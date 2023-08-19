@@ -509,6 +509,51 @@ pub const VirtualMachine = struct {
         return this.rareData().mimeTypeFromString(this.allocator, str);
     }
 
+    const SourceMapHandlerGetter = struct {
+        vm: *VirtualMachine,
+        printer: *js_printer.BufferPrinter,
+
+        pub fn get(this: *SourceMapHandlerGetter) js_printer.SourceMapHandler {
+            if (this.vm.debugger == null) {
+                return SavedSourceMap.SourceMapHandler.init(&this.vm.source_mappings);
+            }
+
+            return js_printer.SourceMapHandler.For(SourceMapHandlerGetter, onChunk).init(this);
+        }
+
+        /// When the inspector is enabled, we want to generate an inline sourcemap.
+        /// And, for now, we also store it in source_mappings like normal
+        /// This is hideously expensive memory-wise...
+        pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+            var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+            defer temp_json_buffer.deinit();
+            temp_json_buffer = try chunk.printSourceMapContents(source, temp_json_buffer, true, true);
+            const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
+            // TODO: do we need to %-encode the path?
+            const source_url_len = source.path.text.len;
+            const source_mapping_url = "\n//# sourceURL=";
+            const prefix_len = source_map_url_prefix_start.len + source_mapping_url.len + source_url_len;
+
+            try this.vm.source_mappings.putMappings(source, chunk.buffer);
+            const encode_len = bun.base64.encodeLen(temp_json_buffer.list.items);
+            try this.printer.ctx.buffer.growIfNeeded(encode_len + prefix_len + 2);
+            this.printer.ctx.buffer.appendAssumeCapacity("\n" ++ source_map_url_prefix_start);
+            _ = bun.base64.encode(this.printer.ctx.buffer.list.items.ptr[this.printer.ctx.buffer.len()..this.printer.ctx.buffer.list.capacity], temp_json_buffer.list.items);
+            this.printer.ctx.buffer.list.items.len += encode_len;
+            this.printer.ctx.buffer.appendAssumeCapacity(source_mapping_url);
+            // TODO: do we need to %-encode the path?
+            this.printer.ctx.buffer.appendAssumeCapacity(source.path.text);
+            try this.printer.ctx.buffer.append("\n");
+        }
+    };
+
+    pub inline fn sourceMapHandler(this: *VirtualMachine, printer: *js_printer.BufferPrinter) SourceMapHandlerGetter {
+        return SourceMapHandlerGetter{
+            .vm = this,
+            .printer = printer,
+        };
+    }
+
     pub const GCLevel = enum(u3) {
         none = 0,
         mild = 1,

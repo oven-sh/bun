@@ -1535,7 +1535,7 @@ pub fn StatType(comptime Big: bool) type {
 pub const StatsSmall = StatType(false);
 pub const StatsBig = StatType(true);
 
-///
+/// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,

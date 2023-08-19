@@ -2,6 +2,8 @@
 
 #include "wtf/StackTrace.h"
 #include "wtf/dtoa.h"
+#include "wtf/Lock.h"
+#include "termios.h"
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
@@ -11,6 +13,138 @@ extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* p
 extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
 {
     WTF::StringImpl::copyCharacters(destination, source, length);
+}
+
+static int orig_termios_fd = -1;
+static struct termios orig_termios;
+static WTF::Lock orig_termios_lock;
+
+static int current_tty_mode = 0;
+static struct termios orig_tty_termios;
+
+int uv__tcsetattr(int fd, int how, const struct termios* term)
+{
+    int rc;
+
+    do
+        rc = tcsetattr(fd, how, term);
+    while (rc == -1 && errno == EINTR);
+
+    if (rc == -1)
+        return errno;
+
+    return 0;
+}
+
+static void uv__tty_make_raw(struct termios* tio)
+{
+    assert(tio != NULL);
+
+#if defined __sun || defined __MVS__
+    /*
+     * This implementation of cfmakeraw for Solaris and derivatives is taken from
+     * http://www.perkin.org.uk/posts/solaris-portability-cfmakeraw.html.
+     */
+    tio->c_iflag &= ~(IMAXBEL | IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+    tio->c_oflag &= ~OPOST;
+    tio->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    tio->c_cflag &= ~(CSIZE | PARENB);
+    tio->c_cflag |= CS8;
+
+    /*
+     * By default, most software expects a pending read to block until at
+     * least one byte becomes available.  As per termio(7I), this requires
+     * setting the MIN and TIME parameters appropriately.
+     *
+     * As a somewhat unfortunate artifact of history, the MIN and TIME slots
+     * in the control character array overlap with the EOF and EOL slots used
+     * for canonical mode processing.  Because the EOF character needs to be
+     * the ASCII EOT value (aka Control-D), it has the byte value 4.  When
+     * switching to raw mode, this is interpreted as a MIN value of 4; i.e.,
+     * reads will block until at least four bytes have been input.
+     *
+     * Other platforms with a distinct MIN slot like Linux and FreeBSD appear
+     * to default to a MIN value of 1, so we'll force that value here:
+     */
+    tio->c_cc[VMIN] = 1;
+    tio->c_cc[VTIME] = 0;
+#else
+    cfmakeraw(tio);
+#endif /* #ifdef __sun */
+}
+
+extern "C" int
+Bun__ttySetMode(int fd, int mode)
+{
+    struct termios tmp;
+    int expected;
+    int rc;
+
+    if (current_tty_mode == mode)
+        return 0;
+
+    if (current_tty_mode == 0 && mode != 0) {
+        do {
+            rc = tcgetattr(fd, &orig_tty_termios);
+        } while (rc == -1 && errno == EINTR);
+
+        if (rc == -1)
+            return errno;
+
+        {
+            /* This is used for uv_tty_reset_mode() */
+            LockHolder locker(orig_termios_lock);
+
+            if (orig_termios_fd == -1) {
+                orig_termios = orig_termios;
+                orig_termios_fd = fd;
+            }
+        }
+    }
+
+    tmp = orig_tty_termios;
+    switch (mode) {
+    case 0: // normal
+        break;
+    case 1: // raw
+        tmp.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+        tmp.c_oflag |= (ONLCR);
+        tmp.c_cflag |= (CS8);
+        tmp.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+        tmp.c_cc[VMIN] = 1;
+        tmp.c_cc[VTIME] = 0;
+        break;
+    case 2: // io
+        uv__tty_make_raw(&tmp);
+        break;
+    }
+
+    /* Apply changes after draining */
+    rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
+    if (rc == 0)
+        current_tty_mode = mode;
+
+    return rc;
+}
+
+int uv_tty_reset_mode(void)
+{
+    int saved_errno;
+    int err;
+
+    saved_errno = errno;
+
+    if (orig_termios_lock.tryLock())
+        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+
+    err = 0;
+    if (orig_termios_fd != -1)
+        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+
+    orig_termios_lock.unlock();
+    errno = saved_errno;
+
+    return err;
 }
 
 extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);

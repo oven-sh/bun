@@ -15,6 +15,7 @@
         "${workspaceFolder}/src/bun.js/bindings/webcore/",
         "${workspaceFolder}/src/bun.js/bindings/sqlite/",
         "${workspaceFolder}/src/bun.js/bindings/webcrypto/",
+        "${workspaceFolder}/src/bun.js/modules/",
         "${workspaceFolder}/src/js/builtins/",
         "${workspaceFolder}/src/js/out",
         "${workspaceFolder}/src/deps/boringssl/include/",

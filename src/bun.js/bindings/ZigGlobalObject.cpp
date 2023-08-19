@@ -109,6 +109,7 @@
 #include "NodeVMScript.h"
 #include "ProcessIdentifier.h"
 #include "SerializedScriptValue.h"
+#include "NodeTTYModule.h"
 
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -1408,6 +1409,35 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" int Bun__ttySetMode(int fd, int mode);
+
+JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() != 2) {
+        throwTypeError(globalObject, scope, "Expected 2 arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue fd = callFrame->argument(0);
+    if (!fd.isNumber()) {
+        throwTypeError(globalObject, scope, "fd must be a number"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue mode = callFrame->argument(1);
+    if (!mode.isNumber()) {
+        throwTypeError(globalObject, scope, "mode must be a number"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
+    int err = Bun__ttySetMode(fd.asNumber(), mode.asNumber());
+    return JSValue::encode(jsNumber(err));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1483,6 +1513,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
     return JSC::JSValue::encode(jsUndefined());
 }
+
+extern JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
@@ -1657,6 +1689,18 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "cleanupLater"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, asyncHooksCleanupLater, ImplementationVisibility::Public), 0);
+            return JSValue::encode(obj);
+        }
+
+        if (string == "tty"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ttySetMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 1);
+
+            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, jsFunctionTty_isatty, ImplementationVisibility::Public), 1);
+
+            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
+
             return JSValue::encode(obj);
         }
 

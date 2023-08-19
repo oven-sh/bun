@@ -352,7 +352,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include -Isrc/bun.js/modules
 
 
 ifeq ($(OS_NAME),linux)

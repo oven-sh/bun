@@ -15876,7 +15876,7 @@ fn NewParser_(
                     }
 
                     if (comptime allow_macros) {
-                        if (is_macro_ref and p.options.features.is_macro_runtime) {
+                        if (is_macro_ref and !p.options.features.is_macro_runtime) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);

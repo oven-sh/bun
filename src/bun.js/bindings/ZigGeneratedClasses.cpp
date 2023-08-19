@@ -6054,6 +6054,9 @@ JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__attributesGetterWrap);
 extern "C" EncodedJSValue ElementPrototype__before(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ElementPrototype__beforeCallback);
 
+extern "C" JSC::EncodedJSValue ElementPrototype__getCanHaveContent(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__canHaveContentGetterWrap);
+
 extern "C" EncodedJSValue ElementPrototype__getAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ElementPrototype__getAttributeCallback);
 
@@ -6084,6 +6087,9 @@ JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__removedGetterWrap);
 extern "C" EncodedJSValue ElementPrototype__replace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ElementPrototype__replaceCallback);
 
+extern "C" JSC::EncodedJSValue ElementPrototype__getSelfClosing(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__selfClosingGetterWrap);
+
 extern "C" EncodedJSValue ElementPrototype__setAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ElementPrototype__setAttributeCallback);
 
@@ -6103,6 +6109,7 @@ static const HashTableValue JSElementPrototypeTableValues[] = {
     { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__appendCallback, 1 } },
     { "attributes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__attributesGetterWrap, 0 } },
     { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__beforeCallback, 1 } },
+    { "canHaveContent"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__canHaveContentGetterWrap, 0 } },
     { "getAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__getAttributeCallback, 1 } },
     { "hasAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__hasAttributeCallback, 1 } },
     { "namespaceURI"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__namespaceURIGetterWrap, 0 } },
@@ -6113,6 +6120,7 @@ static const HashTableValue JSElementPrototypeTableValues[] = {
     { "removeAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__removeAttributeCallback, 1 } },
     { "removed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__removedGetterWrap, 0 } },
     { "replace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__replaceCallback, 1 } },
+    { "selfClosing"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__selfClosingGetterWrap, 0 } },
     { "setAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__setAttributeCallback, 2 } },
     { "setInnerContent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__setInnerContentCallback, 1 } },
     { "tagName"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__tagNameGetterWrap, ElementPrototype__tagNameSetterWrap } }
@@ -6226,6 +6234,18 @@ JSC_DEFINE_HOST_FUNCTION(ElementPrototype__beforeCallback, (JSGlobalObject * lex
 #endif
 
     return ElementPrototype__before(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__canHaveContentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getCanHaveContent(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ElementPrototype__getAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -6493,6 +6513,18 @@ JSC_DEFINE_HOST_FUNCTION(ElementPrototype__replaceCallback, (JSGlobalObject * le
 #endif
 
     return ElementPrototype__replace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__selfClosingGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getSelfClosing(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ElementPrototype__setAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

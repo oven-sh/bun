@@ -1282,210 +1282,230 @@ pub const Date = enum(u64) {
     }
 };
 
-fn StatsDataType(comptime T: type) type {
+/// Stats and BigIntStats classes from node:fs
+pub fn StatType(comptime Big: bool) type {
+    const Int = if (Big) i64 else i32;
+    const Float = if (Big) i64 else f64;
+    const Timestamp = if (Big) u64 else u0;
+
     return struct {
-        dev: T,
-        ino: T,
-        mode: T,
-        nlink: T,
-        uid: T,
-        gid: T,
-        rdev: T,
+        pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
+
+        dev: Int,
+        ino: Int,
+        mode: Int,
+        nlink: Int,
+        uid: Int,
+        gid: Int,
+        rdev: Int,
         // Always store size as a 64-bit integer
         size: i64,
-        blksize: T,
-        blocks: T,
-        atime_ms: f64,
-        mtime_ms: f64,
-        ctime_ms: f64,
-        birthtime_ms: T,
+        blksize: Int,
+        blocks: Int,
 
-        // TODO: don't store these 4 fields
+        // TODO: don't store each time three separate times
+
+        // _ms is either a float if Small, or a 64-bit integer if Big
+        atime_ms: Float,
+        mtime_ms: Float,
+        ctime_ms: Float,
+        birthtime_ms: Float,
+
         atime: Date,
         mtime: Date,
         ctime: Date,
         birthtime: Date,
 
-        pub fn init(stat_: os.Stat) @This() {
-            const atime = stat_.atime();
-            const mtime = stat_.mtime();
-            const ctime = stat_.ctime();
+        atime_ns: Timestamp = 0,
+        mtime_ns: Timestamp = 0,
+        ctime_ns: Timestamp = 0,
+        birthtime_ns: Timestamp = 0,
 
-            return @This(){
-                .dev = @as(T, @truncate(@as(i64, @intCast(stat_.dev)))),
-                .ino = @as(T, @truncate(@as(i64, @intCast(stat_.ino)))),
-                .mode = @as(T, @truncate(@as(i64, @intCast(stat_.mode)))),
-                .nlink = @as(T, @truncate(@as(i64, @intCast(stat_.nlink)))),
-                .uid = @as(T, @truncate(@as(i64, @intCast(stat_.uid)))),
-                .gid = @as(T, @truncate(@as(i64, @intCast(stat_.gid)))),
-                .rdev = @as(T, @truncate(@as(i64, @intCast(stat_.rdev)))),
+        const This = @This();
+
+        inline fn toNanoseconds(ts: std.os.timespec) Timestamp {
+            return @as(Timestamp, @intCast(ts.tv_sec * 1_000_000_000)) + @as(Timestamp, @intCast(ts.tv_nsec));
+        }
+
+        inline fn toTimeMS(ts: std.os.timespec) Float {
+            if (Big) {
+                return @as(i64, @intCast(ts.tv_sec * std.time.ms_per_s)) + @as(i64, @intCast(@divTrunc(ts.tv_nsec, std.time.ns_per_ms)));
+            } else {
+                return (@as(f64, @floatFromInt(@max(ts.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ts.tv_nsec, 0))))) / std.time.ns_per_ms);
+            }
+        }
+
+        fn getter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+            return struct {
+                pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                    const value = @field(this, @tagName(field));
+                    if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
+                        return JSC.JSValue.fromInt64NoTruncate(globalThis, @intCast(value));
+                    }
+                    return JSC.toJS(globalThis, value, null);
+                }
+            }.callback;
+        }
+
+        pub const isBlockDevice_ = JSC.wrapInstanceMethod(This, "isBlockDevice", false);
+        pub const isCharacterDevice_ = JSC.wrapInstanceMethod(This, "isCharacterDevice", false);
+        pub const isDirectory_ = JSC.wrapInstanceMethod(This, "isDirectory", false);
+        pub const isFIFO_ = JSC.wrapInstanceMethod(This, "isFIFO", false);
+        pub const isFile_ = JSC.wrapInstanceMethod(This, "isFile", false);
+        pub const isSocket_ = JSC.wrapInstanceMethod(This, "isSocket", false);
+        pub const isSymbolicLink_ = JSC.wrapInstanceMethod(This, "isSymbolicLink", false);
+
+        pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
+        pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
+        pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
+        pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
+        pub const isFile_WithoutTypeChecks = domCall(.isFile);
+        pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
+        pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
+
+        const DOMCallFn = fn (
+            *This,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue;
+        fn domCall(comptime decl: std.meta.DeclEnum(This)) DOMCallFn {
+            return struct {
+                pub fn run(
+                    this: *This,
+                    _: *JSC.JSGlobalObject,
+                ) callconv(.C) JSC.JSValue {
+                    return @call(.auto, @field(This, @tagName(decl)), .{this});
+                }
+            }.run;
+        }
+
+        pub const dev = getter(.dev);
+        pub const ino = getter(.ino);
+        pub const mode = getter(.mode);
+        pub const nlink = getter(.nlink);
+        pub const uid = getter(.uid);
+        pub const gid = getter(.gid);
+        pub const rdev = getter(.rdev);
+        pub const size = getter(.size);
+        pub const blksize = getter(.blksize);
+        pub const blocks = getter(.blocks);
+        pub const atime = getter(.atime);
+        pub const mtime = getter(.mtime);
+        pub const ctime = getter(.ctime);
+        pub const birthtime = getter(.birthtime);
+        pub const atimeMs = getter(.atime_ms);
+        pub const mtimeMs = getter(.mtime_ms);
+        pub const ctimeMs = getter(.ctime_ms);
+        pub const birthtimeMs = getter(.birthtime_ms);
+        pub const atimeNs = getter(.atime_ns);
+        pub const mtimeNs = getter(.mtime_ns);
+        pub const ctimeNs = getter(.ctime_ns);
+        pub const birthtimeNs = getter(.birthtime_ns);
+
+        inline fn modeInternal(this: *This) i32 {
+            return @truncate(this.mode);
+        }
+
+        pub fn isBlockDevice(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        pub fn isCharacterDevice(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        pub fn isDirectory(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        pub fn isFIFO(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        pub fn isFile(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISREG(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        pub fn isSocket(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        /// Node.js says this method is only valid on the result of lstat()
+        /// so it's fine if we just include it on stat() because it would
+        /// still just return false.
+        ///
+        /// See https://nodejs.org/api/fs.html#statsissymboliclink
+        pub fn isSymbolicLink(this: *This) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
+        }
+
+        // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.
+
+        pub fn finalize(this: *This) callconv(.C) void {
+            bun.default_allocator.destroy(this);
+        }
+
+        pub fn init(stat_: os.Stat) This {
+            const aTime = stat_.atime();
+            const mTime = stat_.mtime();
+            const cTime = stat_.ctime();
+
+            return .{
+                .dev = @truncate(@as(i64, @intCast(stat_.dev))),
+                .ino = @truncate(@as(i64, @intCast(stat_.ino))),
+                .mode = @truncate(@as(i64, @intCast(stat_.mode))),
+                .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
+                .uid = @truncate(@as(i64, @intCast(stat_.uid))),
+                .gid = @truncate(@as(i64, @intCast(stat_.gid))),
+                .rdev = @truncate(@as(i64, @intCast(stat_.rdev))),
                 .size = @truncate(@as(i64, @intCast(stat_.size))),
-                .blksize = @as(T, @truncate(@as(i64, @intCast(stat_.blksize)))),
-                .blocks = @as(T, @truncate(@as(i64, @intCast(stat_.blocks)))),
-                .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),
-                .mtime_ms = (@as(f64, @floatFromInt(@max(mtime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(mtime.tv_nsec, 0))))) / std.time.ns_per_ms),
-                .ctime_ms = (@as(f64, @floatFromInt(@max(ctime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ctime.tv_nsec, 0))))) / std.time.ns_per_ms),
-                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec * std.time.ms_per_s, 0))))),
-                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec * std.time.ms_per_s, 0))))),
-                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec * std.time.ms_per_s, 0))))),
+                .blksize = @truncate(@as(i64, @intCast(stat_.blksize))),
+                .blocks = @truncate(@as(i64, @intCast(stat_.blocks))),
+                .atime_ms = toTimeMS(aTime),
+                .mtime_ms = toTimeMS(mTime),
+                .ctime_ms = toTimeMS(cTime),
+                .atime = @enumFromInt(@as(u64, @intCast(@max(aTime.tv_sec * std.time.ms_per_s, 0)))),
+                .mtime = @enumFromInt(@as(u64, @intCast(@max(mTime.tv_sec * std.time.ms_per_s, 0)))),
+                .ctime = @enumFromInt(@as(u64, @intCast(@max(cTime.tv_sec * std.time.ms_per_s, 0)))),
+                .atime_ns = if (Big) toNanoseconds(aTime) else 0,
+                .mtime_ns = if (Big) toNanoseconds(mTime) else 0,
+                .ctime_ns = if (Big) toNanoseconds(cTime) else 0,
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
-                .birthtime_ms = if (Environment.isLinux)
-                    0
-                else
-                    @as(T, @truncate(@as(i64, @intCast(if (stat_.birthtime().tv_nsec > 0) (@as(usize, @intCast(stat_.birthtime().tv_nsec)) / std.time.ns_per_ms) else 0)))),
-
+                .birthtime_ms = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime()),
                 .birthtime = if (Environment.isLinux)
-                    @as(Date, @enumFromInt(0))
+                    @enumFromInt(0)
                 else
-                    @as(Date, @enumFromInt(@as(u64, @intCast(@max(stat_.birthtime().tv_sec, 0))))),
+                    @enumFromInt(@as(u64, @intCast(@max(stat_.birthtime().tv_sec, 0)))),
+                .birthtime_ns = if (Big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0,
             };
         }
-    };
-}
 
-pub const Stats = union(enum) {
-    big: StatsDataType(i64),
-    small: StatsDataType(i32),
-
-    const This = Stats;
-    pub usingnamespace JSC.Codegen.JSStats;
-
-    fn unionGetter(comptime field: std.meta.FieldEnum(StatsDataType(i64))) JSC.To.Cpp.PropertyGetter(This) {
-        return struct {
-            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-                return switch (this.*) {
-                    .big => JSC.toJS(globalThis, @field(this.big, @tagName(field)), null),
-                    .small => JSC.toJS(globalThis, @field(this.small, @tagName(field)), null),
-                };
-            }
-        }.callback;
-    }
-
-    pub const isBlockDevice_ = JSC.wrapInstanceMethod(Stats, "isBlockDevice", false);
-    pub const isCharacterDevice_ = JSC.wrapInstanceMethod(Stats, "isCharacterDevice", false);
-    pub const isDirectory_ = JSC.wrapInstanceMethod(Stats, "isDirectory", false);
-    pub const isFIFO_ = JSC.wrapInstanceMethod(Stats, "isFIFO", false);
-    pub const isFile_ = JSC.wrapInstanceMethod(Stats, "isFile", false);
-    pub const isSocket_ = JSC.wrapInstanceMethod(Stats, "isSocket", false);
-    pub const isSymbolicLink_ = JSC.wrapInstanceMethod(Stats, "isSymbolicLink", false);
-
-    pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
-    pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
-    pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
-    pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
-    pub const isFile_WithoutTypeChecks = domCall(.isFile);
-    pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
-    pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
-
-    const DOMCallFn = fn (
-        *Stats,
-        *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue;
-    fn domCall(comptime decl: std.meta.DeclEnum(Stats)) DOMCallFn {
-        return struct {
-            pub fn run(
-                this: *Stats,
-                _: *JSC.JSGlobalObject,
-            ) callconv(.C) JSC.JSValue {
-                return @call(.auto, @field(Stats, @tagName(decl)), .{this});
-            }
-        }.run;
-    }
-
-    pub const dev = unionGetter(.dev);
-    pub const ino = unionGetter(.ino);
-    pub const mode = unionGetter(.mode);
-    pub const nlink = unionGetter(.nlink);
-    pub const uid = unionGetter(.uid);
-    pub const gid = unionGetter(.gid);
-    pub const rdev = unionGetter(.rdev);
-    pub const size = unionGetter(.size);
-    pub const blksize = unionGetter(.blksize);
-    pub const blocks = unionGetter(.blocks);
-    pub const atime = unionGetter(.atime);
-    pub const mtime = unionGetter(.mtime);
-    pub const ctime = unionGetter(.ctime);
-    pub const birthtime = unionGetter(.birthtime);
-    pub const atimeMs = unionGetter(.atime_ms);
-    pub const mtimeMs = unionGetter(.mtime_ms);
-    pub const ctimeMs = unionGetter(.ctime_ms);
-    pub const birthtimeMs = unionGetter(.birthtime_ms);
-
-    fn modeInternal(this: *This) i32 {
-        return switch (this.*) {
-            .big => @as(i32, @truncate(this.big.mode)),
-            .small => this.small.mode,
-        };
-    }
-
-    pub fn isBlockDevice(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn isCharacterDevice(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn isDirectory(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn isFIFO(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn isFile(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISREG(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn isSocket(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    // Node.js says this method is only valid on the result of lstat()
-    // so it's fine if we just include it on stat() because it would
-    // still just return false.
-    //
-    // See https://nodejs.org/api/fs.html#statsissymboliclink
-    pub fn isSymbolicLink(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
-    }
-
-    pub fn finalize(this: *This) callconv(.C) void {
-        bun.default_allocator.destroy(this);
-    }
-
-    pub fn init(stat: std.os.Stat, big: bool) This {
-        if (big) {
-            return .{ .big = StatsDataType(i64).init(stat) };
-        } else {
-            return .{ .small = StatsDataType(i32).init(stat) };
+        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat) *This {
+            var this = allocator.create(This) catch unreachable;
+            this.* = init(stat);
+            return this;
         }
-    }
 
-    pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat, big: bool) *This {
-        var this = allocator.create(Stats) catch unreachable;
-        this.* = init(stat, big);
-        return this;
-    }
+        pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*This {
+            if (Big) {
+                globalThis.throwInvalidArguments("BigIntStats is not a constructor", .{});
+                return null;
+            }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*Stats {
-        // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
-        var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
+            // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+            var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-        var this = globalThis.allocator().create(Stats) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
+            var this = globalThis.allocator().create(This) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
 
-        var atime_ms = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
-        var mtime_ms = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
-        var ctime_ms = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
-        var birthtime_ms = if (args.len > 13 and args[13].isNumber()) args[13].toInt32() else 0;
-        this.* = .{
-            .small = StatsDataType(i32){
+            var atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
+            var mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
+            var ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
+            var birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
+            this.* = .{
                 .dev = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
                 .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
@@ -1496,27 +1516,51 @@ pub const Stats = union(enum) {
                 .ino = if (args.len > 7 and args[7].isNumber()) args[7].toInt32() else 0,
                 .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
                 .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
-                .atime_ms = (atime_ms),
-                .mtime_ms = (mtime_ms),
-                .ctime_ms = (ctime_ms),
+                .atime_ms = atime_ms,
+                .mtime_ms = mtime_ms,
+                .ctime_ms = ctime_ms,
                 .birthtime_ms = birthtime_ms,
                 .atime = @enumFromInt(@as(u64, @intFromFloat(atime_ms))),
                 .mtime = @enumFromInt(@as(u64, @intFromFloat(mtime_ms))),
                 .ctime = @enumFromInt(@as(u64, @intFromFloat(ctime_ms))),
-                .birthtime = @enumFromInt(@as(u64, @intCast(birthtime_ms))),
-            },
-        };
-        return this;
+                .birthtime = @enumFromInt(@as(u64, @intFromFloat(birthtime_ms))),
+            };
+            return this;
+        }
+
+        comptime {
+            _ = isBlockDevice_WithoutTypeChecks;
+            _ = isCharacterDevice_WithoutTypeChecks;
+            _ = isDirectory_WithoutTypeChecks;
+            _ = isFIFO_WithoutTypeChecks;
+            _ = isFile_WithoutTypeChecks;
+            _ = isSocket_WithoutTypeChecks;
+            _ = isSymbolicLink_WithoutTypeChecks;
+        }
+    };
+}
+
+pub const StatsSmall = StatType(false);
+pub const StatsBig = StatType(true);
+
+///
+pub const Stats = union(enum) {
+    big: StatsBig,
+    small: StatsSmall,
+
+    pub inline fn init(stat_: os.Stat, big: bool) Stats {
+        if (big) {
+            return .{ .big = StatsBig.init(stat_) };
+        } else {
+            return .{ .small = StatsSmall.init(stat_) };
+        }
     }
 
-    comptime {
-        _ = isBlockDevice_WithoutTypeChecks;
-        _ = isCharacterDevice_WithoutTypeChecks;
-        _ = isDirectory_WithoutTypeChecks;
-        _ = isFIFO_WithoutTypeChecks;
-        _ = isFile_WithoutTypeChecks;
-        _ = isSocket_WithoutTypeChecks;
-        _ = isSymbolicLink_WithoutTypeChecks;
+    pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .big => this.big.toJS(globalObject),
+            .small => this.small.toJS(globalObject),
+        };
     }
 };
 

@@ -282,7 +282,7 @@ pub const NodeJSFS = struct {
     }
 
     pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.Node.Stats.getConstructor(globalThis);
+        return JSC.Node.StatsSmall.getConstructor(globalThis);
     }
 
     pub const watch = callSync(.watch);

@@ -4,6 +4,12 @@ JSC::Structure* JSAttributeIteratorStructure() { return m_JSAttributeIterator.ge
   JSC::LazyClassStructure m_JSAttributeIterator;
   bool hasJSAttributeIteratorSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSAttributeIteratorSetterValue;
+JSC::Structure* JSBigIntStatsStructure() { return m_JSBigIntStats.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBigIntStatsConstructor() { return m_JSBigIntStats.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBigIntStatsPrototype() { return m_JSBigIntStats.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBigIntStats;
+  bool hasJSBigIntStatsSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBigIntStatsSetterValue;
 JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(this); }
         JSC::JSObject* JSBlobConstructor() { return m_JSBlob.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSBlobPrototype() { return m_JSBlob.prototypeInitializedOnMainThread(this); }

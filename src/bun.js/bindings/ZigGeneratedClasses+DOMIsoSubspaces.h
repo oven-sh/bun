@@ -1,5 +1,6 @@
 std::unique_ptr<IsoSubspace> m_subspaceForAttributeIterator;
-std::unique_ptr<IsoSubspace> m_subspaceForBlob;
+std::unique_ptr<IsoSubspace> m_subspaceForBigIntStats;
+std::unique_ptr<IsoSubspace> m_subspaceForBigIntStatsConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBlob;
 std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBuildArtifact;
 std::unique_ptr<IsoSubspace> m_subspaceForBuildMessage;
 std::unique_ptr<IsoSubspace> m_subspaceForBuildMessageConstructor;std::unique_ptr<IsoSubspace> m_subspaceForComment;

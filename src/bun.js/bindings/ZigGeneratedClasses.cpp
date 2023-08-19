@@ -228,6 +228,1058 @@ extern "C" EncodedJSValue AttributeIterator__create(Zig::GlobalObject* globalObj
 
     return JSValue::encode(instance);
 }
+class JSBigIntStatsPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSBigIntStatsPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSBigIntStatsPrototype* ptr = new (NotNull, JSC::allocateCell<JSBigIntStatsPrototype>(vm)) JSBigIntStatsPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSBigIntStatsPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSBigIntStatsConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSBigIntStatsConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBigIntStatsPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBigIntStatsConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBigIntStatsConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBigIntStatsConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBigIntStatsConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBigIntStatsConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSBigIntStatsConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype);
+};
+
+extern "C" void* BigIntStatsClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsBigIntStatsConstructor);
+
+extern "C" void BigIntStatsClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__blksize(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__blksizeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__blocks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__blocksGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__dev(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__devGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__gid(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__gidGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ino(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__inoGetterWrap);
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isBlockDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isBlockDevice(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isCharacterDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isCharacterDevice(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isDirectory_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isDirectory_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isDirectory(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isDirectory_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isFIFO_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isFIFO_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isFIFO(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isFIFO_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isFile_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isFile_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isFile(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isFile_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isSocket_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isSocket_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isSocket(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isSocket_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isSymbolicLink_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isSymbolicLink(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__modeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__nlink(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__nlinkGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__rdev(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__rdevGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__size(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__sizeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__uid(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__uidGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, JSBigIntStatsPrototype::Base);
+
+static const HashTableValue JSBigIntStatsPrototypeTableValues[] = {
+    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeGetterWrap, 0 } },
+    { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeMsGetterWrap, 0 } },
+    { "atimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeNsGetterWrap, 0 } },
+    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeGetterWrap, 0 } },
+    { "birthtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeMsGetterWrap, 0 } },
+    { "birthtimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeNsGetterWrap, 0 } },
+    { "blksize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__blksizeGetterWrap, 0 } },
+    { "blocks"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__blocksGetterWrap, 0 } },
+    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeGetterWrap, 0 } },
+    { "ctimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeMsGetterWrap, 0 } },
+    { "ctimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeNsGetterWrap, 0 } },
+    { "dev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__devGetterWrap, 0 } },
+    { "gid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__gidGetterWrap, 0 } },
+    { "ino"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__inoGetterWrap, 0 } },
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isBlockDeviceCallback, &DOMJITSignatureForBigIntStatsPrototype__isBlockDevice } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isCharacterDeviceCallback, &DOMJITSignatureForBigIntStatsPrototype__isCharacterDevice } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isDirectoryCallback, &DOMJITSignatureForBigIntStatsPrototype__isDirectory } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isFIFOCallback, &DOMJITSignatureForBigIntStatsPrototype__isFIFO } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isFileCallback, &DOMJITSignatureForBigIntStatsPrototype__isFile } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isSocketCallback, &DOMJITSignatureForBigIntStatsPrototype__isSocket } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isSymbolicLinkCallback, &DOMJITSignatureForBigIntStatsPrototype__isSymbolicLink } },
+    { "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__modeGetterWrap, 0 } },
+    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeGetterWrap, 0 } },
+    { "mtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeMsGetterWrap, 0 } },
+    { "mtimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeNsGetterWrap, 0 } },
+    { "nlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__nlinkGetterWrap, 0 } },
+    { "rdev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__rdevGetterWrap, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__sizeGetterWrap, 0 } },
+    { "uid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__uidGetterWrap, 0 } }
+};
+
+const ClassInfo JSBigIntStatsPrototype::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSBigIntStatsPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSBigIntStatsConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_atime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__atime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_atime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__atimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_atime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__atimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_atime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__atimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__atimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_birthtime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__birthtime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_birthtime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__birthtimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_birthtime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__birthtimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_birthtime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__birthtimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__birthtimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__blksizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__blksize(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__blocksGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__blocks(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_ctime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__ctime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_ctime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__ctimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_ctime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__ctimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_ctime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ctimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ctimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__devGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__dev(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__gidGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__gid(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__inoGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ino(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isBlockDevice_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isCharacterDevice_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isDirectory_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isFIFO_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isFile_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isSocket_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isSymbolicLink_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__modeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mode(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_mtime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__mtime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_mtime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__mtimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_mtime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__mtimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_mtime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mtimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mtimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__nlinkGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__nlink(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__rdevGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__rdev(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__sizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__size(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__uidGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__uid(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSBigIntStatsPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSBigIntStats::info(), JSBigIntStatsPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSBigIntStatsConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "BigIntStats"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSBigIntStatsConstructor::JSBigIntStatsConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSBigIntStatsConstructor* JSBigIntStatsConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBigIntStatsPrototype* prototype)
+{
+    JSBigIntStatsConstructor* ptr = new (NotNull, JSC::allocateCell<JSBigIntStatsConstructor>(vm)) JSBigIntStatsConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBigIntStatsConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSBigIntStatsConstructor();
+    Structure* structure = globalObject->JSBigIntStatsStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSBigIntStatsStructure());
+    }
+
+    void* ptr = BigIntStatsClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSBigIntStats* instance = JSBigIntStats::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSBigIntStatsConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype)
+{
+}
+
+const ClassInfo JSBigIntStatsConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsConstructor) };
+
+extern "C" EncodedJSValue BigIntStats__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSBigIntStatsConstructor());
+}
+
+JSBigIntStats::~JSBigIntStats()
+{
+    if (m_ctx) {
+        BigIntStatsClass__finalize(m_ctx);
+    }
+}
+void JSBigIntStats::destroy(JSCell* cell)
+{
+    static_cast<JSBigIntStats*>(cell)->JSBigIntStats::~JSBigIntStats();
+}
+
+const ClassInfo JSBigIntStats::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStats) };
+
+void JSBigIntStats::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSBigIntStats* JSBigIntStats::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSBigIntStats* ptr = new (NotNull, JSC::allocateCell<JSBigIntStats>(vm)) JSBigIntStats(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* BigIntStats__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSBigIntStats* object = JSC::jsDynamicCast<JSBigIntStats*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool BigIntStats__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSBigIntStats* object = JSC::jsDynamicCast<JSBigIntStats*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t BigIntStats__ptrOffset = JSBigIntStats::offsetOfWrapped();
+
+void JSBigIntStats::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSBigIntStats::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSBigIntStatsConstructor::create(vm, globalObject, WebCore::JSBigIntStatsConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSBigIntStatsPrototype*>(prototype));
+}
+
+JSObject* JSBigIntStats::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSBigIntStatsPrototype::create(vm, globalObject, JSBigIntStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue BigIntStats__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSBigIntStatsStructure();
+    JSBigIntStats* instance = JSBigIntStats::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSBigIntStats::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_atime);
+    visitor.append(thisObject->m_birthtime);
+    visitor.append(thisObject->m_ctime);
+    visitor.append(thisObject->m_mtime);
+}
+
+DEFINE_VISIT_CHILDREN(JSBigIntStats);
+
+template<typename Visitor>
+void JSBigIntStats::visitAdditionalChildren(Visitor& visitor)
+{
+    JSBigIntStats* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_atime);
+    visitor.append(thisObject->m_birthtime);
+    visitor.append(thisObject->m_ctime);
+    visitor.append(thisObject->m_mtime);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSBigIntStats);
+
+template<typename Visitor>
+void JSBigIntStats::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBigIntStats);
 class JSBlobPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

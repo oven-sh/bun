@@ -1833,3 +1833,33 @@ it("new Stats", () => {
   expect(stats.ctime).toEqual(new Date(13));
   expect(stats.birthtime).toEqual(new Date(14));
 });
+
+it("stat bigint", () => {
+  const withoutBigInt = statSync(__filename, { bigint: false });
+  const withBigInt = statSync(__filename, { bigint: true });
+  expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
+  expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
+  expect(withoutBigInt.isBlockDevice() === withBigInt.isBlockDevice()).toBe(true);
+  expect(withoutBigInt.isCharacterDevice() === withBigInt.isCharacterDevice()).toBe(true);
+  expect(withoutBigInt.isSymbolicLink() === withBigInt.isSymbolicLink()).toBe(true);
+  expect(withoutBigInt.isFIFO() === withBigInt.isFIFO()).toBe(true);
+  expect(withoutBigInt.isSocket() === withBigInt.isSocket()).toBe(true);
+  expect(BigInt(withoutBigInt.dev)).toBe(withBigInt.dev);
+  expect(BigInt(withoutBigInt.ino)).toBe(withBigInt.ino);
+  expect(BigInt(withoutBigInt.mode)).toBe(withBigInt.mode);
+  expect(BigInt(withoutBigInt.nlink)).toBe(withBigInt.nlink);
+  expect(BigInt(withoutBigInt.uid)).toBe(withBigInt.uid);
+  expect(BigInt(withoutBigInt.gid)).toBe(withBigInt.gid);
+  expect(BigInt(withoutBigInt.rdev)).toBe(withBigInt.rdev);
+  expect(BigInt(withoutBigInt.size)).toBe(withBigInt.size);
+  expect(BigInt(withoutBigInt.blksize)).toBe(withBigInt.blksize);
+  expect(BigInt(withoutBigInt.blocks)).toBe(withBigInt.blocks);
+  expect(BigInt(Math.floor(withoutBigInt.atimeMs))).toBe(withBigInt.atimeMs);
+  expect(BigInt(Math.floor(withoutBigInt.mtimeMs))).toBe(withBigInt.mtimeMs);
+  expect(BigInt(Math.floor(withoutBigInt.ctimeMs))).toBe(withBigInt.ctimeMs);
+  expect(BigInt(Math.floor(withoutBigInt.birthtimeMs))).toBe(withBigInt.birthtimeMs);
+  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
+  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
+  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
+  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+});

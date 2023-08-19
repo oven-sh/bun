@@ -37,6 +37,7 @@ const gid_t = std.os.gid_t;
 /// u63 to allow one null bit
 const ReadPosition = i64;
 
+const StatsType = JSC.Node.StatsType;
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
 
@@ -3426,8 +3427,6 @@ pub const NodeFS = struct {
         return Maybe(Return.Fdatasync).todo;
     }
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
-        if (args.big_int) return Maybe(Return.Fstat).todo;
-
         switch (comptime flavor) {
             .sync => {
                 return switch (Syscall.fstat(args.fd)) {
@@ -3531,8 +3530,6 @@ pub const NodeFS = struct {
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
         _ = flavor;
-        if (args.big_int) return Maybe(Return.Lstat).todo;
-
         return switch (Syscall.lstat(
             args.path.sliceZ(
                 &this.sync_error_buf,
@@ -4713,7 +4710,6 @@ pub const NodeFS = struct {
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
         _ = flavor;
-        if (args.big_int) return Maybe(Return.Stat).todo;
 
         return @as(Maybe(Return.Stat), switch (Syscall.stat(
             args.path.sliceZ(

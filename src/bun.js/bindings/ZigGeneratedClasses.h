@@ -66,6 +66,65 @@ public:
     void finishCreation(JSC::VM&);
 };
 
+class JSBigIntStats final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSBigIntStats* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBigIntStats, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBigIntStats.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBigIntStats = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBigIntStats.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBigIntStats = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+
+    ~JSBigIntStats();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSBigIntStats, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSBigIntStats(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_atime;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_birthtime;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_ctime;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_mtime;
+};
+
 class JSBlob final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

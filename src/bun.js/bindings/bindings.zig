@@ -3762,6 +3762,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
+            u0 => jsNumberFromInt32(0),
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }
@@ -4140,9 +4141,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
+    /// This always returns a JS BigInt
     pub fn fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue {
         return cppFn("fromInt64NoTruncate", .{ globalObject, i });
     }
+    /// This always returns a JS BigInt
     pub fn fromUInt64NoTruncate(globalObject: *JSGlobalObject, i: u64) JSValue {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }

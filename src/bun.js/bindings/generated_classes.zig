@@ -84,6 +84,313 @@ pub const JSAttributeIterator = struct {
         }
     }
 };
+pub const JSBigIntStats = struct {
+    const BigIntStats = Classes.BigIntStats;
+    const GetterType = fn (*BigIntStats, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*BigIntStats, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*BigIntStats, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*BigIntStats, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*BigIntStats, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*BigIntStats {
+        JSC.markBinding(@src());
+        return BigIntStats__fromJS(value);
+    }
+
+    extern fn BigIntStatsPrototype__atimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__atimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.atime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__atimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.atime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__atimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__birthtimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__birthtimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.birthtime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn birthtimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__birthtimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.birthtime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn birthtimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__birthtimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__ctimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__ctimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.ctime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__ctimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.ctime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__ctimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__mtimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__mtimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.mtime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__mtimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.mtime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__mtimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the BigIntStats constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return BigIntStats__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of BigIntStats
+    pub fn toJS(this: *BigIntStats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = BigIntStats__create(globalObject, this);
+            std.debug.assert(value__.as(BigIntStats).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return BigIntStats__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of BigIntStats.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*BigIntStats) bool {
+        JSC.markBinding(@src());
+        return BigIntStats__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *BigIntStats, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(BigIntStats__dangerouslySetPtr(value, null));
+    }
+
+    extern fn BigIntStats__fromJS(JSC.JSValue) ?*BigIntStats;
+    extern fn BigIntStats__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn BigIntStats__create(globalObject: *JSC.JSGlobalObject, ptr: ?*BigIntStats) JSC.JSValue;
+
+    extern fn BigIntStats__dangerouslySetPtr(JSC.JSValue, ?*BigIntStats) bool;
+
+    comptime {
+        if (@TypeOf(BigIntStats.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*BigIntStats)) {
+            @compileLog("BigIntStats.constructor is not a constructor");
+        }
+
+        if (@TypeOf(BigIntStats.finalize) != (fn (*BigIntStats) callconv(.C) void)) {
+            @compileLog("BigIntStats.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(BigIntStats.atime) != GetterType)
+            @compileLog("Expected BigIntStats.atime to be a getter");
+
+        if (@TypeOf(BigIntStats.atimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.atimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.atimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.atimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtime) != GetterType)
+            @compileLog("Expected BigIntStats.birthtime to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.birthtimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.birthtimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.blksize) != GetterType)
+            @compileLog("Expected BigIntStats.blksize to be a getter");
+
+        if (@TypeOf(BigIntStats.blocks) != GetterType)
+            @compileLog("Expected BigIntStats.blocks to be a getter");
+
+        if (@TypeOf(BigIntStats.ctime) != GetterType)
+            @compileLog("Expected BigIntStats.ctime to be a getter");
+
+        if (@TypeOf(BigIntStats.ctimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.ctimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.ctimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.ctimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.dev) != GetterType)
+            @compileLog("Expected BigIntStats.dev to be a getter");
+
+        if (@TypeOf(BigIntStats.gid) != GetterType)
+            @compileLog("Expected BigIntStats.gid to be a getter");
+
+        if (@TypeOf(BigIntStats.ino) != GetterType)
+            @compileLog("Expected BigIntStats.ino to be a getter");
+
+        if (@TypeOf(BigIntStats.isBlockDevice_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isBlockDevice_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isBlockDevice_) != CallbackType)
+            @compileLog("Expected BigIntStats.isBlockDevice_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isBlockDevice_)));
+        if (@TypeOf(BigIntStats.isCharacterDevice_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isCharacterDevice_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isCharacterDevice_) != CallbackType)
+            @compileLog("Expected BigIntStats.isCharacterDevice_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isCharacterDevice_)));
+        if (@TypeOf(BigIntStats.isDirectory_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isDirectory_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isDirectory_) != CallbackType)
+            @compileLog("Expected BigIntStats.isDirectory_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isDirectory_)));
+        if (@TypeOf(BigIntStats.isFIFO_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isFIFO_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isFIFO_) != CallbackType)
+            @compileLog("Expected BigIntStats.isFIFO_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isFIFO_)));
+        if (@TypeOf(BigIntStats.isFile_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isFile_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isFile_) != CallbackType)
+            @compileLog("Expected BigIntStats.isFile_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isFile_)));
+        if (@TypeOf(BigIntStats.isSocket_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isSocket_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isSocket_) != CallbackType)
+            @compileLog("Expected BigIntStats.isSocket_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isSocket_)));
+        if (@TypeOf(BigIntStats.isSymbolicLink_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isSymbolicLink_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isSymbolicLink_) != CallbackType)
+            @compileLog("Expected BigIntStats.isSymbolicLink_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isSymbolicLink_)));
+        if (@TypeOf(BigIntStats.mode) != GetterType)
+            @compileLog("Expected BigIntStats.mode to be a getter");
+
+        if (@TypeOf(BigIntStats.mtime) != GetterType)
+            @compileLog("Expected BigIntStats.mtime to be a getter");
+
+        if (@TypeOf(BigIntStats.mtimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.mtimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.mtimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.mtimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.nlink) != GetterType)
+            @compileLog("Expected BigIntStats.nlink to be a getter");
+
+        if (@TypeOf(BigIntStats.rdev) != GetterType)
+            @compileLog("Expected BigIntStats.rdev to be a getter");
+
+        if (@TypeOf(BigIntStats.size) != GetterType)
+            @compileLog("Expected BigIntStats.size to be a getter");
+
+        if (@TypeOf(BigIntStats.uid) != GetterType)
+            @compileLog("Expected BigIntStats.uid to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(BigIntStats.atime, .{ .name = "BigIntStatsPrototype__atime" });
+            @export(BigIntStats.atimeMs, .{ .name = "BigIntStatsPrototype__atimeMs" });
+            @export(BigIntStats.atimeNs, .{ .name = "BigIntStatsPrototype__atimeNs" });
+            @export(BigIntStats.birthtime, .{ .name = "BigIntStatsPrototype__birthtime" });
+            @export(BigIntStats.birthtimeMs, .{ .name = "BigIntStatsPrototype__birthtimeMs" });
+            @export(BigIntStats.birthtimeNs, .{ .name = "BigIntStatsPrototype__birthtimeNs" });
+            @export(BigIntStats.blksize, .{ .name = "BigIntStatsPrototype__blksize" });
+            @export(BigIntStats.blocks, .{ .name = "BigIntStatsPrototype__blocks" });
+            @export(BigIntStats.constructor, .{ .name = "BigIntStatsClass__construct" });
+            @export(BigIntStats.ctime, .{ .name = "BigIntStatsPrototype__ctime" });
+            @export(BigIntStats.ctimeMs, .{ .name = "BigIntStatsPrototype__ctimeMs" });
+            @export(BigIntStats.ctimeNs, .{ .name = "BigIntStatsPrototype__ctimeNs" });
+            @export(BigIntStats.dev, .{ .name = "BigIntStatsPrototype__dev" });
+            @export(BigIntStats.finalize, .{ .name = "BigIntStatsClass__finalize" });
+            @export(BigIntStats.gid, .{ .name = "BigIntStatsPrototype__gid" });
+            @export(BigIntStats.ino, .{ .name = "BigIntStatsPrototype__ino" });
+            @export(BigIntStats.isBlockDevice_, .{ .name = "BigIntStatsPrototype__isBlockDevice_" });
+            @export(BigIntStats.isBlockDevice_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks" });
+            @export(BigIntStats.isCharacterDevice_, .{ .name = "BigIntStatsPrototype__isCharacterDevice_" });
+            @export(BigIntStats.isCharacterDevice_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks" });
+            @export(BigIntStats.isDirectory_, .{ .name = "BigIntStatsPrototype__isDirectory_" });
+            @export(BigIntStats.isDirectory_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isDirectory_WithoutTypeChecks" });
+            @export(BigIntStats.isFIFO_, .{ .name = "BigIntStatsPrototype__isFIFO_" });
+            @export(BigIntStats.isFIFO_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isFIFO_WithoutTypeChecks" });
+            @export(BigIntStats.isFile_, .{ .name = "BigIntStatsPrototype__isFile_" });
+            @export(BigIntStats.isFile_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isFile_WithoutTypeChecks" });
+            @export(BigIntStats.isSocket_, .{ .name = "BigIntStatsPrototype__isSocket_" });
+            @export(BigIntStats.isSocket_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isSocket_WithoutTypeChecks" });
+            @export(BigIntStats.isSymbolicLink_, .{ .name = "BigIntStatsPrototype__isSymbolicLink_" });
+            @export(BigIntStats.isSymbolicLink_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks" });
+            @export(BigIntStats.mode, .{ .name = "BigIntStatsPrototype__mode" });
+            @export(BigIntStats.mtime, .{ .name = "BigIntStatsPrototype__mtime" });
+            @export(BigIntStats.mtimeMs, .{ .name = "BigIntStatsPrototype__mtimeMs" });
+            @export(BigIntStats.mtimeNs, .{ .name = "BigIntStatsPrototype__mtimeNs" });
+            @export(BigIntStats.nlink, .{ .name = "BigIntStatsPrototype__nlink" });
+            @export(BigIntStats.rdev, .{ .name = "BigIntStatsPrototype__rdev" });
+            @export(BigIntStats.size, .{ .name = "BigIntStatsPrototype__size" });
+            @export(BigIntStats.uid, .{ .name = "BigIntStatsPrototype__uid" });
+        }
+    }
+};
 pub const JSBlob = struct {
     const Blob = Classes.Blob;
     const GetterType = fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -5793,6 +6100,7 @@ pub const JSTranspiler = struct {
 
 comptime {
     _ = JSAttributeIterator;
+    _ = JSBigIntStats;
     _ = JSBlob;
     _ = JSBuildArtifact;
     _ = JSBuildMessage;

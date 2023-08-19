@@ -679,7 +679,9 @@ pub const Crypto = struct {
     pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
-        if (!JSc.is_bindgen) {}
+        if (!JSC.is_bindgen) {
+            _ = CryptoObject__create;
+        }
     }
 };
 

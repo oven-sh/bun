@@ -11,7 +11,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports function breakpoints using the `setFunctionBreakpoints` request.
    * @see setFunctionBreakpoints
    */
-  supportsFunctionBreakpoints: false,
+  supportsFunctionBreakpoints: true,
 
   /**
    * The debug adapter supports conditional breakpoints.
@@ -21,7 +21,7 @@ const capabilities: DAP.Capabilities = {
    * @see setExceptionBreakpoints
    * @see setDataBreakpoints
    */
-  supportsConditionalBreakpoints: false,
+  supportsConditionalBreakpoints: true,
 
   /**
    * The debug adapter supports breakpoints that break execution after a specified number of hits.
@@ -31,7 +31,7 @@ const capabilities: DAP.Capabilities = {
    * @see setExceptionBreakpoints
    * @see setDataBreakpoints
    */
-  supportsHitConditionalBreakpoints: false,
+  supportsHitConditionalBreakpoints: true,
 
   /**
    * The debug adapter supports a (side effect free) `evaluate` request for data hovers.
@@ -181,7 +181,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports log points by interpreting the `logMessage` attribute of the `SourceBreakpoint`.
    * @see setBreakpoints
    */
-  supportsLogPoints: false,
+  supportsLogPoints: true,
 
   /**
    * The debug adapter supports the `terminateThreads` request.

@@ -2,7 +2,7 @@ import type { DAP } from "..";
 import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
 import { WebSocketInspector } from "../../bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { SourceMap } from "./sourcemap";
 
@@ -41,6 +41,11 @@ type Breakpoint = DAP.Breakpoint & {
   source: Source;
 };
 
+type FunctionBreakpoint = DAP.Breakpoint & {
+  id: number;
+  name: string;
+};
+
 type StackFrame = DAP.StackFrame & {
   scriptId: string;
   callFrameId: string;
@@ -52,14 +57,14 @@ type Scope = DAP.Scope & {
   source?: Source;
 };
 
-export type DebugAdapterOptions = {
-  sendToAdapter(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
-};
-
 type IDebugAdapter = {
   [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void;
 } & {
   [R in keyof DAP.RequestMap]?: (request: DAP.RequestMap[R]) => DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]>;
+};
+
+export type DebugAdapterOptions = {
+  sendToAdapter(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
 };
 
 // This adapter only support single-threaded debugging,
@@ -68,7 +73,6 @@ const threadId = 1;
 
 export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #sendToAdapter: DebugAdapterOptions["sendToAdapter"];
-  #url?: URL;
   #inspector: WebSocketInspector;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
@@ -77,6 +81,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #stopped?: DAP.StoppedEvent["reason"];
   #breakpointId: number;
   #breakpoints: Breakpoint[];
+  #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #variableId: number;
   #variables: Map<number, JSC.Runtime.RemoteObject>;
   #process?: ChildProcess;
@@ -91,6 +96,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#stopped = undefined;
     this.#breakpointId = 1;
     this.#breakpoints = [];
+    this.#functionBreakpoints = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
   }
@@ -102,6 +108,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#stopped = undefined;
     this.#breakpointId = 1;
     this.#breakpoints.length = 0;
+    this.#functionBreakpoints.clear();
     this.#variableId = 1;
     this.#variables.clear();
   }
@@ -111,15 +118,18 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
    */
   async accept(message: DAP.Request | DAP.Response | DAP.Event): Promise<void> {
     const { type } = message;
+
     switch (type) {
       case "request":
         return this.#acceptRequest(message);
     }
+
     throw new Error(`Not supported: ${type}`);
   }
 
   async #acceptRequest(request: DAP.Request): Promise<void> {
     const { seq, command, arguments: args } = request;
+
     let response;
     try {
       if (!(command! in this)) {
@@ -138,6 +148,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         command,
       });
     }
+
     return this.#sendToAdapter({
       type: "response",
       success: true,
@@ -162,6 +173,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     params?: JSC.RequestMap[M] & { errorsToIgnore?: string[] },
   ): Promise<JSC.ResponseMap[M]> {
     const { errorsToIgnore, ...options } = params ?? {};
+
     try {
       // @ts-ignore
       return await this.#inspector.send(method, options);
@@ -191,6 +203,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async initialize(request: DAP.InitializeRequest): Promise<DAP.InitializeResponse> {
+    const { clientID, supportsConfigurationDoneRequest } = request as any;
+
     this.#send("Inspector.enable");
     this.#send("Runtime.enable");
     this.#send("Console.enable");
@@ -200,10 +214,23 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.#send("Debugger.setBreakpointsActive", { active: true });
 
+    // If the client will send a `configurationDone` request, pause execution
+    // until it is received, so any breakpoints can be set before the program continues.
+    if (supportsConfigurationDoneRequest || clientID === "vscode") {
+      this.#send("Debugger.pause");
+      this.#stopped = "entry";
+    }
+
     return capabilities;
   }
 
   async configurationDone(request: DAP.ConfigurationDoneRequest): Promise<DAP.ConfigurationDoneResponse> {
+    // Now that the client has finished configuring the debugger, resume execution.
+    if (this.#stopped === "entry") {
+      this.#send("Debugger.resume");
+      this.#stopped = undefined;
+    }
+
     return {};
   }
 
@@ -281,7 +308,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         stdout = undefined;
         stderr = undefined;
 
-        this.#url = url;
         this.#inspector.start(url);
         return {};
       }
@@ -323,8 +349,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async attach(request: AttachRequest): Promise<DAP.AttachResponse> {
     const { url } = request;
 
-    this.#url = parseUrl(url);
-    this.#inspector.start(this.#url);
+    this.#inspector.start(parseUrl(url));
 
     return {};
   }
@@ -339,10 +364,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { terminateDebuggee } = request;
 
     if (terminateDebuggee) {
-      await this.terminate(request);
+      this.#process?.kill();
     }
-
     this.close();
+
     return {};
   }
 
@@ -386,9 +411,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async pause(request: DAP.PauseRequest): Promise<DAP.PauseResponse> {
     const { threadId } = request;
 
-    await this.#send("Debugger.pause", {
-      errorsToIgnore: ["Must be paused or waiting to pause"],
-    });
+    await this.#send("Debugger.pause");
     this.#stopped = "pause";
 
     return {};
@@ -397,9 +420,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async continue(request: DAP.ContinueRequest): Promise<DAP.ContinueResponse> {
     const { threadId } = request;
 
-    await this.#send("Debugger.resume", {
-      errorsToIgnore: ["Must be paused or waiting to pause"],
-    });
+    await this.#send("Debugger.resume");
     this.#stopped = undefined;
 
     return {};
@@ -408,9 +429,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async next(request: DAP.NextRequest): Promise<DAP.NextResponse> {
     const { threadId, granularity } = request;
 
-    await this.#send("Debugger.stepNext", {
-      errorsToIgnore: ["Must be paused or waiting to pause"],
-    });
+    await this.#send("Debugger.stepNext");
     this.#stopped = "step";
 
     return {};
@@ -419,9 +438,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async stepIn(request: DAP.StepInRequest): Promise<DAP.StepInResponse> {
     const { threadId, granularity } = request;
 
-    await this.#send("Debugger.stepInto", {
-      errorsToIgnore: ["Must be paused or waiting to pause"],
-    });
+    await this.#send("Debugger.stepInto");
     this.#stopped = "step";
 
     return {};
@@ -430,121 +447,257 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async stepOut(request: DAP.StepOutRequest): Promise<DAP.StepOutResponse> {
     const { threadId, granularity } = request;
 
-    await this.#send("Debugger.stepOut", {
-      errorsToIgnore: ["Must be paused or waiting to pause"],
-    });
+    await this.#send("Debugger.stepOut");
     this.#stopped = "step";
 
     return {};
   }
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
-    const { line, endLine, column, endColumn, source } = request;
+    const { line, endLine, column, endColumn, source: source0 } = request;
+    const source = await this.#getSource(sourceToId(source0));
 
-    const { scriptId } = await this.#getSource(sourceToId(source));
+    const [start, end] = await Promise.all([
+      this.#generatedLocation(source, line, column),
+      this.#generatedLocation(source, endLine ?? line + 1, endColumn),
+    ]);
+
     const { locations } = await this.#send("Debugger.getBreakpointLocations", {
-      start: {
-        scriptId,
-        lineNumber: line,
-        columnNumber: column,
-      },
-      end: {
-        scriptId,
-        lineNumber: endLine ?? line + 1,
-        columnNumber: endColumn,
-      },
+      start,
+      end,
     });
 
     return {
-      breakpoints: locations.map(({ lineNumber, columnNumber }) => ({
-        line: lineNumber,
-        column: columnNumber,
-      })),
+      breakpoints: locations.map(location => this.#originalLocation(source, location)),
+    };
+  }
+
+  #generatedLocation(source: Source, line?: number, column?: number): JSC.Debugger.Location {
+    const { sourceMap, scriptId, path } = source;
+    const { line: line0, column: column0 } = sourceMap.generatedPosition(line, column, path);
+
+    return {
+      scriptId,
+      lineNumber: line0,
+      columnNumber: column0,
+    };
+  }
+
+  #originalLocation(
+    source: Source,
+    line?: number | JSC.Debugger.Location,
+    column?: number,
+  ): { line: number; column: number } {
+    if (typeof line === "object") {
+      const { lineNumber, columnNumber } = line;
+      line = lineNumber;
+      column = columnNumber;
+    }
+
+    const { sourceMap } = source;
+    const { line: line0, column: column0 } = sourceMap.originalPosition(line, column);
+
+    return {
+      line: line0,
+      column: column0,
     };
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
-    const { source: sourceInfo, sourceModified, breakpoints: requests } = request;
-    const sourceId = sourceToId(sourceInfo);
+    const { source: source0, breakpoints: requests } = request;
+    const sourceId = sourceToId(source0);
     const source = await this.#getSource(sourceId);
-    const { scriptId, sourceMap, path } = source;
 
-    // If a breakpoint is not included in the request, it must be removed.
     const oldBreakpoints = this.#getBreakpoints(sourceId);
 
     const breakpoints = await Promise.all(
-      requests!.map(async ({ line: ln, column: cl, ...options }) => {
-        const { line, column } = sourceMap.generatedPosition({ line: ln, column: cl, path });
-
+      requests!.map(async ({ line, column, ...options }) => {
         const breakpoint = this.#getBreakpoint(sourceId, line, column);
-        if (breakpoint && !sourceModified) {
-          return breakpoint;
-        }
-        let response: JSC.Debugger.SetBreakpointResponse;
-        try {
-          response = await this.#send("Debugger.setBreakpoint", {
-            location: {
-              scriptId,
-              lineNumber: line,
-              columnNumber: column,
-            },
-            options: breakpointOptions(options),
-          });
-        } catch (error) {
-          const { message } = unknownToError(error);
-          if (!/already set/i.test(message)) {
-            // If there was an error setting the breakpoint,
-            // mark it as unverified and add a message.
-            const breakpointId = this.#breakpointId++;
-            return this.#addBreakpoint({
-              id: breakpointId,
-              breakpointId: `${breakpointId}`,
-              line,
-              column,
-              source,
-              verified: false,
-              message,
-            });
-          }
-        }
-
-        await Promise.all(
-          oldBreakpoints.map(async ({ breakpointId }) => {
-            const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
-            if (isRemoved) {
-              await this.#send("Debugger.removeBreakpoint", {
-                breakpointId,
-              });
-              this.#removeBreakpoint(breakpointId);
-            }
-          }),
-        );
-
         if (breakpoint) {
           return breakpoint;
         }
 
-        const { breakpointId, actualLocation } = response!;
-        const { lineNumber, columnNumber } = actualLocation;
-        return this.#addBreakpoint({
+        const location = this.#generatedLocation(source, line, column);
+        try {
+          const { breakpointId, actualLocation } = await this.#send("Debugger.setBreakpoint", {
+            location,
+            options: breakpointOptions(options),
+          });
+
+          const originalLocation = this.#originalLocation(source, actualLocation);
+          return this.#addBreakpoint({
+            id: this.#breakpointId++,
+            breakpointId,
+            source,
+            verified: true,
+            ...originalLocation,
+          });
+        } catch (error) {
+          const { message } = unknownToError(error);
+          // If there was an error setting the breakpoint,
+          // mark it as unverified and add a message.
+          const breakpointId = this.#breakpointId++;
+          return this.#addBreakpoint({
+            id: breakpointId,
+            breakpointId: `${breakpointId}`,
+            line,
+            column,
+            source,
+            verified: false,
+            message,
+          });
+        }
+      }),
+    );
+
+    await Promise.all(
+      oldBreakpoints.map(async ({ breakpointId }) => {
+        const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
+        if (isRemoved) {
+          await this.#send("Debugger.removeBreakpoint", {
+            breakpointId,
+          });
+          this.#removeBreakpoint(breakpointId);
+        }
+      }),
+    );
+
+    return {
+      breakpoints,
+    };
+  }
+
+  #getBreakpoints(sourceId: string | number): Breakpoint[] {
+    const breakpoints: Breakpoint[] = [];
+
+    for (const breakpoint of this.#breakpoints.values()) {
+      const { source } = breakpoint;
+      if (sourceId === sourceToId(source)) {
+        breakpoints.push(breakpoint);
+      }
+    }
+
+    return breakpoints;
+  }
+
+  #getBreakpoint(sourceId: string | number, line?: number, column?: number): Breakpoint | undefined {
+    for (const breakpoint of this.#getBreakpoints(sourceId)) {
+      if (isSameLocation(breakpoint, { line, column })) {
+        return breakpoint;
+      }
+    }
+    return undefined;
+  }
+
+  #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
+    this.#breakpoints.push(breakpoint);
+
+    this.#emit("breakpoint", {
+      reason: "changed",
+      breakpoint,
+    });
+
+    return breakpoint;
+  }
+
+  #removeBreakpoint(breakpointId: string): void {
+    const breakpoint = this.#breakpoints.find(({ breakpointId: id }) => id === breakpointId);
+    if (!breakpoint) {
+      return;
+    }
+
+    this.#breakpoints = this.#breakpoints.filter(({ breakpointId: id }) => id !== breakpointId);
+    this.#emit("breakpoint", {
+      reason: "removed",
+      breakpoint,
+    });
+  }
+
+  async setFunctionBreakpoints(
+    request: DAP.SetFunctionBreakpointsRequest,
+  ): Promise<DAP.SetFunctionBreakpointsResponse> {
+    const { breakpoints: requests } = request;
+
+    const oldBreakpoints = this.#getFunctionBreakpoints();
+
+    const breakpoints = await Promise.all(
+      requests.map(async ({ name, ...options }) => {
+        const breakpoint = this.#getFunctionBreakpoint(name);
+        if (breakpoint) {
+          return breakpoint;
+        }
+
+        try {
+          await this.#send("Debugger.addSymbolicBreakpoint", {
+            symbol: name,
+            caseSensitive: true,
+            isRegex: false,
+            options: breakpointOptions(options),
+          });
+        } catch (error) {
+          const { message } = unknownToError(error);
+          return this.#addFunctionBreakpoint({
+            id: this.#breakpointId++,
+            name,
+            verified: false,
+            message,
+          });
+        }
+
+        return this.#addFunctionBreakpoint({
           id: this.#breakpointId++,
-          breakpointId,
-          line: lineNumber,
-          column: columnNumber,
-          source,
+          name,
           verified: true,
         });
       }),
     );
 
-    const mappedBreakpoints = breakpoints.map(({ line, column, ...breakpoint }) => ({
-      ...sourceMap.originalPosition({ line, column, path }),
-      ...breakpoint,
-    }));
+    await Promise.all(
+      oldBreakpoints.map(async ({ name }) => {
+        const isRemoved = !breakpoints.filter(({ name: n }) => name === n).length;
+        if (isRemoved) {
+          await this.#send("Debugger.removeSymbolicBreakpoint", {
+            symbol: name,
+            caseSensitive: true,
+            isRegex: false,
+          });
+          this.#removeFunctionBreakpoint(name);
+        }
+      }),
+    );
 
     return {
-      breakpoints: mappedBreakpoints,
+      breakpoints,
     };
+  }
+
+  #getFunctionBreakpoints(): FunctionBreakpoint[] {
+    return [...this.#functionBreakpoints.values()];
+  }
+
+  #getFunctionBreakpoint(name: string): FunctionBreakpoint | undefined {
+    return this.#functionBreakpoints.get(name);
+  }
+
+  #addFunctionBreakpoint(breakpoint: FunctionBreakpoint): FunctionBreakpoint {
+    const { name } = breakpoint;
+    this.#functionBreakpoints.set(name, breakpoint);
+    this.#emit("breakpoint", {
+      reason: "changed",
+      breakpoint,
+    });
+    return breakpoint;
+  }
+
+  #removeFunctionBreakpoint(name: string): void {
+    const breakpoint = this.#functionBreakpoints.get(name);
+    if (!breakpoint || !this.#functionBreakpoints.delete(name)) {
+      return;
+    }
+    this.#emit("breakpoint", {
+      reason: "removed",
+      breakpoint,
+    });
   }
 
   async setExceptionBreakpoints(
@@ -614,6 +767,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async scopes(request: DAP.ScopesRequest): Promise<DAP.ScopesResponse> {
     const { frameId } = request;
+
     for (const stackFrame of this.#stackFrames) {
       const { id, scopes } = stackFrame;
       if (id !== frameId || !scopes) {
@@ -623,26 +777,25 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         scopes,
       };
     }
+
     return {
       scopes: [],
     };
   }
 
   ["Inspector.connected"](): void {
-    const { href } = this.#url!;
     this.#emit("output", {
       category: "debug console",
-      output: `Debugger attached. ${href}\n`,
+      output: "Debugger attached.\n",
     });
 
     this.#emit("initialized");
   }
 
   ["Inspector.disconnected"](error?: Error): void {
-    const { href } = this.#url!;
     this.#emit("output", {
       category: "debug console",
-      output: `Debugger detached. ${href}\n`,
+      output: "Debugger detached.\n",
     });
 
     if (error) {
@@ -660,11 +813,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
-    // START HACK: FOR TESTING PURPOSES, DO NOT MERGE
-    if (event.url.endsWith("/example.ts")) {
-      event.sourceMapURL = "data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiZXhhbXBsZS50cyJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiZXhwb3J0IGRlZmF1bHQge1xuICBhc3luYyBmZXRjaChyZXF1ZXN0OiBSZXF1ZXN0KTogUHJvbWlzZTxSZXNwb25zZT4ge1xuICAgIGEocmVxdWVzdCk7XG4gICAgY29uc3QgY29vbFRoaW5nOiBDb29sVGhpbmcgPSBuZXcgU3VwZXJDb29sVGhpbmcoKTtcbiAgICBjb29sVGhpbmcuZG9Db29sVGhpbmcoKTtcbiAgICBkZWJ1Z2dlcjtcbiAgICByZXR1cm4gbmV3IFJlc3BvbnNlKHJlcXVlc3QudXJsKTtcbiAgfSxcbn07XG5cbi8vIGFcbmZ1bmN0aW9uIGEocmVxdWVzdDogUmVxdWVzdCk6IHZvaWQge1xuICBiKHJlcXVlc3QpO1xufVxuXG4vLyBiXG5mdW5jdGlvbiBiKHJlcXVlc3Q6IFJlcXVlc3QpOiB2b2lkIHtcbiAgYyhyZXF1ZXN0KTtcbn1cblxuLy8gY1xuZnVuY3Rpb24gYyhyZXF1ZXN0OiBSZXF1ZXN0KSB7XG4gIGNvbnNvbGUubG9nKHJlcXVlc3QpO1xufVxuXG5pbnRlcmZhY2UgQ29vbFRoaW5nIHtcbiAgZG9Db29sVGhpbmcoKTogdm9pZDtcbn1cblxuY2xhc3MgU3VwZXJDb29sVGhpbmcgaW1wbGVtZW50cyBDb29sVGhpbmcge1xuICBkb0Nvb2xUaGluZygpOiB2b2lkIHtcbiAgICBjb25zb2xlLmxvZyhcInN1cGVyIGNvb2wgdGhpbmchXCIpO1xuICB9XG59XG4iXSwKICAibWFwcGluZ3MiOiAiQUFBQSxlQUFlO0FBQUEsRUFDYixNQUFNLE1BQU0sU0FBcUM7QUFDL0MsTUFBRSxPQUFPO0FBQ1QsVUFBTSxZQUF1QixJQUFJLGVBQWU7QUFDaEQsY0FBVSxZQUFZO0FBQ3RCO0FBQ0EsV0FBTyxJQUFJLFNBQVMsUUFBUSxHQUFHO0FBQUEsRUFDakM7QUFDRjtBQUdBLFNBQVMsRUFBRSxTQUF3QjtBQUNqQyxJQUFFLE9BQU87QUFDWDtBQUdBLFNBQVMsRUFBRSxTQUF3QjtBQUNqQyxJQUFFLE9BQU87QUFDWDtBQUdBLFNBQVMsRUFBRSxTQUFrQjtBQUMzQixVQUFRLElBQUksT0FBTztBQUNyQjtBQU1BLE1BQU0sZUFBb0M7QUFBQSxFQUN4QyxjQUFvQjtBQUNsQixZQUFRLElBQUksbUJBQW1CO0FBQUEsRUFDakM7QUFDRjsiLAogICJuYW1lcyI6IFtdCn0K";
+    // HACK: remove once Bun starts sending correct source map urls
+    if (event.url && event.url.startsWith("/")) {
+      event.sourceMapURL = generateSourceMapUrl(event.url);
     }
-    // END HACK
     const { url, scriptId, sourceMapURL } = event;
 
     // If no url is present, the script is from a `evaluate` request.
@@ -717,6 +869,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
+    // If the debugger was paused on entry, don't emit an event.
+    // When the client sends the `configurationDone` request, then
+    // the debugger will be resumed.
+    if (this.#stopped === "entry") {
+      return;
+    }
+
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
     for (const callFrame of callFrames) {
@@ -733,20 +892,26 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (data) {
       if (reason === "exception") {
         const remoteObject = data as JSC.Runtime.RemoteObject;
-        // TODO
       }
-      // const { breakpointId: hitId } = data;
-      // if (typeof hitId === "string") {
-      //   loop: for (const breakpoints of this.#breakpoints.values()) {
-      //     for (const [breakpointId, { id }] of breakpoints) {
-      //       if (hitId === breakpointId && id) {
-      //         hitBreakpointIds = [id];
-      //         this.#stopped = "breakpoint";
-      //         break loop;
-      //       }
-      //     }
-      //   }
-      // }
+
+      if (reason === "FunctionCall") {
+        const { name } = data as { name: string };
+        const breakpoint = this.#getFunctionBreakpoint(name);
+        if (breakpoint) {
+          const { id } = breakpoint;
+          hitBreakpointIds = [id];
+        }
+      }
+
+      if (reason === "Breakpoint") {
+        const { breakpointId: hitBreakpointId } = data as { breakpointId: string };
+        for (const { id, breakpointId } of this.#breakpoints.values()) {
+          if (breakpointId === hitBreakpointId) {
+            hitBreakpointIds = [id];
+            break;
+          }
+        }
+      }
     }
 
     this.#emit("stopped", {
@@ -872,8 +1037,15 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   #addStackFrame(callFrame: JSC.Debugger.CallFrame): StackFrame {
     const { callFrameId, functionName, location, scopeChain } = callFrame;
-    const { scriptId, lineNumber, columnNumber } = location;
+    const { scriptId } = location;
     const source = this.#getSourceIfPresent(scriptId);
+
+    let { lineNumber, columnNumber } = location;
+    if (source) {
+      const { line, column } = this.#originalLocation(source, location);
+      lineNumber = line;
+      columnNumber = column;
+    }
 
     const scopes: Scope[] = [];
     const stackFrame: StackFrame = {
@@ -900,13 +1072,21 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       const presentationHint = scopePresentationHint(type);
       const title = presentationHint ? titleize(presentationHint) : "Unknown";
       const displayName = name ? `${title}: ${name}` : title;
+
+      let { lineNumber, columnNumber } = location;
+      if (source) {
+        const { line, column } = this.#originalLocation(source, location);
+        lineNumber = line;
+        columnNumber = column;
+      }
+
       scopes.push({
         name: displayName,
         presentationHint,
         expensive: presentationHint === "globals",
         variablesReference,
-        line: location?.lineNumber,
-        column: location?.columnNumber,
+        line: lineNumber,
+        column: columnNumber,
         source,
       });
     }
@@ -916,18 +1096,28 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   #addAsyncStackTrace(stackTrace: JSC.Console.StackTrace): void {
     const { callFrames, parentStackTrace } = stackTrace;
+
     for (const callFrame of callFrames) {
       this.#addAsyncStackFrame(callFrame);
     }
+
     if (parentStackTrace) {
       this.#addAsyncStackTrace(parentStackTrace);
     }
   }
 
   #addAsyncStackFrame(callFrame: JSC.Console.CallFrame): StackFrame {
-    const { scriptId, functionName, lineNumber, columnNumber } = callFrame;
+    const { scriptId, functionName } = callFrame;
     const callFrameId = callFrameToId(callFrame);
     const source = this.#getSourceIfPresent(scriptId);
+
+    let { lineNumber, columnNumber } = callFrame;
+    if (source) {
+      const { line, column } = this.#originalLocation(source, callFrame);
+      lineNumber = line;
+      columnNumber = column;
+    }
+
     const stackFrame: StackFrame = {
       callFrameId,
       scriptId,
@@ -940,53 +1130,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       canRestart: false,
     };
     this.#stackFrames.push(stackFrame);
+
     return stackFrame;
-  }
-
-  #getBreakpoints(sourceId: string | number): Breakpoint[] {
-    const breakpoints: Breakpoint[] = [];
-    for (const breakpoint of this.#breakpoints.values()) {
-      const { source } = breakpoint;
-      if (sourceId === sourceToId(source)) {
-        breakpoints.push(breakpoint);
-      }
-    }
-    return breakpoints;
-  }
-
-  #getBreakpoint(sourceId: string | number, lineNo?: number, columnNo?: number): Breakpoint | undefined {
-    for (const breakpoint of this.#breakpoints.values()) {
-      const { source, line, column } = breakpoint;
-      if (
-        sourceId === sourceToId(source) &&
-        (line === lineNo || (line === 0 && lineNo === undefined)) &&
-        (column === columnNo || (column === 0 && columnNo === undefined))
-      ) {
-        return breakpoint;
-      }
-    }
-    return undefined;
-  }
-
-  #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
-    this.#breakpoints.push(breakpoint);
-    // this.#emit("breakpoint", {
-    //   reason: "changed",
-    //   breakpoint,
-    // });
-    return breakpoint;
-  }
-
-  #removeBreakpoint(breakpointId: string): void {
-    const breakpoint = this.#breakpoints.find(({ breakpointId: id }) => id === breakpointId);
-    if (!breakpoint) {
-      return;
-    }
-    this.#breakpoints = this.#breakpoints.filter(({ breakpointId: id }) => id !== breakpointId);
-    this.#emit("breakpoint", {
-      reason: "removed",
-      breakpoint,
-    });
   }
 
   #addVariable(remoteObject: JSC.Runtime.RemoteObject): number {
@@ -1459,4 +1604,23 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
   if (ai > bi) return 1;
   if (ai < bi) return -1;
   return 0;
+}
+
+// HACK: this will be removed once Bun starts sending source maps
+// with the `Debugger.scriptParsed` event.
+function generateSourceMapUrl(path: string): string | undefined {
+  const { stdout } = spawnSync("bunx", ["esbuild", path, "--sourcemap=inline"], {
+    stdio: "pipe",
+    encoding: "utf-8",
+  });
+  const match = /sourceMappingURL=(.*)/im.exec(stdout);
+  if (!match) {
+    return undefined;
+  }
+  const [_, sourceMapUrl] = match;
+  return sourceMapUrl;
+}
+
+function isSameLocation(a: { line?: number; column?: number }, b: { line?: number; column?: number }): boolean {
+  return (a.line === b.line || (!a.line && !b.line)) && (a.column === b.column || (!a.column && !b.column));
 }

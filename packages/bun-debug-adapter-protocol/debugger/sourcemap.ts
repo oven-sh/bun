@@ -1,20 +1,13 @@
 import { SourceMapConsumer } from "source-map-js";
 
-export type PositionRequest = {
-  line?: number;
-  column?: number;
-  path?: string;
-};
-
 export type Position = {
   line: number;
   column: number;
-  verified?: boolean;
 };
 
 export interface SourceMap {
-  generatedPosition(request: PositionRequest): Position;
-  originalPosition(request: PositionRequest): Position;
+  generatedPosition(line?: number, column?: number, url?: string): Position;
+  originalPosition(line?: number, column?: number): Position;
 }
 
 class ActualSourceMap implements SourceMap {
@@ -27,64 +20,58 @@ class ActualSourceMap implements SourceMap {
     this.#sources = sourceMap._absoluteSources;
   }
 
-  #getSource(path?: string): string {
+  #getSource(url?: string): string {
     const sources = this.#sources;
     if (sources.length === 1) {
       return sources[0];
     }
-    if (!path) {
+    if (!url) {
       return sources[0] ?? "";
     }
     for (const source of sources) {
-      if (path.endsWith(source)) {
+      if (url.endsWith(source)) {
         return source;
       }
     }
     return "";
   }
 
-  generatedPosition(request: PositionRequest): Position {
-    const { line, column, path } = request;
-    const source = this.#getSource(path);
+  generatedPosition(line?: number, column?: number, url?: string): Position {
+    const source = this.#getSource(url);
     const { line: gline, column: gcolumn } = this.#sourceMap.generatedPositionFor({
       line: line ?? 0,
       column: column ?? 0,
       source,
     });
-    console.log(`[sourcemap] -->`, { source, path, line, column }, { gline, gcolumn });
+    console.log(`[sourcemap] -->`, { source, url, line, column }, { gline, gcolumn });
     return {
       line: gline || 0,
       column: gcolumn || 0,
-      verified: gline >= 0 && gcolumn >= 0,
     };
   }
 
-  originalPosition(request: PositionRequest): Position {
-    const { line, column, path } = request;
+  originalPosition(line?: number, column?: number): Position {
     const { line: oline, column: ocolumn } = this.#sourceMap.originalPositionFor({
       line: line ?? 0,
       column: column ?? 0,
     });
-    console.log(`[sourcemap] <--`, { path, line, column }, { oline, ocolumn });
+    console.log(`[sourcemap] <--`, { line, column }, { oline, ocolumn });
     return {
       line: oline || 0,
       column: ocolumn || 0,
-      verified: oline >= 0 && ocolumn >= 0,
     };
   }
 }
 
 class NoopSourceMap implements SourceMap {
-  generatedPosition(request: PositionRequest): Position {
-    const { line, column } = request;
+  generatedPosition(line?: number, column?: number, url?: string): Position {
     return {
       line: line ?? 0,
       column: column ?? 0,
     };
   }
 
-  originalPosition(request: PositionRequest): Position {
-    const { line, column } = request;
+  originalPosition(line?: number, column?: number): Position {
     return {
       line: line ?? 0,
       column: column ?? 0,

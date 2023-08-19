@@ -133,8 +133,8 @@ export class WebSocketInspector implements Inspector {
       this.#pendingRequests.delete(id);
       if ("error" in event) {
         const { error } = event;
-        const { message, code } = error;
-        resolve(new Error(`${message} [code: ${code}]`));
+        const { message } = error;
+        resolve(new Error(message));
       } else {
         const { result } = event;
         resolve(result);

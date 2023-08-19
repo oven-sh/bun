@@ -1,5 +1,6 @@
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAttributeIterator;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBigIntStats;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBigIntStatsConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildArtifact;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessage;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuildMessageConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForComment;

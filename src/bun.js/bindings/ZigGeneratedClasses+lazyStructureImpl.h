@@ -5,6 +5,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSAttributeIterator::createStructure(init.vm, init.global, init.prototype));
                  
               });
+    m_JSBigIntStats.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSBigIntStats::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSBigIntStats::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSBigIntStats::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSBlob.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSBlob::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -292,6 +298,7 @@ template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
       thisObject->m_JSAttributeIterator.visit(visitor);  visitor.append(thisObject->m_JSAttributeIteratorSetterValue);
+      thisObject->m_JSBigIntStats.visit(visitor);  visitor.append(thisObject->m_JSBigIntStatsSetterValue);
       thisObject->m_JSBlob.visit(visitor);  visitor.append(thisObject->m_JSBlobSetterValue);
       thisObject->m_JSBuildArtifact.visit(visitor);  visitor.append(thisObject->m_JSBuildArtifactSetterValue);
       thisObject->m_JSBuildMessage.visit(visitor);  visitor.append(thisObject->m_JSBuildMessageSetterValue);

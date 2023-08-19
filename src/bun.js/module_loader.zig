@@ -526,13 +526,14 @@ pub const RuntimeTranspilerStore = struct {
             printer.ctx.reset();
 
             {
+                var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
                 _ = bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&vm.source_mappings),
+                    mapper.get(),
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -1213,13 +1214,14 @@ pub const ModuleLoader = struct {
             printer.ctx.reset();
 
             {
+                var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
                 _ = try jsc_vm.bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                    mapper.get(),
                 );
             }
 
@@ -1603,13 +1605,14 @@ pub const ModuleLoader = struct {
                 printer.ctx.reset();
 
                 _ = brk: {
+                    var mapper = jsc_vm.sourceMapHandler(&printer);
                     defer source_code_printer.* = printer;
                     break :brk try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
                         &printer,
                         .esm_ascii,
-                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                        mapper.get(),
                     );
                 };
 

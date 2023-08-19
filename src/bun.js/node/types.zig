@@ -1269,28 +1269,26 @@ pub const FileSystemFlags = enum(Mode) {
     }
 };
 
-/// Milliseconds precision
-pub const Date = enum(u64) {
-    _,
-
-    pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this)))));
-        const unix_timestamp = JSC.JSValue.jsNumber(seconds);
-        const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
-        const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
-        return obj;
-    }
-};
-
 /// Stats and BigIntStats classes from node:fs
 pub fn StatType(comptime Big: bool) type {
     const Int = if (Big) i64 else i32;
     const Float = if (Big) i64 else f64;
     const Timestamp = if (Big) u64 else u0;
 
+    const Date = packed struct {
+        value: Float,
+        pub inline fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+            const milliseconds = JSC.JSValue.jsNumber(this.value);
+            const array: [1]JSC.C.JSValueRef = .{milliseconds.asObjectRef()};
+            const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
+            return obj;
+        }
+    };
+
     return struct {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
 
+        // Stats stores these as i32, but BigIntStats stores all of these as i64
         dev: Int,
         ino: Int,
         mode: Int,
@@ -1303,19 +1301,13 @@ pub fn StatType(comptime Big: bool) type {
         blksize: Int,
         blocks: Int,
 
-        // TODO: don't store each time three separate times
-
         // _ms is either a float if Small, or a 64-bit integer if Big
         atime_ms: Float,
         mtime_ms: Float,
         ctime_ms: Float,
         birthtime_ms: Float,
 
-        atime: Date,
-        mtime: Date,
-        ctime: Date,
-        birthtime: Date,
-
+        // _ns is a u64 storing nanosecond precision. it is a u0 when not BigIntStats
         atime_ns: Timestamp = 0,
         mtime_ns: Timestamp = 0,
         ctime_ns: Timestamp = 0,
@@ -1343,6 +1335,17 @@ pub fn StatType(comptime Big: bool) type {
                         return JSC.JSValue.fromInt64NoTruncate(globalThis, @intCast(value));
                     }
                     return JSC.toJS(globalThis, value, null);
+                }
+            }.callback;
+        }
+
+        fn dateGetter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+            return struct {
+                pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                    const value = @field(this, @tagName(field));
+                    // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
+                    // but it will tell comptime code how to convert the i64/f64 to a JS Date.
+                    return JSC.toJS(globalThis, Date{ .value = value }, null);
                 }
             }.callback;
         }
@@ -1388,10 +1391,10 @@ pub fn StatType(comptime Big: bool) type {
         pub const size = getter(.size);
         pub const blksize = getter(.blksize);
         pub const blocks = getter(.blocks);
-        pub const atime = getter(.atime);
-        pub const mtime = getter(.mtime);
-        pub const ctime = getter(.ctime);
-        pub const birthtime = getter(.birthtime);
+        pub const atime = dateGetter(.atime_ms);
+        pub const mtime = dateGetter(.mtime_ms);
+        pub const ctime = dateGetter(.ctime_ms);
+        pub const birthtime = dateGetter(.birthtime_ms);
         pub const atimeMs = getter(.atime_ms);
         pub const mtimeMs = getter(.mtime_ms);
         pub const ctimeMs = getter(.ctime_ms);
@@ -1463,9 +1466,6 @@ pub fn StatType(comptime Big: bool) type {
                 .atime_ms = toTimeMS(aTime),
                 .mtime_ms = toTimeMS(mTime),
                 .ctime_ms = toTimeMS(cTime),
-                .atime = @enumFromInt(@as(u64, @intCast(@max(aTime.tv_sec * std.time.ms_per_s, 0)))),
-                .mtime = @enumFromInt(@as(u64, @intCast(@max(mTime.tv_sec * std.time.ms_per_s, 0)))),
-                .ctime = @enumFromInt(@as(u64, @intCast(@max(cTime.tv_sec * std.time.ms_per_s, 0)))),
                 .atime_ns = if (Big) toNanoseconds(aTime) else 0,
                 .mtime_ns = if (Big) toNanoseconds(mTime) else 0,
                 .ctime_ns = if (Big) toNanoseconds(cTime) else 0,
@@ -1473,10 +1473,6 @@ pub fn StatType(comptime Big: bool) type {
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
                 .birthtime_ms = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime()),
-                .birthtime = if (Environment.isLinux)
-                    @enumFromInt(0)
-                else
-                    @enumFromInt(@as(u64, @intCast(@max(stat_.birthtime().tv_sec, 0)))),
                 .birthtime_ns = if (Big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0,
             };
         }
@@ -1520,10 +1516,6 @@ pub fn StatType(comptime Big: bool) type {
                 .mtime_ms = mtime_ms,
                 .ctime_ms = ctime_ms,
                 .birthtime_ms = birthtime_ms,
-                .atime = @enumFromInt(@as(u64, @intFromFloat(atime_ms))),
-                .mtime = @enumFromInt(@as(u64, @intFromFloat(mtime_ms))),
-                .ctime = @enumFromInt(@as(u64, @intFromFloat(ctime_ms))),
-                .birthtime = @enumFromInt(@as(u64, @intFromFloat(birthtime_ms))),
             };
             return this;
         }

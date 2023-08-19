@@ -37,7 +37,6 @@ const gid_t = std.os.gid_t;
 /// u63 to allow one null bit
 const ReadPosition = i64;
 
-const StatsType = JSC.Node.StatsType;
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
 

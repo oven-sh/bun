@@ -3762,7 +3762,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
-            u0 => jsNumberFromInt32(0),
+            // u0 => jsNumberFromInt32(0),
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }

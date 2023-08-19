@@ -261,6 +261,9 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
 
 static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 {
+    if (s->hasNonReifiedStaticProperties()) {
+        return false;
+    }
     if (s->typeInfo().overridesGetOwnPropertySlot())
         return false;
     if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())

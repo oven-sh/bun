@@ -815,10 +815,10 @@ pub fn match(app: *Router, comptime Server: type, server: Server, comptime Reque
             }
         }
 
-        ctx.matched_route = route;
-        RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
-            server.javascript_enabled = false;
-        };
+        // ctx.matched_route = route;
+        // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
+        //     server.javascript_enabled = false;
+        // };
     }
 
     if (!ctx.controlled and !ctx.has_called_done) {

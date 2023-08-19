@@ -201,7 +201,6 @@ public:
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*,
         JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-    void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
@@ -273,8 +272,6 @@ public:
 
     JSFunction* bunSleepThenCallback() { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
 
-    JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
-
     Structure* globalObjectStructure() { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
@@ -284,8 +281,6 @@ public:
     Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
-
-    JSObject* passwordObject() { return m_lazyPasswordObject.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
@@ -464,6 +459,8 @@ public:
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
+    JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -533,12 +530,10 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
-    LazyProperty<JSGlobalObject, JSObject> m_lazyPasswordObject;
 
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
@@ -546,6 +541,7 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;

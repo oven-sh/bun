@@ -113,8 +113,8 @@ class CString extends String {
     super(
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
-          ? new BunCString(ptr, byteOffset || 0, byteLength)
-          : new BunCString(ptr)
+          ? BunCString(ptr, byteOffset || 0, byteLength)
+          : BunCString(ptr)
         : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;
@@ -403,6 +403,10 @@ function dlopen(path, options) {
     }
   }
 
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
   return result;
 }
 
@@ -433,7 +437,7 @@ function CFunction(options) {
     [identifier]: options,
   });
   var hasClosed = false;
-  var close = result.close;
+  var close = result.close.bind(result);
   result.symbols[identifier].close = () => {
     if (hasClosed || !close) return;
     hasClosed = true;

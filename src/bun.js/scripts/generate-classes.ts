@@ -739,7 +739,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
 }    
     
@@ -832,7 +832,8 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
         if (UNLIKELY(!thisObject)) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
-            return throwVMTypeError(lexicalGlobalObject, throwScope);
+            throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
+            return JSValue::encode({});
         }
 
         JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -909,6 +910,11 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           return &m_owner.get();
       }
       `;
+  }
+  var suffix = "";
+
+  if (obj.getInternalProperties) {
+    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
   }
 
   return `
@@ -992,11 +998,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         ${renderCachedFieldsHeader(typeName, klass, proto, values)}
     };
+    ${suffix}
   `;
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
-  const { klass: fields, finalize, proto, construct, estimatedSize, hasPendingActivity = false } = obj;
+  const {
+    klass: fields,
+    finalize,
+    proto,
+    construct,
+    estimatedSize,
+    hasPendingActivity = false,
+    getInternalProperties = false,
+  } = obj;
   const name = className(typeName);
 
   const DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
@@ -1074,6 +1089,24 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
+  }
+
+  if (getInternalProperties) {
+    output += `
+    extern "C" EncodedJSValue ${symbolName(
+      typeName,
+      "getInternalProperties",
+    )}(void* ptr, JSC::JSGlobalObject *globalObject, EncodedJSValue thisValue);
+
+    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis) 
+    {
+      return JSValue::decode(${symbolName(
+        typeName,
+        "getInternalProperties",
+      )}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
+    }
+    
+    `;
   }
 
   if (finalize) {
@@ -1220,6 +1253,7 @@ function generateZig(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
+    getInternalProperties = false,
   } = {} as ClassDefinition,
 ) {
   const exports = new Map<string, string>();
@@ -1245,6 +1279,10 @@ function generateZig(
   }
   Object.values(klass).map(a => appendSymbols(exports, name => classSymbolName(typeName, name), a));
   Object.values(proto).map(a => appendSymbols(exports, name => protoSymbolName(typeName, name), a));
+
+  if (getInternalProperties) {
+    exports.set("getInternalProperties", symbolName(typeName, "getInternalProperties"));
+  }
 
   if (structuredClone) {
     exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
@@ -1305,6 +1343,14 @@ function generateZig(
         @compileLog("${typeName}.onStructuredCloneSerialize is not a structured clone serialize function");
       }
       `;
+
+      if (getInternalProperties) {
+        output += `
+        if (@TypeOf(${typeName}.getInternalProperties) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, JSC.JSValue thisValue) callconv(.C) JSC.JSValue {
+          @compileLog("${typeName}.getInternalProperties is not a getInternalProperties function");
+        }
+        `;
+      }
 
       if (structuredClone === "transferable") {
         exports.set("structuredClone", symbolName(typeName, "onTransferableStructuredClone"));

@@ -64,6 +64,8 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSFetchHeaders* castedThis);
+
 class JSFetchHeadersOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;

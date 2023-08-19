@@ -371,61 +371,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_appendBody(JSC
  **/
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto& impl = castedThis->wrapped();
-    size_t size = impl.size();
-    JSObject* obj;
-    if (size == 0) {
-        obj = constructEmptyObject(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
-    } else if (size < 64) {
-        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
-    } else {
-        obj = constructEmptyObject(lexicalGlobalObject);
-    }
-
-    auto& internal = impl.internalHeaders();
-    {
-        auto& vec = internal.commonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
-        }
-    }
-
-    {
-        auto& values = internal.getSetCookieHeaders();
-
-        size_t count = values.size();
-
-        if (count > 0) {
-            JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-            RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-
-            for (size_t i = 0; i < count; ++i) {
-                array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-                RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-            }
-
-            RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-            obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
-        }
-    }
-
-    {
-        auto& vec = internal.uncommonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
-        }
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+    return JSValue::encode(WebCore::getInternalProperties(lexicalGlobalObject->vm(), lexicalGlobalObject, castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -631,6 +577,64 @@ void JSFetchHeaders::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
     Base::analyzeHeap(cell, analyzer);
+}
+
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObject, JSFetchHeaders* castedThis)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto& impl = castedThis->wrapped();
+    size_t size = impl.size();
+    JSObject* obj;
+    if (size == 0) {
+        obj = constructEmptyObject(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, obj);
+    } else if (size < 64) {
+        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
+    } else {
+        obj = constructEmptyObject(lexicalGlobalObject);
+    }
+
+    auto& internal = impl.internalHeaders();
+    {
+        auto& vec = internal.commonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
+        }
+    }
+
+    {
+        auto& values = internal.getSetCookieHeaders();
+
+        size_t count = values.size();
+
+        if (count > 0) {
+            JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
+            RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+
+            for (size_t i = 0; i < count; ++i) {
+                array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
+                RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+            }
+
+            RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+            obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
+        }
+    }
+
+    {
+        auto& vec = internal.uncommonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, obj);
 }
 
 bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)

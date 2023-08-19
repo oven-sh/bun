@@ -225,6 +225,7 @@ pub const StringOrBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        _ = exception;
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = value.toSlice(global, allocator);
@@ -245,7 +246,7 @@ pub const StringOrBuffer = union(Tag) {
             .BigUint64Array,
             .DataView,
             => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value, exception),
+                .buffer = Buffer.fromArrayBuffer(global, value),
             },
             else => null,
         };
@@ -280,6 +281,7 @@ pub const StringOrBunStringOrBuffer = union(enum) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        _ = exception;
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = value.toSlice(global, allocator);
@@ -300,7 +302,7 @@ pub const StringOrBunStringOrBuffer = union(enum) {
             .BigUint64Array,
             .DataView,
             => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value, exception),
+                .buffer = Buffer.fromArrayBuffer(global, value),
             },
             else => null,
         };
@@ -340,6 +342,7 @@ pub const StringOrNodeBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        _ = exception;
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = value.toSlice(global, allocator);
@@ -360,7 +363,7 @@ pub const StringOrNodeBuffer = union(Tag) {
             .BigUint64Array,
             .DataView,
             => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value, exception),
+                .buffer = Buffer.fromArrayBuffer(global, value),
             },
             else => null,
         };
@@ -701,7 +704,7 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.Uint8Array,
             JSC.JSValue.JSType.DataView,
             => {
-                const buffer = Buffer.fromTypedArray(ctx, arg, exception);
+                const buffer = Buffer.fromTypedArray(ctx, arg);
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 
@@ -710,7 +713,7 @@ pub const PathLike = union(Tag) {
             },
 
             JSC.JSValue.JSType.ArrayBuffer => {
-                const buffer = Buffer.fromArrayBuffer(ctx, arg, exception);
+                const buffer = Buffer.fromArrayBuffer(ctx, arg);
                 if (exception.* != null) return null;
                 if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
 

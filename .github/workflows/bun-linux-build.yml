@@ -46,7 +46,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-2/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-3/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: nehalem
@@ -54,7 +54,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-2/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-3/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
 

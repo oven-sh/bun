@@ -100,28 +100,35 @@ class WebSocketListener {
         idleTimeout: 0,
         open: socket => {
           var connection = new DebuggerWithMessageQueue();
+          // @ts-expect-error
+          const shouldRefEventLoop = !!socket.data?.shouldRefEventLoop;
+
           socket.data = connection;
           this.activeConnections.add(socket);
-          connection.debugger = this.createInspectorConnection(this.scriptExecutionContextId, (...msgs: string[]) => {
-            if (socket.readyState > 1) {
-              connection.disconnect();
-              return;
-            }
-
-            if (connection.messageQueue.length > 0) {
-              connection.messageQueue.push(...msgs);
-              return;
-            }
-
-            for (let i = 0; i < msgs.length; i++) {
-              if (!socket.sendText(msgs[i])) {
-                if (socket.readyState < 2) {
-                  connection.messageQueue.push(...msgs.slice(i));
-                }
+          connection.debugger = this.createInspectorConnection(
+            this.scriptExecutionContextId,
+            shouldRefEventLoop,
+            (...msgs: string[]) => {
+              if (socket.readyState > 1) {
+                connection.disconnect();
                 return;
               }
-            }
-          });
+
+              if (connection.messageQueue.length > 0) {
+                connection.messageQueue.push(...msgs);
+                return;
+              }
+
+              for (let i = 0; i < msgs.length; i++) {
+                if (!socket.sendText(msgs[i])) {
+                  if (socket.readyState < 2) {
+                    connection.messageQueue.push(...msgs.slice(i));
+                  }
+                  return;
+                }
+              }
+            },
+          );
 
           console.log(
             "[Inspector]",
@@ -180,7 +187,14 @@ class WebSocketListener {
         }
 
         if (pathname === this.url) {
-          if (server.upgrade(req)) {
+          const refHeader = req.headers.get("Ref-Event-Loop");
+          if (
+            server.upgrade(req, {
+              data: {
+                shouldRefEventLoop: !!refHeader && refHeader !== "0",
+              },
+            })
+          ) {
             return new Response();
           }
 

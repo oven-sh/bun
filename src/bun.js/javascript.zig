@@ -88,20 +88,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-pub const GlobalClasses = [_]type{
-    Bun.Class,
-    WebCore.Crypto.Class,
-    // EventListenerMixin.addEventListener(VirtualMachine),
-
-    // Fetch.Class,
-    js_ast.Macro.JSNode.BunJSXCallbackFunction,
-
-    WebCore.Crypto.Prototype,
-
-    WebCore.Alert.Class,
-    WebCore.Confirm.Class,
-    WebCore.Prompt.Class,
-};
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
 const Blob = @import("../blob.zig");
@@ -383,7 +369,6 @@ pub const VirtualMachine = struct {
     bun_watcher: ?*JSC.Watcher = null,
     console: *ZigConsoleClient,
     log: *logger.Log,
-    event_listeners: EventListenerMixin.Map,
     main: string = "",
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
@@ -868,17 +853,6 @@ pub const VirtualMachine = struct {
         this.transpiler_store.enabled = true;
     }
 
-    pub fn getAPIGlobals() []js.JSClassRef {
-        if (is_bindgen)
-            return &[_]js.JSClassRef{};
-        var classes = default_allocator.alloc(js.JSClassRef, GlobalClasses.len) catch return &[_]js.JSClassRef{};
-        inline for (GlobalClasses, 0..) |Class, i| {
-            classes[i] = Class.get().*;
-        }
-
-        return classes;
-    }
-
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
         return this.bun_dev_watcher != null or this.bun_watcher != null;
     }
@@ -925,7 +899,6 @@ pub const VirtualMachine = struct {
             .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
             .log = log,
@@ -970,13 +943,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             -1,
             false,
@@ -1034,7 +1001,6 @@ pub const VirtualMachine = struct {
             .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
-            .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
             .log = log,
@@ -1079,13 +1045,7 @@ pub const VirtualMachine = struct {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             -1,
             opts.smol,
@@ -1156,7 +1116,6 @@ pub const VirtualMachine = struct {
             .allocator = allocator,
             .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .entry_point = ServerEntryPoint{},
-            .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
             .log = log,
@@ -1202,13 +1161,7 @@ pub const VirtualMachine = struct {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
@@ -2615,168 +2568,6 @@ pub const VirtualMachine = struct {
     }
 };
 
-const GetterFn = *const fn (
-    this: anytype,
-    ctx: js.JSContextRef,
-    thisObject: js.JSValueRef,
-    prop: js.JSStringRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef;
-const SetterFn = *const fn (
-    this: anytype,
-    ctx: js.JSContextRef,
-    thisObject: js.JSValueRef,
-    prop: js.JSStringRef,
-    value: js.JSValueRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef;
-
-const JSProp = struct {
-    get: ?GetterFn = null,
-    set: ?SetterFn = null,
-    ro: bool = false,
-};
-
-pub const EventListenerMixin = struct {
-    threadlocal var event_listener_names_buf: [128]u8 = undefined;
-    pub const List = std.ArrayList(js.JSObjectRef);
-    pub const Map = std.AutoHashMap(EventListenerMixin.EventType, EventListenerMixin.List);
-
-    pub const EventType = enum {
-        fetch,
-        err,
-
-        const SizeMatcher = strings.ExactSizeMatcher(8);
-
-        pub fn match(str: string) ?EventType {
-            return switch (SizeMatcher.match(str)) {
-                SizeMatcher.case("fetch") => EventType.fetch,
-                SizeMatcher.case("error") => EventType.err,
-                else => null,
-            };
-        }
-    };
-
-    pub fn emitFetchEvent(
-        vm: *VirtualMachine,
-        request_context: *http.RequestContext,
-        comptime CtxType: type,
-        ctx: *CtxType,
-        comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
-    ) !void {
-        JSC.markBinding(@src());
-
-        var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
-        if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
-        const FetchEventRejectionHandler = struct {
-            pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
-                onError(
-                    @as(*CtxType, @ptrFromInt(@intFromPtr(_ctx))),
-                    err,
-                    value,
-                    fetch_event.request_context.?,
-                ) catch {};
-            }
-        };
-
-        // Rely on JS finalizer
-        var fetch_event = try vm.allocator.create(FetchEvent);
-
-        fetch_event.* = FetchEvent{
-            .request_context = request_context,
-            .request = try Request.fromRequestContext(request_context),
-            .onPromiseRejectionCtx = @as(*anyopaque, ctx),
-            .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
-        };
-
-        var fetch_args: [1]js.JSObjectRef = undefined;
-        fetch_args[0] = FetchEvent.Class.make(vm.global, fetch_event);
-        JSC.C.JSValueProtect(vm.global, fetch_args[0]);
-        defer JSC.C.JSValueUnprotect(vm.global, fetch_args[0]);
-
-        for (listeners.items) |listener_ref| {
-            vm.tick();
-            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, JSValue.fromRef(listener_ref), JSValue.zero, 1, &fetch_args);
-            vm.tick();
-            var promise = JSInternalPromise.resolvedPromise(vm.global, result);
-
-            vm.event_loop.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
-
-            if (fetch_event.rejected) return;
-
-            if (promise.status(vm.global.vm()) == .Rejected) {
-                onError(ctx, error.JSError, promise.result(vm.global.vm()), request_context) catch {};
-                return;
-            }
-
-            _ = promise.result(vm.global.vm());
-
-            vm.waitForTasks();
-
-            if (request_context.has_called_done) {
-                break;
-            }
-        }
-
-        if (!request_context.has_called_done) {
-            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), request_context) catch {};
-            return;
-        }
-    }
-
-    pub fn addEventListener(
-        comptime Struct: type,
-    ) type {
-        const Handler = struct {
-            pub fn addListener(
-                ctx: js.JSContextRef,
-                _: js.JSObjectRef,
-                _: js.JSObjectRef,
-                argumentCount: usize,
-                _arguments: [*c]const js.JSValueRef,
-                _: js.ExceptionRef,
-            ) callconv(.C) js.JSValueRef {
-                const arguments = _arguments[0..argumentCount];
-                if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
-                    return js.JSValueMakeUndefined(ctx);
-                }
-                var name_slice = JSValue.c(arguments[0]).toSlice(ctx, ctx.allocator());
-                defer name_slice.deinit();
-                const name = name_slice.slice();
-                const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
-                var entry = VirtualMachine.get().event_listeners.getOrPut(event) catch unreachable;
-
-                if (!entry.found_existing) {
-                    entry.value_ptr.* = List.initCapacity(VirtualMachine.get().allocator, 1) catch unreachable;
-                }
-
-                var callback = arguments[arguments.len - 1];
-                js.JSValueProtect(ctx, callback);
-                entry.value_ptr.append(callback) catch unreachable;
-
-                return js.JSValueMakeUndefined(ctx);
-            }
-        };
-
-        return NewClass(
-            Struct,
-            .{
-                .name = "addEventListener",
-                .read_only = true,
-            },
-            .{
-                .callAsFunction = .{
-                    .rfn = Handler.addListener,
-                },
-            },
-            .{},
-        );
-    }
-};
-
-pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const Watcher = HotReloader.Watcher;
 

@@ -20,7 +20,7 @@ const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls
-const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;
+const use_libc = !(Environment.isLinux and Environment.isX64);
 pub const system = if (Environment.isLinux) linux else @import("root").bun.AsyncIO.darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;

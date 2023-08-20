@@ -4,9 +4,37 @@ Running `bun install` will create a binary lockfile called `bun.lockb`.
 
 In a word: Performance. Bun’s lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
 
-#### How do I inspect it?
+#### How do I inspect the lockfile?
 
 Run `bun install -y` to generate a Yarn-compatible `yarn.lock` (v1) that can be inspected more easily.
+
+#### How do I `git diff` the lockfile?
+
+To add to the global gitattributes file:
+
+- First try `$XDG_CONFIG_HOME/git/attributes`
+- If `$XDG_CONFIG_HOME` is not set, try `~/.config/git/attributes`
+
+For example, on macOS, add the following to `~/.config/git/attributes`:
+
+```
+*.lockb diff=lockb
+```
+
+Then add the following to `~/.gitconfig`:
+
+```
+[diff "lockb"]
+    textconv = bun
+    binary = true
+```
+
+To only add to the local gitattributes file:
+
+```
+$ git config diff.lockb.textconv bun
+$ git config diff.lockb.binary true
+```
 
 #### Platform-specific dependencies?
 

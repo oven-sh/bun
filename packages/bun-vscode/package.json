@@ -1,20 +1,21 @@
 {
   "name": "bun-vscode",
   "version": "0.0.1",
-  "main": "./dist/extension.js",
+  "main": "dist/extension.js",
   "devDependencies": {
     "@types/vscode": "^1.81.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
     "bun-types": "^0.7.3",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "esbuild": "^0.19.2"
   },
   "activationEvents": [
     "onDebugResolve:bun",
     "onDebugDynamicConfigurations:bun",
     "onCommand:extension.bun.getProgramName"
   ],
-  "browser": "./dist/web-extension.js",
+  "browser": "dist/web-extension.js",
   "categories": [
     "Programming Languages",
     "Debuggers"
@@ -85,7 +86,7 @@
           "typescriptreact"
         ],
         "runtime": "node",
-        "program": "./dist/adapter.js",
+        "program": "dist/adapter.js",
         "configurationAttributes": {
           "launch": {
             "required": [
@@ -188,15 +189,15 @@
           ".lockb"
         ],
         "icon": {
-          "dark": "./src/assets/icon-small.png",
-          "light": "./src/assets/icon-small.png"
+          "dark": "src/assets/icon-small.png",
+          "light": "src/assets/icon-small.png"
         }
       }
     ],
     "jsonValidation": [
       {
         "fileMatch": "package.json",
-        "url": "./src/resources/package.json"
+        "url": "src/resources/package.json"
       }
     ],
     "customEditors": [
@@ -214,24 +215,31 @@
   },
   "description": "Visual Studio Code extension for Bun.",
   "engines": {
-    "vscode": "^1.66.0"
+    "vscode": "^1.81.0"
   },
   "galleryBanner": {
     "color": "#C80000",
     "theme": "dark"
   },
-  "icon": "./src/assets/icon.png",
+  "icon": "src/assets/icon.png",
   "license": "MIT",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun"
+  },
   "publisher": "oven",
   "scripts": {
-    "build": "bunx esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
+    "bundle": "./node_modules/.bin/esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
+    "prebuild": "bun run bundle && rm -rf extension && mkdir -p extension/src && cp -r dist extension/dist && cp -r src/assets extension/src/assets && cp package.json extension && cp README.md extension",
+    "build": "cd extension && vsce package",
     "build:watch": "bunx esbuild --watch src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs"
   },
   "workspaceTrust": {
     "request": "never"
   },
-  "dependencies": {
-    "ws": "^8.13.0"
-  }
+  "workspaces": [
+    "../bun-debug-adapter-protocol",
+    "../bun-inspector-protocol"
+  ]
 }

@@ -23,14 +23,40 @@ static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
 static WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
 
+static bool waitingForConnection = false;
+extern "C" void Debugger__didConnect();
+
+class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
+public:
+    using Base = JSC::JSGlobalObjectDebuggable;
+
+    BunJSGlobalObjectDebuggable(JSC::JSGlobalObject& globalObject)
+        : Base(globalObject)
+    {
+    }
+
+    ~BunJSGlobalObjectDebuggable() final
+    {
+    }
+
+    void pauseWaitingForAutomaticInspection() override
+    {
+    }
+    void unpauseForInitializedInspector() override
+    {
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        }
+    }
+};
+
 enum class ConnectionStatus : int32_t {
     Pending = 0,
     Connected = 1,
     Disconnecting = 2,
     Disconnected = 3,
 };
-static bool waitingForConnection = false;
-extern "C" void Debugger__didConnect();
 
 class BunInspectorConnection : public Inspector::FrontendChannel {
 
@@ -81,15 +107,9 @@ public:
                     Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
                 }
                 globalObject->setInspectable(true);
-
                 auto& inspector = globalObject->inspectorDebuggable();
                 inspector.setInspectable(true);
-
-                inspector.connect(*connection);
-                if (waitingForConnection) {
-                    waitingForConnection = false;
-                    Debugger__didConnect();
-                }
+                globalObject->inspectorController().connectFrontend(*connection, true, waitingForConnection);
 
                 Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
                 if (debugger) {
@@ -99,7 +119,6 @@ public:
                 }
 
                 connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject));
-
                 break;
             }
             default: {
@@ -415,6 +434,8 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 
     auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+    globalObject->m_inspectorDebuggable = makeUnique<BunJSGlobalObjectDebuggable>(*globalObject);
+
     globalObject->setInspectable(true);
 
     auto& inspector = globalObject->inspectorDebuggable();

@@ -2950,6 +2950,20 @@ pub const Parser = struct {
             before.deinit();
         }
 
+        // --inspect-brk
+        if (p.options.features.set_breakpoint_on_first_line) {
+            var debugger_stmts = try p.allocator.alloc(Stmt, 1);
+            debugger_stmts[0] = Stmt{
+                .data = .{ .s_debugger = .{} },
+                .loc = logger.Loc.Empty,
+            };
+            before.append(
+                js_ast.Part{
+                    .stmts = debugger_stmts,
+                },
+            ) catch unreachable;
+        }
+
         if (p.options.bundle) {
             // allocate an empty part for the bundle
             before.append(

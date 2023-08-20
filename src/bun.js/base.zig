@@ -771,44 +771,6 @@ comptime {
     std.testing.refAllDecls(RefString);
 }
 
-// TODO: remove this abstraction and make it work directly with
-pub const ExternalBuffer = struct {
-    global: *JSC.JSGlobalObject,
-    ctx: ?*anyopaque = null,
-    function: JSC.napi.napi_finalize = null,
-    allocator: std.mem.Allocator,
-    buf: []u8 = &[_]u8{},
-
-    pub fn create(ctx: ?*anyopaque, buf: []u8, global: *JSC.JSGlobalObject, function: JSC.napi.napi_finalize, allocator: std.mem.Allocator) !*ExternalBuffer {
-        var container = try allocator.create(ExternalBuffer);
-        container.* = .{
-            .ctx = ctx,
-            .global = global,
-            .allocator = allocator,
-            .function = function,
-            .buf = buf,
-        };
-        return container;
-    }
-
-    pub fn toJS(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.createBufferWithCtx(ctx, this.buf, this, ExternalBuffer_deallocator);
-    }
-
-    pub fn toArrayBuffer(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSValue.c(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(ctx.ref(), this.buf.ptr, this.buf.len, ExternalBuffer_deallocator, this, null));
-    }
-};
-pub export fn ExternalBuffer_deallocator(bytes_: *anyopaque, ctx: *anyopaque) callconv(.C) void {
-    var external: *ExternalBuffer = bun.cast(*ExternalBuffer, ctx);
-    if (external.function) |function| {
-        function(external.global, external.ctx, bytes_);
-    }
-
-    const allocator = external.allocator;
-    allocator.destroy(external);
-}
-
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here

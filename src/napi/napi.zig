@@ -1093,6 +1093,11 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
     length.* = array_buf.byte_len;
     return .ok;
 }
+
+extern fn node_api_create_syntax_error(napi_env, napi_value, napi_value, *napi_value) napi_status;
+extern fn node_api_symbol_for(napi_env, [*]const c_char, usize, *napi_value) napi_status;
+extern fn node_api_throw_syntax_error(napi_env, [*]const c_char, [*]const c_char) napi_status;
+
 pub export fn napi_create_async_work(
     env: napi_env,
     _: napi_value,
@@ -1610,6 +1615,8 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_unref_threadsafe_function);
     std.mem.doNotOptimizeAway(&napi_unwrap);
     std.mem.doNotOptimizeAway(&napi_wrap);
-
+    std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
+    std.mem.doNotOptimizeAway(&node_api_symbol_for);
+    std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

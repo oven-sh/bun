@@ -1053,6 +1053,61 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
     return napi_ok;
 }
 
+extern "C" napi_status node_api_symbol_for(napi_env env,
+    const char* utf8description,
+    size_t length, napi_value* result)
+{
+    auto* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    if (UNLIKELY(!result || !utf8description)) {
+        return napi_invalid_arg;
+    }
+
+    auto description = WTF::String::fromUTF8(utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length);
+    *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)));
+
+    return napi_ok;
+}
+
+extern "C" napi_status node_api_create_syntax_error(napi_env env,
+    napi_value code,
+    napi_value msg,
+    napi_value* result)
+{
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
+    JSValue messageValue = toJS(msg);
+    JSValue codeValue = toJS(code);
+    auto globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto* err = messageValue && !messageValue.isUndefinedOrNull() ? createSyntaxError(globalObject, messageValue.toWTFString(globalObject)) : createSyntaxError(globalObject);
+    if (codeValue && !codeValue.isUndefinedOrNull()) {
+        err->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    }
+
+    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(err));
+    return napi_ok;
+}
+
+extern "C" napi_status node_api_throw_syntax_error(napi_env env,
+    const char* code,
+    const char* msg)
+{
+    auto message = msg ? WTF::String::fromUTF8(msg) : String();
+    auto globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto* err = createSyntaxError(globalObject, message);
+    if (code) {
+        err->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, String::fromUTF8(code)), 0);
+    }
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    scope.throwException(globalObject, err);
+    return napi_ok;
+}
+
 extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
     const char* msg)
 {

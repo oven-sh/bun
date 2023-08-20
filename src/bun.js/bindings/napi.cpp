@@ -1244,18 +1244,30 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+    JSObject* constructorTarget = asObject(callFrame->jsCallee());
     JSObject* newTarget = asObject(callFrame->newTarget());
+    NapiClass* napi = jsDynamicCast<NapiClass*>(constructorTarget);
+    while (!napi && constructorTarget) {
+        constructorTarget = constructorTarget->getPrototypeDirect().getObject();
+        napi = jsDynamicCast<NapiClass*>(constructorTarget);
+    }
 
-    NapiClass* napi = jsDynamicCast<NapiClass*>(newTarget);
     if (UNLIKELY(!napi)) {
         JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor called on an object that is not a NapiClass"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getDirect(vm, vm.propertyNames->prototype));
-
+    NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (!prototype) {
+        JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto* subclass = prototype->subclass(globalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, {});
+    callFrame->setThisValue(subclass);
 
     size_t count = callFrame->argumentCount();
     MarkedArgumentBuffer args;
@@ -1266,7 +1278,6 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
         }
     }
 
-    callFrame->setThisValue(prototype->subclass(newTarget));
     napi->constructor()(globalObject, callFrame);
     RETURN_IF_EXCEPTION(scope, {});
 

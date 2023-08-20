@@ -1592,7 +1592,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.bundler.options.target)) |hardcoded| {
             if (hardcoded.tag == .none) {
                 resolveMaybeNeedsTrailingSlash(
                     res,

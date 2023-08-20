@@ -467,6 +467,13 @@ pub const Target = enum {
         };
     }
 
+    pub inline fn isNode(this: Target) bool {
+        return switch (this) {
+            .node => true,
+            else => false,
+        };
+    }
+
     pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
             .browser => true,

@@ -484,7 +484,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     continue;
@@ -2338,20 +2338,15 @@ pub const HardcodedModule = enum {
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
         },
     );
+
     pub const Alias = struct {
         path: string,
         tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
     };
-    pub const Aliases = bun.ComptimeStringMap(
-        Alias,
-        .{
-            .{ "bun", .{ .path = "bun", .tag = .bun } },
-            .{ "bun:ffi", .{ .path = "bun:ffi" } },
-            .{ "bun:jsc", .{ .path = "bun:jsc" } },
-            .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
-            .{ "bun:wrap", .{ .path = "bun:wrap" } },
-            .{ "ffi", .{ .path = "bun:ffi" } },
 
+    pub const Aliases = struct {
+        // Used by both Bun and Node.
+        const common_alias_kvs = .{
             .{ "node:assert", .{ .path = "node:assert" } },
             .{ "node:assert/strict", .{ .path = "node:assert/strict" } },
             .{ "node:async_hooks", .{ .path = "node:async_hooks" } },
@@ -2461,7 +2456,7 @@ pub const HardcodedModule = enum {
             // It implements the same interface
             .{ "sys", .{ .path = "node:util" } },
             .{ "node:sys", .{ .path = "node:util" } },
-            .{ "inspector/promises", .{ .path = "node:inspector" } },
+            // .{ "inspector/promises", .{ .path = "node:inspector" } },
             .{ "node:inspector/promises", .{ .path = "node:inspector" } },
 
             // These are returned in builtinModules, but probably not many packages use them
@@ -2486,6 +2481,15 @@ pub const HardcodedModule = enum {
             // .{ "readable-stream", .{ .path = "node:stream" } },
             // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
             // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+        };
+
+        const bun_extra_alias_kvs = .{
+            .{ "bun", .{ .path = "bun", .tag = .bun } },
+            .{ "bun:ffi", .{ .path = "bun:ffi" } },
+            .{ "bun:jsc", .{ .path = "bun:jsc" } },
+            .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "ffi", .{ .path = "bun:ffi" } },
 
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
@@ -2497,6 +2501,36 @@ pub const HardcodedModule = enum {
             .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
-        },
-    );
+        };
+
+        const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs);
+        const BunAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
+
+        pub fn has(name: []const u8, target: options.Target) bool {
+            if (target.isBun()) {
+                return BunAliases.has(name);
+            } else if (target.isNode()) {
+                return NodeAliases.has(name);
+            }
+            return false;
+        }
+
+        pub fn get(name: []const u8, target: options.Target) ?Alias {
+            if (target.isBun()) {
+                return BunAliases.get(name);
+            } else if (target.isNode()) {
+                return NodeAliases.get(name);
+            }
+            return null;
+        }
+
+        pub fn getWithEql(name: anytype, comptime eql: anytype, target: options.Target) ?Alias {
+            if (target.isBun()) {
+                return BunAliases.getWithEql(name, eql);
+            } else if (target.isNode()) {
+                return NodeAliases.getWithEql(name, eql);
+            }
+            return null;
+        }
+    };
 };

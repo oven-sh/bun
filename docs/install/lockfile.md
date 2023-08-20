@@ -31,10 +31,17 @@ Then add the following to `~/.gitconfig`:
 
 To only add to the local gitattributes file:
 
-```
+```sh
 $ git config diff.lockb.textconv bun
 $ git config diff.lockb.binary true
 ```
+
+**Why this works:**
+
+- `textconv` tells git to run `bun` on the file before diffing
+- `binary` tells git to treat the file as binary (so it doesn't try to diff it line-by-line)
+
+Running `bun` on a lockfile will print a human-readable diff. So we just need to tell `git` to run `bun` on the lockfile before diffing it.
 
 #### Platform-specific dependencies?
 

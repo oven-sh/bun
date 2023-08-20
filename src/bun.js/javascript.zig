@@ -747,7 +747,7 @@ pub const VirtualMachine = struct {
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
-        auto_pause: bool = false,
+        wait_for_connection: bool = false,
         const debug = Output.scoped(.DEBUGGER, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
@@ -759,7 +759,8 @@ pub const VirtualMachine = struct {
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
             debug("create", .{});
             JSC.markBinding(@src());
-            this.debugger.?.script_execution_context_id = Bun__createJSDebugger(globalObject);
+            var debugger = &this.debugger.?;
+            debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
             if (!has_started_debugger_thread) {
                 has_started_debugger_thread = true;
                 futex_atomic = std.atomic.Atomic(u32).init(0);
@@ -767,9 +768,11 @@ pub const VirtualMachine = struct {
                 thread.detach();
             }
             this.eventLoop().ensureWaker();
-            if (this.debugger.?.auto_pause) {
-                this.debugger.?.poll_ref.ref(this);
+
+            if (debugger.wait_for_connection) {
+                debugger.poll_ref.ref(this);
             }
+
             debug("spin", .{});
             while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
             if (comptime Environment.allow_assert)
@@ -778,7 +781,10 @@ pub const VirtualMachine = struct {
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
 
-            Bun__ensureDebugger(this.debugger.?.script_execution_context_id, this.debugger.?.auto_pause);
+            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);
+            while (debugger.wait_for_connection) {
+                this.eventLoop().tick();
+            }
         }
 
         pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
@@ -804,6 +810,13 @@ pub const VirtualMachine = struct {
 
         pub export var Bun__debugger_server_url: bun.String = undefined;
 
+        pub export fn Debugger__didConnect() void {
+            var this = VirtualMachine.get();
+            std.debug.assert(this.debugger.?.wait_for_connection);
+            this.debugger.?.wait_for_connection = false;
+            this.debugger.?.poll_ref.unref(this);
+        }
+
         fn start(other_vm: *VirtualMachine) void {
             JSC.markBinding(@src());
 
@@ -824,9 +837,10 @@ pub const VirtualMachine = struct {
                 Output.flush();
             }
 
+            debug("wake", .{});
             futex_atomic.store(0, .Monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
-            debug("wake", .{});
+
             this.eventLoop().tick();
 
             while (true) {
@@ -1119,11 +1133,9 @@ pub const VirtualMachine = struct {
         switch (debugger) {
             .unspecified => {},
             .enable => {
-                this.debugger = Debugger{};
-            },
-            .path_or_port => {
                 this.debugger = Debugger{
-                    .path_or_port = debugger.path_or_port,
+                    .path_or_port = debugger.enable.path_or_port,
+                    .wait_for_connection = debugger.enable.wait_for_connection,
                 };
             },
         }

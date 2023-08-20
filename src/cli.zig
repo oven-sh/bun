@@ -161,7 +161,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
-        clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger and pause immediately") catch unreachable,
+        clap.parseParam("--inspect-wait <STR>?             Activate Bun's Debugger and wait for a connection before executing") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -515,11 +515,21 @@ pub const Arguments = struct {
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
-                    Command.Debugger{ .enable = {} }
+                    Command.Debugger{ .enable = .{} }
                 else
-                    Command.Debugger{
+                    Command.Debugger{ .enable = .{
                         .path_or_port = inspect_flag,
-                    };
+                    } };
+            } else if (args.option("--inspect-wait")) |inspect_flag| {
+                ctx.runtime_options.debugger = if (inspect_flag.len == 0)
+                    Command.Debugger{ .enable = .{
+                        .wait_for_connection = true,
+                    } }
+                else
+                    Command.Debugger{ .enable = .{
+                        .path_or_port = inspect_flag,
+                        .wait_for_connection = true,
+                    } };
             }
         }
 
@@ -956,8 +966,10 @@ pub const Command = struct {
 
     pub const Debugger = union(enum) {
         unspecified: void,
-        enable: void,
-        path_or_port: []const u8,
+        enable: struct {
+            path_or_port: []const u8 = "",
+            wait_for_connection: bool = false,
+        },
     };
 
     pub const RuntimeOptions = struct {

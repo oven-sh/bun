@@ -29,6 +29,8 @@ enum class ConnectionStatus : int32_t {
     Disconnecting = 2,
     Disconnected = 3,
 };
+static bool waitingForConnection = false;
+extern "C" void Debugger__didConnect();
 
 class BunInspectorConnection : public Inspector::FrontendChannel {
 
@@ -84,6 +86,10 @@ public:
                 inspector.setInspectable(true);
 
                 inspector.connect(*connection);
+                if (waitingForConnection) {
+                    waitingForConnection = false;
+                    Debugger__didConnect();
+                }
 
                 Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
                 if (debugger) {
@@ -420,9 +426,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
             BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
         };
     }
-
-    if (pauseOnStart)
-        inspector.pauseWaitingForAutomaticInspection();
+    waitingForConnection = true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))

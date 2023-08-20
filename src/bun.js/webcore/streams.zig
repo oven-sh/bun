@@ -4137,7 +4137,7 @@ pub const File = struct {
                                 else => {},
                             }
 
-                            this.pending.result = .{ .err = err };
+                            this.pending.result = .{ .err = .{ .err = err } };
                             scheduleMainThreadTask(this);
                             return;
                         },

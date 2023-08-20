@@ -189,15 +189,15 @@
           ".lockb"
         ],
         "icon": {
-          "dark": "src/assets/icon-small.png",
-          "light": "src/assets/icon-small.png"
+          "dark": "./src/assets/icon-small.png",
+          "light": "./src/assets/icon-small.png"
         }
       }
     ],
     "jsonValidation": [
       {
         "fileMatch": "package.json",
-        "url": "src/resources/package.json"
+        "url": "./src/resources/package.json"
       }
     ],
     "customEditors": [

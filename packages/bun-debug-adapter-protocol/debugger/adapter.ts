@@ -234,21 +234,37 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     return {};
   }
 
-  async launch(request: LaunchRequest): Promise<DAP.LaunchResponse> {
+  async launch(request: DAP.LaunchRequest): Promise<DAP.LaunchResponse> {
+    try {
+      await this.#launch(request);
+    } catch (error) {
+      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
+      // Instead, we want to show the error as a sidebar notification.
+      const { message } = unknownToError(error);
+      this.#emit("output", {
+        category: "stderr",
+        output: `Failed to start debugger.\n${message}`,
+      });
+      this.#emit("terminated");
+    }
+    return {};
+  }
+
+  async #launch(request: LaunchRequest): Promise<void> {
     if (this.#process?.exitCode === null) {
-      throw new Error("Already running, terminate the previous session first.");
+      throw new Error("Another program is already running. Did you terminate the last session?");
     }
 
     const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true } = request;
     if (!program) {
-      throw new Error("Missing program.");
+      throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
 
     if (!isJavaScript(program)) {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const subprocess = spawn(runtime, ["--inspect=0", ...args, program], {
+    const subprocess = spawn(runtime, ["--inspect-wait", "--inspect=0", ...args, program], {
       stdio: ["ignore", "pipe", "pipe", "pipe"],
       cwd,
       env: inheritEnv ? { ...process.env, ...env } : env,
@@ -285,47 +301,41 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }
     });
 
-    const started = new Promise<undefined>(resolve => {
+    const start = new Promise<undefined>(resolve => {
       subprocess.on("spawn", () => resolve(undefined));
     });
 
-    const exited = new Promise<number | string | Error>(resolve => {
+    const exitOrError = new Promise<number | string | Error>(resolve => {
       subprocess.on("exit", (code, signal) => resolve(code ?? signal ?? -1));
       subprocess.on("error", resolve);
     });
 
-    const exitReason = await Promise.race([started, exited]);
+    const reason = await Promise.race([start, exitOrError]);
 
-    if (exitReason === undefined) {
-      let retries = 0;
-      while (retries++ < 10) {
-        const url = lookForUrl(stdout);
-        if (!url) {
-          await new Promise(resolve => setTimeout(resolve, 100 * retries));
-          continue;
-        }
+    if (reason instanceof Error) {
+      const { message } = reason;
+      throw new Error(`Program could not be started.\n${message}`);
+    }
 
-        stdout = undefined;
-        stderr = undefined;
+    if (reason !== undefined) {
+      throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
+    }
 
-        this.#inspector.start(url);
-        return {};
+    let retries = 0;
+    while (retries++ < 10) {
+      const url = lookForUrl(stdout);
+      if (!url) {
+        await new Promise(resolve => setTimeout(resolve, 100 * retries));
+        continue;
       }
 
-      this.#emit("output", {
-        category: "debug console",
-        output: `Failed to attach to ${program}\n`,
-      });
-    }
+      // Since a url was found, stop buffering stdout and stderr.
+      stdout = undefined;
+      stderr = undefined;
 
-    if (!subprocess.killed && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
-      this.#emit("output", {
-        category: "debug console",
-        output: `Failed to kill process ${subprocess.pid}\n`,
-      });
+      this.#inspector.start(url);
+      return;
     }
-
-    this.#emit("terminated");
 
     for (const message of stderr) {
       this.#emit("output", {
@@ -337,13 +347,24 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
     }
 
-    if (exitReason instanceof Error) {
-      const { message } = exitReason;
-      throw new Error(`Failed to launch program: ${message}`);
+    for (const message of stdout) {
+      this.#emit("output", {
+        category: "stdout",
+        output: message,
+        source: {
+          path: program,
+        },
+      });
     }
 
-    const { exitCode } = subprocess;
-    throw new Error(`Program exited with code: ${exitCode}`);
+    if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
+      this.#emit("output", {
+        category: "debug console",
+        output: `Failed to kill process ${subprocess.pid}\n`,
+      });
+    }
+
+    throw new Error("Program started, but the debugger could not be attached.");
   }
 
   async attach(request: AttachRequest): Promise<DAP.AttachResponse> {
@@ -806,9 +827,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
     }
 
-    this.#emit("terminated", {
-      restart: this.#process?.exitCode === null,
-    });
+    this.#emit("terminated");
     this.#reset();
   }
 
@@ -1161,8 +1180,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     };
   }
 
-  #getVariables(propertyDescriptor: JSC.Runtime.PropertyDescriptor): DAP.Variable[] {
-    const { value, get, set, symbol } = propertyDescriptor;
+  #getVariables(
+    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
+  ): DAP.Variable[] {
+    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
     const variables: DAP.Variable[] = [];
     if (value) {
       variables.push(this.#getVariable(value, propertyDescriptor));
@@ -1187,21 +1208,32 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async #listVariables(variableReference: number, offset?: number, count?: number): Promise<DAP.Variable[]> {
     const remoteObject = this.#variables.get(variableReference);
+
     if (!remoteObject) {
       return [];
     }
+
     const { objectId, subtype, size } = remoteObject;
     if (!objectId) {
       return [];
     }
-    const { properties } = await this.#send("Runtime.getDisplayableProperties", {
+
+    const { properties, internalProperties } = await this.#send("Runtime.getDisplayableProperties", {
       objectId,
       generatePreview: true,
     });
+
     const variables: DAP.Variable[] = [];
     for (const property of properties) {
       variables.push(...this.#getVariables(property));
     }
+
+    if (internalProperties) {
+      for (const property of internalProperties) {
+        variables.push(...this.#getVariables(property));
+      }
+    }
+
     const hasEntries = !!size && subtype !== "array" && (isIndexed(subtype) || isNamedIndexed(subtype));
     if (hasEntries) {
       const { entries } = await this.#send("Runtime.getCollectionEntries", {
@@ -1209,6 +1241,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         fetchStart: offset,
         fetchCount: count,
       });
+
       let i = 0;
       for (const { key, value } of entries) {
         let name = String(i++);
@@ -1219,6 +1252,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         variables.push(this.#getVariable(value, { name }));
       }
     }
+
     return variables;
   }
 }

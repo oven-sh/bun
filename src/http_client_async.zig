@@ -2339,9 +2339,9 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (!can_continue) {
                 // if is chuncked but no body is expected we mark the last chunk
-                if (this.state.isChunkedEncoding()) {
-                    this.state.received_last_chunk = true;
-                }
+                this.state.received_last_chunk = true;
+                // if is not we ignore the body_size
+                this.state.body_size = 0;
                 this.progressUpdate(is_ssl, ctx, socket);
                 return;
             }

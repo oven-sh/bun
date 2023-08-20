@@ -1,0 +1,6 @@
+{
+  "name": "bun-debug-adapter-protocol",
+  "devDependencies": {
+    "source-map-js": "^1.0.2"
+  }
+}

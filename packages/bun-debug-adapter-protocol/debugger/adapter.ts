@@ -5,6 +5,7 @@ import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { SourceMap } from "./sourcemap";
+import { compare, parse } from "semver";
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
@@ -337,6 +338,21 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       return;
     }
 
+    if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
+      this.#emit("output", {
+        category: "debug console",
+        output: `Failed to kill process ${subprocess.pid}\n`,
+      });
+    }
+
+    const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
+
+    if (parse(version, true) && compare("0.8.0", version, true)) {
+      throw new Error(
+        `Bun v${version.trim()} does not have debugger support. Please upgrade to v0.8 or later by running: \`bun upgrade\``,
+      );
+    }
+
     for (const message of stderr) {
       this.#emit("output", {
         category: "stderr",
@@ -354,13 +370,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         source: {
           path: program,
         },
-      });
-    }
-
-    if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
-      this.#emit("output", {
-        category: "debug console",
-        output: `Failed to kill process ${subprocess.pid}\n`,
       });
     }
 

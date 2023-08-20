@@ -439,7 +439,7 @@ pub const StandaloneModuleGraph = struct {
             std.fs.cwd().fd,
             &(try std.os.toPosixPath(temp_location)),
             root_dir.dir.fd,
-            &(try std.os.toPosixPath(outfile)),
+            &(try std.os.toPosixPath(std.fs.path.basename(outfile))),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});

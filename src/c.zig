@@ -113,10 +113,11 @@ pub fn moveFileZ(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.
 }
 
 pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    _ = from_handle;
     std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
         switch (err) {
             error.RenameAcrossMountPoints => {
-                try moveFileZSlowWithHandle(from_handle, to_dir, destination);
+                try moveFileZSlow(from_dir, filename, to_dir, destination);
             },
             else => {
                 return err;
@@ -129,7 +130,9 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
     const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
+    defer std.os.close(in_handle);
     try moveFileZSlowWithHandle(in_handle, to_dir, destination);
+    std.os.unlinkatZ(from_dir, filename, 0) catch {};
 }
 
 pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {

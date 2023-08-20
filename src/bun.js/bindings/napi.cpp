@@ -1551,6 +1551,55 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     return napi_ok;
 }
 
+extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
+    void* data,
+    napi_finalize finalize_cb,
+    void* finalize_hint,
+    napi_value* result)
+{
+    if (UNLIKELY(result == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    auto arrayBuffer = ArrayBuffer::createFromBytes(data, length, createSharedTask<void(void*)>([globalObject, finalize_hint, finalize_cb](void* p) {
+        if (finalize_cb != nullptr) {
+            finalize_cb(toNapi(globalObject), p, finalize_hint);
+        }
+    }));
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+
+    *result = toNapi(buffer);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* external_data, size_t byte_length,
+    napi_finalize finalize_cb, void* finalize_hint, napi_value* result)
+{
+    if (UNLIKELY(result == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    auto arrayBuffer = ArrayBuffer::createFromBytes(external_data, byte_length, createSharedTask<void(void*)>([globalObject, finalize_hint, finalize_cb](void* p) {
+        if (finalize_cb != nullptr) {
+            finalize_cb(toNapi(globalObject), p, finalize_hint);
+        }
+    }));
+
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTFMove(arrayBuffer));
+
+    *result = toNapi(buffer);
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     napi_value napiValue, char* buf,
     size_t bufsize,

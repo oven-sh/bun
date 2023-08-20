@@ -426,7 +426,9 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
             BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
         };
     }
-    waitingForConnection = true;
+    if (pauseOnStart) {
+        waitingForConnection = true;
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))

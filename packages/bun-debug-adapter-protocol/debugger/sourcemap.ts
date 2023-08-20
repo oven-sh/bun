@@ -37,29 +37,45 @@ class ActualSourceMap implements SourceMap {
   }
 
   generatedPosition(line?: number, column?: number, url?: string): Position {
-    const source = this.#getSource(url);
-    const { line: gline, column: gcolumn } = this.#sourceMap.generatedPositionFor({
-      line: line ?? 0,
-      column: column ?? 0,
-      source,
-    });
-    console.log(`[sourcemap] -->`, { source, url, line, column }, { gline, gcolumn });
-    return {
-      line: gline || 0,
-      column: gcolumn || 0,
-    };
+    try {
+      const source = this.#getSource(url);
+      const { line: gline, column: gcolumn } = this.#sourceMap.generatedPositionFor({
+        line: line ?? 0,
+        column: column ?? 0,
+        source,
+      });
+      console.log(`[sourcemap] -->`, { source, url, line, column }, { gline, gcolumn });
+      return {
+        line: gline || 0,
+        column: gcolumn || 0,
+      };
+    } catch (error) {
+      console.error(error);
+      return {
+        line: line || 0,
+        column: column || 0,
+      };
+    }
   }
 
   originalPosition(line?: number, column?: number): Position {
-    const { line: oline, column: ocolumn } = this.#sourceMap.originalPositionFor({
-      line: line ?? 0,
-      column: column ?? 0,
-    });
-    console.log(`[sourcemap] <--`, { line, column }, { oline, ocolumn });
-    return {
-      line: oline || 0,
-      column: ocolumn || 0,
-    };
+    try {
+      const { line: oline, column: ocolumn } = this.#sourceMap.originalPositionFor({
+        line: line ?? 0,
+        column: column ?? 0,
+      });
+      console.log(`[sourcemap] <--`, { line, column }, { oline, ocolumn });
+      return {
+        line: oline || 0,
+        column: ocolumn || 0,
+      };
+    } catch (error) {
+      console.error(error);
+      return {
+        line: line || 0,
+        column: column || 0,
+      };
+    }
   }
 }
 

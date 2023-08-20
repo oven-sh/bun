@@ -833,8 +833,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
     // HACK: remove once Bun starts sending correct source map urls
-    if (event.url && event.url.startsWith("/")) {
+    if (event.url && event.url.startsWith("/") && event.url.endsWith(".ts")) {
       event.sourceMapURL = generateSourceMapUrl(event.url);
+    } else {
+      event.sourceMapURL = undefined;
     }
     const { url, scriptId, sourceMapURL } = event;
 

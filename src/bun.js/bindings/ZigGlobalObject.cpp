@@ -1053,8 +1053,6 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-using MicrotaskCallback = void (*)(void*);
-
 JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -4213,6 +4211,11 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 
     // Do not use JSCell* here because the GC will try to visit it.
     globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+}
+
+void Zig::GlobalObject::queueMicrotaskCallback(void* ptr, MicrotaskCallback callback)
+{
+    JSC__JSGlobalObject__queueMicrotaskCallback(this, ptr, callback);
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,

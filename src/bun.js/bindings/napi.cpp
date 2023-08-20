@@ -46,6 +46,8 @@
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BigIntObject.h"
+#include "ScriptExecutionContext.h"
+#include "Strong.h"
 
 #include "../modules/ObjectModule.h"
 
@@ -1764,8 +1766,16 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     auto* structure = Bun::NapiExternal::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSValue value = JSValue(Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb));
 
-    JSC::Strong<JSC::Unknown> strongRef(vm, value);
-    // TODO: ???
+    // With `fsevents`, their napi_create_external seems to get immediatly garbage
+    // collected, which will cause the event loop to die. Waiting a microtask doesnt
+    // seem to fix it, but a setTimeout(1) does work.
+    // See https://github.com/oven-sh/bun/issues/3978 and `fsevents.test.ts`
+    JSC::Strong<Unknown>* strong = new JSC::Strong<Unknown>(vm, value);
+    globalObject->queueTaskOnTimeout(new WebCore::EventLoopTask([strong](WebCore::ScriptExecutionContext& context) {
+        strong->clear();
+        delete strong;
+    }),
+        1);
 
     *result = toNapi(value);
     return napi_ok;

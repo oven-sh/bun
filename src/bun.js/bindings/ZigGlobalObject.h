@@ -57,8 +57,6 @@ extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSVa
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
-using MicrotaskCallback = void (*)(void*);
-
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -463,8 +461,6 @@ public:
 
     JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
-
-    void queueMicrotaskCallback(void* ptr, MicrotaskCallback callback);
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

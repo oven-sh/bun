@@ -1767,15 +1767,13 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSValue value = JSValue(Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb));
 
     // With `fsevents`, their napi_create_external seems to get immediatly garbage
-    // collected, which will cause the event loop to die. Waiting a microtask doesnt
-    // seem to fix it, but a setTimeout(1) does work.
+    // collected for some unknown reason.
     // See https://github.com/oven-sh/bun/issues/3978 and `fsevents.test.ts`
     JSC::Strong<Unknown>* strong = new JSC::Strong<Unknown>(vm, value);
-    globalObject->queueTaskOnTimeout(new WebCore::EventLoopTask([strong](WebCore::ScriptExecutionContext& context) {
+    globalObject->scriptExecutionContext()->postTask([strong](auto& context) -> void {
         strong->clear();
         delete strong;
-    }),
-        1);
+    });
 
     *result = toNapi(value);
     return napi_ok;

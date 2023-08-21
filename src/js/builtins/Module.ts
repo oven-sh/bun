@@ -85,14 +85,7 @@ export function requireResolve(this: string | { path: string }, id: string) {
   // This try catch is needed because err.code on ESM resolves is ERR_MODULE_NOT_FOUND
   // while in require.resolve this error code is only MODULE_NOT_FOUND.
   // `local-pkg` will check for .code's exact value, and log extra messages if we don't match it.
-  try {
-    return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
-  } catch (error) {
-    var e = new Error(`Cannot find module '${id}'`);
-    e.code = "MODULE_NOT_FOUND";
-    // e.requireStack = []; // TODO: we might have to implement this
-    throw e;
-  }
+  return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
 }
 
 export function requireNativeModule(id: string) {

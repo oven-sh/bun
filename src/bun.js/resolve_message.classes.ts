@@ -13,6 +13,10 @@ export default [
         getter: "getMessage",
         cache: true,
       },
+      code: {
+        getter: "getCode",
+        cache: true,
+      },
       name: {
         value: "ResolveMessage",
       },

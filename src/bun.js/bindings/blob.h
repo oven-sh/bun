@@ -49,6 +49,7 @@ public:
     {
         m_fileName = fileName;
     }
+    void* m_impl;
 
 private:
     Blob(void* impl, String fileName = String())
@@ -57,7 +58,6 @@ private:
         m_fileName = fileName;
     }
 
-    void* m_impl;
     String m_fileName;
 };
 

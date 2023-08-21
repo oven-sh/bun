@@ -748,6 +748,8 @@ pub const VirtualMachine = struct {
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
         wait_for_connection: bool = false,
+        set_breakpoint_on_first_line: bool = false,
+
         const debug = Output.scoped(.DEBUGGER, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
@@ -784,6 +786,8 @@ pub const VirtualMachine = struct {
             Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);
             while (debugger.wait_for_connection) {
                 this.eventLoop().tick();
+                if (debugger.wait_for_connection)
+                    this.eventLoop().autoTickActive();
             }
         }
 
@@ -1136,6 +1140,7 @@ pub const VirtualMachine = struct {
                 this.debugger = Debugger{
                     .path_or_port = debugger.enable.path_or_port,
                     .wait_for_connection = debugger.enable.wait_for_connection,
+                    .set_breakpoint_on_first_line = debugger.enable.set_breakpoint_on_first_line,
                 };
             },
         }
@@ -1870,6 +1875,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
+        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
 
         try this.entry_point.generate(
             this.allocator,

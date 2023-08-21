@@ -2176,7 +2176,7 @@ pub const Blob = struct {
                     switch (linux.getErrno(written)) {
                         .SUCCESS => {},
 
-                        .SYS, .EXDEV => {
+                        .NOSYS, .XDEV => {
                             switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                                 .err => |err| {
                                     this.system_error = err.toSystemError();

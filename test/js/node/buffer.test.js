@@ -1748,7 +1748,7 @@ it("constants", () => {
 });
 
 it("File", () => {
-  expect(BufferModule.File).toBe(Blob);
+  expect(BufferModule.File).toBe(File);
 });
 
 it("transcode", () => {

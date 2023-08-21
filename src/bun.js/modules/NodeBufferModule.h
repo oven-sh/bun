@@ -149,12 +149,11 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
   put(JSC::Identifier::fromString(vm, "SlowBuffer"_s), slowBuffer);
   auto blobIdent = JSC::Identifier::fromString(vm, "Blob"_s);
 
-  JSValue blobValue =
-      lexicalGlobalObject->get(globalObject, PropertyName(blobIdent));
+  JSValue blobValue = globalObject->JSBlobConstructor();
   put(blobIdent, blobValue);
 
-  // TODO: implement File
-  put(JSC::Identifier::fromString(vm, "File"_s), blobValue);
+  put(JSC::Identifier::fromString(vm, "File"_s),
+      globalObject->JSDOMFileConstructor());
 
   put(JSC::Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s),
       JSC::jsNumber(50));

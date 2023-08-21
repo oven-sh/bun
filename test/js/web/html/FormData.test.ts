@@ -15,9 +15,11 @@ describe("FormData", () => {
 
   it("should be able to append a Blob", async () => {
     const formData = new FormData();
-    formData.append("foo", new Blob(["bar"]));
+    formData.append("foo", new Blob(["bar"]), "mynameis.txt");
     expect(await ((await formData.get("foo")) as Blob)!.text()).toBe("bar");
     expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
+    expect(formData.getAll("foo")[0] instanceof File).toBe(true);
+    expect((formData.getAll("foo")[0] as File).name).toBe("mynameis.txt");
   });
 
   it("should be able to set a Blob", async () => {

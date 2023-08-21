@@ -134,6 +134,79 @@ describe("copyFileSync", () => {
     copyFileSync(tempdir + "/copyFileSync.src.blob", tempdir + "/copyFileSync.dest.blob");
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
+
+  if (process.platform === "linux") {
+    describe("should work when copyFileRange is not available", () => {
+      it("on large files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/large`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(128 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        writeFileSync(src, buffer.buffer);
+        try {
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+
+      it("on small files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/small`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(1 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        try {
+          writeFileSync(src, buffer.buffer);
+
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+    });
+  }
 });
 
 describe("mkdirSync", () => {

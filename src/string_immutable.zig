@@ -3602,6 +3602,14 @@ inline fn _decodeHexToBytes(destination: []u8, comptime Char: type, source: []co
     return destination.len - remain.len;
 }
 
+fn byte2hex(char: u8) u8 {
+    return switch (char) {
+        0...9 => char + '0',
+        10...15 => char - 10 + 'a',
+        else => unreachable,
+    };
+}
+
 pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     if (comptime Environment.allow_assert) {
         std.debug.assert(destination.len > 0);
@@ -3614,10 +3622,75 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 
     const to_read = to_write / 2;
 
-    const formatter = std.fmt.fmtSliceHexLower(source[0..to_read]);
-    const written = std.fmt.bufPrint(destination, "{}", .{formatter}) catch unreachable;
+    var remaining = source[0..to_read];
+    var remaining_dest = destination;
+    if (comptime Environment.enableSIMD) {
+        var remaining_end = remaining.ptr + remaining.len - (remaining.len % 16);
+        while (remaining.ptr != remaining_end) {
+            const input_chunk: @Vector(16, u8) = remaining[0..16].*;
+            const input_chunk_4: @Vector(16, u8) = input_chunk >> @as(@Vector(16, u8), @splat(@as(u8, 4)));
+            const input_chunk_15: @Vector(16, u8) = input_chunk & @as(@Vector(16, u8), @splat(@as(u8, 15)));
 
-    return written.len;
+            // This looks extremely redundant but it was the easiest way to make the compiler do the right thing
+            // the more convienient "0123456789abcdef" string produces worse codegen
+            // https://zig.godbolt.org/z/bfdracEeq
+            const lower_16 = [16]u8{
+                byte2hex(input_chunk_4[0]),
+                byte2hex(input_chunk_4[1]),
+                byte2hex(input_chunk_4[2]),
+                byte2hex(input_chunk_4[3]),
+                byte2hex(input_chunk_4[4]),
+                byte2hex(input_chunk_4[5]),
+                byte2hex(input_chunk_4[6]),
+                byte2hex(input_chunk_4[7]),
+                byte2hex(input_chunk_4[8]),
+                byte2hex(input_chunk_4[9]),
+                byte2hex(input_chunk_4[10]),
+                byte2hex(input_chunk_4[11]),
+                byte2hex(input_chunk_4[12]),
+                byte2hex(input_chunk_4[13]),
+                byte2hex(input_chunk_4[14]),
+                byte2hex(input_chunk_4[15]),
+            };
+            const upper_16 = [16]u8{
+                byte2hex(input_chunk_15[0]),
+                byte2hex(input_chunk_15[1]),
+                byte2hex(input_chunk_15[2]),
+                byte2hex(input_chunk_15[3]),
+                byte2hex(input_chunk_15[4]),
+                byte2hex(input_chunk_15[5]),
+                byte2hex(input_chunk_15[6]),
+                byte2hex(input_chunk_15[7]),
+                byte2hex(input_chunk_15[8]),
+                byte2hex(input_chunk_15[9]),
+                byte2hex(input_chunk_15[10]),
+                byte2hex(input_chunk_15[11]),
+                byte2hex(input_chunk_15[12]),
+                byte2hex(input_chunk_15[13]),
+                byte2hex(input_chunk_15[14]),
+                byte2hex(input_chunk_15[15]),
+            };
+
+            const output_chunk = std.simd.interlace(.{
+                lower_16,
+                upper_16,
+            });
+
+            remaining_dest[0..32].* = @bitCast(output_chunk);
+            remaining_dest = remaining_dest[32..];
+            remaining = remaining[16..];
+        }
+    }
+
+    for (remaining) |c| {
+        const charset = "0123456789abcdef";
+
+        const buf: [2]u8 = .{ charset[c >> 4], charset[c & 15] };
+        remaining_dest[0..2].* = buf;
+        remaining_dest = remaining_dest[2..];
+    }
+
+    return to_read * 2;
 }
 
 test "decodeHexToBytes" {

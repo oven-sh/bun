@@ -46,6 +46,8 @@
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BigIntObject.h"
+#include "ScriptExecutionContext.h"
+#include "Strong.h"
 
 #include "../modules/ObjectModule.h"
 
@@ -1763,7 +1765,16 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
 
     auto* structure = Bun::NapiExternal::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSValue value = JSValue(Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb));
-    JSC::EnsureStillAliveScope ensureStillAlive(value);
+
+    // With `fsevents`, their napi_create_external seems to get immediatly garbage
+    // collected for some unknown reason.
+    // See https://github.com/oven-sh/bun/issues/3978 and `fsevents.test.ts`
+    JSC::Strong<Unknown>* strong = new JSC::Strong<Unknown>(vm, value);
+    globalObject->scriptExecutionContext()->postTask([strong](auto& context) -> void {
+        strong->clear();
+        delete strong;
+    });
+
     *result = toNapi(value);
     return napi_ok;
 }

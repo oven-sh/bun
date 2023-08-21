@@ -1682,6 +1682,14 @@ pub const PollRef = struct {
         this.status = .active;
         vm.uws_event_loop.?.refConcurrently();
     }
+
+    pub fn refConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
+        this.refConcurrently(loop.virtual_machine);
+    }
+
+    pub fn unrefConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
+        this.unrefConcurrently(loop.virtual_machine);
+    }
 };
 
 const KQueueGenerationNumber = if (Environment.isMac and Environment.allow_assert) usize else u0;

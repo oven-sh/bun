@@ -3130,7 +3130,7 @@ pub const NodeFS = struct {
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
-    noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         var stack_buf: [64 * 1024]u8 = undefined;
         var buf_to_free: []u8 = &[_]u8{};
         var buf: []u8 = &stack_buf;
@@ -3154,7 +3154,7 @@ pub const NodeFS = struct {
         toplevel: while (remain > 0) {
             const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
                 .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                .err => |err| return Maybe(Return.CopyFile){ .err = if (src.len > 0) err.withPath(src) else err },
             };
             // 0 == EOF
             if (amt == 0) {
@@ -3167,7 +3167,7 @@ pub const NodeFS = struct {
             while (slice.len > 0) {
                 const written = switch (Syscall.write(dest_fd, slice)) {
                     .result => |result| result,
-                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
+                    .err => |err| return Maybe(Return.CopyFile){ .err = if (dest.len > 0) err.withPath(dest) else err },
                 };
                 if (written == 0) break :toplevel;
                 slice = slice[written..];
@@ -3176,7 +3176,7 @@ pub const NodeFS = struct {
             outer: while (true) {
                 const amt = switch (Syscall.read(src_fd, buf)) {
                     .result => |result| result,
-                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                    .err => |err| return Maybe(Return.CopyFile){ .err = if (src.len > 0) err.withPath(src) else err },
                 };
                 // we don't know the size
                 // so we just go forever until we get an EOF
@@ -3189,7 +3189,7 @@ pub const NodeFS = struct {
                 while (slice.len > 0) {
                     const written = switch (Syscall.write(dest_fd, slice)) {
                         .result => |result| result,
-                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
+                        .err => |err| return Maybe(Return.CopyFile){ .err = if (dest.len > 0) err.withPath(dest) else err },
                     };
                     slice = slice[written..];
                     if (written == 0) break :outer;

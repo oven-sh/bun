@@ -872,22 +872,22 @@ pub const Map = struct {
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
         var iterator = self.map.iterator();
 
-        _ = try writer.writeAll("{");
+        _ = try writer.write("{");
         while (iterator.next()) |entry| {
-            _ = try writer.writeAll("\n    ");
+            _ = try writer.write("\n    ");
 
             std.json.stringify(entry.key_ptr.*, writer.options, writer) catch unreachable;
 
-            _ = try writer.writeAll(": ");
+            _ = try writer.write(": ");
 
             std.json.stringify(entry.value_ptr.*, writer.options, writer) catch unreachable;
 
             if (iterator.index <= self.map.count() - 1) {
-                _ = try writer.writeAll(", ");
+                _ = try writer.write(", ");
             }
         }
 
-        try writer.writeAll("\n}");
+        try writer.write("\n}");
     }
 
     pub inline fn get(

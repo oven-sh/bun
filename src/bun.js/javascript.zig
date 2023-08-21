@@ -2552,7 +2552,7 @@ pub const VirtualMachine = struct {
                         } else if (kind.isObject() or kind.isArray()) {
                             var bun_str = bun.String.empty;
                             defer bun_str.deref();
-                            value.jsonStringify(this.global, &bun_str); //2
+                            value.jsonStringify(this.global, 2, &bun_str); //2
                             try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
                             add_extra_line = true;
                         }

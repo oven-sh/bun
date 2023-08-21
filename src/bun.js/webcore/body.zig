@@ -635,32 +635,6 @@ pub const Body = struct {
                 return Body.Value.fromReadableStream(readable, globalThis);
             }
 
-            // If we have a Response object, we can use its body
-            // This is not WebAPI compliant, but chrome does it
-            if (JSC.WebCore.Response.fromJS(value)) |response| {
-                const body = response.getBodyValue().*;
-                if (body == .Locked) {
-                    const locked = &body.Locked;
-                    if (locked.readable) |readable| {
-                        return Body.Value.fromReadableStream(readable, globalThis);
-                    }
-                    if (locked.promise) |promise| {
-                        return Body.Value{
-                            .Locked = .{
-                                .promise = promise,
-                                .global = globalThis,
-                            },
-                        };
-                    }
-                }
-                // same as return `response.body`
-                const new_readable = response.getBody(globalThis);
-                new_readable.ensureStillAlive();
-                if (JSC.WebCore.ReadableStream.fromJS(new_readable, globalThis)) |readable| {
-                    return Body.Value.fromReadableStream(readable, globalThis);
-                }
-            }
-
             return Body.Value{
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
                     if (err == error.InvalidArguments) {

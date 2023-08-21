@@ -212,6 +212,72 @@ describe("fetch() with streaming", () => {
     }
   });
 
+  it(`can handle transforms`, async () => {
+    let server: Server | null = null;
+    try {
+      const content = "Hello, world!\n".repeat(5);
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                const data = Buffer.from(content, "utf8");
+                const size = data.byteLength / 5;
+                controller.write(data.slice(0, size));
+                await controller.flush();
+                await Bun.sleep(100);
+                controller.write(data.slice(size, size * 2));
+                await controller.flush();
+                await Bun.sleep(100);
+                controller.write(data.slice(size * 2, size * 3));
+                await controller.flush();
+                await Bun.sleep(100);
+                controller.write(data.slice(size * 3, size * 5));
+                await controller.flush();
+
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain",
+              },
+            },
+          );
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      const res = await fetch(server_url);
+
+      const transform = new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(Buffer.from(chunk).toString("utf8").toUpperCase());
+        },
+      });
+
+      const reader = res.body?.pipeThrough(transform).getReader();
+
+      let result = "";
+      while (true) {
+        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        if (value) {
+          result += value;
+        }
+        if (done) {
+          break;
+        }
+      }
+
+      gcTick(false);
+      expect(result).toBe(content.toUpperCase());
+    } finally {
+      server?.stop();
+    }
+  });
   it(`can proxy fetch with Bun.serve`, async () => {
     let server: Server | null = null;
     let server_original: Server | null = null;

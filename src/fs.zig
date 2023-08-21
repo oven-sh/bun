@@ -1578,8 +1578,8 @@ pub const Path = struct {
         this.is_symlink = true;
     }
 
-    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(self.text, options, writer);
+    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        return try std.json.stringify(self.text, writer.options, writer);
     }
 
     pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {

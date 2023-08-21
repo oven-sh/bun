@@ -285,8 +285,8 @@ pub const Ref = packed struct(u64) {
         return self.tag == .invalid;
     }
 
-    pub fn jsonStringify(self: *const Ref, options: anytype, writer: anytype) !void {
-        return try std.json.stringify([2]u32{ self.sourceIndex(), self.innerIndex() }, options, writer);
+    pub fn jsonStringify(self: *const Ref, writer: anytype) !void {
+        return try std.json.stringify([2]u32{ self.sourceIndex(), self.innerIndex() }, writer.options, writer);
     }
 };
 

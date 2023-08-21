@@ -62,8 +62,8 @@ pub const ImportKind = enum(u8) {
         };
     }
 
-    pub fn jsonStringify(self: @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(@tagName(self), options, writer);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try std.json.stringify(@tagName(self), writer.options, writer);
     }
 
     pub fn isFromCSS(k: ImportKind) bool {

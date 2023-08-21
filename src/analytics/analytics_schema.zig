@@ -346,8 +346,8 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), o: anytype) !void {
+            return try std.json.stringify(@tagName(self), o.options, o);
         }
     };
 
@@ -361,8 +361,8 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), o: anytype) !void {
+            return try std.json.stringify(@tagName(self), o.options, o);
         }
     };
 
@@ -411,8 +411,8 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), o: anytype) !void {
+            return try std.json.stringify(@tagName(self), o.options, o);
         }
     };
 

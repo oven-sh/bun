@@ -69,7 +69,7 @@ pub const ThreadPool = struct {
 
         const allocator = self.allocator;
         const closure = try allocator.create(Closure);
-        errdefer allocator.free(closure);
+        errdefer allocator.destroy(closure);
         closure.* = Closure{
             .func_args = args,
             .allocator = allocator,

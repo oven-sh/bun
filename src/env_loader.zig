@@ -869,18 +869,18 @@ pub const Map = struct {
         try this.map.put(key, value);
     }
 
-    pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
+    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
         var iterator = self.map.iterator();
 
         _ = try writer.writeAll("{");
         while (iterator.next()) |entry| {
             _ = try writer.writeAll("\n    ");
 
-            std.json.stringify(entry.key_ptr.*, options, writer) catch unreachable;
+            std.json.stringify(entry.key_ptr.*, writer.options, writer) catch unreachable;
 
             _ = try writer.writeAll(": ");
 
-            std.json.stringify(entry.value_ptr.*, options, writer) catch unreachable;
+            std.json.stringify(entry.value_ptr.*, writer.options, writer) catch unreachable;
 
             if (iterator.index <= self.map.count() - 1) {
                 _ = try writer.writeAll(", ");

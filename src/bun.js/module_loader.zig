@@ -2456,8 +2456,6 @@ pub const HardcodedModule = enum {
             // It implements the same interface
             .{ "sys", .{ .path = "node:util" } },
             .{ "node:sys", .{ .path = "node:util" } },
-            // .{ "inspector/promises", .{ .path = "node:inspector" } },
-            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
 
             // These are returned in builtinModules, but probably not many packages use them
             // so we will just alias them.
@@ -2501,9 +2499,18 @@ pub const HardcodedModule = enum {
             .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
+
+            .{ "inspector/promises", .{ .path = "node:inspector" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
         };
 
-        const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs);
+        const node_alias_kvs = .{
+            .{ "inspector/promises", .{ .path = "node:inspector/promises" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector/promises" } },
+            .{ "node:test", .{ .path = "node:test" } },
+        };
+
+        const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);
         const BunAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
 
         pub fn has(name: []const u8, target: options.Target) bool {

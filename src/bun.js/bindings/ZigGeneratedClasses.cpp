@@ -560,7 +560,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsConstructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<JSBigIntStatsPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for BigIntStats"_s);
     return JSValue::encode(globalObject->JSBigIntStatsConstructor());
 }
 
@@ -797,7 +797,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -824,7 +825,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -851,7 +853,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -878,7 +881,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -905,7 +909,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -932,7 +937,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -959,7 +965,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);

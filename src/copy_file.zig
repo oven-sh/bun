@@ -67,9 +67,16 @@ pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
 const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
 
 var can_use_copy_file_range = std.atomic.Atomic(i32).init(0);
-fn canUseCopyFileRangeSyscall() bool {
+pub fn canUseCopyFileRangeSyscall() bool {
     const result = can_use_copy_file_range.load(.Monotonic);
     if (result == 0) {
+        // This flag mostly exists to make other code more easily testable.
+        if (bun.getenvZ("BUN_CONFIG_DISABLE_COPY_FILE_RANGE") != null) {
+            bun.Output.debug("copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{});
+            can_use_copy_file_range.store(-1, .Monotonic);
+            return false;
+        }
+
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
             bun.Output.debug("copy_file_range is supported", .{});

@@ -873,6 +873,7 @@ pub fn FDHashMap(comptime Type: type) type {
 
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
+pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
 pub const copyFile = CopyFile.copyFile;
 
 pub fn parseDouble(input: []const u8) !f64 {

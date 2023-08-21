@@ -2134,7 +2134,8 @@ pub const Blob = struct {
                 this.read_off += this.offset;
 
                 var remain = @as(usize, this.max_length);
-                if (remain == max_size or remain == 0) {
+                const unknown_size = remain == max_size or remain == 0;
+                if (unknown_size) {
                     // sometimes stat lies
                     // let's give it 4096 and see how it goes
                     remain = 4096;
@@ -2150,6 +2151,21 @@ pub const Blob = struct {
 
                 var has_unset_append = false;
 
+                // If they can't use copy_file_range, they probably also can't
+                // use sendfile() or splice()
+                if (!bun.canUseCopyFileRangeSyscall()) {
+                    switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                        .err => |err| {
+                            this.system_error = err.toSystemError();
+                            return AsyncIO.asError(err.errno);
+                        },
+                        .result => {
+                            _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                            return;
+                        },
+                    }
+                }
+
                 while (true) {
                     const written = switch (comptime use) {
                         .copy_file_range => linux.copy_file_range(src_fd, null, dest_fd, null, remain, 0),
@@ -2159,6 +2175,19 @@ pub const Blob = struct {
 
                     switch (linux.getErrno(written)) {
                         .SUCCESS => {},
+
+                        .NOSYS, .XDEV => {
+                            switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                                .err => |err| {
+                                    this.system_error = err.toSystemError();
+                                    return AsyncIO.asError(err.errno);
+                                },
+                                .result => {
+                                    _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                    return;
+                                },
+                            }
+                        },
 
                         .INVAL => {
                             if (comptime clear_append_if_invalid) {
@@ -2172,6 +2201,23 @@ pub const Blob = struct {
                                         _ = linux.fcntl(dest_fd, linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
                                     }
+                                }
+                            }
+
+                            // If the Linux machine doesn't support
+                            // copy_file_range or the file descrpitor is
+                            // incompatible with the chosen syscall, fall back
+                            // to a read/write loop
+                            if (total_written == 0) {
+                                switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
+                                    .err => |err| {
+                                        this.system_error = err.toSystemError();
+                                        return AsyncIO.asError(err.errno);
+                                    },
+                                    .result => {
+                                        _ = linux.ftruncate(dest_fd, @as(std.os.off_t, @intCast(total_written)));
+                                        return;
+                                    },
                                 }
                             }
 

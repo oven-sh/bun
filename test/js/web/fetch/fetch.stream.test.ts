@@ -7,6 +7,7 @@ import { gcTick } from "harness";
 const fixtures = {
   "fixture": readFileSync(join(import.meta.dir, "fixture.html")),
   "fixture.png": readFileSync(join(import.meta.dir, "fixture.png")),
+  "fixture.png.gz": readFileSync(join(import.meta.dir, "fixture.png.gz")),
 };
 
 const invalid = Buffer.from([0xc0]);
@@ -278,6 +279,47 @@ describe("fetch() with streaming", () => {
       server?.stop();
     }
   });
+
+  it(`can handle gz images`, async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const data = fixtures["fixture.png.gz"];
+          return new Response(data, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain",
+              "Content-Encoding": "gzip",
+            },
+          });
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      const res = await fetch(server_url);
+
+      const reader = res.body?.getReader();
+
+      let buffer = Buffer.alloc(0);
+      while (true) {
+        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        if (value) {
+          buffer = Buffer.concat([buffer, value]);
+        }
+        if (done) {
+          break;
+        }
+      }
+
+      gcTick(false);
+      expect(buffer).toEqual(fixtures["fixture.png"]);
+    } finally {
+      server?.stop();
+    }
+  });
+
   it(`can proxy fetch with Bun.serve`, async () => {
     let server: Server | null = null;
     let server_original: Server | null = null;

@@ -199,6 +199,11 @@ interface BunLazyModules {
     threadId: number,
     _receiveMessageOnPort: (port: MessagePort) => any,
   ];
+  "tty": {
+    ttySetMode: (fd: number, mode: number) => number;
+    isatty: (fd: number) => boolean;
+    getWindowSize: (fd: number, out: number[2]) => boolean;
+  };
 
   // ReadableStream related
   [1]: any;

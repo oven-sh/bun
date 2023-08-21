@@ -25,6 +25,7 @@
     "pg-connection-string": "2.6.1",
     "postgres": "3.3.5",
     "prisma": "5.1.1",
+    "@resvg/resvg-js": "2.4.1",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
     "supertest": "6.3.3",

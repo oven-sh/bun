@@ -467,6 +467,13 @@ pub const Target = enum {
         };
     }
 
+    pub inline fn isNode(this: Target) bool {
+        return switch (this) {
+            .node => true,
+            else => false,
+        };
+    }
+
     pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
             .browser => true,
@@ -1410,7 +1417,7 @@ pub const BundleOptions = struct {
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
-    polyfill_node_globals: bool = true,
+    polyfill_node_globals: bool = false,
     transform_only: bool = false,
 
     rewrite_jest_for_tests: bool = false,
@@ -1837,7 +1844,7 @@ pub const BundleOptions = struct {
             opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
         }
 
-        opts.polyfill_node_globals = opts.target != .node;
+        opts.polyfill_node_globals = opts.target == .browser;
 
         Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
         Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;

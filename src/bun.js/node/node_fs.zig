@@ -3129,6 +3129,77 @@ pub const NodeFS = struct {
         return .{ .err = Syscall.Error.todo };
     }
 
+    // since we use a 64 KB stack buffer, we should not let this function get inlined
+    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+        var stack_buf: [64 * 1024]u8 = undefined;
+        var buf_to_free: []u8 = &[_]u8{};
+        var buf: []u8 = &stack_buf;
+
+        maybe_allocate_large_temp_buf: {
+            if (stat_size > stack_buf.len * 16) {
+                // Don't allocate more than 8 MB at a time
+                const clamped_size: usize = @min(stat_size, 8 * 1024 * 1024);
+
+                var buf_ = bun.default_allocator.alloc(u8, clamped_size) catch break :maybe_allocate_large_temp_buf;
+                buf = buf_;
+                buf_to_free = buf_;
+            }
+        }
+
+        defer {
+            if (buf_to_free.len > 0) bun.default_allocator.free(buf_to_free);
+        }
+
+        var remain = @as(u64, @intCast(@max(stat_size, 0)));
+        toplevel: while (remain > 0) {
+            const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = if (src.len > 0) err.withPath(src) else err },
+            };
+            // 0 == EOF
+            if (amt == 0) {
+                break :toplevel;
+            }
+            wrote.* += amt;
+            remain -|= amt;
+
+            var slice = buf[0..amt];
+            while (slice.len > 0) {
+                const written = switch (Syscall.write(dest_fd, slice)) {
+                    .result => |result| result,
+                    .err => |err| return Maybe(Return.CopyFile){ .err = if (dest.len > 0) err.withPath(dest) else err },
+                };
+                if (written == 0) break :toplevel;
+                slice = slice[written..];
+            }
+        } else {
+            outer: while (true) {
+                const amt = switch (Syscall.read(src_fd, buf)) {
+                    .result => |result| result,
+                    .err => |err| return Maybe(Return.CopyFile){ .err = if (src.len > 0) err.withPath(src) else err },
+                };
+                // we don't know the size
+                // so we just go forever until we get an EOF
+                if (amt == 0) {
+                    break;
+                }
+                wrote.* += amt;
+
+                var slice = buf[0..amt];
+                while (slice.len > 0) {
+                    const written = switch (Syscall.write(dest_fd, slice)) {
+                        .result => |result| result,
+                        .err => |err| return Maybe(Return.CopyFile){ .err = if (dest.len > 0) err.withPath(dest) else err },
+                    };
+                    slice = slice[written..];
+                    if (written == 0) break :outer;
+                }
+            }
+        }
+
+        return Maybe(Return.CopyFile).success;
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
@@ -3191,65 +3262,11 @@ pub const NodeFS = struct {
                             };
                             defer {
                                 _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                                _ = C.fchmod(dest_fd, stat_.mode);
                                 _ = Syscall.close(dest_fd);
                             }
 
-                            // stack buffer of 16 KB
-                            // this code path isn't hit unless the buffer is < 128 KB
-                            // 16 writes is ok
-                            // 16 KB is high end of what is okay to use for stack space
-                            // good thing we ask for absurdly large stack sizes
-                            var buf: [16384]u8 = undefined;
-                            var remain = @as(u64, @intCast(@max(stat_.size, 0)));
-                            toplevel: while (remain > 0) {
-                                const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
-                                    .result => |result| result,
-                                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
-                                };
-                                // 0 == EOF
-                                if (amt == 0) {
-                                    break :toplevel;
-                                }
-                                wrote += amt;
-                                remain -|= amt;
-
-                                var slice = buf[0..amt];
-                                while (slice.len > 0) {
-                                    const written = switch (Syscall.write(dest_fd, slice)) {
-                                        .result => |result| result,
-                                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
-                                    };
-                                    if (written == 0) break :toplevel;
-                                    slice = slice[written..];
-                                }
-                            } else {
-                                outer: while (true) {
-                                    const amt = switch (Syscall.read(src_fd, &buf)) {
-                                        .result => |result| result,
-                                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
-                                    };
-                                    // we don't know the size
-                                    // so we just go forever until we get an EOF
-                                    if (amt == 0) {
-                                        break;
-                                    }
-                                    wrote += amt;
-
-                                    var slice = buf[0..amt];
-                                    while (slice.len > 0) {
-                                        const written = switch (Syscall.write(dest_fd, slice)) {
-                                            .result => |result| result,
-                                            .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
-                                        };
-                                        slice = slice[written..];
-                                        if (written == 0) break :outer;
-                                    }
-                                }
-                            }
-                            // can't really do anything with this error
-                            _ = C.fchmod(dest_fd, stat_.mode);
-
-                            return ret.success;
+                            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
                         }
                     }
 
@@ -3298,15 +3315,20 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
-                    var size = @as(usize, @intCast(@max(stat_.size, 0)));
+                    var size: usize = @intCast(@max(stat_.size, 0));
 
                     defer {
                         _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = linux.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
                     var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
                     var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
+
+                    if (!bun.canUseCopyFileRangeSyscall()) {
+                        return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                    }
 
                     if (size == 0) {
                         // copy until EOF
@@ -3315,10 +3337,10 @@ pub const NodeFS = struct {
                             // Linux Kernel 5.3 or later
                             const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                // TODO: handle EXDEV
-                                // seems like zfs does not support copy_file_range across devices
-                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
-                                return err;
+                                return switch (err.getErrno()) {
+                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                                    else => return err,
+                                };
                             }
                             // wrote zero bytes means EOF
                             if (written == 0) break;
@@ -3329,10 +3351,10 @@ pub const NodeFS = struct {
                             // Linux Kernel 5.3 or later
                             const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
                             if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                // TODO: handle EXDEV
-                                // seems like zfs does not support copy_file_range across devices
-                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
-                                return err;
+                                return switch (err.getErrno()) {
+                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                                    else => return err,
+                                };
                             }
                             // wrote zero bytes means EOF
                             if (written == 0) break;
@@ -3340,7 +3362,7 @@ pub const NodeFS = struct {
                             size -|= written;
                         }
                     }
-                    _ = linux.fchmod(dest_fd, stat_.mode);
+
                     return ret.success;
                 }
             },
@@ -3426,8 +3448,6 @@ pub const NodeFS = struct {
         return Maybe(Return.Fdatasync).todo;
     }
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
-        if (args.big_int) return Maybe(Return.Fstat).todo;
-
         switch (comptime flavor) {
             .sync => {
                 return switch (Syscall.fstat(args.fd)) {
@@ -3531,8 +3551,6 @@ pub const NodeFS = struct {
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
         _ = flavor;
-        if (args.big_int) return Maybe(Return.Lstat).todo;
-
         return switch (Syscall.lstat(
             args.path.sliceZ(
                 &this.sync_error_buf,
@@ -4713,7 +4731,6 @@ pub const NodeFS = struct {
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
         _ = flavor;
-        if (args.big_int) return Maybe(Return.Stat).todo;
 
         return @as(Maybe(Return.Stat), switch (Syscall.stat(
             args.path.sliceZ(

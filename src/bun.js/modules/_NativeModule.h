@@ -31,7 +31,6 @@
     macro("node:module"_s, NodeModule) \
     macro("node:process"_s, NodeProcess) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
-    macro("node:tty"_s, NodeTTY) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
 

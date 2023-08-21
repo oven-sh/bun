@@ -86,6 +86,8 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalOb
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<URLSearchParams>&&);
 inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<URLSearchParams>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis);
+
 template<> struct JSDOMWrapperConverterTraits<URLSearchParams> {
     using WrapperClass = JSURLSearchParams;
     using ToWrappedReturnType = URLSearchParams*;

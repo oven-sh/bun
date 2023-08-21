@@ -2786,15 +2786,8 @@ pub const Parser = struct {
         if (comptime Environment.isWasm) {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            // if (self.options.features.is_macro_runtime) {
-            //     return try self._parse(TSParserMacro);
-            // }
-
             return try self._parse(TSXParser);
         }
-
-        if (self.options.ts and self.options.features.is_macro_runtime) return try self._parse(TSParserMacro);
-        if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
 
         if (self.options.ts and self.options.jsx.parse) {
             return try self._parse(TSXParser);
@@ -2955,6 +2948,20 @@ pub const Parser = struct {
         defer {
             after.deinit();
             before.deinit();
+        }
+
+        // --inspect-brk
+        if (p.options.features.set_breakpoint_on_first_line) {
+            var debugger_stmts = try p.allocator.alloc(Stmt, 1);
+            debugger_stmts[0] = Stmt{
+                .data = .{ .s_debugger = .{} },
+                .loc = logger.Loc.Empty,
+            };
+            before.append(
+                js_ast.Part{
+                    .stmts = debugger_stmts,
+                },
+            ) catch unreachable;
         }
 
         if (p.options.bundle) {
@@ -3865,7 +3872,6 @@ pub const ImportOrRequireScanResults = struct {
 const JSXTransformType = enum {
     none,
     react,
-    macro,
 };
 
 const ParserFeatures = struct {
@@ -4177,7 +4183,7 @@ fn NewParser_(
 
     // P is for Parser!
     return struct {
-        const js_parser_jsx = if (FeatureFlags.force_macro) JSXTransformType.macro else js_parser_features.jsx;
+        const js_parser_jsx = js_parser_features.jsx;
         const is_typescript_enabled = js_parser_features.typescript;
         const is_jsx_enabled = js_parser_jsx != .none;
         const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
@@ -4190,7 +4196,7 @@ fn NewParser_(
         pub const parser_features: ParserFeatures = js_parser_features;
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
-        const allow_macros = FeatureFlags.is_macro_enabled and jsx_transform_type != .macro;
+        const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -6019,17 +6025,6 @@ fn NewParser_(
                     }
                 },
 
-                .macro => {
-                    if (!p.options.bundle) {
-                        p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
-                        BunJSX.bun_jsx_identifier = E.Identifier{
-                            .ref = p.bun_jsx_ref,
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                        };
-                        p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
-                    }
-                },
                 else => {},
             }
         }
@@ -14447,11 +14442,6 @@ fn NewParser_(
 
                 .e_jsx_element => |e_| {
                     switch (comptime jsx_transform_type) {
-                        .macro => {
-                            const WriterType = js_ast.Macro.JSNode.NewJSXWriter(P);
-                            var writer = WriterType.initWriter(p, &BunJSX.bun_jsx_identifier);
-                            return writer.writeFunctionCall(e_.*);
-                        },
                         .react => {
                             const tag: Expr = tagger: {
                                 if (e_.tag) |_tag| {
@@ -14793,7 +14783,7 @@ fn NewParser_(
                         e_.tag = p.visitExpr(tag);
 
                         if (comptime allow_macros) {
-                            if (e_.tag.?.data == .e_import_identifier) {
+                            if (e_.tag.?.data == .e_import_identifier and !p.options.features.is_macro_runtime) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
 
                                 if (p.macro.refs.get(ref)) |import_record_id| {
@@ -14901,89 +14891,6 @@ fn NewParser_(
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
                     // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                     const was_anonymous_named_expr = e_.right.isAnonymousNamed();
-
-                    if (comptime jsx_transform_type == .macro) {
-                        if (e_.op == Op.Code.bin_instanceof and (e_.right.data == .e_jsx_element or e_.left.data == .e_jsx_element)) {
-                            // foo instanceof <string />
-                            // ->
-                            // bunJSX.isNodeType(foo, 13)
-
-                            // <string /> instanceof foo
-                            // ->
-                            // bunJSX.isNodeType(foo, 13)
-                            var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
-                            call_args[0] = e_.left;
-                            call_args[1] = e_.right;
-
-                            if (e_.right.data == .e_jsx_element) {
-                                const jsx_element = e_.right.data.e_jsx_element;
-                                if (jsx_element.tag) |tag| {
-                                    if (tag.data == .e_string) {
-                                        const tag_string = tag.data.e_string.slice(p.allocator);
-                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
-                                            call_args[1] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
-                                        } else {
-                                            p.log.addRangeErrorFmt(
-                                                p.source,
-                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
-                                                p.allocator,
-                                                "Invalid JSX tag: \"{s}\"",
-                                                .{tag_string},
-                                            ) catch unreachable;
-                                            return expr;
-                                        }
-                                    }
-                                } else {
-                                    call_args[1] = p.visitExpr(call_args[1]);
-                                }
-                            } else {
-                                call_args[1] = p.visitExpr(call_args[1]);
-                            }
-
-                            if (e_.left.data == .e_jsx_element) {
-                                const jsx_element = e_.left.data.e_jsx_element;
-                                if (jsx_element.tag) |tag| {
-                                    if (tag.data == .e_string) {
-                                        const tag_string = tag.data.e_string.slice(p.allocator);
-                                        if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
-                                            call_args[0] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
-                                        } else {
-                                            p.log.addRangeErrorFmt(
-                                                p.source,
-                                                js_lexer.rangeOfIdentifier(p.source, tag.loc),
-                                                p.allocator,
-                                                "Invalid JSX tag: \"{s}\"",
-                                                .{tag_string},
-                                            ) catch unreachable;
-                                            return expr;
-                                        }
-                                    }
-                                } else {
-                                    call_args[0] = p.visitExpr(call_args[0]);
-                                }
-                            } else {
-                                call_args[0] = p.visitExpr(call_args[0]);
-                            }
-
-                            return p.newExpr(
-                                E.Call{
-                                    .target = p.newExpr(
-                                        E.Dot{
-                                            .name = "isNodeType",
-                                            .name_loc = expr.loc,
-                                            .target = p.newExpr(BunJSX.bun_jsx_identifier, expr.loc),
-                                            .can_be_removed_if_unused = true,
-                                            .call_can_be_unwrapped_if_unused = true,
-                                        },
-                                        expr.loc,
-                                    ),
-                                    .args = ExprNodeList.init(call_args),
-                                    .can_be_unwrapped_if_unused = true,
-                                },
-                                expr.loc,
-                            );
-                        }
-                    }
 
                     e_.left = p.visitExprInOut(e_.left, ExprIn{
                         .assign_target = e_.op.binaryAssignTarget(),
@@ -15629,9 +15536,11 @@ fn NewParser_(
                         }
 
                         if (comptime allow_macros) {
-                            if (p.macro_call_count > 0 and e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
-                                if (e_.target.get(e_.name)) |obj| {
-                                    return obj;
+                            if (!p.options.features.is_macro_runtime) {
+                                if (p.macro_call_count > 0 and e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
+                                    if (e_.target.get(e_.name)) |obj| {
+                                        return obj;
+                                    }
                                 }
                             }
                         }
@@ -15861,8 +15770,7 @@ fn NewParser_(
                         else => {},
                     }
 
-                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled and
-                        jsx_transform_type != .macro)
+                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled)
                         e_.target.data == .e_import_identifier and p.macro.refs.contains(e_.target.data.e_import_identifier.ref)
                     else
                         false;
@@ -15982,7 +15890,7 @@ fn NewParser_(
                     }
 
                     if (comptime allow_macros) {
-                        if (is_macro_ref) {
+                        if (is_macro_ref and !p.options.features.is_macro_runtime) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
@@ -21438,16 +21346,6 @@ else
     NewParser(.{ .jsx = .react });
 pub const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
-const JSParserMacro = if (bun.fast_debug_build_mode)
-    TSParserMacro
-else
-    NewParser(.{
-        .jsx = .macro,
-    });
-const TSParserMacro = NewParser(.{
-    .jsx = .macro,
-    .typescript = true,
-});
 const JavaScriptImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .scan_only = true });
 const JSXImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .jsx = .react, .scan_only = true });
 const TSXImportScanner = NewParser(.{ .jsx = .react, .typescript = true, .scan_only = true });

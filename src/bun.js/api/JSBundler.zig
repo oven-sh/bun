@@ -23,7 +23,7 @@ const JSError = Base.JSError;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
 const String = bun.String;
@@ -523,17 +523,11 @@ pub const JSBundler = struct {
     }
 
     pub fn buildFn(
-        // this
-        _: void,
         globalThis: *JSC.JSGlobalObject,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        arguments_: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return build(globalThis, @as([]const JSC.JSValue, @ptrCast(arguments_))).asObjectRef();
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1);
+        return build(globalThis, arguments.slice());
     }
 
     pub const Resolve = struct {

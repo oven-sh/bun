@@ -143,4 +143,7 @@
     _napi_unref_threadsafe_function;
     _napi_unwrap;
     _napi_wrap;
+    _node_api_create_syntax_error;
+    _node_api_symbol_for;
+    _node_api_throw_syntax_error;
 };

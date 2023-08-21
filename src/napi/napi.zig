@@ -707,20 +707,8 @@ pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
     return .ok;
 }
 
-pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
-    log("napi_create_external_arraybuffer", .{});
-    var external = JSC.ExternalBuffer.create(
-        finalize_hint,
-        @as([*]u8, @ptrCast(external_data.?))[0..byte_length],
-        env,
-        finalize_cb,
-        env.bunVM().allocator,
-    ) catch {
-        return genericFailure();
-    };
-    result.* = external.toArrayBuffer(env);
-    return .ok;
-}
+pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
+
 pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     log("napi_get_arraybuffer_info", .{});
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
@@ -1072,15 +1060,7 @@ pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaqu
     result.* = buffer;
     return .ok;
 }
-pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
-    log("napi_create_external_buffer: {d}", .{length});
-    var buf = JSC.ExternalBuffer.create(finalize_hint, @as([*]u8, @ptrCast(data.?))[0..length], env, finalize_cb, bun.default_allocator) catch {
-        return genericFailure();
-    };
-
-    result.* = buf.toJS(env);
-    return .ok;
-}
+pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
     log("napi_create_buffer_copy: {d}", .{length});
     var buffer = JSC.JSValue.createBufferFromLength(env, length);
@@ -1113,6 +1093,11 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
     length.* = array_buf.byte_len;
     return .ok;
 }
+
+extern fn node_api_create_syntax_error(napi_env, napi_value, napi_value, *napi_value) napi_status;
+extern fn node_api_symbol_for(napi_env, [*]const c_char, usize, *napi_value) napi_status;
+extern fn node_api_throw_syntax_error(napi_env, [*]const c_char, [*]const c_char) napi_status;
+
 pub export fn napi_create_async_work(
     env: napi_env,
     _: napi_value,
@@ -1630,6 +1615,8 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_unref_threadsafe_function);
     std.mem.doNotOptimizeAway(&napi_unwrap);
     std.mem.doNotOptimizeAway(&napi_wrap);
-
+    std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
+    std.mem.doNotOptimizeAway(&node_api_symbol_for);
+    std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

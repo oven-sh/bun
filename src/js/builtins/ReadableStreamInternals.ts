@@ -1504,7 +1504,12 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
     function callClose(controller) {
       try {
-        controller.close();
+        if (
+          $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") ===
+          $streamReadable
+        ) {
+          controller.close();
+        }
       } catch (e) {
         globalThis.reportError(e);
       }

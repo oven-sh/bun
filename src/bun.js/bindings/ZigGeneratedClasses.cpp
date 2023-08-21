@@ -28,6 +28,1260 @@ namespace WebCore {
 using namespace JSC;
 using namespace Zig;
 
+class JSAttributeIteratorPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSAttributeIteratorPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSAttributeIteratorPrototype* ptr = new (NotNull, JSC::allocateCell<JSAttributeIteratorPrototype>(vm)) JSAttributeIteratorPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSAttributeIteratorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* AttributeIteratorClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsAttributeIteratorConstructor);
+
+extern "C" void AttributeIteratorClass__finalize(void*);
+
+extern "C" EncodedJSValue AttributeIteratorPrototype__getThis(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(AttributeIteratorPrototype__iteratorCallback);
+
+extern "C" EncodedJSValue AttributeIteratorPrototype__next(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(AttributeIteratorPrototype__nextCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAttributeIteratorPrototype, JSAttributeIteratorPrototype::Base);
+
+static const HashTableValue JSAttributeIteratorPrototypeTableValues[] = {
+    { "next"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, AttributeIteratorPrototype__nextCallback, 0 } }
+};
+
+const ClassInfo JSAttributeIteratorPrototype::s_info = { "AttributeIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAttributeIteratorPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsAttributeIteratorConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSAttributeIteratorPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for AttributeIterator"_s);
+    return JSValue::encode(globalObject->JSAttributeIteratorConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(AttributeIteratorPrototype__iteratorCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSAttributeIterator* thisObject = jsDynamicCast<JSAttributeIterator*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof AttributeIterator"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return AttributeIteratorPrototype__getThis(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(AttributeIteratorPrototype__nextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSAttributeIterator* thisObject = jsDynamicCast<JSAttributeIterator*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof AttributeIterator"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return AttributeIteratorPrototype__next(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSAttributeIteratorPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSAttributeIterator::info(), JSAttributeIteratorPrototypeTableValues, *this);
+    this->putDirect(vm, vm.propertyNames->iteratorSymbol, JSFunction::create(vm, globalObject, 1, String("iterator"_s), AttributeIteratorPrototype__iteratorCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSAttributeIterator::~JSAttributeIterator()
+{
+    if (m_ctx) {
+        AttributeIteratorClass__finalize(m_ctx);
+    }
+}
+void JSAttributeIterator::destroy(JSCell* cell)
+{
+    static_cast<JSAttributeIterator*>(cell)->JSAttributeIterator::~JSAttributeIterator();
+}
+
+const ClassInfo JSAttributeIterator::s_info = { "AttributeIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAttributeIterator) };
+
+void JSAttributeIterator::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSAttributeIterator* JSAttributeIterator::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSAttributeIterator* ptr = new (NotNull, JSC::allocateCell<JSAttributeIterator>(vm)) JSAttributeIterator(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* AttributeIterator__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSAttributeIterator* object = JSC::jsDynamicCast<JSAttributeIterator*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool AttributeIterator__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSAttributeIterator* object = JSC::jsDynamicCast<JSAttributeIterator*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t AttributeIterator__ptrOffset = JSAttributeIterator::offsetOfWrapped();
+
+void JSAttributeIterator::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSAttributeIterator*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSAttributeIterator::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSAttributeIteratorPrototype::create(vm, globalObject, JSAttributeIteratorPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue AttributeIterator__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSAttributeIteratorStructure();
+    JSAttributeIterator* instance = JSAttributeIterator::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+class JSBigIntStatsPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSBigIntStatsPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSBigIntStatsPrototype* ptr = new (NotNull, JSC::allocateCell<JSBigIntStatsPrototype>(vm)) JSBigIntStatsPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSBigIntStatsPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSBigIntStatsConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSBigIntStatsConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBigIntStatsPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBigIntStatsConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBigIntStatsConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBigIntStatsConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBigIntStatsConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBigIntStatsConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSBigIntStatsConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype);
+};
+
+extern "C" void* BigIntStatsClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsBigIntStatsConstructor);
+
+extern "C" void BigIntStatsClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__atimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__atimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__birthtimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__blksize(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__blksizeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__blocks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__blocksGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ctimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__dev(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__devGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__gid(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__gidGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__ino(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__inoGetterWrap);
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isBlockDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isBlockDevice(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isCharacterDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isCharacterDevice(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isDirectory_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isDirectory_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isDirectory(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isDirectory_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isFIFO_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isFIFO_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isFIFO(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isFIFO_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isFile_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isFile_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isFile(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isFile_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isSocket_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isSocket_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isSocket(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isSocket_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__isSymbolicLink_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForBigIntStatsPrototype__isSymbolicLink(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper,
+    JSBigIntStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(BigIntStatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks(reinterpret_cast<JSBigIntStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__modeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtimeMs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeMsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__mtimeNs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeNsGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__nlink(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__nlinkGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__rdev(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__rdevGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__size(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__sizeGetterWrap);
+
+extern "C" JSC::EncodedJSValue BigIntStatsPrototype__uid(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__uidGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, JSBigIntStatsPrototype::Base);
+
+static const HashTableValue JSBigIntStatsPrototypeTableValues[] = {
+    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeGetterWrap, 0 } },
+    { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeMsGetterWrap, 0 } },
+    { "atimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeNsGetterWrap, 0 } },
+    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeGetterWrap, 0 } },
+    { "birthtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeMsGetterWrap, 0 } },
+    { "birthtimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__birthtimeNsGetterWrap, 0 } },
+    { "blksize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__blksizeGetterWrap, 0 } },
+    { "blocks"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__blocksGetterWrap, 0 } },
+    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeGetterWrap, 0 } },
+    { "ctimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeMsGetterWrap, 0 } },
+    { "ctimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__ctimeNsGetterWrap, 0 } },
+    { "dev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__devGetterWrap, 0 } },
+    { "gid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__gidGetterWrap, 0 } },
+    { "ino"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__inoGetterWrap, 0 } },
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isBlockDeviceCallback, &DOMJITSignatureForBigIntStatsPrototype__isBlockDevice } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isCharacterDeviceCallback, &DOMJITSignatureForBigIntStatsPrototype__isCharacterDevice } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isDirectoryCallback, &DOMJITSignatureForBigIntStatsPrototype__isDirectory } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isFIFOCallback, &DOMJITSignatureForBigIntStatsPrototype__isFIFO } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isFileCallback, &DOMJITSignatureForBigIntStatsPrototype__isFile } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isSocketCallback, &DOMJITSignatureForBigIntStatsPrototype__isSocket } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, BigIntStatsPrototype__isSymbolicLinkCallback, &DOMJITSignatureForBigIntStatsPrototype__isSymbolicLink } },
+    { "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__modeGetterWrap, 0 } },
+    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeGetterWrap, 0 } },
+    { "mtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeMsGetterWrap, 0 } },
+    { "mtimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__mtimeNsGetterWrap, 0 } },
+    { "nlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__nlinkGetterWrap, 0 } },
+    { "rdev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__rdevGetterWrap, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__sizeGetterWrap, 0 } },
+    { "uid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__uidGetterWrap, 0 } }
+};
+
+const ClassInfo JSBigIntStatsPrototype::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSBigIntStatsPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSBigIntStatsConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_atime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__atime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_atime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__atimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_atime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__atimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_atime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__atimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__atimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__atimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_birthtime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__birthtime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_birthtime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__birthtimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_birthtime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__birthtimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_birthtime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__birthtimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__birthtimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__birthtimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__blksizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__blksize(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__blocksGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__blocks(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_ctime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__ctime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_ctime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__ctimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_ctime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__ctimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_ctime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ctimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__ctimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ctimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__devGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__dev(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__gidGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__gid(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__inoGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__ino(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isBlockDevice_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isCharacterDevice_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isDirectory_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isFIFO_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isFile_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isSocket_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigIntStats* thisObject = jsDynamicCast<JSBigIntStats*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return BigIntStatsPrototype__isSymbolicLink_(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__modeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mode(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_mtime.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        BigIntStatsPrototype__mtime(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_mtime.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void BigIntStatsPrototype__mtimeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    thisObject->m_mtime.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue BigIntStatsPrototype__mtimeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_mtime.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeMsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mtimeMs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__mtimeNsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__mtimeNs(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__nlinkGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__nlink(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__rdevGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__rdev(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__sizeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__size(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(BigIntStatsPrototype__uidGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = BigIntStatsPrototype__uid(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSBigIntStatsPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSBigIntStats::info(), JSBigIntStatsPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSBigIntStatsConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "BigIntStats"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSBigIntStatsConstructor::JSBigIntStatsConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSBigIntStatsConstructor* JSBigIntStatsConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBigIntStatsPrototype* prototype)
+{
+    JSBigIntStatsConstructor* ptr = new (NotNull, JSC::allocateCell<JSBigIntStatsConstructor>(vm)) JSBigIntStatsConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBigIntStatsConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSBigIntStatsConstructor();
+    Structure* structure = globalObject->JSBigIntStatsStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSBigIntStatsStructure());
+    }
+
+    void* ptr = BigIntStatsClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSBigIntStats* instance = JSBigIntStats::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSBigIntStatsConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBigIntStatsPrototype* prototype)
+{
+}
+
+const ClassInfo JSBigIntStatsConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStatsConstructor) };
+
+extern "C" EncodedJSValue BigIntStats__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSBigIntStatsConstructor());
+}
+
+JSBigIntStats::~JSBigIntStats()
+{
+    if (m_ctx) {
+        BigIntStatsClass__finalize(m_ctx);
+    }
+}
+void JSBigIntStats::destroy(JSCell* cell)
+{
+    static_cast<JSBigIntStats*>(cell)->JSBigIntStats::~JSBigIntStats();
+}
+
+const ClassInfo JSBigIntStats::s_info = { "BigIntStats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBigIntStats) };
+
+void JSBigIntStats::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSBigIntStats* JSBigIntStats::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSBigIntStats* ptr = new (NotNull, JSC::allocateCell<JSBigIntStats>(vm)) JSBigIntStats(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* BigIntStats__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSBigIntStats* object = JSC::jsDynamicCast<JSBigIntStats*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool BigIntStats__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSBigIntStats* object = JSC::jsDynamicCast<JSBigIntStats*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t BigIntStats__ptrOffset = JSBigIntStats::offsetOfWrapped();
+
+void JSBigIntStats::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSBigIntStats*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSBigIntStats::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSBigIntStatsConstructor::create(vm, globalObject, WebCore::JSBigIntStatsConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSBigIntStatsPrototype*>(prototype));
+}
+
+JSObject* JSBigIntStats::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSBigIntStatsPrototype::create(vm, globalObject, JSBigIntStatsPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue BigIntStats__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSBigIntStatsStructure();
+    JSBigIntStats* instance = JSBigIntStats::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSBigIntStats::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_atime);
+    visitor.append(thisObject->m_birthtime);
+    visitor.append(thisObject->m_ctime);
+    visitor.append(thisObject->m_mtime);
+}
+
+DEFINE_VISIT_CHILDREN(JSBigIntStats);
+
+template<typename Visitor>
+void JSBigIntStats::visitAdditionalChildren(Visitor& visitor)
+{
+    JSBigIntStats* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_atime);
+    visitor.append(thisObject->m_birthtime);
+    visitor.append(thisObject->m_ctime);
+    visitor.append(thisObject->m_mtime);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSBigIntStats);
+
+template<typename Visitor>
+void JSBigIntStats::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBigIntStats* thisObject = jsCast<JSBigIntStats*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBigIntStats);
 class JSBlobPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -168,7 +1422,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBlobConstructor, (JSGlobalObject * lexicalGlobalObjec
     auto* prototype = jsDynamicCast<JSBlobPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Blob"_s);
     return JSValue::encode(globalObject->JSBlobConstructor());
 }
 
@@ -180,7 +1434,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__arrayBufferCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -207,7 +1462,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__existsCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -234,7 +1490,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__formDataCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -261,7 +1518,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__jsonCallback, (JSGlobalObject * lexicalG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -343,7 +1601,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__sliceCallback, (JSGlobalObject * lexical
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -370,7 +1629,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__streamCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -397,7 +1657,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__textCallback, (JSGlobalObject * lexicalG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -436,7 +1697,8 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__writerCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Blob"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -734,7 +1996,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__arrayBufferCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildArtifact"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -792,7 +2055,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__jsonCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildArtifact"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -924,7 +2188,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__sliceCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildArtifact"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -982,7 +2247,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__streamCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildArtifact"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1009,7 +2275,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildArtifactPrototype__textCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildArtifact"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1296,7 +2563,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBuildMessageConstructor, (JSGlobalObject * lexicalGlo
     auto* prototype = jsDynamicCast<JSBuildMessagePrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for BuildMessage"_s);
     return JSValue::encode(globalObject->JSBuildMessageConstructor());
 }
 
@@ -1308,7 +2575,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildMessagePrototype__toPrimitiveCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1428,7 +2696,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildMessagePrototype__toJSONCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1455,7 +2724,8 @@ JSC_DEFINE_HOST_FUNCTION(BuildMessagePrototype__toStringCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BuildMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1663,6 +2933,771 @@ void JSBuildMessage::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBuildMessage);
+class JSCommentPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSCommentPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSCommentPrototype* ptr = new (NotNull, JSC::allocateCell<JSCommentPrototype>(vm)) JSCommentPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSCommentPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* CommentClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsCommentConstructor);
+
+extern "C" void CommentClass__finalize(void*);
+
+extern "C" EncodedJSValue CommentPrototype__after(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CommentPrototype__afterCallback);
+
+extern "C" EncodedJSValue CommentPrototype__before(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CommentPrototype__beforeCallback);
+
+extern "C" EncodedJSValue CommentPrototype__remove(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CommentPrototype__removeCallback);
+
+extern "C" JSC::EncodedJSValue CommentPrototype__removed(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CommentPrototype__removedGetterWrap);
+
+extern "C" EncodedJSValue CommentPrototype__replace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CommentPrototype__replaceCallback);
+
+extern "C" JSC::EncodedJSValue CommentPrototype__getText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CommentPrototype__textGetterWrap);
+
+extern "C" bool CommentPrototype__setText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(CommentPrototype__textSetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommentPrototype, JSCommentPrototype::Base);
+
+static const HashTableValue JSCommentPrototypeTableValues[] = {
+    { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__afterCallback, 1 } },
+    { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__beforeCallback, 1 } },
+    { "remove"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__removeCallback, 0 } },
+    { "removed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CommentPrototype__removedGetterWrap, 0 } },
+    { "replace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__replaceCallback, 1 } },
+    { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CommentPrototype__textGetterWrap, CommentPrototype__textSetterWrap } }
+};
+
+const ClassInfo JSCommentPrototype::s_info = { "Comment"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommentPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsCommentConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSCommentPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Comment"_s);
+    return JSValue::encode(globalObject->JSCommentConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(CommentPrototype__afterCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSComment* thisObject = jsDynamicCast<JSComment*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Comment"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CommentPrototype__after(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CommentPrototype__beforeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSComment* thisObject = jsDynamicCast<JSComment*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Comment"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CommentPrototype__before(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CommentPrototype__removeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSComment* thisObject = jsDynamicCast<JSComment*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Comment"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CommentPrototype__remove(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CommentPrototype__removedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSComment* thisObject = jsCast<JSComment*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CommentPrototype__removed(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CommentPrototype__replaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSComment* thisObject = jsDynamicCast<JSComment*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Comment"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CommentPrototype__replace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CommentPrototype__textGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSComment* thisObject = jsCast<JSComment*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CommentPrototype__getText(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(CommentPrototype__textSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSComment* thisObject = jsCast<JSComment*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = CommentPrototype__setText(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSCommentPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSComment::info(), JSCommentPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSComment::~JSComment()
+{
+    if (m_ctx) {
+        CommentClass__finalize(m_ctx);
+    }
+}
+void JSComment::destroy(JSCell* cell)
+{
+    static_cast<JSComment*>(cell)->JSComment::~JSComment();
+}
+
+const ClassInfo JSComment::s_info = { "Comment"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSComment) };
+
+void JSComment::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSComment* JSComment::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSComment* ptr = new (NotNull, JSC::allocateCell<JSComment>(vm)) JSComment(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* Comment__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSComment* object = JSC::jsDynamicCast<JSComment*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool Comment__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSComment* object = JSC::jsDynamicCast<JSComment*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t Comment__ptrOffset = JSComment::offsetOfWrapped();
+
+void JSComment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSComment*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSComment::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSCommentPrototype::create(vm, globalObject, JSCommentPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue Comment__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSCommentStructure();
+    JSComment* instance = JSComment::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+class JSCryptoPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSCryptoPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSCryptoPrototype* ptr = new (NotNull, JSC::allocateCell<JSCryptoPrototype>(vm)) JSCryptoPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSCryptoPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSCryptoConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSCryptoConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCryptoPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSCryptoConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForCryptoConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCryptoConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSCryptoConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSCryptoPrototype* prototype);
+};
+
+extern "C" void* CryptoClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsCryptoConstructor);
+
+extern "C" void CryptoClass__finalize(void*);
+
+extern "C" EncodedJSValue CryptoPrototype__getRandomValues(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoPrototype__getRandomValuesCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(CryptoPrototype__getRandomValuesWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0));
+extern "C" EncodedJSValue CryptoPrototype__getRandomValuesWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* arg0);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForCryptoPrototype__getRandomValues(CryptoPrototype__getRandomValuesWithoutTypeChecksWrapper,
+    JSCrypto::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecUint8Array);
+
+JSC_DEFINE_JIT_OPERATION(CryptoPrototype__getRandomValuesWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return CryptoPrototype__getRandomValuesWithoutTypeChecks(reinterpret_cast<JSCrypto*>(thisValue)->wrapped(), lexicalGlobalObject, arg0);
+}
+
+extern "C" EncodedJSValue CryptoPrototype__randomInt(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoPrototype__randomIntCallback);
+
+extern "C" EncodedJSValue CryptoPrototype__randomUUID(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoPrototype__randomUUIDCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(CryptoPrototype__randomUUIDWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue CryptoPrototype__randomUUIDWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForCryptoPrototype__randomUUID(CryptoPrototype__randomUUIDWithoutTypeChecksWrapper,
+    JSCrypto::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecString);
+
+JSC_DEFINE_JIT_OPERATION(CryptoPrototype__randomUUIDWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return CryptoPrototype__randomUUIDWithoutTypeChecks(reinterpret_cast<JSCrypto*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
+extern "C" EncodedJSValue CryptoPrototype__doScryptSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoPrototype__scryptSyncCallback);
+
+extern "C" EncodedJSValue CryptoPrototype__timingSafeEqual(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoPrototype__timingSafeEqualCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(CryptoPrototype__timingSafeEqualWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, JSC::JSUint8Array* arg1));
+extern "C" EncodedJSValue CryptoPrototype__timingSafeEqualWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* arg0, JSC::JSUint8Array* arg1);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForCryptoPrototype__timingSafeEqual(CryptoPrototype__timingSafeEqualWithoutTypeChecksWrapper,
+    JSCrypto::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecUint8Array, JSC::SpecUint8Array);
+
+JSC_DEFINE_JIT_OPERATION(CryptoPrototype__timingSafeEqualWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, JSC::JSUint8Array* arg1))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return CryptoPrototype__timingSafeEqualWithoutTypeChecks(reinterpret_cast<JSCrypto*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
+}
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoPrototype, JSCryptoPrototype::Base);
+
+static const HashTableValue JSCryptoPrototypeTableValues[] = {
+    { "getRandomValues"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, CryptoPrototype__getRandomValuesCallback, &DOMJITSignatureForCryptoPrototype__getRandomValues } },
+    { "randomInt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoPrototype__randomIntCallback, 2 } },
+    { "randomUUID"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, CryptoPrototype__randomUUIDCallback, &DOMJITSignatureForCryptoPrototype__randomUUID } },
+    { "scryptSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoPrototype__scryptSyncCallback, 2 } },
+    { "timingSafeEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, CryptoPrototype__timingSafeEqualCallback, &DOMJITSignatureForCryptoPrototype__timingSafeEqual } }
+};
+
+const ClassInfo JSCryptoPrototype::s_info = { "Crypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSCryptoPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Crypto"_s);
+    return JSValue::encode(globalObject->JSCryptoConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoPrototype__getRandomValuesCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCrypto* thisObject = jsDynamicCast<JSCrypto*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Crypto"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CryptoPrototype__getRandomValues(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoPrototype__randomIntCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCrypto* thisObject = jsDynamicCast<JSCrypto*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Crypto"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CryptoPrototype__randomInt(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoPrototype__randomUUIDCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCrypto* thisObject = jsDynamicCast<JSCrypto*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Crypto"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CryptoPrototype__randomUUID(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoPrototype__scryptSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCrypto* thisObject = jsDynamicCast<JSCrypto*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Crypto"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CryptoPrototype__doScryptSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(CryptoPrototype__timingSafeEqualCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSCrypto* thisObject = jsDynamicCast<JSCrypto*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Crypto"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return CryptoPrototype__timingSafeEqual(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSCryptoPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSCrypto::info(), JSCryptoPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSCryptoConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "Crypto"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSCryptoConstructor::JSCryptoConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSCryptoConstructor* JSCryptoConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCryptoPrototype* prototype)
+{
+    JSCryptoConstructor* ptr = new (NotNull, JSC::allocateCell<JSCryptoConstructor>(vm)) JSCryptoConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCryptoConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSCryptoConstructor();
+    Structure* structure = globalObject->JSCryptoStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSCryptoStructure());
+    }
+
+    void* ptr = CryptoClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSCrypto* instance = JSCrypto::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSCryptoConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoPrototype* prototype)
+{
+}
+
+const ClassInfo JSCryptoConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoConstructor) };
+
+extern "C" EncodedJSValue Crypto__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSCryptoConstructor());
+}
+
+JSCrypto::~JSCrypto()
+{
+}
+void JSCrypto::destroy(JSCell* cell)
+{
+    static_cast<JSCrypto*>(cell)->JSCrypto::~JSCrypto();
+}
+
+const ClassInfo JSCrypto::s_info = { "Crypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCrypto) };
+
+void JSCrypto::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSCrypto* JSCrypto::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSCrypto* ptr = new (NotNull, JSC::allocateCell<JSCrypto>(vm)) JSCrypto(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* Crypto__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSCrypto* object = JSC::jsDynamicCast<JSCrypto*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool Crypto__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSCrypto* object = JSC::jsDynamicCast<JSCrypto*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t Crypto__ptrOffset = JSCrypto::offsetOfWrapped();
+
+void JSCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSCrypto*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSCrypto::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSCryptoConstructor::create(vm, globalObject, WebCore::JSCryptoConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSCryptoPrototype*>(prototype));
+}
+
+JSObject* JSCrypto::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSCryptoPrototype::create(vm, globalObject, JSCryptoPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue Crypto__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSCryptoStructure();
+    JSCrypto* instance = JSCrypto::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
 class JSCryptoHasherPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -1771,7 +3806,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCryptoHasherConstructor, (JSGlobalObject * lexicalGlo
     auto* prototype = jsDynamicCast<JSCryptoHasherPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for CryptoHasher"_s);
     return JSValue::encode(globalObject->JSCryptoHasherConstructor());
 }
 
@@ -1826,7 +3861,8 @@ JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__copyCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CryptoHasher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1853,7 +3889,8 @@ JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__digestCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CryptoHasher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1880,7 +3917,8 @@ JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__updateCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof CryptoHasher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2092,6 +4130,898 @@ void JSCryptoHasher::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSCryptoHasher);
+class JSDebugHTTPSServerPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSDebugHTTPSServerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDebugHTTPSServerPrototype* ptr = new (NotNull, JSC::allocateCell<JSDebugHTTPSServerPrototype>(vm)) JSDebugHTTPSServerPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSDebugHTTPSServerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* DebugHTTPSServerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor);
+
+extern "C" void DebugHTTPSServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap);
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doFetch(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__fetchCallback);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getHostname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__hostnameGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getPendingRequests(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__pendingRequestsGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getPendingWebSockets(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__pendingWebSocketsGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__portGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__protocolGetterWrap);
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doPublish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__publishCallback);
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback);
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback);
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, JSDebugHTTPSServerPrototype::Base);
+
+static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
+    { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__developmentGetterWrap, 0 } },
+    { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__fetchCallback, 1 } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__hostnameGetterWrap, 0 } },
+    { "pendingRequests"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__pendingRequestsGetterWrap, 0 } },
+    { "pendingWebSockets"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__pendingWebSocketsGetterWrap, 0 } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__portGetterWrap, 0 } },
+    { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__protocolGetterWrap, 0 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__publishCallback, 3 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__reloadCallback, 2 } },
+    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__stopCallback, 1 } },
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } }
+};
+
+const ClassInfo JSDebugHTTPSServerPrototype::s_info = { "DebugHTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPSServerPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPSServerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSDebugHTTPSServerPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPSServer"_s);
+    return JSValue::encode(globalObject->JSDebugHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getDevelopment(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__fetchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doFetch(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__hostnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_hostname.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPSServerPrototype__getHostname(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_hostname.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPSServerPrototype__hostnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_hostname.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__hostnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_hostname.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__pendingRequestsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getPendingRequests(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__pendingWebSocketsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getPendingWebSockets(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__portGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getPort(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__protocolGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getProtocol(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doPublish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPSServer* thisObject = jsDynamicCast<JSDebugHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPSServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSDebugHTTPSServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSDebugHTTPSServer::info(), JSDebugHTTPSServerPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSDebugHTTPSServer::~JSDebugHTTPSServer()
+{
+    if (m_ctx) {
+        DebugHTTPSServerClass__finalize(m_ctx);
+    }
+}
+void JSDebugHTTPSServer::destroy(JSCell* cell)
+{
+    static_cast<JSDebugHTTPSServer*>(cell)->JSDebugHTTPSServer::~JSDebugHTTPSServer();
+}
+
+const ClassInfo JSDebugHTTPSServer::s_info = { "DebugHTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPSServer) };
+
+void JSDebugHTTPSServer::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSDebugHTTPSServer* JSDebugHTTPSServer::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSDebugHTTPSServer* ptr = new (NotNull, JSC::allocateCell<JSDebugHTTPSServer>(vm)) JSDebugHTTPSServer(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* DebugHTTPSServer__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSDebugHTTPSServer* object = JSC::jsDynamicCast<JSDebugHTTPSServer*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool DebugHTTPSServer__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSDebugHTTPSServer* object = JSC::jsDynamicCast<JSDebugHTTPSServer*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t DebugHTTPSServer__ptrOffset = JSDebugHTTPSServer::offsetOfWrapped();
+
+void JSDebugHTTPSServer::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSDebugHTTPSServer*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSDebugHTTPSServer::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSDebugHTTPSServerPrototype::create(vm, globalObject, JSDebugHTTPSServerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue DebugHTTPSServer__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSDebugHTTPSServerStructure();
+    JSDebugHTTPSServer* instance = JSDebugHTTPSServer::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSDebugHTTPSServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_CHILDREN(JSDebugHTTPSServer);
+
+template<typename Visitor>
+void JSDebugHTTPSServer::visitAdditionalChildren(Visitor& visitor)
+{
+    JSDebugHTTPSServer* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDebugHTTPSServer);
+
+template<typename Visitor>
+void JSDebugHTTPSServer::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSDebugHTTPSServer);
+class JSDebugHTTPServerPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSDebugHTTPServerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDebugHTTPServerPrototype* ptr = new (NotNull, JSC::allocateCell<JSDebugHTTPServerPrototype>(vm)) JSDebugHTTPServerPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSDebugHTTPServerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* DebugHTTPServerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsDebugHTTPServerConstructor);
+
+extern "C" void DebugHTTPServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap);
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doFetch(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__fetchCallback);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getHostname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__hostnameGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getPendingRequests(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__pendingRequestsGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getPendingWebSockets(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__pendingWebSocketsGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__portGetterWrap);
+
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__protocolGetterWrap);
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doPublish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__publishCallback);
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback);
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback);
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, JSDebugHTTPServerPrototype::Base);
+
+static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
+    { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__developmentGetterWrap, 0 } },
+    { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__fetchCallback, 1 } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__hostnameGetterWrap, 0 } },
+    { "pendingRequests"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__pendingRequestsGetterWrap, 0 } },
+    { "pendingWebSockets"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__pendingWebSocketsGetterWrap, 0 } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__portGetterWrap, 0 } },
+    { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__protocolGetterWrap, 0 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__publishCallback, 3 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__reloadCallback, 2 } },
+    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__stopCallback, 1 } },
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } }
+};
+
+const ClassInfo JSDebugHTTPServerPrototype::s_info = { "DebugHTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPServerPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsDebugHTTPServerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSDebugHTTPServerPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DebugHTTPServer"_s);
+    return JSValue::encode(globalObject->JSDebugHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getDevelopment(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__fetchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doFetch(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__hostnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_hostname.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DebugHTTPServerPrototype__getHostname(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_hostname.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DebugHTTPServerPrototype__hostnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_hostname.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DebugHTTPServerPrototype__hostnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_hostname.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__pendingRequestsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getPendingRequests(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__pendingWebSocketsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getPendingWebSockets(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__portGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getPort(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__protocolGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getProtocol(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doPublish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDebugHTTPServer* thisObject = jsDynamicCast<JSDebugHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DebugHTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DebugHTTPServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSDebugHTTPServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSDebugHTTPServer::info(), JSDebugHTTPServerPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSDebugHTTPServer::~JSDebugHTTPServer()
+{
+    if (m_ctx) {
+        DebugHTTPServerClass__finalize(m_ctx);
+    }
+}
+void JSDebugHTTPServer::destroy(JSCell* cell)
+{
+    static_cast<JSDebugHTTPServer*>(cell)->JSDebugHTTPServer::~JSDebugHTTPServer();
+}
+
+const ClassInfo JSDebugHTTPServer::s_info = { "DebugHTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPServer) };
+
+void JSDebugHTTPServer::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSDebugHTTPServer* JSDebugHTTPServer::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSDebugHTTPServer* ptr = new (NotNull, JSC::allocateCell<JSDebugHTTPServer>(vm)) JSDebugHTTPServer(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* DebugHTTPServer__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSDebugHTTPServer* object = JSC::jsDynamicCast<JSDebugHTTPServer*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool DebugHTTPServer__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSDebugHTTPServer* object = JSC::jsDynamicCast<JSDebugHTTPServer*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t DebugHTTPServer__ptrOffset = JSDebugHTTPServer::offsetOfWrapped();
+
+void JSDebugHTTPServer::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSDebugHTTPServer*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSDebugHTTPServer::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSDebugHTTPServerPrototype::create(vm, globalObject, JSDebugHTTPServerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue DebugHTTPServer__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSDebugHTTPServerStructure();
+    JSDebugHTTPServer* instance = JSDebugHTTPServer::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSDebugHTTPServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_CHILDREN(JSDebugHTTPServer);
+
+template<typename Visitor>
+void JSDebugHTTPServer::visitAdditionalChildren(Visitor& visitor)
+{
+    JSDebugHTTPServer* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDebugHTTPServer);
+
+template<typename Visitor>
+void JSDebugHTTPServer::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSDebugHTTPServer);
 class JSDirentPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -2212,7 +5142,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDirentConstructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSDirentPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Dirent"_s);
     return JSValue::encode(globalObject->JSDirentConstructor());
 }
 
@@ -2224,7 +5154,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isBlockDeviceCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2251,7 +5182,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isCharacterDeviceCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2278,7 +5210,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isDirectoryCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2305,7 +5238,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isFIFOCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2332,7 +5266,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isFileCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2359,7 +5294,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isSocketCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2386,7 +5322,8 @@ JSC_DEFINE_HOST_FUNCTION(DirentPrototype__isSymbolicLinkCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Dirent"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2619,6 +5556,1436 @@ void JSDirent::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSDirent);
+class JSDocEndPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSDocEndPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDocEndPrototype* ptr = new (NotNull, JSC::allocateCell<JSDocEndPrototype>(vm)) JSDocEndPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSDocEndPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* DocEndClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsDocEndConstructor);
+
+extern "C" void DocEndClass__finalize(void*);
+
+extern "C" EncodedJSValue DocEndPrototype__append(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DocEndPrototype__appendCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocEndPrototype, JSDocEndPrototype::Base);
+
+static const HashTableValue JSDocEndPrototypeTableValues[] = {
+    { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DocEndPrototype__appendCallback, 1 } }
+};
+
+const ClassInfo JSDocEndPrototype::s_info = { "DocEnd"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDocEndPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsDocEndConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSDocEndPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DocEnd"_s);
+    return JSValue::encode(globalObject->JSDocEndConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(DocEndPrototype__appendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSDocEnd* thisObject = jsDynamicCast<JSDocEnd*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof DocEnd"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return DocEndPrototype__append(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSDocEndPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSDocEnd::info(), JSDocEndPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSDocEnd::~JSDocEnd()
+{
+    if (m_ctx) {
+        DocEndClass__finalize(m_ctx);
+    }
+}
+void JSDocEnd::destroy(JSCell* cell)
+{
+    static_cast<JSDocEnd*>(cell)->JSDocEnd::~JSDocEnd();
+}
+
+const ClassInfo JSDocEnd::s_info = { "DocEnd"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDocEnd) };
+
+void JSDocEnd::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSDocEnd* JSDocEnd::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSDocEnd* ptr = new (NotNull, JSC::allocateCell<JSDocEnd>(vm)) JSDocEnd(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* DocEnd__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSDocEnd* object = JSC::jsDynamicCast<JSDocEnd*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool DocEnd__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSDocEnd* object = JSC::jsDynamicCast<JSDocEnd*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t DocEnd__ptrOffset = JSDocEnd::offsetOfWrapped();
+
+void JSDocEnd::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSDocEnd*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSDocEnd::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSDocEndPrototype::create(vm, globalObject, JSDocEndPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue DocEnd__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSDocEndStructure();
+    JSDocEnd* instance = JSDocEnd::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+class JSDocTypePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSDocTypePrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDocTypePrototype* ptr = new (NotNull, JSC::allocateCell<JSDocTypePrototype>(vm)) JSDocTypePrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSDocTypePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* DocTypeClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsDocTypeConstructor);
+
+extern "C" void DocTypeClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue DocTypePrototype__name(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DocTypePrototype__nameGetterWrap);
+
+extern "C" JSC::EncodedJSValue DocTypePrototype__publicId(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DocTypePrototype__publicIdGetterWrap);
+
+extern "C" JSC::EncodedJSValue DocTypePrototype__systemId(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DocTypePrototype__systemIdGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocTypePrototype, JSDocTypePrototype::Base);
+
+static const HashTableValue JSDocTypePrototypeTableValues[] = {
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__nameGetterWrap, 0 } },
+    { "publicId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__publicIdGetterWrap, 0 } },
+    { "systemId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__systemIdGetterWrap, 0 } }
+};
+
+const ClassInfo JSDocTypePrototype::s_info = { "DocType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDocTypePrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsDocTypeConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSDocTypePrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for DocType"_s);
+    return JSValue::encode(globalObject->JSDocTypeConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DocTypePrototype__nameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDocType* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_name.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DocTypePrototype__name(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_name.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DocTypePrototype__nameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    thisObject->m_name.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DocTypePrototype__nameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_name.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DocTypePrototype__publicIdGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDocType* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_publicId.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DocTypePrototype__publicId(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_publicId.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DocTypePrototype__publicIdSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    thisObject->m_publicId.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DocTypePrototype__publicIdGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_publicId.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DocTypePrototype__systemIdGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDocType* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_systemId.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        DocTypePrototype__systemId(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_systemId.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void DocTypePrototype__systemIdSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    thisObject->m_systemId.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue DocTypePrototype__systemIdGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSDocType*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_systemId.get());
+}
+
+void JSDocTypePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSDocType::info(), JSDocTypePrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSDocType::~JSDocType()
+{
+    if (m_ctx) {
+        DocTypeClass__finalize(m_ctx);
+    }
+}
+void JSDocType::destroy(JSCell* cell)
+{
+    static_cast<JSDocType*>(cell)->JSDocType::~JSDocType();
+}
+
+const ClassInfo JSDocType::s_info = { "DocType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDocType) };
+
+void JSDocType::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSDocType* JSDocType::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSDocType* ptr = new (NotNull, JSC::allocateCell<JSDocType>(vm)) JSDocType(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* DocType__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSDocType* object = JSC::jsDynamicCast<JSDocType*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool DocType__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSDocType* object = JSC::jsDynamicCast<JSDocType*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t DocType__ptrOffset = JSDocType::offsetOfWrapped();
+
+void JSDocType::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSDocType*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSDocType::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSDocTypePrototype::create(vm, globalObject, JSDocTypePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue DocType__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSDocTypeStructure();
+    JSDocType* instance = JSDocType::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSDocType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDocType* thisObject = jsCast<JSDocType*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_publicId);
+    visitor.append(thisObject->m_systemId);
+}
+
+DEFINE_VISIT_CHILDREN(JSDocType);
+
+template<typename Visitor>
+void JSDocType::visitAdditionalChildren(Visitor& visitor)
+{
+    JSDocType* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_publicId);
+    visitor.append(thisObject->m_systemId);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSDocType);
+
+template<typename Visitor>
+void JSDocType::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSDocType* thisObject = jsCast<JSDocType*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSDocType);
+class JSElementPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSElementPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSElementPrototype* ptr = new (NotNull, JSC::allocateCell<JSElementPrototype>(vm)) JSElementPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSElementPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* ElementClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsElementConstructor);
+
+extern "C" void ElementClass__finalize(void*);
+
+extern "C" EncodedJSValue ElementPrototype__after(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__afterCallback);
+
+extern "C" EncodedJSValue ElementPrototype__append(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__appendCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getAttributes(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__attributesGetterWrap);
+
+extern "C" EncodedJSValue ElementPrototype__before(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__beforeCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getCanHaveContent(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__canHaveContentGetterWrap);
+
+extern "C" EncodedJSValue ElementPrototype__getAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__getAttributeCallback);
+
+extern "C" EncodedJSValue ElementPrototype__hasAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__hasAttributeCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getNamespaceURI(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__namespaceURIGetterWrap);
+
+extern "C" EncodedJSValue ElementPrototype__onEndTag(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__onEndTagCallback);
+
+extern "C" EncodedJSValue ElementPrototype__prepend(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__prependCallback);
+
+extern "C" EncodedJSValue ElementPrototype__remove(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__removeCallback);
+
+extern "C" EncodedJSValue ElementPrototype__removeAndKeepContent(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__removeAndKeepContentCallback);
+
+extern "C" EncodedJSValue ElementPrototype__removeAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__removeAttributeCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getRemoved(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__removedGetterWrap);
+
+extern "C" EncodedJSValue ElementPrototype__replace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__replaceCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getSelfClosing(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__selfClosingGetterWrap);
+
+extern "C" EncodedJSValue ElementPrototype__setAttribute(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__setAttributeCallback);
+
+extern "C" EncodedJSValue ElementPrototype__setInnerContent(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ElementPrototype__setInnerContentCallback);
+
+extern "C" JSC::EncodedJSValue ElementPrototype__getTagName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ElementPrototype__tagNameGetterWrap);
+
+extern "C" bool ElementPrototype__setTagName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(ElementPrototype__tagNameSetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSElementPrototype, JSElementPrototype::Base);
+
+static const HashTableValue JSElementPrototypeTableValues[] = {
+    { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__afterCallback, 1 } },
+    { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__appendCallback, 1 } },
+    { "attributes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__attributesGetterWrap, 0 } },
+    { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__beforeCallback, 1 } },
+    { "canHaveContent"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__canHaveContentGetterWrap, 0 } },
+    { "getAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__getAttributeCallback, 1 } },
+    { "hasAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__hasAttributeCallback, 1 } },
+    { "namespaceURI"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__namespaceURIGetterWrap, 0 } },
+    { "onEndTag"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__onEndTagCallback, 1 } },
+    { "prepend"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__prependCallback, 1 } },
+    { "remove"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__removeCallback, 0 } },
+    { "removeAndKeepContent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__removeAndKeepContentCallback, 0 } },
+    { "removeAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__removeAttributeCallback, 1 } },
+    { "removed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__removedGetterWrap, 0 } },
+    { "replace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__replaceCallback, 1 } },
+    { "selfClosing"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__selfClosingGetterWrap, 0 } },
+    { "setAttribute"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__setAttributeCallback, 2 } },
+    { "setInnerContent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__setInnerContentCallback, 1 } },
+    { "tagName"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__tagNameGetterWrap, ElementPrototype__tagNameSetterWrap } }
+};
+
+const ClassInfo JSElementPrototype::s_info = { "Element"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSElementPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsElementConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSElementPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Element"_s);
+    return JSValue::encode(globalObject->JSElementConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__afterCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__after(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__appendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__append(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__attributesGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getAttributes(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__beforeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__before(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__canHaveContentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getCanHaveContent(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__getAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__getAttribute(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__hasAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__hasAttribute(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__namespaceURIGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_namespaceURI.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        ElementPrototype__getNamespaceURI(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_namespaceURI.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void ElementPrototype__namespaceURISetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    thisObject->m_namespaceURI.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ElementPrototype__namespaceURIGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_namespaceURI.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__onEndTagCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__onEndTag(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__prependCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__prepend(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__removeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__remove(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__removeAndKeepContentCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__removeAndKeepContent(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__removeAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__removeAttribute(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__removedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getRemoved(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__replaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__replace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__selfClosingGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getSelfClosing(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__setAttributeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__setAttribute(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ElementPrototype__setInnerContentCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSElement* thisObject = jsDynamicCast<JSElement*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Element"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ElementPrototype__setInnerContent(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ElementPrototype__tagNameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ElementPrototype__getTagName(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(ElementPrototype__tagNameSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSElement* thisObject = jsCast<JSElement*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = ElementPrototype__setTagName(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSElementPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSElement::info(), JSElementPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSElement::~JSElement()
+{
+    if (m_ctx) {
+        ElementClass__finalize(m_ctx);
+    }
+}
+void JSElement::destroy(JSCell* cell)
+{
+    static_cast<JSElement*>(cell)->JSElement::~JSElement();
+}
+
+const ClassInfo JSElement::s_info = { "Element"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSElement) };
+
+void JSElement::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSElement* JSElement::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSElement* ptr = new (NotNull, JSC::allocateCell<JSElement>(vm)) JSElement(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* Element__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSElement* object = JSC::jsDynamicCast<JSElement*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool Element__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSElement* object = JSC::jsDynamicCast<JSElement*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t Element__ptrOffset = JSElement::offsetOfWrapped();
+
+void JSElement::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSElement*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSElement::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSElementPrototype::create(vm, globalObject, JSElementPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue Element__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSElementStructure();
+    JSElement* instance = JSElement::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSElement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSElement* thisObject = jsCast<JSElement*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_namespaceURI);
+}
+
+DEFINE_VISIT_CHILDREN(JSElement);
+
+template<typename Visitor>
+void JSElement::visitAdditionalChildren(Visitor& visitor)
+{
+    JSElement* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_namespaceURI);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSElement);
+
+template<typename Visitor>
+void JSElement::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSElement* thisObject = jsCast<JSElement*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSElement);
+class JSEndTagPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSEndTagPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSEndTagPrototype* ptr = new (NotNull, JSC::allocateCell<JSEndTagPrototype>(vm)) JSEndTagPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSEndTagPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* EndTagClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsEndTagConstructor);
+
+extern "C" void EndTagClass__finalize(void*);
+
+extern "C" EncodedJSValue EndTagPrototype__after(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(EndTagPrototype__afterCallback);
+
+extern "C" EncodedJSValue EndTagPrototype__before(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(EndTagPrototype__beforeCallback);
+
+extern "C" JSC::EncodedJSValue EndTagPrototype__getName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(EndTagPrototype__nameGetterWrap);
+
+extern "C" bool EndTagPrototype__setName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(EndTagPrototype__nameSetterWrap);
+
+extern "C" EncodedJSValue EndTagPrototype__remove(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(EndTagPrototype__removeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEndTagPrototype, JSEndTagPrototype::Base);
+
+static const HashTableValue JSEndTagPrototypeTableValues[] = {
+    { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, EndTagPrototype__afterCallback, 1 } },
+    { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, EndTagPrototype__beforeCallback, 1 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, EndTagPrototype__nameGetterWrap, EndTagPrototype__nameSetterWrap } },
+    { "remove"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, EndTagPrototype__removeCallback, 0 } }
+};
+
+const ClassInfo JSEndTagPrototype::s_info = { "EndTag"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEndTagPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsEndTagConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSEndTagPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for EndTag"_s);
+    return JSValue::encode(globalObject->JSEndTagConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(EndTagPrototype__afterCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSEndTag* thisObject = jsDynamicCast<JSEndTag*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof EndTag"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return EndTagPrototype__after(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(EndTagPrototype__beforeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSEndTag* thisObject = jsDynamicCast<JSEndTag*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof EndTag"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return EndTagPrototype__before(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(EndTagPrototype__nameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSEndTag* thisObject = jsCast<JSEndTag*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = EndTagPrototype__getName(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(EndTagPrototype__nameSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSEndTag* thisObject = jsCast<JSEndTag*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = EndTagPrototype__setName(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(EndTagPrototype__removeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSEndTag* thisObject = jsDynamicCast<JSEndTag*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof EndTag"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return EndTagPrototype__remove(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSEndTagPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSEndTag::info(), JSEndTagPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSEndTag::~JSEndTag()
+{
+    if (m_ctx) {
+        EndTagClass__finalize(m_ctx);
+    }
+}
+void JSEndTag::destroy(JSCell* cell)
+{
+    static_cast<JSEndTag*>(cell)->JSEndTag::~JSEndTag();
+}
+
+const ClassInfo JSEndTag::s_info = { "EndTag"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEndTag) };
+
+void JSEndTag::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSEndTag* JSEndTag::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSEndTag* ptr = new (NotNull, JSC::allocateCell<JSEndTag>(vm)) JSEndTag(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* EndTag__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSEndTag* object = JSC::jsDynamicCast<JSEndTag*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool EndTag__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSEndTag* object = JSC::jsDynamicCast<JSEndTag*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t EndTag__ptrOffset = JSEndTag::offsetOfWrapped();
+
+void JSEndTag::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSEndTag*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSEndTag::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSEndTagPrototype::create(vm, globalObject, JSEndTagPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue EndTag__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSEndTagStructure();
+    JSEndTag* instance = JSEndTag::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
 class JSExpectPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -2968,7 +7335,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsExpectConstructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSExpectPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Expect"_s);
     return JSValue::encode(globalObject->JSExpectConstructor());
 }
 
@@ -2980,7 +7347,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__failCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3019,7 +7387,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__passCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3070,7 +7439,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3097,7 +7467,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeArrayCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3124,7 +7495,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeArrayOfSizeCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3151,7 +7523,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeBooleanCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3178,7 +7551,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeCloseToCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3205,7 +7579,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeDateCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3232,7 +7607,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeDefinedCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3259,7 +7635,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeEmptyCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3286,7 +7663,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeEvenCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3313,7 +7691,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeFalseCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3340,7 +7719,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeFalsyCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3367,7 +7747,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeFiniteCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3394,7 +7775,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeFunctionCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3421,7 +7803,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeGreaterThanCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3448,7 +7831,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeGreaterThanOrEqualCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3475,7 +7859,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeInstanceOfCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3502,7 +7887,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeIntegerCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3529,7 +7915,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeLessThanCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3556,7 +7943,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeLessThanOrEqualCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3583,7 +7971,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNaNCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3610,7 +7999,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNegativeCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3637,7 +8027,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNilCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3664,7 +8055,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNullCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3691,7 +8083,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeNumberCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3718,7 +8111,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeOddCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3745,7 +8139,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBePositiveCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3772,7 +8167,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeStringCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3799,7 +8195,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeSymbolCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3826,7 +8223,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeTrueCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3853,7 +8251,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeTruthyCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3880,7 +8279,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeTypeOfCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3907,7 +8307,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeUndefinedCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3934,7 +8335,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toBeWithinCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3961,7 +8363,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toContainCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -3988,7 +8391,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toContainEqualCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4015,7 +8419,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEndWithCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4042,7 +8447,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4069,7 +8475,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4096,7 +8503,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledTimesCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4123,7 +8531,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledWithCallback, (JSGloba
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4150,7 +8559,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenLastCalledWithCallback, (JSG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4177,7 +8587,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenNthCalledWithCallback, (JSGl
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4204,7 +8615,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveLastReturnedWithCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4231,7 +8643,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveLengthCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4258,7 +8671,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveNthReturnedWithCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4285,7 +8699,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHavePropertyCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4312,7 +8727,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveReturnedTimesCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4339,7 +8755,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveReturnedWithCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4366,7 +8783,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toIncludeCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4393,7 +8811,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toIncludeRepeatedCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4420,7 +8839,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toMatchCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4447,7 +8867,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toMatchInlineSnapshotCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4474,7 +8895,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toMatchObjectCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4501,7 +8923,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toMatchSnapshotCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4528,7 +8951,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toSatisfyCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4555,7 +8979,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toStartWithCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4582,7 +9007,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toStrictEqualCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4609,7 +9035,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toThrowCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4636,7 +9063,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toThrowErrorMatchingInlineSnapshotCall
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -4663,7 +9091,8 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toThrowErrorMatchingSnapshotCallback, 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -5545,6 +9974,255 @@ void JSExpectStringMatching::visitOutputConstraintsImpl(JSCell* cell, Visitor& v
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpectStringMatching);
+class JSFFIPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSFFIPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSFFIPrototype* ptr = new (NotNull, JSC::allocateCell<JSFFIPrototype>(vm)) JSFFIPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSFFIPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* FFIClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsFFIConstructor);
+
+extern "C" void FFIClass__finalize(void*);
+
+extern "C" EncodedJSValue FFIPrototype__close(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(FFIPrototype__closeCallback);
+
+extern "C" JSC::EncodedJSValue FFIPrototype__getSymbols(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(FFIPrototype__symbolsGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFFIPrototype, JSFFIPrototype::Base);
+
+static const HashTableValue JSFFIPrototypeTableValues[] = {
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FFIPrototype__closeCallback, 0 } },
+    { "symbols"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, FFIPrototype__symbolsGetterWrap, 0 } }
+};
+
+const ClassInfo JSFFIPrototype::s_info = { "FFI"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsFFIConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSFFIPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for FFI"_s);
+    return JSValue::encode(globalObject->JSFFIConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(FFIPrototype__closeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSFFI* thisObject = jsDynamicCast<JSFFI*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FFI"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return FFIPrototype__close(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(FFIPrototype__symbolsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSFFI* thisObject = jsCast<JSFFI*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_symbolsValue.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        FFIPrototype__getSymbols(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_symbolsValue.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void FFIPrototype__symbolsSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSFFI*>(JSValue::decode(thisValue));
+    thisObject->m_symbolsValue.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue FFIPrototype__symbolsGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSFFI*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_symbolsValue.get());
+}
+
+extern "C" void FFIPrototype__symbolsValueSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSFFI*>(JSValue::decode(thisValue));
+    thisObject->m_symbolsValue.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue FFIPrototype__symbolsValueGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSFFI*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_symbolsValue.get());
+}
+
+void JSFFIPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSFFI::info(), JSFFIPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSFFI::~JSFFI()
+{
+    if (m_ctx) {
+        FFIClass__finalize(m_ctx);
+    }
+}
+void JSFFI::destroy(JSCell* cell)
+{
+    static_cast<JSFFI*>(cell)->JSFFI::~JSFFI();
+}
+
+const ClassInfo JSFFI::s_info = { "FFI"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFI) };
+
+void JSFFI::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSFFI* JSFFI::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSFFI* ptr = new (NotNull, JSC::allocateCell<JSFFI>(vm)) JSFFI(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* FFI__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSFFI* object = JSC::jsDynamicCast<JSFFI*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool FFI__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSFFI* object = JSC::jsDynamicCast<JSFFI*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t FFI__ptrOffset = JSFFI::offsetOfWrapped();
+
+void JSFFI::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSFFI*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSFFI::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSFFIPrototype::create(vm, globalObject, JSFFIPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue FFI__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSFFIStructure();
+    JSFFI* instance = JSFFI::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSFFI::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSFFI* thisObject = jsCast<JSFFI*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_symbolsValue);
+}
+
+DEFINE_VISIT_CHILDREN(JSFFI);
+
+template<typename Visitor>
+void JSFFI::visitAdditionalChildren(Visitor& visitor)
+{
+    JSFFI* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_symbolsValue);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSFFI);
+
+template<typename Visitor>
+void JSFFI::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSFFI* thisObject = jsCast<JSFFI*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSFFI);
 class JSFSWatcherPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -5609,7 +10287,8 @@ JSC_DEFINE_HOST_FUNCTION(FSWatcherPrototype__closeCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FSWatcher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -5636,7 +10315,8 @@ JSC_DEFINE_HOST_FUNCTION(FSWatcherPrototype__hasRefCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FSWatcher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -5663,7 +10343,8 @@ JSC_DEFINE_HOST_FUNCTION(FSWatcherPrototype__refCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FSWatcher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -5690,7 +10371,8 @@ JSC_DEFINE_HOST_FUNCTION(FSWatcherPrototype__unrefCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FSWatcher"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -5954,7 +10636,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsFileSystemRouterConstructor, (JSGlobalObject * lexica
     auto* prototype = jsDynamicCast<JSFileSystemRouterPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for FileSystemRouter"_s);
     return JSValue::encode(globalObject->JSFileSystemRouterConstructor());
 }
 
@@ -5966,7 +10648,8 @@ JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__matchCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FileSystemRouter"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6024,7 +10707,8 @@ JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__reloadCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof FileSystemRouter"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6292,6 +10976,1236 @@ void JSFileSystemRouter::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSFileSystemRouter);
+class JSHTMLRewriterPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSHTMLRewriterPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSHTMLRewriterPrototype* ptr = new (NotNull, JSC::allocateCell<JSHTMLRewriterPrototype>(vm)) JSHTMLRewriterPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSHTMLRewriterPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSHTMLRewriterConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSHTMLRewriterConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSHTMLRewriterPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSHTMLRewriterConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForHTMLRewriterConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForHTMLRewriterConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForHTMLRewriterConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForHTMLRewriterConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSHTMLRewriterPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSHTMLRewriterConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSHTMLRewriterPrototype* prototype);
+};
+
+extern "C" void* HTMLRewriterClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsHTMLRewriterConstructor);
+
+extern "C" void HTMLRewriterClass__finalize(void*);
+
+extern "C" EncodedJSValue HTMLRewriterPrototype__on(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTMLRewriterPrototype__onCallback);
+
+extern "C" EncodedJSValue HTMLRewriterPrototype__onDocument(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTMLRewriterPrototype__onDocumentCallback);
+
+extern "C" EncodedJSValue HTMLRewriterPrototype__transform(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTMLRewriterPrototype__transformCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTMLRewriterPrototype, JSHTMLRewriterPrototype::Base);
+
+static const HashTableValue JSHTMLRewriterPrototypeTableValues[] = {
+    { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__onCallback, 2 } },
+    { "onDocument"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__onDocumentCallback, 1 } },
+    { "transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__transformCallback, 1 } }
+};
+
+const ClassInfo JSHTMLRewriterPrototype::s_info = { "HTMLRewriter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTMLRewriterPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsHTMLRewriterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSHTMLRewriterPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTMLRewriter"_s);
+    return JSValue::encode(globalObject->JSHTMLRewriterConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTMLRewriterPrototype__onCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTMLRewriter* thisObject = jsDynamicCast<JSHTMLRewriter*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTMLRewriter"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTMLRewriterPrototype__on(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTMLRewriterPrototype__onDocumentCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTMLRewriter* thisObject = jsDynamicCast<JSHTMLRewriter*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTMLRewriter"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTMLRewriterPrototype__onDocument(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTMLRewriterPrototype__transformCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTMLRewriter* thisObject = jsDynamicCast<JSHTMLRewriter*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTMLRewriter"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTMLRewriterPrototype__transform(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSHTMLRewriterPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSHTMLRewriter::info(), JSHTMLRewriterPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSHTMLRewriterConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSHTMLRewriterPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "HTMLRewriter"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSHTMLRewriterConstructor::JSHTMLRewriterConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSHTMLRewriterConstructor* JSHTMLRewriterConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSHTMLRewriterPrototype* prototype)
+{
+    JSHTMLRewriterConstructor* ptr = new (NotNull, JSC::allocateCell<JSHTMLRewriterConstructor>(vm)) JSHTMLRewriterConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSHTMLRewriterConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSHTMLRewriterConstructor();
+    Structure* structure = globalObject->JSHTMLRewriterStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSHTMLRewriterStructure());
+    }
+
+    void* ptr = HTMLRewriterClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSHTMLRewriter* instance = JSHTMLRewriter::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSHTMLRewriterConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSHTMLRewriterPrototype* prototype)
+{
+}
+
+const ClassInfo JSHTMLRewriterConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTMLRewriterConstructor) };
+
+extern "C" EncodedJSValue HTMLRewriter__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSHTMLRewriterConstructor());
+}
+
+JSHTMLRewriter::~JSHTMLRewriter()
+{
+    if (m_ctx) {
+        HTMLRewriterClass__finalize(m_ctx);
+    }
+}
+void JSHTMLRewriter::destroy(JSCell* cell)
+{
+    static_cast<JSHTMLRewriter*>(cell)->JSHTMLRewriter::~JSHTMLRewriter();
+}
+
+const ClassInfo JSHTMLRewriter::s_info = { "HTMLRewriter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTMLRewriter) };
+
+void JSHTMLRewriter::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSHTMLRewriter* JSHTMLRewriter::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSHTMLRewriter* ptr = new (NotNull, JSC::allocateCell<JSHTMLRewriter>(vm)) JSHTMLRewriter(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* HTMLRewriter__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSHTMLRewriter* object = JSC::jsDynamicCast<JSHTMLRewriter*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool HTMLRewriter__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSHTMLRewriter* object = JSC::jsDynamicCast<JSHTMLRewriter*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t HTMLRewriter__ptrOffset = JSHTMLRewriter::offsetOfWrapped();
+
+void JSHTMLRewriter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSHTMLRewriter*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSHTMLRewriter::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSHTMLRewriterConstructor::create(vm, globalObject, WebCore::JSHTMLRewriterConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSHTMLRewriterPrototype*>(prototype));
+}
+
+JSObject* JSHTMLRewriter::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSHTMLRewriterPrototype::create(vm, globalObject, JSHTMLRewriterPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue HTMLRewriter__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSHTMLRewriterStructure();
+    JSHTMLRewriter* instance = JSHTMLRewriter::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+class JSHTTPSServerPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSHTTPSServerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSHTTPSServerPrototype* ptr = new (NotNull, JSC::allocateCell<JSHTTPSServerPrototype>(vm)) JSHTTPSServerPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSHTTPSServerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* HTTPSServerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsHTTPSServerConstructor);
+
+extern "C" void HTTPSServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap);
+
+extern "C" EncodedJSValue HTTPSServerPrototype__doFetch(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__fetchCallback);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getHostname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__hostnameGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getPendingRequests(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__pendingRequestsGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getPendingWebSockets(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__pendingWebSocketsGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__portGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__protocolGetterWrap);
+
+extern "C" EncodedJSValue HTTPSServerPrototype__doPublish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__publishCallback);
+
+extern "C" EncodedJSValue HTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback);
+
+extern "C" EncodedJSValue HTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback);
+
+extern "C" EncodedJSValue HTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, JSHTTPSServerPrototype::Base);
+
+static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
+    { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__developmentGetterWrap, 0 } },
+    { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__fetchCallback, 1 } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__hostnameGetterWrap, 0 } },
+    { "pendingRequests"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__pendingRequestsGetterWrap, 0 } },
+    { "pendingWebSockets"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__pendingWebSocketsGetterWrap, 0 } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__portGetterWrap, 0 } },
+    { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__protocolGetterWrap, 0 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__publishCallback, 3 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__reloadCallback, 2 } },
+    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__stopCallback, 1 } },
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } }
+};
+
+const ClassInfo JSHTTPSServerPrototype::s_info = { "HTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPSServerPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsHTTPSServerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSHTTPSServerPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPSServer"_s);
+    return JSValue::encode(globalObject->JSHTTPSServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getDevelopment(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__fetchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doFetch(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__hostnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_hostname.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPSServerPrototype__getHostname(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_hostname.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPSServerPrototype__hostnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    thisObject->m_hostname.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPSServerPrototype__hostnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_hostname.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__pendingRequestsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getPendingRequests(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__pendingWebSocketsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getPendingWebSockets(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__portGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getPort(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__protocolGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getProtocol(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doPublish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPSServer* thisObject = jsDynamicCast<JSHTTPSServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPSServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPSServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSHTTPSServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSHTTPSServer::info(), JSHTTPSServerPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSHTTPSServer::~JSHTTPSServer()
+{
+    if (m_ctx) {
+        HTTPSServerClass__finalize(m_ctx);
+    }
+}
+void JSHTTPSServer::destroy(JSCell* cell)
+{
+    static_cast<JSHTTPSServer*>(cell)->JSHTTPSServer::~JSHTTPSServer();
+}
+
+const ClassInfo JSHTTPSServer::s_info = { "HTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPSServer) };
+
+void JSHTTPSServer::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSHTTPSServer* JSHTTPSServer::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSHTTPSServer* ptr = new (NotNull, JSC::allocateCell<JSHTTPSServer>(vm)) JSHTTPSServer(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* HTTPSServer__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSHTTPSServer* object = JSC::jsDynamicCast<JSHTTPSServer*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool HTTPSServer__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSHTTPSServer* object = JSC::jsDynamicCast<JSHTTPSServer*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t HTTPSServer__ptrOffset = JSHTTPSServer::offsetOfWrapped();
+
+void JSHTTPSServer::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSHTTPSServer*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSHTTPSServer::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSHTTPSServerPrototype::create(vm, globalObject, JSHTTPSServerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue HTTPSServer__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSHTTPSServerStructure();
+    JSHTTPSServer* instance = JSHTTPSServer::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSHTTPSServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_CHILDREN(JSHTTPSServer);
+
+template<typename Visitor>
+void JSHTTPSServer::visitAdditionalChildren(Visitor& visitor)
+{
+    JSHTTPSServer* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSHTTPSServer);
+
+template<typename Visitor>
+void JSHTTPSServer::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSHTTPSServer);
+class JSHTTPServerPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSHTTPServerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSHTTPServerPrototype* ptr = new (NotNull, JSC::allocateCell<JSHTTPServerPrototype>(vm)) JSHTTPServerPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSHTTPServerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* HTTPServerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsHTTPServerConstructor);
+
+extern "C" void HTTPServerClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getDevelopment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap);
+
+extern "C" EncodedJSValue HTTPServerPrototype__doFetch(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__fetchCallback);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getHostname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__hostnameGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getPendingRequests(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__pendingRequestsGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getPendingWebSockets(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__pendingWebSocketsGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__portGetterWrap);
+
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__protocolGetterWrap);
+
+extern "C" EncodedJSValue HTTPServerPrototype__doPublish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__publishCallback);
+
+extern "C" EncodedJSValue HTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback);
+
+extern "C" EncodedJSValue HTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__stopCallback);
+
+extern "C" EncodedJSValue HTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, JSHTTPServerPrototype::Base);
+
+static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
+    { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__developmentGetterWrap, 0 } },
+    { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__fetchCallback, 1 } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__hostnameGetterWrap, 0 } },
+    { "pendingRequests"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__pendingRequestsGetterWrap, 0 } },
+    { "pendingWebSockets"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__pendingWebSocketsGetterWrap, 0 } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__portGetterWrap, 0 } },
+    { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__protocolGetterWrap, 0 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__publishCallback, 3 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__reloadCallback, 2 } },
+    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__stopCallback, 1 } },
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } }
+};
+
+const ClassInfo JSHTTPServerPrototype::s_info = { "HTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPServerPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsHTTPServerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSHTTPServerPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for HTTPServer"_s);
+    return JSValue::encode(globalObject->JSHTTPServerConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__developmentGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getDevelopment(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__fetchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doFetch(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__hostnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_hostname.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        HTTPServerPrototype__getHostname(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_hostname.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void HTTPServerPrototype__hostnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    thisObject->m_hostname.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue HTTPServerPrototype__hostnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_hostname.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__pendingRequestsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getPendingRequests(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__pendingWebSocketsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getPendingWebSockets(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__portGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getPort(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__protocolGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getProtocol(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doPublish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doStop(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSHTTPServer* thisObject = jsDynamicCast<JSHTTPServer*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof HTTPServer"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return HTTPServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSHTTPServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSHTTPServer::info(), JSHTTPServerPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSHTTPServer::~JSHTTPServer()
+{
+    if (m_ctx) {
+        HTTPServerClass__finalize(m_ctx);
+    }
+}
+void JSHTTPServer::destroy(JSCell* cell)
+{
+    static_cast<JSHTTPServer*>(cell)->JSHTTPServer::~JSHTTPServer();
+}
+
+const ClassInfo JSHTTPServer::s_info = { "HTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPServer) };
+
+void JSHTTPServer::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSHTTPServer* JSHTTPServer::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSHTTPServer* ptr = new (NotNull, JSC::allocateCell<JSHTTPServer>(vm)) JSHTTPServer(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* HTTPServer__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSHTTPServer* object = JSC::jsDynamicCast<JSHTTPServer*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool HTTPServer__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSHTTPServer* object = JSC::jsDynamicCast<JSHTTPServer*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t HTTPServer__ptrOffset = JSHTTPServer::offsetOfWrapped();
+
+void JSHTTPServer::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSHTTPServer*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSHTTPServer::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSHTTPServerPrototype::create(vm, globalObject, JSHTTPServerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue HTTPServer__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSHTTPServerStructure();
+    JSHTTPServer* instance = JSHTTPServer::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSHTTPServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_CHILDREN(JSHTTPServer);
+
+template<typename Visitor>
+void JSHTTPServer::visitAdditionalChildren(Visitor& visitor)
+{
+    JSHTTPServer* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hostname);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSHTTPServer);
+
+template<typename Visitor>
+void JSHTTPServer::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSHTTPServer);
 class JSListenerPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -6378,7 +12292,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsListenerConstructor, (JSGlobalObject * lexicalGlobalO
     auto* prototype = jsDynamicCast<JSListenerPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Listener"_s);
     return JSValue::encode(globalObject->JSListenerConstructor());
 }
 
@@ -6456,7 +12370,8 @@ JSC_DEFINE_HOST_FUNCTION(ListenerPrototype__refCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Listener"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6483,7 +12398,8 @@ JSC_DEFINE_HOST_FUNCTION(ListenerPrototype__reloadCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Listener"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6510,7 +12426,8 @@ JSC_DEFINE_HOST_FUNCTION(ListenerPrototype__stopCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Listener"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6568,7 +12485,8 @@ JSC_DEFINE_HOST_FUNCTION(ListenerPrototype__unrefCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Listener"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6805,7 +12723,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMD4Constructor, (JSGlobalObject * lexicalGlobalObject
     auto* prototype = jsDynamicCast<JSMD4Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for MD4"_s);
     return JSValue::encode(globalObject->JSMD4Constructor());
 }
 
@@ -6829,7 +12747,8 @@ JSC_DEFINE_HOST_FUNCTION(MD4Prototype__digestCallback, (JSGlobalObject * lexical
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof MD4"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -6856,7 +12775,8 @@ JSC_DEFINE_HOST_FUNCTION(MD4Prototype__updateCallback, (JSGlobalObject * lexical
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof MD4"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -7133,7 +13053,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMD5Constructor, (JSGlobalObject * lexicalGlobalObject
     auto* prototype = jsDynamicCast<JSMD5Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for MD5"_s);
     return JSValue::encode(globalObject->JSMD5Constructor());
 }
 
@@ -7157,7 +13077,8 @@ JSC_DEFINE_HOST_FUNCTION(MD5Prototype__digestCallback, (JSGlobalObject * lexical
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof MD5"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -7184,7 +13105,8 @@ JSC_DEFINE_HOST_FUNCTION(MD5Prototype__updateCallback, (JSGlobalObject * lexical
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof MD5"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -7444,7 +13366,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMatchedRouteConstructor, (JSGlobalObject * lexicalGlo
     auto* prototype = jsDynamicCast<JSMatchedRoutePrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for MatchedRoute"_s);
     return JSValue::encode(globalObject->JSMatchedRouteConstructor());
 }
 
@@ -8244,7 +14166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeJSFSConstructor, (JSGlobalObject * lexicalGlobalO
     auto* prototype = jsDynamicCast<JSNodeJSFSPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for NodeJSFS"_s);
     return JSValue::encode(globalObject->JSNodeJSFSConstructor());
 }
 
@@ -8256,7 +14178,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__accessCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8283,7 +14206,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__accessSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8310,7 +14234,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__appendFileCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8337,7 +14262,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__appendFileSyncCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8364,7 +14290,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__chmodCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8391,7 +14318,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__chmodSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8418,7 +14346,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__chownCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8445,7 +14374,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__chownSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8472,7 +14402,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__closeCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8499,7 +14430,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__closeSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8526,7 +14458,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__copyFileCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8553,7 +14486,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__copyFileSyncCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8592,7 +14526,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__existsCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8619,7 +14554,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__existsSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8646,7 +14582,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fchmodCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8673,7 +14610,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fchmodSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8700,7 +14638,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fchownCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8727,7 +14666,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fchownSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8754,7 +14694,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fdatasyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8781,7 +14722,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fdatasyncSyncCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8808,7 +14750,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fstatCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8835,7 +14778,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fstatSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8862,7 +14806,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fsyncCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8889,7 +14834,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__fsyncSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8916,7 +14862,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__ftruncateCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8943,7 +14890,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__ftruncateSyncCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8970,7 +14918,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__futimesCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -8997,7 +14946,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__futimesSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9024,7 +14974,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lchmodCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9051,7 +15002,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lchmodSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9078,7 +15030,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lchownCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9105,7 +15058,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lchownSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9132,7 +15086,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__linkCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9159,7 +15114,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__linkSyncCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9186,7 +15142,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lstatCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9213,7 +15170,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lstatSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9240,7 +15198,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lutimesCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9267,7 +15226,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__lutimesSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9294,7 +15254,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__mkdirCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9321,7 +15282,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__mkdirSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9348,7 +15310,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__mkdtempCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9375,7 +15338,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__mkdtempSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9402,7 +15366,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__openCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9429,7 +15394,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__opendirCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9456,7 +15422,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__opendirSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9483,7 +15450,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__openSyncCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9510,7 +15478,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9537,7 +15506,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readdirCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9564,7 +15534,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readdirSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9591,7 +15562,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readFileCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9618,7 +15590,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readFileSyncCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9645,7 +15618,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readlinkCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9672,7 +15646,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readlinkSyncCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9699,7 +15674,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readSyncCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9726,7 +15702,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readvCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9753,7 +15730,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__readvSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9780,7 +15758,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__realpathCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9807,7 +15786,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__realpathSyncCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9834,7 +15814,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__renameCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9861,7 +15842,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__renameSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9888,7 +15870,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__rmCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9915,7 +15898,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__rmdirCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9942,7 +15926,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__rmdirSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9969,7 +15954,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__rmSyncCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -9996,7 +15982,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__statCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10035,7 +16022,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__statSyncCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10062,7 +16050,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__symlinkCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10089,7 +16078,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__symlinkSyncCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10116,7 +16106,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__truncateCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10143,7 +16134,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__truncateSyncCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10170,7 +16162,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__unlinkCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10197,7 +16190,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__unlinkSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10224,7 +16218,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__utimesCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10251,7 +16246,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__utimesSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10278,7 +16274,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__watchCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10305,7 +16302,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writeCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10332,7 +16330,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writeFileCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10359,7 +16358,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writeFileSyncCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10386,7 +16386,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writeSyncCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10413,7 +16414,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writevCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10440,7 +16442,8 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__writevSyncCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof NodeJSFS"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10774,7 +16777,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequestConstructor, (JSGlobalObject * lexicalGlobalOb
     auto* prototype = jsDynamicCast<JSRequestPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Request"_s);
     return JSValue::encode(globalObject->JSRequestConstructor());
 }
 
@@ -10786,7 +16789,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__arrayBufferCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10813,7 +16817,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__blobCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10895,7 +16900,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__cloneCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -10946,7 +16952,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__formDataCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -11016,7 +17023,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__jsonCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -11134,7 +17142,8 @@ JSC_DEFINE_HOST_FUNCTION(RequestPrototype__textCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Request"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -11502,7 +17511,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsResolveMessageConstructor, (JSGlobalObject * lexicalG
     auto* prototype = jsDynamicCast<JSResolveMessagePrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ResolveMessage"_s);
     return JSValue::encode(globalObject->JSResolveMessageConstructor());
 }
 
@@ -11514,7 +17523,8 @@ JSC_DEFINE_HOST_FUNCTION(ResolveMessagePrototype__toPrimitiveCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ResolveMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -11727,7 +17737,8 @@ JSC_DEFINE_HOST_FUNCTION(ResolveMessagePrototype__toJSONCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ResolveMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -11754,7 +17765,8 @@ JSC_DEFINE_HOST_FUNCTION(ResolveMessagePrototype__toStringCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ResolveMessage"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12117,7 +18129,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsResponseConstructor, (JSGlobalObject * lexicalGlobalO
     auto* prototype = jsDynamicCast<JSResponsePrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Response"_s);
     return JSValue::encode(globalObject->JSResponseConstructor());
 }
 
@@ -12129,7 +18141,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__arrayBufferCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12156,7 +18169,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__blobCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12226,7 +18240,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__cloneCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12253,7 +18268,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__formDataCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12311,7 +18327,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__jsonCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12405,7 +18422,8 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__textCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Response"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12771,7 +18789,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA1Constructor, (JSGlobalObject * lexicalGlobalObjec
     auto* prototype = jsDynamicCast<JSSHA1Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA1"_s);
     return JSValue::encode(globalObject->JSSHA1Constructor());
 }
 
@@ -12795,7 +18813,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA1Prototype__digestCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA1"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -12822,7 +18841,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA1Prototype__updateCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA1"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13099,7 +19119,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA224Constructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSSHA224Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA224"_s);
     return JSValue::encode(globalObject->JSSHA224Constructor());
 }
 
@@ -13123,7 +19143,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA224Prototype__digestCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA224"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13150,7 +19171,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA224Prototype__updateCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA224"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13427,7 +19449,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA256Constructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSSHA256Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA256"_s);
     return JSValue::encode(globalObject->JSSHA256Constructor());
 }
 
@@ -13451,7 +19473,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA256Prototype__digestCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA256"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13478,7 +19501,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA256Prototype__updateCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA256"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13755,7 +19779,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA384Constructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSSHA384Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA384"_s);
     return JSValue::encode(globalObject->JSSHA384Constructor());
 }
 
@@ -13779,7 +19803,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA384Prototype__digestCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA384"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -13806,7 +19831,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA384Prototype__updateCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA384"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14083,7 +20109,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA512Constructor, (JSGlobalObject * lexicalGlobalObj
     auto* prototype = jsDynamicCast<JSSHA512Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA512"_s);
     return JSValue::encode(globalObject->JSSHA512Constructor());
 }
 
@@ -14107,7 +20133,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA512Prototype__digestCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA512"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14134,7 +20161,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA512Prototype__updateCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA512"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14411,7 +20439,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSHA512_256Constructor, (JSGlobalObject * lexicalGloba
     auto* prototype = jsDynamicCast<JSSHA512_256Prototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for SHA512_256"_s);
     return JSValue::encode(globalObject->JSSHA512_256Constructor());
 }
 
@@ -14435,7 +20463,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA512_256Prototype__digestCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA512_256"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14462,7 +20491,8 @@ JSC_DEFINE_HOST_FUNCTION(SHA512_256Prototype__updateCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof SHA512_256"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14881,7 +20911,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsServerWebSocketConstructor, (JSGlobalObject * lexical
     auto* prototype = jsDynamicCast<JSServerWebSocketPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ServerWebSocket"_s);
     return JSValue::encode(globalObject->JSServerWebSocketConstructor());
 }
 
@@ -14916,7 +20946,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback, (JSGlobalObjec
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -14943,7 +20974,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15012,7 +21044,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback, (J
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15039,7 +21072,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__isSubscribedCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15066,7 +21100,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__pingCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15093,7 +21128,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__pongCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15120,7 +21156,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15147,7 +21184,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishBinaryCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15174,7 +21212,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishTextCallback, (JSGloba
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15244,7 +21283,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15271,7 +21311,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendBinaryCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15298,7 +21339,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendTextCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15325,7 +21367,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__subscribeCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15352,7 +21395,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__terminateCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15379,7 +21423,8 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback, (JSGloba
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ServerWebSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -15897,7 +21942,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsStatsConstructor, (JSGlobalObject * lexicalGlobalObje
     auto* prototype = jsDynamicCast<JSStatsPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Stats"_s);
     return JSValue::encode(globalObject->JSStatsConstructor());
 }
 
@@ -16079,7 +22124,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isBlockDeviceCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16106,7 +22152,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isCharacterDeviceCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16133,7 +22180,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isDirectoryCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16160,7 +22208,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isFIFOCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16187,7 +22236,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isFileCallback, (JSGlobalObject * lexic
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16214,7 +22264,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isSocketCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16241,7 +22292,8 @@ JSC_DEFINE_HOST_FUNCTION(StatsPrototype__isSymbolicLinkCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Stats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16653,7 +22705,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSubprocessConstructor, (JSGlobalObject * lexicalGloba
     auto* prototype = jsDynamicCast<JSSubprocessPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Subprocess"_s);
     return JSValue::encode(globalObject->JSSubprocessConstructor());
 }
 
@@ -16689,7 +22741,8 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__killCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Subprocess"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16771,7 +22824,8 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__refCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Subprocess"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -16903,7 +22957,8 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__unrefCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Subprocess"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17259,7 +23314,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTCPSocketConstructor, (JSGlobalObject * lexicalGlobal
     auto* prototype = jsDynamicCast<JSTCPSocketPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for TCPSocket"_s);
     return JSValue::encode(globalObject->JSTCPSocketConstructor());
 }
 
@@ -17337,7 +23392,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__endCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17364,7 +23420,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__exportKeyingMaterialCallback, (JSGl
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17391,7 +23448,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__flushCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17418,7 +23476,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getAuthorizationErrorCallback, (JSG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17445,7 +23504,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getCertificateCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17472,7 +23532,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getCipherCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17499,7 +23560,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getEphemeralKeyInfoCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17526,7 +23588,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getPeerCertificateCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17553,7 +23616,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getSessionCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17580,7 +23644,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getSharedSigalgsCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17607,7 +23672,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSFinishedMessageCallback, (JSG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17634,7 +23700,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSPeerFinishedMessageCallback, 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17661,7 +23728,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSTicketCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17688,7 +23756,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSVersionCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17751,7 +23820,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__refCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17778,7 +23848,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__reloadCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17836,7 +23907,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setMaxSendFragmentCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17863,7 +23935,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setServernameCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17890,7 +23963,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setSessionCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17917,7 +23991,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__shutdownCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17944,7 +24019,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__timeoutCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17971,7 +24047,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__unrefCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -17998,7 +24075,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__upgradeTLSCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18025,7 +24103,8 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__writeCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TCPSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18348,7 +24427,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTLSSocketConstructor, (JSGlobalObject * lexicalGlobal
     auto* prototype = jsDynamicCast<JSTLSSocketPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for TLSSocket"_s);
     return JSValue::encode(globalObject->JSTLSSocketConstructor());
 }
 
@@ -18426,7 +24505,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__endCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18453,7 +24533,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__exportKeyingMaterialCallback, (JSGl
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18480,7 +24561,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__flushCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18507,7 +24589,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getAuthorizationErrorCallback, (JSG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18534,7 +24617,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getCertificateCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18561,7 +24645,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getCipherCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18588,7 +24673,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getEphemeralKeyInfoCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18615,7 +24701,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getPeerCertificateCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18642,7 +24729,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getSessionCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18669,7 +24757,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getSharedSigalgsCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18696,7 +24785,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSFinishedMessageCallback, (JSG
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18723,7 +24813,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSPeerFinishedMessageCallback, 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18750,7 +24841,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSTicketCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18777,7 +24869,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSVersionCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18840,7 +24933,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__refCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18867,7 +24961,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__reloadCallback, (JSGlobalObject * l
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18925,7 +25020,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setMaxSendFragmentCallback, (JSGlob
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18952,7 +25048,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setServernameCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -18979,7 +25076,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setSessionCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19006,7 +25104,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__shutdownCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19033,7 +25132,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__timeoutCallback, (JSGlobalObject * 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19060,7 +25160,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__unrefCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19087,7 +25188,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__upgradeTLSCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19114,7 +25216,8 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__writeCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TLSSocket"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19259,6 +25362,372 @@ void JSTLSSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTLSSocket);
+class JSTextChunkPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSTextChunkPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSTextChunkPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextChunkPrototype>(vm)) JSTextChunkPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSTextChunkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* TextChunkClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsTextChunkConstructor);
+
+extern "C" void TextChunkClass__finalize(void*);
+
+extern "C" EncodedJSValue TextChunkPrototype__after(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TextChunkPrototype__afterCallback);
+
+extern "C" EncodedJSValue TextChunkPrototype__before(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TextChunkPrototype__beforeCallback);
+
+extern "C" JSC::EncodedJSValue TextChunkPrototype__lastInTextNode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextChunkPrototype__lastInTextNodeGetterWrap);
+
+extern "C" EncodedJSValue TextChunkPrototype__remove(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TextChunkPrototype__removeCallback);
+
+extern "C" JSC::EncodedJSValue TextChunkPrototype__removed(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextChunkPrototype__removedGetterWrap);
+
+extern "C" EncodedJSValue TextChunkPrototype__replace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TextChunkPrototype__replaceCallback);
+
+extern "C" JSC::EncodedJSValue TextChunkPrototype__getText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextChunkPrototype__textGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextChunkPrototype, JSTextChunkPrototype::Base);
+
+static const HashTableValue JSTextChunkPrototypeTableValues[] = {
+    { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__afterCallback, 1 } },
+    { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__beforeCallback, 1 } },
+    { "lastInTextNode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextChunkPrototype__lastInTextNodeGetterWrap, 0 } },
+    { "remove"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__removeCallback, 0 } },
+    { "removed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextChunkPrototype__removedGetterWrap, 0 } },
+    { "replace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__replaceCallback, 1 } },
+    { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextChunkPrototype__textGetterWrap, 0 } }
+};
+
+const ClassInfo JSTextChunkPrototype::s_info = { "TextChunk"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextChunkPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsTextChunkConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSTextChunkPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for TextChunk"_s);
+    return JSValue::encode(globalObject->JSTextChunkConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(TextChunkPrototype__afterCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTextChunk* thisObject = jsDynamicCast<JSTextChunk*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TextChunk"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TextChunkPrototype__after(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TextChunkPrototype__beforeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTextChunk* thisObject = jsDynamicCast<JSTextChunk*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TextChunk"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TextChunkPrototype__before(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(TextChunkPrototype__lastInTextNodeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextChunk* thisObject = jsCast<JSTextChunk*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_lastInTextNode.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        TextChunkPrototype__lastInTextNode(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_lastInTextNode.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void TextChunkPrototype__lastInTextNodeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSTextChunk*>(JSValue::decode(thisValue));
+    thisObject->m_lastInTextNode.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue TextChunkPrototype__lastInTextNodeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSTextChunk*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_lastInTextNode.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(TextChunkPrototype__removeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTextChunk* thisObject = jsDynamicCast<JSTextChunk*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TextChunk"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TextChunkPrototype__remove(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(TextChunkPrototype__removedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextChunk* thisObject = jsCast<JSTextChunk*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = TextChunkPrototype__removed(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TextChunkPrototype__replaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTextChunk* thisObject = jsDynamicCast<JSTextChunk*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TextChunk"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TextChunkPrototype__replace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(TextChunkPrototype__textGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextChunk* thisObject = jsCast<JSTextChunk*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = TextChunkPrototype__getText(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+void JSTextChunkPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSTextChunk::info(), JSTextChunkPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSTextChunk::~JSTextChunk()
+{
+    if (m_ctx) {
+        TextChunkClass__finalize(m_ctx);
+    }
+}
+void JSTextChunk::destroy(JSCell* cell)
+{
+    static_cast<JSTextChunk*>(cell)->JSTextChunk::~JSTextChunk();
+}
+
+const ClassInfo JSTextChunk::s_info = { "TextChunk"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextChunk) };
+
+void JSTextChunk::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSTextChunk* JSTextChunk::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSTextChunk* ptr = new (NotNull, JSC::allocateCell<JSTextChunk>(vm)) JSTextChunk(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* TextChunk__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSTextChunk* object = JSC::jsDynamicCast<JSTextChunk*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool TextChunk__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSTextChunk* object = JSC::jsDynamicCast<JSTextChunk*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t TextChunk__ptrOffset = JSTextChunk::offsetOfWrapped();
+
+void JSTextChunk::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSTextChunk*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSTextChunk::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSTextChunkPrototype::create(vm, globalObject, JSTextChunkPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue TextChunk__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSTextChunkStructure();
+    JSTextChunk* instance = JSTextChunk::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSTextChunk::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTextChunk* thisObject = jsCast<JSTextChunk*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_lastInTextNode);
+}
+
+DEFINE_VISIT_CHILDREN(JSTextChunk);
+
+template<typename Visitor>
+void JSTextChunk::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTextChunk* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_lastInTextNode);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTextChunk);
+
+template<typename Visitor>
+void JSTextChunk::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTextChunk* thisObject = jsCast<JSTextChunk*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTextChunk);
 class JSTextDecoderPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -19377,7 +25846,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderConstructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<JSTextDecoderPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for TextDecoder"_s);
     return JSValue::encode(globalObject->JSTextDecoderConstructor());
 }
 
@@ -19389,7 +25858,8 @@ JSC_DEFINE_HOST_FUNCTION(TextDecoderPrototype__decodeCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof TextDecoder"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19701,7 +26171,8 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__toPrimitiveCallback, (JSGlobalObject 
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Timeout"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19728,7 +26199,8 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__hasRefCallback, (JSGlobalObject * lex
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Timeout"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19755,7 +26227,8 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__refCallback, (JSGlobalObject * lexica
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Timeout"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19782,7 +26255,8 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__refreshCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Timeout"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -19809,7 +26283,8 @@ JSC_DEFINE_HOST_FUNCTION(TimeoutPrototype__unrefCallback, (JSGlobalObject * lexi
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Timeout"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -20075,7 +26550,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTranspilerConstructor, (JSGlobalObject * lexicalGloba
     auto* prototype = jsDynamicCast<JSTranspilerPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for Transpiler"_s);
     return JSValue::encode(globalObject->JSTranspilerConstructor());
 }
 
@@ -20087,7 +26562,8 @@ JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__scanCallback, (JSGlobalObject * le
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Transpiler"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -20114,7 +26590,8 @@ JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__scanImportsCallback, (JSGlobalObje
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Transpiler"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -20141,7 +26618,8 @@ JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__transformCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Transpiler"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -20168,7 +26646,8 @@ JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__transformSyncCallback, (JSGlobalOb
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Transpiler"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);

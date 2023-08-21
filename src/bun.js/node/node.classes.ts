@@ -199,6 +199,155 @@ export default [
     },
   }),
   define({
+    name: "BigIntStats",
+    construct: false,
+    finalize: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      isBlockDevice: {
+        fn: "isBlockDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isCharacterDevice: {
+        fn: "isCharacterDevice_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isDirectory: {
+        fn: "isDirectory_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFIFO: {
+        fn: "isFIFO_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isFile: {
+        fn: "isFile_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSocket: {
+        fn: "isSocket_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      isSymbolicLink: {
+        fn: "isSymbolicLink_",
+        length: 0,
+        enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
+      },
+      dev: {
+        getter: "dev",
+      },
+      ino: {
+        getter: "ino",
+      },
+      mode: {
+        getter: "mode",
+      },
+      nlink: {
+        getter: "nlink",
+      },
+      uid: {
+        getter: "uid",
+      },
+      gid: {
+        getter: "gid",
+      },
+      rdev: {
+        getter: "rdev",
+      },
+      size: {
+        getter: "size",
+      },
+      blksize: {
+        getter: "blksize",
+      },
+      blocks: {
+        getter: "blocks",
+      },
+      atime: {
+        getter: "atime",
+        cache: true,
+      },
+      mtime: {
+        getter: "mtime",
+        cache: true,
+      },
+      ctime: {
+        getter: "ctime",
+        cache: true,
+      },
+      birthtime: {
+        getter: "birthtime",
+        cache: true,
+      },
+      atimeMs: {
+        getter: "atimeMs",
+      },
+      mtimeMs: {
+        getter: "mtimeMs",
+      },
+      ctimeMs: {
+        getter: "ctimeMs",
+      },
+      birthtimeMs: {
+        getter: "birthtimeMs",
+      },
+      atimeNs: {
+        getter: "atimeNs",
+      },
+      mtimeNs: {
+        getter: "mtimeNs",
+      },
+      ctimeNs: {
+        getter: "ctimeNs",
+      },
+      birthtimeNs: {
+        getter: "birthtimeNs",
+      },
+    },
+  }),
+  define({
     name: "Dirent",
     construct: true,
     finalize: true,

@@ -290,6 +290,8 @@ pub const Runtime = struct {
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
 
+        set_breakpoint_on_first_line: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

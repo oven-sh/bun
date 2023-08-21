@@ -403,6 +403,7 @@ pub const RuntimeTranspilerStore = struct {
                     vm.main.len == path.text.len and
                     vm.main_hash == hash and
                     strings.eqlLong(vm.main, path.text, false),
+                .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, false),
             };
 
             defer {
@@ -484,7 +485,7 @@ pub const RuntimeTranspilerStore = struct {
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     continue;
@@ -526,13 +527,14 @@ pub const RuntimeTranspilerStore = struct {
             printer.ctx.reset();
 
             {
+                var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
                 _ = bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&vm.source_mappings),
+                    mapper.get(),
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -1213,13 +1215,14 @@ pub const ModuleLoader = struct {
             printer.ctx.reset();
 
             {
+                var mapper = jsc_vm.sourceMapHandler(&printer);
                 defer VirtualMachine.source_code_printer.?.* = printer;
                 _ = try jsc_vm.bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                    mapper.get(),
                 );
             }
 
@@ -1437,6 +1440,7 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line,
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != 0) {
@@ -1603,13 +1607,14 @@ pub const ModuleLoader = struct {
                 printer.ctx.reset();
 
                 _ = brk: {
+                    var mapper = jsc_vm.sourceMapHandler(&printer);
                     defer source_code_printer.* = printer;
                     break :brk try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
                         &printer,
                         .esm_ascii,
-                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                        mapper.get(),
                     );
                 };
 
@@ -2335,20 +2340,15 @@ pub const HardcodedModule = enum {
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
         },
     );
+
     pub const Alias = struct {
         path: string,
         tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
     };
-    pub const Aliases = bun.ComptimeStringMap(
-        Alias,
-        .{
-            .{ "bun", .{ .path = "bun", .tag = .bun } },
-            .{ "bun:ffi", .{ .path = "bun:ffi" } },
-            .{ "bun:jsc", .{ .path = "bun:jsc" } },
-            .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
-            .{ "bun:wrap", .{ .path = "bun:wrap" } },
-            .{ "ffi", .{ .path = "bun:ffi" } },
 
+    pub const Aliases = struct {
+        // Used by both Bun and Node.
+        const common_alias_kvs = .{
             .{ "node:assert", .{ .path = "node:assert" } },
             .{ "node:assert/strict", .{ .path = "node:assert/strict" } },
             .{ "node:async_hooks", .{ .path = "node:async_hooks" } },
@@ -2458,8 +2458,6 @@ pub const HardcodedModule = enum {
             // It implements the same interface
             .{ "sys", .{ .path = "node:util" } },
             .{ "node:sys", .{ .path = "node:util" } },
-            .{ "inspector/promises", .{ .path = "node:inspector" } },
-            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
 
             // These are returned in builtinModules, but probably not many packages use them
             // so we will just alias them.
@@ -2483,6 +2481,15 @@ pub const HardcodedModule = enum {
             // .{ "readable-stream", .{ .path = "node:stream" } },
             // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
             // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+        };
+
+        const bun_extra_alias_kvs = .{
+            .{ "bun", .{ .path = "bun", .tag = .bun } },
+            .{ "bun:ffi", .{ .path = "bun:ffi" } },
+            .{ "bun:jsc", .{ .path = "bun:jsc" } },
+            .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "ffi", .{ .path = "bun:ffi" } },
 
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
@@ -2494,6 +2501,45 @@ pub const HardcodedModule = enum {
             .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
-        },
-    );
+
+            .{ "inspector/promises", .{ .path = "node:inspector" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
+        };
+
+        const node_alias_kvs = .{
+            .{ "inspector/promises", .{ .path = "node:inspector/promises" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector/promises" } },
+            .{ "node:test", .{ .path = "node:test" } },
+        };
+
+        const NodeAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_alias_kvs);
+        const BunAliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
+
+        pub fn has(name: []const u8, target: options.Target) bool {
+            if (target.isBun()) {
+                return BunAliases.has(name);
+            } else if (target.isNode()) {
+                return NodeAliases.has(name);
+            }
+            return false;
+        }
+
+        pub fn get(name: []const u8, target: options.Target) ?Alias {
+            if (target.isBun()) {
+                return BunAliases.get(name);
+            } else if (target.isNode()) {
+                return NodeAliases.get(name);
+            }
+            return null;
+        }
+
+        pub fn getWithEql(name: anytype, comptime eql: anytype, target: options.Target) ?Alias {
+            if (target.isBun()) {
+                return BunAliases.getWithEql(name, eql);
+            } else if (target.isNode()) {
+                return NodeAliases.getWithEql(name, eql);
+            }
+            return null;
+        }
+    };
 };

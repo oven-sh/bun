@@ -129,6 +129,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::NodeTraceEvents: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:trace_events"_s, "node/trace_events.js"_s, InternalModuleRegistryConstants::NodeTraceEventsCode, "builtin://node/trace/events"_s);
     }
+    case Field::NodeTty: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:tty"_s, "node/tty.js"_s, InternalModuleRegistryConstants::NodeTtyCode, "builtin://node/tty"_s);
+    }
     case Field::NodeUrl: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:url"_s, "node/url.js"_s, InternalModuleRegistryConstants::NodeUrlCode, "builtin://node/url"_s);
     }

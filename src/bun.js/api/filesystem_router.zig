@@ -21,11 +21,10 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = @import("root").bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
 
-const FetchEvent = WebCore.FetchEvent;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
 const Log = @import("root").bun.logger;
@@ -39,117 +38,6 @@ const default_extensions = &[_][]const u8{
     "mjs",
     "cjs",
     "js",
-};
-
-const DeprecatedGlobalRouter = struct {
-    pub fn deprecatedBunGlobalMatch(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        if (arguments.len == 0) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request but there were no arguments", .{}, ctx, exception);
-            return null;
-        }
-
-        const arg: JSC.JSValue = brk: {
-            if (FetchEvent.Class.isLoaded()) {
-                if (JSValue.as(JSValue.fromRef(arguments[0]), FetchEvent)) |fetch_event| {
-                    if (fetch_event.request_context != null) {
-                        return deprecatedMatchFetchEvent(ctx, fetch_event, exception);
-                    }
-
-                    // When disconencted, we still have a copy of the request data in here
-                    break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, undefined, null));
-                }
-            }
-            break :brk JSC.JSValue.fromRef(arguments[0]);
-        };
-
-        var router = JavaScript.VirtualMachine.get().bundler.router orelse {
-            JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
-            return null;
-        };
-
-        var path_: ?ZigString.Slice = null;
-        var req_url_slice: ZigString.Slice = .{};
-        defer req_url_slice.deinit();
-        var pathname: string = "";
-        defer {
-            if (path_) |path| {
-                path.deinit();
-            }
-        }
-
-        if (arg.isString()) {
-            var path_string = arg.getZigString(ctx);
-            path_ = path_string.toSlice(bun.default_allocator);
-            var url = URL.parse(path_.?.slice());
-            pathname = url.pathname;
-        } else if (arg.as(Request)) |req| {
-            req_url_slice = req.url.toUTF8(bun.default_allocator);
-            var url = URL.parse(req_url_slice.slice());
-            pathname = url.pathname;
-        }
-
-        if (path_ == null) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request", .{}, ctx, exception);
-            return null;
-        }
-
-        const url_path = URLPath.parse(path_.?.slice()) catch {
-            JSError(getAllocator(ctx), "Could not parse URL path", .{}, ctx, exception);
-            return null;
-        };
-
-        var match_params_fallback = std.heap.stackFallback(1024, bun.default_allocator);
-        var match_params_allocator = match_params_fallback.get();
-        var match_params = Router.Param.List{};
-        match_params.ensureTotalCapacity(match_params_allocator, 16) catch unreachable;
-        var prev_allocator = router.routes.allocator;
-        router.routes.allocator = match_params_allocator;
-        defer router.routes.allocator = prev_allocator;
-        if (router.routes.matchPage("", url_path, &match_params)) |matched| {
-            return createRouteObjectFromMatch(ctx, &matched);
-        }
-        //    router.routes.matchPage
-
-        return JSC.JSValue.jsNull().asObjectRef();
-    }
-
-    fn deprecatedMatchFetchEvent(
-        ctx: js.JSContextRef,
-        fetch_event: *const FetchEvent,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
-        return createRouteObject(ctx, fetch_event.request_context.?);
-    }
-
-    fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext) js.JSValueRef {
-        const route = &(req.matched_route orelse {
-            return js.JSValueMakeNull(ctx);
-        });
-
-        return createRouteObjectFromMatch(ctx, route);
-    }
-
-    fn createRouteObjectFromMatch(
-        ctx: js.JSContextRef,
-        route: *const Router.Match,
-    ) js.JSValueRef {
-        var matched = MatchedRoute.init(
-            getAllocator(ctx),
-            route.*,
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().origin.href, null, false),
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.options.routes.asset_prefix_path, null, false),
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.fs.top_level_dir, null, false),
-        ) catch unreachable;
-
-        return matched.toJS(ctx).asObjectRef();
-    }
 };
 
 pub const FileSystemRouter = struct {
@@ -764,5 +652,3 @@ pub const MatchedRoute = struct {
         return JSValue.createEmptyObject(globalThis, 0);
     }
 };
-
-pub const deprecatedBunGlobalMatch = DeprecatedGlobalRouter.deprecatedBunGlobalMatch;

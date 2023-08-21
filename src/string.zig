@@ -838,6 +838,8 @@ pub const String = extern struct {
 
     extern fn BunString__toThreadSafe(this: *String) void;
     pub fn toThreadSafe(this: *String) void {
+        JSC.markBinding(@src());
+
         if (this.tag == .WTFStringImpl) {
             BunString__toThreadSafe(this);
         }

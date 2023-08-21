@@ -50,6 +50,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSValue(JSC::jsEmptyString(globalObject->vm()));
     }
     if (bunString.tag == BunStringTag::WTFStringImpl) {
+#if BUN_DEBUG
+        if (bunString.tag == BunStringTag::WTFStringImpl) {
+            RELEASE_ASSERT(bunString.impl.wtf->refCount() > 0);
+        }
+#endif
         return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));
     }
 
@@ -62,6 +67,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t length)
 {
+#if BUN_DEBUG
+    if (bunString.tag == BunStringTag::WTFStringImpl) {
+        RELEASE_ASSERT(bunString.impl.wtf->refCount() > 0);
+    }
+#endif
     return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
 }
 
@@ -79,6 +89,9 @@ WTF::String toWTFString(const BunString& bunString)
     }
 
     if (bunString.tag == BunStringTag::WTFStringImpl) {
+#if BUN_DEBUG
+        RELEASE_ASSERT(bunString.impl.wtf->refCount() > 0);
+#endif
         return WTF::String(bunString.impl.wtf);
     }
 

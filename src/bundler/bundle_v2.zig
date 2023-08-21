@@ -1854,7 +1854,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;

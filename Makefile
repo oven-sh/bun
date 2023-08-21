@@ -352,7 +352,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -I$(BUN_DEPS_DIR)/zstd/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include -Isrc/bun.js/modules
 
 
 ifeq ($(OS_NAME),linux)
@@ -401,6 +401,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
 		-DBUILDING_WITH_CMAKE=1 \
 		-DBUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1 \
+		-DNAPI_EXPERIMENTAL=ON \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
@@ -943,6 +944,7 @@ headers:
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
+	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp 
 
 .PHONY: jsc-bindings-headers
 jsc-bindings-headers: headers

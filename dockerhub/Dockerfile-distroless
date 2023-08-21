@@ -1,4 +1,5 @@
 FROM debian:bullseye-slim AS build
+# Not officially supported (yet)
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest

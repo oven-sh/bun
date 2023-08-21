@@ -607,7 +607,7 @@ class IncomingMessage extends Readable {
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
-    this.#nodeReq = nodeReq;
+    this.#nodeReq = this.req = nodeReq;
     assignHeaders(this, req);
   }
 
@@ -623,10 +623,6 @@ class IncomingMessage extends Readable {
   url;
   #type;
   #nodeReq;
-
-  get req() {
-    return this.#nodeReq;
-  }
 
   _construct(callback) {
     // TODO: streaming

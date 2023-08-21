@@ -315,6 +315,45 @@ describe("HTMLRewriter", () => {
 
     expect(lastInTextNode).toBeBoolean();
   });
+
+  it("it supports selfClosing", async () => {
+    const selfClosing = {};
+    await new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          selfClosing[el.tagName] = el.selfClosing;
+        },
+      })
+
+      .transform(new Response("<p>Lorem ipsum!<br></p><div />"))
+      .text();
+
+    expect(selfClosing).toEqual({
+      p: false,
+      br: false,
+      div: true,
+    });
+  });
+
+  it("it supports canHaveContent", async () => {
+    const canHaveContent = {};
+    await new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          canHaveContent[el.tagName] = el.canHaveContent;
+        },
+      })
+      .transform(new Response("<p>Lorem ipsum!<br></p><div /><svg><circle /></svg>"))
+      .text();
+
+    expect(canHaveContent).toEqual({
+      p: true,
+      br: false,
+      div: true,
+      svg: true,
+      circle: false,
+    });
+  });
 });
 
 // By not segfaulting, this test passes

@@ -45,11 +45,11 @@ const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
 const JSC = @import("root").bun.JSC;
 const JSError = @import("../base.zig").JSError;
-const d = @import("../base.zig").d;
+
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
-const NewClass = @import("../base.zig").NewClass;
+
 const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
@@ -82,12 +82,9 @@ pub const FFI = struct {
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
 
-    pub const Class = JSC.NewClass(
-        FFI,
-        .{ .name = "class" },
-        .{ .call = JSC.wrapWithHasContainer(FFI, "close", false, true, true) },
-        .{},
-    );
+    pub usingnamespace JSC.Codegen.JSFFI;
+
+    pub fn finalize(_: *FFI) callconv(.C) void {}
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         var function = ctx.asPtr(Function);
@@ -147,7 +144,8 @@ pub const FFI = struct {
     pub fn close(
         this: *FFI,
         globalThis: *JSC.JSGlobalObject,
-    ) JSValue {
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
             return JSC.JSValue.jsUndefined();
@@ -320,9 +318,9 @@ pub const FFI = struct {
             };
         };
 
-        var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global, null, null));
-        JSC.C.JSValueProtect(global, obj.asObjectRef());
-        defer JSC.C.JSValueUnprotect(global, obj.asObjectRef());
+        var obj = JSC.JSValue.createEmptyObject(global, symbols.values().len);
+        obj.protect();
+        defer obj.unprotect();
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
 
@@ -400,9 +398,14 @@ pub const FFI = struct {
             .functions = symbols,
         };
 
-        var close_object = JSC.JSValue.c(Class.make(global, lib));
+        const js_object = lib.toJS(global);
+        JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
+        return js_object;
+    }
 
-        return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
+    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        // This shouldn't be called. The cachedValue is what should be called.
+        return .undefined;
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
@@ -498,9 +501,9 @@ pub const FFI = struct {
             .functions = symbols,
         };
 
-        var close_object = JSC.JSValue.c(Class.make(global, lib));
-
-        return JSC.JSValue.createObject2(global, ZigString.static("close"), ZigString.static("symbols"), close_object, obj);
+        const js_object = lib.toJS(global);
+        JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
+        return js_object;
     }
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
         JSC.markBinding(@src());

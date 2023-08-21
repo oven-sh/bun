@@ -2374,6 +2374,7 @@ pub const E = struct {
 
             if (s.is_utf16) {
                 var out = bun.String.createUninitializedUTF16(s.len());
+                defer out.deref();
                 @memcpy(@constCast(out.utf16()), s.slice16());
                 return out.toJS(globalObject);
             }

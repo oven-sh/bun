@@ -68,34 +68,34 @@ const bufs = struct {
     // bundling 10 copies of Three.js. It may be worthwhile for more complicated
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
-    threadlocal var extension_path: [512]u8 = undefined;
-    threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var extension_path: [512]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    threadlocal var esm_subpath: [512]u8 = undefined;
-    threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var esm_subpath: [512]u8 = undefined;
+    pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    threadlocal var open_dirs: [256]std.fs.IterableDir = undefined;
-    threadlocal var resolve_without_remapping: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var index: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var dir_info_uncached_filename: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var node_bin_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var dir_info_uncached_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tsconfig_base_url: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var relative_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var node_modules_check: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var field_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tsconfig_path_abs: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var check_browser_map: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var remap_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var load_as_file: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
+    pub threadlocal var open_dirs: [256]std.fs.IterableDir = undefined;
+    pub threadlocal var resolve_without_remapping: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var index: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var dir_info_uncached_filename: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var node_bin_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var dir_info_uncached_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_base_url: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var relative_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var node_modules_check: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var field_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_path_abs: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var check_browser_map: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var remap_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var load_as_file: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));

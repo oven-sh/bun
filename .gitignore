@@ -130,3 +130,5 @@ src/js/out/tmp
 src/js/out/DebugPath.h
 
 make-dev-stats.csv
+
+.uuid

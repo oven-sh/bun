@@ -202,6 +202,7 @@ pub fn build(b: *Build) !void {
         .root_source_file = FileSource.relative(root_src),
         .target = target,
         .optimize = optimize,
+        .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
 
     var default_build_options: BunBuildOptions = brk: {
@@ -239,8 +240,6 @@ pub fn build(b: *Build) !void {
     };
 
     {
-        obj.setMainPkgPath(b.pathFromRoot("."));
-
         try addInternalPackages(
             b,
             obj,
@@ -271,9 +270,13 @@ pub fn build(b: *Build) !void {
         std.io.getStdErr().writer().print("Output: {s}/{s}\n\n", .{ output_dir, bun_executable_name }) catch unreachable;
 
         defer obj_step.dependOn(&obj.step);
-        obj.emit_bin = .{
-            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, bun_executable_name }),
-        };
+
+        //  = .{
+        //             .generated_path = .{
+        //                 .path = b.fmt("{s}/{s}.o", .{ output_dir, bun_executable_name }),
+        //             },
+        //         };
+
         var actual_build_options = default_build_options;
         if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
             actual_build_options.sizegen = true;
@@ -289,9 +292,9 @@ pub fn build(b: *Build) !void {
         // Disable stack probing on x86 so we don't need to include compiler_rt
         if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
-        if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
-            obj.emit_bin = .no_emit;
-        }
+        // if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
+        //     obj.emit_bin = .no_emit;
+        // }
 
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
@@ -310,7 +313,7 @@ pub fn build(b: *Build) !void {
             .optimize = optimize,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path);
         var headers_build_options = default_build_options;
         headers_build_options.bindgen = true;
         headers_obj.addOptions("build_options", default_build_options.step(b));
@@ -440,9 +443,9 @@ pub fn build(b: *Build) !void {
         headers_obj.filter = test_filter;
         if (test_bin_) |test_bin| {
             headers_obj.name = std.fs.path.basename(test_bin);
-            if (std.fs.path.dirname(test_bin)) |dir| headers_obj.emit_bin = .{
-                .emit_to = b.fmt("{s}/{s}", .{ dir, headers_obj.name }),
-            };
+            // if (std.fs.path.dirname(test_bin)) |dir| headers_obj.emit_bin = .{
+            //     .emit_to = b.fmt("{s}/{s}", .{ dir, headers_obj.name }),
+            // };
         }
 
         try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
@@ -456,8 +459,8 @@ pub fn build(b: *Build) !void {
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
 
-pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
-    obj.setMainPkgPath(main_pkg_path);
+pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Target: type, target: Target, main_pkg_path: ?Build.LazyPath) !void {
+    obj.main_pkg_path = main_pkg_path;
 
     // obj.setTarget(target);
     try addInternalPackages(b, obj, std.heap.page_allocator, b.zig_exe, target);
@@ -466,10 +469,10 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     // obj.setBuildMode(optimize);
     obj.bundle_compiler_rt = false;
-    if (obj.emit_bin == .default)
-        obj.emit_bin = .{
-            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, obj.name }),
-        };
+    // if (obj.emit_bin == .default)
+    //     obj.emit_bin = .{
+    //         .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, obj.name }),
+    //     };
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;

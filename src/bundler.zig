@@ -653,9 +653,7 @@ pub const Bundler = struct {
     pub noinline fn dumpEnvironmentVariables(bundler: *const Bundler) void {
         @setCold(true);
         const opts = std.json.StringifyOptions{
-            .whitespace = std.json.StringifyOptions.Whitespace{
-                .separator = true,
-            },
+            .whitespace = .indent_2,
         };
         Output.flush();
         std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;

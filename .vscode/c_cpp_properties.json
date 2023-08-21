@@ -43,7 +43,8 @@
           "${workspaceFolder}/src/bun.js/modules/*",
           "${workspaceFolder}/src/deps",
           "${workspaceFolder}/src/deps/boringssl/include/",
-          "${workspaceFolder}/src/deps/uws/uSockets/src"
+          "${workspaceFolder}/src/deps/uws/uSockets/src",
+          "${workspaceFolder}/src/napi"
         ],
         "limitSymbolsToIncludedHeaders": true,
         "databaseFilename": ".vscode/cppdb"

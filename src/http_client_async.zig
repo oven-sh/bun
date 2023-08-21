@@ -1004,7 +1004,7 @@ pub const InternalState = struct {
     stage: Stage = Stage.pending,
     body_out_str: ?*MutableString = null,
     compressed_body: MutableString = undefined,
-    body_size: usize = 0,
+    content_length: ?usize = null,
     total_body_received: usize = 0,
     request_body: []const u8 = "",
     original_request_body: HTTPRequestBody = .{ .bytes = "" },
@@ -1064,7 +1064,13 @@ pub const InternalState = struct {
         if (this.isChunkedEncoding()) {
             return this.received_last_chunk;
         }
-        return this.total_body_received >= this.body_size;
+
+        if (this.content_length) |content_length| {
+            return this.total_body_received >= content_length;
+        }
+
+        // TODO: in future to handle Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
+        return true;
     }
 
     fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
@@ -2340,8 +2346,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             if (!can_continue) {
                 // if is chuncked but no body is expected we mark the last chunk
                 this.state.received_last_chunk = true;
-                // if is not we ignore the body_size
-                this.state.body_size = 0;
+                // if is not we ignore the content_length
+                this.state.content_length = 0;
                 this.progressUpdate(is_ssl, ctx, socket);
                 return;
             }
@@ -2617,7 +2623,18 @@ pub const HTTPClientResult = struct {
     redirected: bool = false,
     headers_buf: []picohttp.Header = &.{},
     has_more: bool = false,
-    body_size: usize = 0,
+
+    /// For Http Client requests
+    /// when Content-Length is provided this represents the whole size of the request
+    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+    /// If is not chunked encoded and Content-Length is not provided this will be unknown
+    body_size: BodySize = .unknown,
+
+    pub const BodySize = union(enum) {
+        total_received: usize,
+        content_length: usize,
+        unknown: void,
+    };
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
         return this.fail == error.NoError;
@@ -2671,6 +2688,12 @@ pub const HTTPClientResult = struct {
 };
 
 pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientResult {
+    const body_size: HTTPClientResult.BodySize = if (this.state.isChunkedEncoding())
+        .{ .total_received = this.state.total_body_received }
+    else if (this.state.content_length) |content_length|
+        .{ .content_length = content_length }
+    else
+        .{ .unknown = {} };
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .response = metadata.response,
@@ -2680,7 +2703,7 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
         .fail = this.state.fail,
         .headers_buf = metadata.response.headers,
         .has_more = this.state.fail == error.NoError and !this.state.isDone(),
-        .body_size = this.state.body_size,
+        .body_size = body_size,
     };
 }
 
@@ -2692,9 +2715,10 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
+    const content_length = this.state.content_length orelse 0;
     // is it exactly as much as we need?
-    if (is_only_buffer and incoming_data.len >= this.state.body_size) {
-        try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
+    if (is_only_buffer and incoming_data.len >= content_length) {
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length]);
         return true;
     } else {
         return handleResponseBodyFromMultiplePackets(this, incoming_data);
@@ -2702,7 +2726,9 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_
 }
 
 fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
-    this.state.total_body_received += incoming_data.len;
+    if (!this.state.isChunkedEncoding()) {
+        this.state.total_body_received += incoming_data.len;
+    }
 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
@@ -2737,14 +2763,15 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
+    const content_length = this.state.content_length orelse 0;
 
     if (buffer.list.items.len == 0 and
-        this.state.body_size > 0 and incoming_data.len < preallocate_max)
+        content_length > 0 and incoming_data.len < preallocate_max)
     {
         buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
     }
 
-    const remaining_content_length = this.state.body_size -| this.state.total_body_received;
+    const remaining_content_length = content_length -| this.state.total_body_received;
     var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
 
     _ = try buffer.write(remainder);
@@ -2758,7 +2785,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     // done or streaming
-    const is_done = this.state.total_body_received >= this.state.body_size;
+    const is_done = this.state.total_body_received >= content_length;
     if (is_done or this.enable_body_stream.load(.Acquire)) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
@@ -2804,7 +2831,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         &bytes_decoded,
     );
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
-    this.state.body_size += bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
 
     buffer_.* = buffer;
 
@@ -2882,7 +2909,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         &bytes_decoded,
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
-    this.state.body_size += bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -2936,12 +2963,12 @@ pub fn handleResponseMetadata(
     for (response.headers, 0..) |header, header_i| {
         switch (hashHeaderName(header.name)) {
             hashHeaderConst("Content-Length") => {
-                const content_length = std.fmt.parseInt(@TypeOf(this.state.body_size), header.value, 10) catch 0;
+                const content_length = std.fmt.parseInt(usize, header.value, 10) catch 0;
                 if (this.method.hasBody()) {
-                    this.state.body_size = content_length;
+                    this.state.content_length = content_length;
                 } else {
                     // ignore body size for HEAD requests
-                    this.state.body_size = 0;
+                    this.state.content_length = content_length;
                 }
             },
             hashHeaderConst("Content-Encoding") => {
@@ -3119,6 +3146,7 @@ pub fn handleResponseMetadata(
 
     // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
+    const content_length = this.state.content_length orelse 0;
     // if no body is expected we should stop processing
-    return this.method.hasBody() and (this.state.body_size > 0 or this.state.transfer_encoding == .chunked);
+    return this.method.hasBody() and (content_length > 0 or this.state.transfer_encoding == .chunked);
 }

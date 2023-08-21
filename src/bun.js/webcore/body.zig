@@ -215,6 +215,19 @@ pub const Body = struct {
         deinit: bool = false,
         action: Action = Action{ .none = {} },
 
+        /// For Http Client requests
+        /// when Content-Length is provided this represents the whole size of the request
+        /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+        /// If the size is unknown will be 0
+        fn sizeHint(this: *const PendingValue) Blob.SizeType {
+            if (this.readable) |readable| {
+                if (readable.ptr == .Bytes) {
+                    return readable.ptr.Bytes.size_hint;
+                }
+            }
+            return this.size_hint;
+        }
+
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
                 return null;
@@ -371,20 +384,12 @@ pub const Body = struct {
             }
         }
 
-        fn _lockedSize(this: *const Value) Blob.SizeType {
-            if (this.Locked.readable) |readable| {
-                return readable.ptr.Bytes.size_hint;
-            }
-
-            return this.Locked.size_hint;
-        }
-
         pub fn size(this: *const Value) Blob.SizeType {
             return switch (this.*) {
                 .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
-                .Locked => this._lockedSize(),
+                .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -395,6 +400,7 @@ pub const Body = struct {
                 .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
+                .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -402,8 +408,10 @@ pub const Body = struct {
 
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
+                .Blob => this.Blob.size,
                 .InternalBlob => this.InternalBlob.sliceConst().len,
                 .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
+                .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
             };

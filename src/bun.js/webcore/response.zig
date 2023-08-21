@@ -630,7 +630,11 @@ pub const Fetch = struct {
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: JSC.PollRef = .{},
-        body_size: usize = 0,
+        /// For Http Client requests
+        /// when Content-Length is provided this represents the whole size of the request
+        /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+        /// If is not chunked encoded and Content-Length is not provided this will be unknown
+        body_size: HTTPClient.HTTPClientResult.BodySize = .unknown,
 
         /// This is url + proxy memory buffer and is owned by FetchTasklet
         /// We always clone url and proxy (if informed)
@@ -765,7 +769,7 @@ pub const Fetch = struct {
                     if (body.value == .Locked) {
                         if (body.value.Locked.readable) |readable| {
                             if (readable.ptr == .Bytes) {
-                                readable.ptr.Bytes.size_hint = @as(u52, @intCast(this.body_size));
+                                readable.ptr.Bytes.size_hint = this.getSizeHint();
 
                                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
 
@@ -793,7 +797,7 @@ pub const Fetch = struct {
                                 return;
                             }
                         } else {
-                            response.body.value.Locked.size_hint = @as(u52, @intCast(this.body_size));
+                            response.body.value.Locked.size_hint = this.getSizeHint();
                         }
                         // we will reach here when not streaming
                         if (!this.result.has_more) {
@@ -931,6 +935,8 @@ pub const Fetch = struct {
 
             this.mutex.lock();
             defer this.mutex.unlock();
+            const size_hint = this.getSizeHint();
+
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
@@ -945,21 +951,30 @@ pub const Fetch = struct {
                 return .{
                     .owned = .{
                         .list = scheduled_response_buffer.toManaged(bun.default_allocator),
-                        .size_hint = this.body_size,
+                        .size_hint = size_hint,
                     },
                 };
             }
 
             return .{
-                .estimated_size = this.body_size,
+                .estimated_size = size_hint,
             };
+        }
+
+        fn getSizeHint(this: *FetchTasklet) u52 {
+            if (this.body_size == .content_length) {
+                return @as(u52, @intCast(this.body_size.content_length));
+            } else if (this.body_size == .total_received) {
+                return @as(u52, @intCast(this.body_size.total_received));
+            }
+            return 0;
         }
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
-                        .size_hint = @as(u52, @intCast(this.body_size)),
+                        .size_hint = this.getSizeHint(),
                         .task = this,
                         .global = this.global_this,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,

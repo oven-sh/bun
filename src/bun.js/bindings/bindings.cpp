@@ -362,8 +362,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSCell* c2 = v2.asCell();
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
-    JSC::JSType c1Type = c1->type();
-    JSC::JSType c2Type = c2->type();
+
+    // We use additional values outside the enum
+    // so the warning here is unnecessary
+    uint8_t c1Type = c1->type();
+    uint8_t c2Type = c2->type();
 
     switch (c1Type) {
     case JSSetType: {
@@ -573,7 +576,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(c2Type)) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
             return false;
         }
 
@@ -620,6 +623,37 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSFunctionType: {
         return false;
     }
+
+    case JSDOMWrapperType: {
+        if (c2Type == JSDOMWrapperType) {
+            // https://github.com/oven-sh/bun/issues/4089
+            auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
+            auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
+
+            if constexpr (isStrict) {
+                // if one is a URL and the other is not a URL, toStrictEqual returns false.
+                if ((url2 == nullptr) != (url1 == nullptr)) {
+                    return false;
+                }
+
+                if (url2 && url1) {
+                    return url1->wrapped().href() != url2->wrapped().href();
+                }
+            } else {
+                if (url2 && url1) {
+                    // toEqual should return false when the URLs' href is not equal
+                    // But you could have added additional properties onto the
+                    // url object itself, so we must check those as well
+                    // But it's definitely not equal if the href() is not the same
+                    if (url1->wrapped().href() != url2->wrapped().href()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        break;
+    }
+
     default: {
         break;
     }
@@ -745,9 +779,9 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     JSC::Structure* o1Structure = o1->structure();
-    if (canPerformFastPropertyEnumerationForIterationBun(o1Structure)) {
+    if (!o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
         JSC::Structure* o2Structure = o2->structure();
-        if (canPerformFastPropertyEnumerationForIterationBun(o2Structure)) {
+        if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
             size_t count1 = 0;
 
@@ -758,59 +792,95 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
-                    return true;
-                }
-                count1++;
+            bool sameStructure = o2Structure->id() == o1Structure->id();
 
-                JSValue left = o1->getDirect(entry.offset());
-                JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
-
-                if constexpr (!isStrict) {
-                    if (left.isUndefined() && right.isEmpty()) {
-                        return true;
-                    }
-                }
-
-                if (!right) {
-                    result = false;
-                    return false;
-                }
-
-                if (left == right || JSC::sameValue(globalObject, left, right)) {
-                    return true;
-                }
-
-                if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
-                    result = false;
-                    return false;
-                }
-
-                return true;
-            });
-
-            if (result && o2Structure->id() != o1Structure->id()) {
-                size_t remain = count1;
-                o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (sameStructure) {
+                o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
+                    count1++;
+
+                    JSValue left = o1->getDirect(entry.offset());
+                    JSValue right = o2->getDirect(entry.offset());
 
                     if constexpr (!isStrict) {
-                        if (o2->getDirect(entry.offset()).isUndefined()) {
+                        if (left.isUndefined() && right.isEmpty()) {
                             return true;
                         }
                     }
 
-                    if (remain == 0) {
+                    if (!right) {
                         result = false;
                         return false;
                     }
 
-                    remain--;
+                    if (left == right || JSC::sameValue(globalObject, left, right)) {
+                        return true;
+                    }
+
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                        result = false;
+                        return false;
+                    }
+
                     return true;
                 });
+            } else {
+                o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                    if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
+                        return true;
+                    }
+                    count1++;
+
+                    JSValue left = o1->getDirect(entry.offset());
+                    JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+
+                    if constexpr (!isStrict) {
+                        if (left.isUndefined() && right.isEmpty()) {
+                            return true;
+                        }
+                    }
+
+                    if (!right) {
+                        result = false;
+                        return false;
+                    }
+
+                    if (left == right || JSC::sameValue(globalObject, left, right)) {
+                        return true;
+                    }
+
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                        result = false;
+                        return false;
+                    }
+
+                    return true;
+                });
+
+                if (result) {
+                    size_t remain = count1;
+                    o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                        if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
+                            return true;
+                        }
+
+                        if constexpr (!isStrict) {
+                            if (o2->getDirect(entry.offset()).isUndefined()) {
+                                return true;
+                            }
+                        }
+
+                        if (remain == 0) {
+                            result = false;
+                            return false;
+                        }
+
+                        remain--;
+                        return true;
+                    });
+                }
             }
 
             if (addToStack) {
@@ -824,7 +894,9 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(*scope, false);
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(*scope, false);
 
     const size_t propertyArrayLength = a1.size();
     if (propertyArrayLength != a2.size()) {

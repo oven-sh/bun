@@ -467,6 +467,13 @@ pub const Target = enum {
         };
     }
 
+    pub inline fn isNode(this: Target) bool {
+        return switch (this) {
+            .node => true,
+            else => false,
+        };
+    }
+
     pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
             .browser => true,
@@ -1150,7 +1157,9 @@ pub fn definesFromTransformOptions(
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
+    debugger: bool,
 ) !*defines.Define {
+    _ = debugger;
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -1408,7 +1417,7 @@ pub const BundleOptions = struct {
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
-    polyfill_node_globals: bool = true,
+    polyfill_node_globals: bool = false,
     transform_only: bool = false,
 
     rewrite_jest_for_tests: bool = false,
@@ -1434,6 +1443,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
 
     code_coverage: bool = false,
+    debugger: bool = false,
 
     compile: bool = false,
 
@@ -1508,6 +1518,7 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
+            this.debugger,
         );
         this.defines_loaded = true;
     }
@@ -1833,7 +1844,7 @@ pub const BundleOptions = struct {
             opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
         }
 
-        opts.polyfill_node_globals = opts.target != .node;
+        opts.polyfill_node_globals = opts.target == .browser;
 
         Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
         Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;

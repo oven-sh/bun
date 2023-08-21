@@ -23,11 +23,10 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-const NewClass = @import("../base.zig").NewClass;
-const d = @import("../base.zig").d;
+
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -637,6 +636,8 @@ pub const Fetch = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
 
+        tracker: JSC.AsyncTaskTracker,
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: HTTPClient.Sendfile,
@@ -725,7 +726,9 @@ pub const Fetch = struct {
             }
 
             const promise = promise_value.asAnyPromise().?;
-
+            const tracker = this.tracker;
+            tracker.willDispatch(globalThis);
+            defer tracker.didDispatch(globalThis);
             const success = this.result.isSuccess();
             const result = switch (success) {
                 true => this.onResolve(),
@@ -856,7 +859,10 @@ pub const Fetch = struct {
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
                 .signal = fetch_options.signal,
                 .hostname = fetch_options.hostname,
+                .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
             };
+
+            fetch_tasklet.tracker.didSchedule(globalThis);
 
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
@@ -918,6 +924,7 @@ pub const Fetch = struct {
             this.abort_reason = reason;
             reason.protect();
             this.aborted.store(true, .Monotonic);
+            this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
                 HTTPClient.http_thread.scheduleShutdown(this.http.?);
@@ -1673,252 +1680,5 @@ pub const Headers = struct {
         }
 
         return headers;
-    }
-};
-
-// https://github.com/WebKit/WebKit/blob/main/Source/WebCore/workers/service/FetchEvent.h
-pub const FetchEvent = struct {
-    started_waiting_at: u64 = 0,
-    response: ?*Response = null,
-    request_context: ?*RequestContext = null,
-    request: Request,
-    pending_promise: JSValue = JSValue.zero,
-
-    onPromiseRejectionCtx: *anyopaque = undefined,
-    onPromiseRejectionHandler: ?*const fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
-    rejected: bool = false,
-
-    pub const Class = NewClass(
-        FetchEvent,
-        .{
-            .name = "FetchEvent",
-            .read_only = true,
-            .ts = .{ .class = d.ts.class{ .interface = true } },
-        },
-        .{
-            .respondWith = .{
-                .rfn = respondWith,
-                .ts = d.ts{
-                    .tsdoc = "Render the response in the active HTTP request",
-                    .@"return" = "void",
-                    .args = &[_]d.ts.arg{
-                        .{ .name = "response", .@"return" = "Response" },
-                    },
-                },
-            },
-            .waitUntil = waitUntil,
-            .finalize = finalize,
-        },
-        .{
-            .client = .{
-                .get = getClient,
-                .ro = true,
-                .ts = d.ts{
-                    .tsdoc = "HTTP client metadata. This is not implemented yet, do not use.",
-                    .@"return" = "undefined",
-                },
-            },
-            .request = .{
-                .get = getRequest,
-                .ro = true,
-                .ts = d.ts{
-                    .tsdoc = "HTTP request",
-                    .@"return" = "InstanceType<Request>",
-                },
-            },
-        },
-    );
-
-    pub fn finalize(
-        this: *FetchEvent,
-    ) void {
-        VirtualMachine.get().allocator.destroy(this);
-    }
-
-    pub fn getClient(
-        _: *FetchEvent,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        Output.prettyErrorln("FetchEvent.client is not implemented yet - sorry!!", .{});
-        Output.flush();
-        return js.JSValueMakeUndefined(ctx);
-    }
-    pub fn getRequest(
-        this: *FetchEvent,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var req = bun.default_allocator.create(Request) catch unreachable;
-        req.* = this.request;
-
-        return req.toJS(
-            ctx,
-        ).asObjectRef();
-    }
-
-    // https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent/respondWith
-    pub fn respondWith(
-        this: *FetchEvent,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var request_context = this.request_context orelse return js.JSValueMakeUndefined(ctx);
-        if (request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
-        var globalThis = ctx.ptr();
-        // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
-        if (arguments.len == 0) {
-            JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
-            request_context.sendInternalError(error.respondWithWasEmpty) catch {};
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        var arg = arguments[0];
-
-        var existing_response: ?*Response = arguments[0].?.value().as(Response);
-
-        if (existing_response == null) {
-            switch (JSValue.fromRef(arg).jsTypeLoose()) {
-                .JSPromise => {
-                    this.pending_promise = JSValue.fromRef(arg);
-                },
-                else => {
-                    JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
-                    request_context.sendInternalError(error.respondWithWasNotResponse) catch {};
-                    return js.JSValueMakeUndefined(ctx);
-                },
-            }
-        }
-
-        if (this.pending_promise.asAnyPromise()) |promise| {
-            globalThis.bunVM().waitForPromise(promise);
-
-            switch (promise.status(ctx.ptr().vm())) {
-                .Fulfilled => {},
-                else => {
-                    this.rejected = true;
-                    this.pending_promise = JSValue.zero;
-                    this.onPromiseRejectionHandler.?(
-                        this.onPromiseRejectionCtx,
-                        error.PromiseRejection,
-                        this,
-                        promise.result(globalThis.vm()),
-                    );
-                    return js.JSValueMakeUndefined(ctx);
-                },
-            }
-
-            arg = promise.result(ctx.ptr().vm()).asRef();
-        }
-
-        var response: *Response = JSValue.c(arg.?).as(Response) orelse {
-            this.rejected = true;
-            this.pending_promise = JSValue.zero;
-            JSError(getAllocator(ctx), "event.respondWith() expects Response or Promise<Response>", .{}, ctx, exception);
-            this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
-            return js.JSValueMakeUndefined(ctx);
-        };
-
-        defer {
-            if (!VirtualMachine.get().had_errors) {
-                Output.printElapsed(@as(f64, @floatFromInt((request_context.timer.lap()))) / std.time.ns_per_ms);
-
-                Output.prettyError(
-                    " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
-                    .{
-                        request_context.matched_route.?.name,
-                        VirtualMachine.get().transpiled_count,
-                        VirtualMachine.get().resolved_count,
-                    },
-                );
-            }
-        }
-
-        defer this.pending_promise = JSValue.zero;
-        var needs_mime_type = true;
-        var content_length: ?usize = null;
-
-        if (response.body.init.headers) |headers_ref| {
-            var headers = Headers.from(headers_ref, request_context.allocator, .{}) catch unreachable;
-
-            var i: usize = 0;
-            while (i < headers.entries.len) : (i += 1) {
-                var header = headers.entries.get(i);
-                const name = headers.asStr(header.name);
-                if (strings.eqlComptime(name, "content-type") and headers.asStr(header.value).len > 0) {
-                    needs_mime_type = false;
-                }
-
-                if (strings.eqlComptime(name, "content-length")) {
-                    content_length = std.fmt.parseInt(usize, headers.asStr(header.value), 10) catch null;
-                    continue;
-                }
-
-                // Some headers need to be managed by bun
-                if (strings.eqlComptime(name, "transfer-encoding") or
-                    strings.eqlComptime(name, "content-encoding") or
-                    strings.eqlComptime(name, "strict-transport-security") or
-                    strings.eqlComptime(name, "content-security-policy"))
-                {
-                    continue;
-                }
-
-                request_context.appendHeaderSlow(
-                    name,
-                    headers.asStr(header.value),
-                ) catch unreachable;
-            }
-        }
-
-        if (needs_mime_type) {
-            request_context.appendHeader("Content-Type", response.mimeTypeWithDefault(MimeType.html, request_context));
-        }
-
-        var blob = response.body.value.use();
-        defer blob.deinit();
-
-        const content_length_ = content_length orelse blob.size;
-
-        if (content_length_ == 0) {
-            request_context.sendNoContent() catch return js.JSValueMakeUndefined(ctx);
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        if (FeatureFlags.strong_etags_for_built_files) {
-            const did_send = request_context.writeETag(blob.sharedView()) catch false;
-            if (did_send) {
-                // defer getAllocator(ctx).destroy(str.ptr);
-                return js.JSValueMakeUndefined(ctx);
-            }
-        }
-
-        defer request_context.done();
-
-        request_context.writeStatusSlow(response.body.init.status_code) catch return js.JSValueMakeUndefined(ctx);
-        request_context.prepareToSendBody(content_length_, false) catch return js.JSValueMakeUndefined(ctx);
-
-        request_context.writeBodyBuf(blob.sharedView()) catch return js.JSValueMakeUndefined(ctx);
-
-        return js.JSValueMakeUndefined(ctx);
-    }
-
-    // our implementation of the event listener already does this
-    // so this is a no-op for us
-    pub fn waitUntil(
-        _: *FetchEvent,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeUndefined(ctx);
     }
 };

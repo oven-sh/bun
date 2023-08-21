@@ -213,15 +213,19 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    NapiPrototype* subclass(JSC::JSObject* newTarget)
+    NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)
     {
         auto& vm = this->vm();
-        auto* structure = InternalFunction::createSubclassStructure(globalObject(),
-            newTarget,
-            this->structure());
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* targetFunction = jsCast<JSFunction*>(newTarget);
+        FunctionRareData* rareData = targetFunction->ensureRareData(vm);
+        auto* prototype = newTarget->get(globalObject, vm.propertyNames->prototype).getObject();
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+        RETURN_IF_EXCEPTION(scope, nullptr);
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
-        return footprint;
+        RELEASE_AND_RETURN(scope, footprint);
     }
 
     NapiRef* napiRef = nullptr;

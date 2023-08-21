@@ -252,7 +252,8 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
         arguments.append(jsUndefined());
         arguments.append(JSValue::decode(ctx));
         ASSERT(!arguments.hasOverflowed());
-        JSC::call(globalThis, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        // async context tracking is handled by performPromiseThenFunction internally.
+        JSC::profiledCall(globalThis, JSC::ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
     } else {
         promise->then(globalThis, resolverFunction, rejecterFunction);
     }
@@ -260,6 +261,9 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
 
 static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 {
+    if (s->hasNonReifiedStaticProperties()) {
+        return false;
+    }
     if (s->typeInfo().overridesGetOwnPropertySlot())
         return false;
     if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
@@ -1770,7 +1774,7 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -1811,7 +1815,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
@@ -3956,6 +3960,7 @@ enum class BuiltinNamesMap : uint8_t {
     data,
     toString,
     redirect,
+    inspectCustom,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -3987,7 +3992,46 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::redirect: {
         return clientData->builtinNames().redirectPublicName();
     }
+    case BuiltinNamesMap::inspectCustom: {
+        return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
     }
+    }
+}
+
+extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encodedFunctionValue,
+    JSC__JSValue encodedThisValue,
+    unsigned depth,
+    unsigned max_depth,
+    bool colors)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue functionToCall = JSValue::decode(encodedFunctionValue);
+    JSValue thisValue = JSValue::decode(encodedThisValue);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSFunction* inspectFn = globalObject->utilInspectFunction();
+    JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
+
+    JSObject* options = JSC::constructEmptyObject(globalObject);
+    options->putDirect(vm, Identifier::fromString(vm, "stylize"_s), stylizeFn);
+    options->putDirect(vm, Identifier::fromString(vm, "depth"_s), jsNumber(max_depth));
+    options->putDirect(vm, Identifier::fromString(vm, "colors"_s), jsBoolean(colors));
+
+    auto callData = JSC::getCallData(functionToCall);
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(depth));
+    arguments.append(options);
+    arguments.append(inspectFn);
+
+    auto inspectRet = JSC::call(globalObject, functionToCall, callData, thisValue, arguments);
+    if (auto exe = scope.exception()) {
+        scope.clearException();
+        return JSValue::encode(exe);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)

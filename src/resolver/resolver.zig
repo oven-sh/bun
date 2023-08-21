@@ -588,7 +588,7 @@ pub const Resolver = struct {
                 return true;
             }
 
-            if (bun.JSC.HardcodedModule.Aliases.has(import_path)) {
+            if (bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target)) {
                 return true;
             }
         }
@@ -1269,16 +1269,28 @@ pub const Resolver = struct {
                     result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));
                     result.is_from_node_modules = true;
                     return .{ .success = result };
-                    // "node:*
-                    // "fs"
-                    // "fs/*"
-                    // These are disabled!
-                } else if (had_node_prefix and !JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix)) {
-                    return .{ .not_found = {} };
-                } else if (had_node_prefix or
-                    (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
+                }
+
+                if (had_node_prefix) {
+                    // Module resolution fails automatically for unknown node builtins
+                    if (!bun.JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix, .node)) {
+                        return .{ .not_found = {} };
+                    }
+
+                    // Valid node:* modules becomes {} in the output
+                    result.path_pair.primary.namespace = "node";
+                    result.path_pair.primary.text = import_path_without_node_prefix;
+                    result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
+                    result.module_type = .cjs;
+                    result.path_pair.primary.is_disabled = true;
+                    result.is_from_node_modules = true;
+                    return .{ .success = result };
+                }
+
+                // Always mark "fs" as disabled, matching Webpack v4 behavior
+                if (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[2] == '/')))
+                    import_path_without_node_prefix[2] == '/'))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;

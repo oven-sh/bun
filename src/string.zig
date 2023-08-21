@@ -637,7 +637,7 @@ pub const String = extern struct {
 
     pub fn canBeUTF8(self: String) bool {
         if (self.tag == .WTFStringImpl)
-            return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1());
+            return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
         if (self.tag == .ZigString or self.tag == .StaticZigString)
             return self.value.ZigString.isUTF8();
@@ -838,6 +838,8 @@ pub const String = extern struct {
 
     extern fn BunString__toThreadSafe(this: *String) void;
     pub fn toThreadSafe(this: *String) void {
+        JSC.markBinding(@src());
+
         if (this.tag == .WTFStringImpl) {
             BunString__toThreadSafe(this);
         }

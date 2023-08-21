@@ -543,9 +543,15 @@ pub const Listener = struct {
     pub fn listen(
         globalObject: *JSC.JSGlobalObject,
         opts: JSValue,
-        exception: JSC.C.ExceptionRef,
     ) JSValue {
         log("listen", .{});
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_;
+        defer {
+            if (exception_[0] != null) {
+                globalObject.throwValue(exception_[0].?.value());
+            }
+        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
             return .zero;
@@ -877,8 +883,14 @@ pub const Listener = struct {
     pub fn connect(
         globalObject: *JSC.JSGlobalObject,
         opts: JSValue,
-        exception: JSC.C.ExceptionRef,
     ) JSValue {
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_;
+        defer {
+            if (exception_[0] != null) {
+                globalObject.throwValue(exception_[0].?.value());
+            }
+        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
             return .zero;
@@ -985,6 +997,7 @@ pub const Listener = struct {
                 exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
+            tls.poll_ref.ref(handlers.vm);
 
             return promise_value;
         } else {
@@ -1010,6 +1023,7 @@ pub const Listener = struct {
                 exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
+            tcp.poll_ref.ref(handlers.vm);
 
             return promise_value;
         }
@@ -1175,7 +1189,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.markInactive();
 
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
+            this.poll_ref.unrefOnNextTick(handlers.vm);
 
             const callback = handlers.onConnectError;
             var globalObject = handlers.globalObject;
@@ -1212,7 +1226,6 @@ fn NewSocket(comptime ssl: bool) type {
                 const err_ = err.toErrorInstance(globalObject);
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
                 this.has_pending_activity.store(false, .Release);
-                this.poll_ref.unref(handlers.vm);
             }
         }
 
@@ -1280,7 +1293,6 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            this.poll_ref.ref(this.handlers.vm);
             this.detached = false;
             this.socket = socket;
 

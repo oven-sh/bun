@@ -391,6 +391,8 @@ pub const Element = opaque {
     extern fn lol_html_element_remove(element: *const Element) void;
     extern fn lol_html_element_remove_and_keep_content(element: *const Element) void;
     extern fn lol_html_element_is_removed(element: *const Element) bool;
+    extern fn lol_html_element_is_self_closing(element: *const Element) bool;
+    extern fn lol_html_element_can_have_content(element: *const Element) bool;
     extern fn lol_html_element_user_data_set(element: *const Element, user_data: ?*anyopaque) void;
     extern fn lol_html_element_user_data_get(element: *const Element) ?*anyopaque;
     extern fn lol_html_element_add_end_tag_handler(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
@@ -492,6 +494,14 @@ pub const Element = opaque {
     pub fn isRemoved(element: *const Element) bool {
         auto_disable();
         return lol_html_element_is_removed(element);
+    }
+    pub fn isSelfClosing(element: *const Element) bool {
+        auto_disable();
+        return lol_html_element_is_self_closing(element);
+    }
+    pub fn canHaveContent(element: *const Element) bool {
+        auto_disable();
+        return lol_html_element_can_have_content(element);
     }
     pub fn setUserData(element: *const Element, user_data: ?*anyopaque) void {
         auto_disable();

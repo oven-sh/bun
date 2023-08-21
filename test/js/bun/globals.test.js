@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it, describe } from "bun:test";
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
@@ -25,6 +25,7 @@ it("writable", () => {
     ["ErrorEvent", ErrorEvent],
     ["CustomEvent", CustomEvent],
     ["CloseEvent", CloseEvent],
+    ["File", File],
   ];
   for (let [name, Class] of classes) {
     globalThis[name] = 123;
@@ -45,8 +46,80 @@ it("name", () => {
     ["HTMLRewriter", HTMLRewriter],
     ["Transpiler", Bun.Transpiler],
     ["Buffer", Buffer],
+    ["File", File],
   ];
   for (let [name, Class] of classes) {
     expect(Class.name).toBe(name);
   }
+});
+
+describe("File", () => {
+  it("constructor", () => {
+    const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
+    expect(file.name).toBe("bar.txt");
+    expect(file.type).toBe("text/plain;charset=utf-8");
+    expect(file.size).toBe(3);
+    expect(file.lastModified).toBe(0);
+  });
+
+  it("constructor with lastModified", () => {
+    const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8", lastModified: 123 });
+    expect(file.name).toBe("bar.txt");
+    expect(file.type).toBe("text/plain;charset=utf-8");
+    expect(file.size).toBe(3);
+    expect(file.lastModified).toBe(123);
+  });
+
+  it("constructor with undefined name", () => {
+    const file = new File(["foo"], undefined);
+    expect(file.name).toBe("undefined");
+    expect(file.type).toBe("");
+    expect(file.size).toBe(3);
+    expect(file.lastModified).toBe(0);
+  });
+
+  it("constructor throws invalid args", () => {
+    const invalid = [[], [undefined], [null], [Symbol(), "foo"], [Symbol(), Symbol(), Symbol()]];
+    for (let args of invalid) {
+      expect(() => new File(...args)).toThrow();
+    }
+  });
+
+  it("instanceof", () => {
+    const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    expect(file instanceof Object).toBe(true);
+    expect(file instanceof Function).toBe(false);
+    const blob = new Blob(["foo"], { type: "text/plain;charset=utf-8" });
+    expect(blob instanceof File).toBe(false);
+  });
+
+  it("extendable", async () => {
+    class Foo extends File {
+      constructor(...args) {
+        super(...args);
+      }
+
+      bar() {
+        return true;
+      }
+
+      text() {
+        return super.text();
+      }
+    }
+    const foo = new Foo(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
+    expect(foo instanceof File).toBe(true);
+    expect(foo instanceof Blob).toBe(true);
+    expect(foo instanceof Object).toBe(true);
+    expect(foo instanceof Function).toBe(false);
+    expect(foo instanceof Foo).toBe(true);
+    expect(foo.bar()).toBe(true);
+    expect(foo.name).toBe("bar.txt");
+    expect(foo.type).toBe("text/plain;charset=utf-8");
+    expect(foo.size).toBe(3);
+    expect(foo.lastModified).toBe(0);
+    expect(await foo.text()).toBe("foo");
+  });
 });

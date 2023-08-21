@@ -310,7 +310,7 @@ it("invalid syntax counts towards bail", async () => {
     await writeFile(join(test_dir, "bad4.test.js"), "!!!");
     await writeFile(join(test_dir, "bad5.test.js"), "!!!");
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "test", "--bail", "3"],
+      cmd: [bunExe(), "test", "--bail=3"],
       cwd: test_dir,
       stdout: null,
       stdin: "pipe",

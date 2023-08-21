@@ -3,6 +3,10 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
+import { builtinModules } from "node:module";
+import { BuildConfig } from "bun";
+
+const t = new Bun.Transpiler({ loader: "tsx" });
 
 let start = performance.now();
 function mark(log: string) {
@@ -70,7 +74,7 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
   if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
 
   if (specifier in nativeModuleIds) {
-    return `__intrinsic__requireNativeModule(${JSON.stringify(specifier)})`;
+    return codegenRequireNativeModule(JSON.stringify(specifier));
   }
 
   const relativeMatch =
@@ -93,33 +97,59 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < moduleList.length; i++) {
   try {
-    const input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-    const processed = sliceSourceCode("{" + input.replace(/export\s*{\s*}\s*;/g, ""), true, x =>
-      globalThis.requireTransformer(x, moduleList[i]),
+    let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+
+    const scannedImports = t.scanImports(input);
+    for (const imp of scannedImports) {
+      if (imp.kind === "import-statement") {
+        var isBuiltin = true;
+        try {
+          if (!builtinModules.includes(imp.path)) {
+            globalThis.requireTransformer(imp.path, moduleList[i]);
+          }
+        } catch {
+          isBuiltin = false;
+        }
+        if (isBuiltin) {
+          throw new Error(`Cannot use ESM import on builtin modules. Use require("${imp.path}") instead.`);
+        }
+      }
+    }
+
+    let importStatements: string[] = [];
+
+    const processed = sliceSourceCode(
+      "{" +
+        input
+          .replace(
+            /\bimport(\s*type)?\s*(\{[^}]*\}|(\*\s*as)?\s[a-zA-Z0-9_$]+)\s*from\s*['"][^'"]+['"]/g,
+            stmt => (importStatements.push(stmt), ""),
+          )
+          .replace(/export\s*{\s*}\s*;/g, ""),
+      true,
+      x => globalThis.requireTransformer(x, moduleList[i]),
     );
     let fileToTranspile = `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
+${importStatements.join("\n")}
 
-$$capture_start$$(function() {
-${processed.result.slice(1)}
-return __intrinsic__exports;
-}).$$capture_end$$;`;
+${processed.result.slice(1).trim()}
+$$EXPORT$$(__intrinsic__exports).$$EXPORT_END$$;
+`;
 
     // Attempt to optimize "$exports = ..." to a variableless return
     // otherwise, declare $exports so it works.
     let exportOptimization = false;
     fileToTranspile = fileToTranspile.replace(
-      /__intrinsic__exports\s*=\s*(.*|.*\{[^\}]*}|.*\([^\)]*\));?\n\s*return\s*__intrinsic__exports;/g,
+      /__intrinsic__exports\s*=\s*(.*|.*\{[^\}]*}|.*\([^\)]*\))\n+\s*\$\$EXPORT\$\$\(__intrinsic__exports\).\$\$EXPORT_END\$\$;/,
       (_, a) => {
         exportOptimization = true;
-        return "return " + a + ";";
+        return "$$EXPORT$$(" + a.replace(/;$/, "") + ").$$EXPORT_END$$;";
       },
     );
     if (!exportOptimization) {
-      fileToTranspile = fileToTranspile
-        .replaceAll("__intrinsic__exports", "$")
-        .replace("$$capture_start$$(function() {", "$$$$capture_start$$$$(function() {var $;");
+      fileToTranspile = `var $;` + fileToTranspile.replaceAll("__intrinsic__exports", "$");
     }
     const outputPath = path.join(TMP, moduleList[i].slice(0, -3) + ".ts");
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -134,16 +164,20 @@ return __intrinsic__exports;
 
 mark("Preprocess modules");
 
-const config = ({ platform, debug }: { platform: string; debug?: boolean }) => ({
-  entrypoints: bundledEntryPoints,
-  minify: { syntax: true, whitespace: !debug },
-  root: TMP,
-  define: {
-    IS_BUN_DEVELOPMENT: String(!!debug),
-    __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-    "process.platform": JSON.stringify(platform),
-  },
-});
+const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
+  ({
+    entrypoints: bundledEntryPoints,
+    // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
+    minify: { syntax: true, whitespace: false },
+    root: TMP,
+    target: "bun",
+    external: builtinModules,
+    define: {
+      IS_BUN_DEVELOPMENT: String(!!debug),
+      __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
+      "process.platform": JSON.stringify(platform),
+    },
+  } satisfies BuildConfig);
 const bundled_dev = await Bun.build(config({ platform: process.platform, debug: true }));
 const bundled_linux = await Bun.build(config({ platform: "linux" }));
 const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
@@ -172,15 +206,33 @@ for (const [name, bundle, outputs] of [
 ] as const) {
   for (const file of bundle.outputs) {
     const output = await file.text();
-    let captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     captured =
       captured
-        .replace(/^\((async )?function\(/, "($1function (")
+        .replace(
+          `var __require = (id) => {
+  return import.meta.require(id);
+};`,
+          "",
+        )
+        .replace(/var\s*__require\s*=\s*\(?id\)?\s*=>\s*{\s*return\s*import.meta.require\(id\)\s*};?/, "")
+        .replace(/var __require=\(?id\)?=>import.meta.require\(id\);?/, "")
+        .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
         .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
         .replace(/]\s*,\s*__debug_end__\)/g, ")")
         .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
+          try {
+            const str = JSON.parse(specifier);
+            return globalThis.requireTransformer(str, file.path);
+          } catch {
+            throw new Error(
+              `Builtin Bundler: import.meta.require() must be called with a string literal. Found ${specifier}. (in ${file.path}))`,
+            );
+          }
+        })
         .replace(/__intrinsic__/g, "@") + "\n";
     captured = captured.replace(
       /function\s*\(.*?\)\s*{/,
@@ -250,7 +302,8 @@ fs.writeFileSync(
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistry+createInternalModuleById.h"),
-  `JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
+  `// clang-format off
+JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
   switch (id) {
     // JS internal modules
@@ -259,7 +312,9 @@ fs.writeFileSync(
         return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
           id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code);
+        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+          .replace(/\.[mc]?[tj]s$/, "")
+          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
       })
       .join("\n    ")}
@@ -272,12 +327,13 @@ fs.writeFileSync(
 // It inlines all the strings for the module IDs.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistryConstants.h"),
-  `#pragma once
+  `// clang-format off
+#pragma once
 
-  namespace Bun {
-  namespace InternalModuleRegistryConstants {
+namespace Bun {
+namespace InternalModuleRegistryConstants {
 
-  #if __APPLE__
+#if __APPLE__
   ${moduleList
     .map(
       (id, n) =>
@@ -308,10 +364,10 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
 `,
     )
     .join("\n")}
-  #endif
+#endif
 
-  }
-  }`,
+}
+}`,
 );
 
 // This is a generated enum for zig code (exports.zig)

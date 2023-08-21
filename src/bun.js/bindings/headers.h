@@ -81,7 +81,6 @@ typedef void* JSClassRef;
  typedef bJSC__JSCell JSC__JSCell; // JSC::JSCell
  typedef bJSC__JSGlobalObject JSC__JSGlobalObject; // JSC::JSGlobalObject
  typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
-  typedef JSClassRef JSClassRef;
  typedef bJSC__JSInternalPromise JSC__JSInternalPromise; // JSC::JSInternalPromise
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
 
@@ -121,7 +120,6 @@ typedef void* JSClassRef;
   typedef ErrorableString ErrorableString;
   typedef SystemError SystemError;
   typedef Uint8Array_alias Uint8Array_alias;
-  typedef JSClassRef JSClassRef;
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
   using JSC__JSGlobalObject = JSC::JSGlobalObject;
   using JSC__Exception = JSC::Exception;
@@ -426,14 +424,14 @@ CPP_DECL size_t JSC__VM__heapSize(JSC__VM* arg0);
 CPP_DECL void JSC__VM__holdAPILock(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
 CPP_DECL bool JSC__VM__isEntered(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
+CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedTermination(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC__VM* arg0);
 CPP_DECL JSC__JSValue JSC__VM__runGC(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
-CPP_DECL void JSC__VM__notifyNeedTermination(JSC__VM* arg0);
-CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0);
-CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0);
-CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC__VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
@@ -556,34 +554,10 @@ ZIG_DECL JSC__JSValue Reader__intptr__fastpath(JSC__JSGlobalObject* arg0, void* 
 ZIG_DECL JSC__JSValue Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
-CPP_DECL void Crypto__getRandomValues__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC__JSValue Crypto__getRandomValues__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2);
-ZIG_DECL JSC__JSValue Crypto__getRandomValues__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
-
-#endif
-CPP_DECL void Crypto__randomUUID__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC__JSValue Crypto__randomUUID__fastpath(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue Crypto__randomUUID__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
-
-#endif
-CPP_DECL void Crypto__timingSafeEqual__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC__JSValue Crypto__timingSafeEqual__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2, Uint8Array_alias* arg3);
-ZIG_DECL JSC__JSValue Crypto__timingSafeEqual__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
-
-#endif
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2, int32_t arg3, bool arg4, void* arg5);
+CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, void* arg3);
 CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0);
 CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg0, void* arg1);
 
@@ -595,12 +569,6 @@ ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC__JSValue Zig__GlobalObject__promiseRejectionTracker(JSC__JSGlobalObject* arg0, JSC__JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC__JSValue Zig__GlobalObject__reportUncaughtException(JSC__JSGlobalObject* arg0, JSC__Exception* arg1);
 ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3, ZigString* arg4);
-
-#endif
-
-#ifdef __cplusplus
-
-ZIG_DECL bool Zig__ErrorType__isPrivateData(void* arg0);
 
 #endif
 

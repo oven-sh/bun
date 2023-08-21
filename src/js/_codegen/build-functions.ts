@@ -6,7 +6,7 @@ import { cap, fmtCPPString, low } from "./helpers";
 import { spawn } from "bun";
 
 async function createStaticHashtables() {
-  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp"];
+  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp", "src/bun.js/bindings/BunObject.cpp"];
   console.time("Creating static hash tables...");
   const create_hash_table = path.join(import.meta.dir, "../../../src/bun.js/scripts/create_hash_table");
   if (!create_hash_table) {

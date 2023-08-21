@@ -121,7 +121,7 @@ This event does not exist in browsers.
 
 By default, an active `Worker` will keep the main (spawning) process alive, so async tasks like `setTimeout` and promises will keep the process alive. Attaching `message` listeners will also keep the `Worker` alive.
 
-### `worker.unref`
+### `worker.unref()`
 
 To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivlent to what Node.js' `worker_threads` does.
 
@@ -132,7 +132,7 @@ worker.unref();
 
 Note: `worker.unref()` is not available in browers.
 
-### `worker.ref`
+### `worker.ref()`
 
 To keep the process alive until the `Worker` terminates, call `worker.ref()`. A ref'd worker is the default behavior, and still needs something going on in the event loop (such as a `"message"` listener) for the worker to continue running.
 

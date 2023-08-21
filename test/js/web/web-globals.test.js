@@ -20,6 +20,7 @@ test("exists", () => {
   expect(typeof Blob !== "undefined").toBe(true);
   expect(typeof FormData !== "undefined").toBe(true);
   expect(typeof Worker !== "undefined").toBe(true);
+  expect(typeof File !== "undefined").toBe(true);
 });
 
 const globalSetters = [

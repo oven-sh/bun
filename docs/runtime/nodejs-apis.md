@@ -10,7 +10,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🔴 Not implemented.
+🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented.
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 
@@ -50,7 +50,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `EventEmitterAsyncResource` `events.on`.
+🟡 Missing `on`
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -162,11 +162,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟢 Fully implemented.
+🟡 `Worker` doesn't support the following options: `eval`, `argv`, `execArgv`, `stdin`, `stdout`, `stderr`, `trackedUnmanagedFds`, `resourceLimits`. Missing `markAsUntransferable`, `moveMessagePortToContext`, `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Missing `zlib.brotli*`
+🟡 Missing `zlib.brotli*`. Some methods are not optimized.
 
 <!-- {% block className="ScrollFrame" %}
 {% table %}
@@ -485,7 +485,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
-🟢 Fully implemented.
+🟡 Missing `Console` constructor.
 
 ### [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
 

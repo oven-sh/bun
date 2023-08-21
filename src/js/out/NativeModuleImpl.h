@@ -5,6 +5,5 @@
 #include "../../bun.js/modules/NodeModuleModule.h"
 #include "../../bun.js/modules/NodeProcessModule.h"
 #include "../../bun.js/modules/NodeStringDecoderModule.h"
-#include "../../bun.js/modules/NodeTTYModule.h"
 #include "../../bun.js/modules/NodeUtilTypesModule.h"
 #include "../../bun.js/modules/UTF8ValidateModule.h"

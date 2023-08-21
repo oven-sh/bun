@@ -4,13 +4,13 @@
   "type": "module",
   "devDependencies": {
     "bun-types": "0.7.0",
-    "prisma": "5.0.0"
+    "prisma": "5.1.1"
   },
   "peerDependencies": {
     "typescript": "5.0.0"
   },
   "dependencies": {
-    "@prisma/client": "5.0.0"
+    "@prisma/client": "5.1.1"
   },
   "scripts": {
     "postinstall": "prisma generate --schema=./prisma/schema.prisma"

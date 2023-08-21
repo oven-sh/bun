@@ -18,7 +18,6 @@ const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;
 const Request = WebCore.Request;
 const Router = @import("./api/filesystem_router.zig");
-const FetchEvent = WebCore.FetchEvent;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = @import("root").bun.uws;
 const Body = WebCore.Body;
@@ -79,100 +78,6 @@ pub const To = struct {
         }
     };
     pub const JS = struct {
-        pub inline fn str(_: anytype, val: anytype) js.JSStringRef {
-            return js.JSStringCreateWithUTF8CString(val[0.. :0]);
-        }
-
-        pub fn functionWithCallback(
-            comptime ZigContextType: type,
-            zig: ObjectPtrType(ZigContextType),
-            name: js.JSStringRef,
-            ctx: js.JSContextRef,
-            comptime callback: fn (
-                obj: ObjectPtrType(ZigContextType),
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) js.JSValueRef,
-        ) js.JSObjectRef {
-            var function = js.JSObjectMakeFunctionWithCallback(ctx, name, Callback(ZigContextType, callback).rfn);
-            std.debug.assert(js.JSObjectSetPrivate(
-                function,
-                JSPrivateDataPtr.init(zig).ptr(),
-            ));
-            return function;
-        }
-
-        pub fn Finalize(
-            comptime ZigContextType: type,
-            comptime ctxfn: fn (
-                this: ObjectPtrType(ZigContextType),
-            ) void,
-        ) type {
-            return struct {
-                pub fn rfn(
-                    object: js.JSObjectRef,
-                ) callconv(.C) void {
-                    return ctxfn(
-                        GetJSPrivateData(ZigContextType, object) orelse return,
-                    );
-                }
-            };
-        }
-
-        pub fn Constructor(
-            comptime ctxfn: fn (
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) js.JSValueRef,
-        ) type {
-            return struct {
-                pub fn rfn(
-                    ctx: js.JSContextRef,
-                    function: js.JSObjectRef,
-                    argumentCount: usize,
-                    arguments: [*c]const js.JSValueRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    return ctxfn(
-                        ctx,
-                        function,
-                        if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                        exception,
-                    );
-                }
-            };
-        }
-        pub fn ConstructorCallback(
-            comptime ctxfn: fn (
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) js.JSValueRef,
-        ) type {
-            return struct {
-                pub fn rfn(
-                    ctx: js.JSContextRef,
-                    function: js.JSObjectRef,
-                    argumentCount: usize,
-                    arguments: [*c]const js.JSValueRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    return ctxfn(
-                        ctx,
-                        function,
-                        if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                        exception,
-                    );
-                }
-            };
-        }
-
         pub fn withType(comptime Type: type, value: Type, context: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return withTypeClone(Type, value, context, exception, false);
         }
@@ -325,93 +230,6 @@ pub const To = struct {
                 },
             };
         }
-
-        pub fn PropertyGetter(
-            comptime Type: type,
-        ) type {
-            return comptime fn (
-                this: ObjectPtrType(Type),
-                ctx: js.JSContextRef,
-                _: js.JSValueRef,
-                _: js.JSStringRef,
-                exception: js.ExceptionRef,
-            ) js.JSValueRef;
-        }
-
-        pub fn Getter(comptime Type: type, comptime field: std.meta.FieldEnum(Type)) PropertyGetter(Type) {
-            return struct {
-                pub fn rfn(
-                    this: ObjectPtrType(Type),
-                    ctx: js.JSContextRef,
-                    _: js.JSValueRef,
-                    _: js.JSStringRef,
-                    exception: js.ExceptionRef,
-                ) js.JSValueRef {
-                    return withType(std.meta.fieldInfo(Type, field).type, @field(this, @tagName(field)), ctx, exception);
-                }
-            }.rfn;
-        }
-
-        pub const JSC_C_Function = fn (
-            js.JSContextRef,
-            js.JSObjectRef,
-            js.JSObjectRef,
-            usize,
-            [*c]const js.JSValueRef,
-            js.ExceptionRef,
-        ) callconv(.C) js.JSValueRef;
-
-        pub fn Callback(
-            comptime ZigContextType: type,
-            comptime ctxfn: fn (
-                obj: ObjectPtrType(ZigContextType),
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                thisObject: js.JSObjectRef,
-                arguments: []const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) js.JSValueRef,
-        ) type {
-            return struct {
-                pub fn rfn(
-                    ctx: js.JSContextRef,
-                    function: js.JSObjectRef,
-                    thisObject: js.JSObjectRef,
-                    argumentCount: usize,
-                    arguments: [*c]const js.JSValueRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    if (comptime ZigContextType == anyopaque) {
-                        return ctxfn(
-                            js.JSObjectGetPrivate(function) orelse js.JSObjectGetPrivate(thisObject) orelse undefined,
-                            ctx,
-                            function,
-                            thisObject,
-                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                            exception,
-                        );
-                    } else if (comptime ZigContextType == void) {
-                        return ctxfn(
-                            {},
-                            ctx,
-                            function,
-                            thisObject,
-                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                            exception,
-                        );
-                    } else {
-                        return ctxfn(
-                            GetJSPrivateData(ZigContextType, function) orelse GetJSPrivateData(ZigContextType, thisObject) orelse return js.JSValueMakeUndefined(ctx),
-                            ctx,
-                            function,
-                            thisObject,
-                            if (arguments) |args| args[0..argumentCount] else &[_]js.JSValueRef{},
-                            exception,
-                        );
-                    }
-                }
-            };
-        }
     };
 };
 
@@ -459,1132 +277,6 @@ pub const Properties = struct {
         Refs.empty_string = js.JSStringCreateWithUTF8CString(&Refs.empty_string_ptr);
     }
 };
-
-const hasSetter = std.meta.trait.hasField("set");
-const hasReadOnly = std.meta.trait.hasField("ro");
-const hasFinalize = std.meta.trait.hasField("finalize");
-const hasEnumerable = std.meta.trait.hasField("enumerable");
-
-const hasTypeScriptField = std.meta.trait.hasField("ts");
-fn hasTypeScript(comptime Type: type) bool {
-    if (hasTypeScriptField(Type)) {
-        return true;
-    }
-
-    return @hasDecl(Type, "ts");
-}
-
-fn getTypeScript(comptime Type: type, value: Type) d.ts.or_decl {
-    if (comptime !@hasDecl(Type, "ts") and !@hasField(Type, "ts")) {
-        return d.ts.or_decl{
-            .ts = .{ .name = @typeName(Type) },
-        };
-    }
-
-    if (comptime hasTypeScriptField(Type)) {
-        if (@TypeOf(value.ts) == d.ts.decl) {
-            return d.ts.or_decl{ .decl = value };
-        } else {
-            return d.ts.or_decl{ .ts = value.ts };
-        }
-    }
-
-    if (@TypeOf(Type.ts) == d.ts.decl) {
-        return d.ts.or_decl{ .decl = Type.ts };
-    } else {
-        return d.ts.or_decl{ .ts = value.ts };
-    }
-}
-
-pub const d = struct {
-    pub const ts = struct {
-        @"return": string = "unknown",
-        tsdoc: string = "",
-        name: string = "",
-        read_only: ?bool = null,
-        args: []const arg = &[_]arg{},
-        splat_args: bool = false,
-
-        pub const or_decl = union(Tag) {
-            ts: ts,
-            decl: decl,
-            pub const Tag = enum { ts, decl };
-        };
-
-        pub const decl = union(Tag) {
-            module: module,
-            class: class,
-            empty: u0,
-            pub const Tag = enum { module, class, empty };
-        };
-
-        pub const module = struct {
-            tsdoc: string = "",
-            read_only: ?bool = null,
-            path: string = "",
-            global: bool = false,
-
-            properties: []ts = &[_]ts{},
-            functions: []ts = &[_]ts{},
-            classes: []class = &[_]class{},
-        };
-
-        pub const class = struct {
-            name: string = "",
-            tsdoc: string = "",
-            @"return": string = "",
-            read_only: ?bool = null,
-            interface: bool = true,
-            default_export: bool = false,
-
-            properties: []ts = &[_]ts{},
-            functions: []ts = &[_]ts{},
-
-            pub const Printer = struct {
-                const indent_level = 2;
-                pub fn printIndented(comptime fmt: string, args: anytype, comptime indent: usize) string {
-                    comptime var buf: string = "";
-                    comptime buf = buf ++ " " ** indent;
-
-                    return comptime buf ++ std.fmt.comptimePrint(fmt, args);
-                }
-
-                pub fn printVar(comptime property: d.ts, comptime indent: usize) string {
-                    comptime var buf: string = "";
-                    comptime buf = buf ++ " " ** indent;
-
-                    comptime {
-                        if (property.read_only orelse false) {
-                            buf = buf ++ "readonly ";
-                        }
-
-                        buf = buf ++ "var ";
-                        buf = buf ++ property.name;
-                        buf = buf ++ ": ";
-
-                        if (property.@"return".len > 0) {
-                            buf = buf ++ property.@"return";
-                        } else {
-                            buf = buf ++ "any";
-                        }
-
-                        buf = buf ++ ";\n";
-                    }
-
-                    comptime {
-                        if (property.tsdoc.len > 0) {
-                            buf = printTSDoc(property.tsdoc, indent) ++ buf;
-                        }
-                    }
-
-                    return buf;
-                }
-
-                pub fn printProperty(comptime property: d.ts, comptime indent: usize) string {
-                    comptime var buf: string = "";
-                    comptime buf = buf ++ " " ** indent;
-
-                    comptime {
-                        if (property.read_only orelse false) {
-                            buf = buf ++ "readonly ";
-                        }
-
-                        buf = buf ++ property.name;
-                        buf = buf ++ ": ";
-
-                        if (property.@"return".len > 0) {
-                            buf = buf ++ property.@"return";
-                        } else {
-                            buf = buf ++ "any";
-                        }
-
-                        buf = buf ++ ";\n";
-                    }
-
-                    comptime {
-                        if (property.tsdoc.len > 0) {
-                            buf = printTSDoc(property.tsdoc, indent) ++ buf;
-                        }
-                    }
-
-                    return buf;
-                }
-                pub fn printInstanceFunction(comptime func: d.ts, comptime _indent: usize, comptime no_type: bool) string {
-                    comptime var indent = _indent;
-                    comptime var buf: string = "";
-
-                    comptime {
-                        var args: string = "";
-                        for (func.args, 0..) |a, i| {
-                            if (i > 0) {
-                                args = args ++ ", ";
-                            }
-                            args = args ++ printArg(a);
-                        }
-
-                        if (no_type) {
-                            buf = buf ++ printIndented("{s}({s});\n", .{
-                                func.name,
-                                args,
-                            }, indent);
-                        } else {
-                            buf = buf ++ printIndented("{s}({s}): {s};\n", .{
-                                func.name,
-                                args,
-                                func.@"return",
-                            }, indent);
-                        }
-                    }
-
-                    comptime {
-                        if (func.tsdoc.len > 0) {
-                            buf = printTSDoc(func.tsdoc, indent) ++ buf;
-                        }
-                    }
-
-                    return buf;
-                }
-                pub fn printFunction(comptime func: d.ts, comptime _indent: usize, comptime no_type: bool) string {
-                    comptime var indent = _indent;
-                    comptime var buf: string = "";
-
-                    comptime {
-                        var args: string = "";
-                        for (func.args, 0..) |a, i| {
-                            if (i > 0) {
-                                args = args ++ ", ";
-                            }
-                            args = args ++ printArg(a);
-                        }
-
-                        if (no_type) {
-                            buf = buf ++ printIndented("function {s}({s});\n", .{
-                                func.name,
-                                args,
-                            }, indent);
-                        } else {
-                            buf = buf ++ printIndented("function {s}({s}): {s};\n", .{
-                                func.name,
-                                args,
-                                func.@"return",
-                            }, indent);
-                        }
-                    }
-
-                    comptime {
-                        if (func.tsdoc.len > 0) {
-                            buf = printTSDoc(func.tsdoc, indent) ++ buf;
-                        }
-                    }
-
-                    return buf;
-                }
-                pub fn printArg(
-                    comptime _arg: d.ts.arg,
-                ) string {
-                    comptime var buf: string = "";
-                    comptime {
-                        buf = buf ++ _arg.name;
-                        buf = buf ++ ": ";
-
-                        if (_arg.@"return".len == 0) {
-                            buf = buf ++ "any";
-                        } else {
-                            buf = buf ++ _arg.@"return";
-                        }
-                    }
-
-                    return buf;
-                }
-
-                pub fn printDecl(comptime klass: d.ts.decl, comptime _indent: usize) string {
-                    return comptime switch (klass) {
-                        .module => |mod| printModule(mod, _indent),
-                        .class => |cla| printClass(cla, _indent),
-                        .empty => "",
-                    };
-                }
-
-                pub fn printModule(comptime klass: d.ts.module, comptime _indent: usize) string {
-                    comptime var indent = _indent;
-                    comptime var buf: string = "";
-                    comptime brk: {
-                        if (klass.tsdoc.len > 0) {
-                            buf = buf ++ printTSDoc(klass.tsdoc, indent);
-                        }
-
-                        if (klass.global) {
-                            buf = buf ++ printIndented("declare global {{\n", .{}, indent);
-                        } else {
-                            buf = buf ++ printIndented("declare module \"{s}\" {{\n", .{klass.path}, indent);
-                        }
-
-                        indent += indent_level;
-
-                        for (klass.properties, 0..) |property, i| {
-                            if (i > 0) {
-                                buf = buf ++ "\n";
-                            }
-
-                            buf = buf ++ printVar(property, indent);
-                        }
-
-                        buf = buf ++ "\n";
-
-                        for (klass.functions, 0..) |func, i| {
-                            if (i > 0) {
-                                buf = buf ++ "\n";
-                            }
-
-                            buf = buf ++ printFunction(
-                                func,
-                                indent,
-                                false,
-                            );
-                        }
-
-                        for (klass.classes, 0..) |func, i| {
-                            if (i > 0) {
-                                buf = buf ++ "\n";
-                            }
-
-                            buf = buf ++ printClass(
-                                func,
-                                indent,
-                            );
-                        }
-
-                        indent -= indent_level;
-
-                        buf = buf ++ printIndented("}}\n", .{}, indent);
-
-                        break :brk;
-                    }
-                    return comptime buf;
-                }
-
-                pub fn printClass(comptime klass: d.ts.class, comptime _indent: usize) string {
-                    comptime var indent = _indent;
-                    comptime var buf: string = "";
-                    comptime brk: {
-                        if (klass.tsdoc.len > 0) {
-                            buf = buf ++ printTSDoc(klass.tsdoc, indent);
-                        }
-
-                        const qualifier = if (!klass.default_export) "export " else "";
-
-                        if (klass.interface) {
-                            buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
-                        } else {
-                            buf = buf ++ printIndented("{s}class {s} {{\n", .{ qualifier, klass.name }, indent);
-                        }
-
-                        indent += indent_level;
-
-                        var did_print_constructor = false;
-                        for (klass.functions) |func| {
-                            if (!strings.eqlComptime(func.name, "constructor")) continue;
-                            did_print_constructor = true;
-                            buf = buf ++ printInstanceFunction(
-                                func,
-                                indent,
-                                !klass.interface,
-                            );
-                        }
-
-                        for (klass.properties, 0..) |property, i| {
-                            if (i > 0 or did_print_constructor) {
-                                buf = buf ++ "\n";
-                            }
-
-                            buf = buf ++ printProperty(property, indent);
-                        }
-
-                        buf = buf ++ "\n";
-
-                        for (klass.functions, 0..) |func, i| {
-                            if (i > 0) {
-                                buf = buf ++ "\n";
-                            }
-
-                            if (strings.eqlComptime(func.name, "constructor")) continue;
-
-                            buf = buf ++ printInstanceFunction(
-                                func,
-                                indent,
-                                false,
-                            );
-                        }
-
-                        indent -= indent_level;
-
-                        buf = buf ++ printIndented("}}\n", .{}, indent);
-
-                        if (klass.default_export) {
-                            buf = buf ++ printIndented("export = {s};\n", .{klass.name}, indent);
-                        }
-
-                        break :brk;
-                    }
-                    return comptime buf;
-                }
-
-                pub fn printTSDoc(comptime str: string, comptime indent: usize) string {
-                    comptime var buf: string = "";
-
-                    comptime brk: {
-                        var splitter = std.mem.split(u8, str, "\n");
-
-                        const first = splitter.next() orelse break :brk;
-                        const second = splitter.next() orelse {
-                            buf = buf ++ printIndented("/**  {s}  */\n", .{std.mem.trim(u8, first, " ")}, indent);
-                            break :brk;
-                        };
-                        buf = buf ++ printIndented("/**\n", .{}, indent);
-                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, first, " ")}, indent);
-                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, second, " ")}, indent);
-                        while (splitter.next()) |line| {
-                            buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, line, " ")}, indent);
-                        }
-                        buf = buf ++ printIndented("*/\n", .{}, indent);
-                    }
-
-                    return buf;
-                }
-            };
-        };
-
-        pub const arg = struct {
-            name: string = "",
-            @"return": string = "any",
-            optional: bool = false,
-        };
-    };
-};
-
-// This should only exist at compile-time.
-pub const ClassOptions = struct {
-    name: stringZ,
-
-    read_only: bool = false,
-    hidden: []const string = &[_]string{},
-    no_inheritance: bool = false,
-    singleton: bool = false,
-    ts: d.ts.decl = d.ts.decl{ .empty = 0 },
-    has_dom_calls: bool = false,
-};
-
-pub fn NewConstructor(
-    comptime InstanceType: type,
-    comptime staticFunctions: anytype,
-    comptime properties: anytype,
-) type {
-    return struct {
-        pub usingnamespace NewClassWithInstanceType(void, InstanceType.Class.class_options, staticFunctions, properties, InstanceType);
-        const name_string = ZigString.static(InstanceType.Class.class_options.name);
-        pub fn constructor(ctx: js.JSContextRef) callconv(.C) js.JSObjectRef {
-            return JSValue.makeWithNameAndPrototype(
-                ctx.ptr(),
-                @This().get().*,
-                InstanceType.Class.get().*,
-                name_string,
-            ).asObjectRef();
-        }
-    };
-}
-
-const _to_json: stringZ = "toJSON";
-
-pub fn NewClass(
-    comptime ZigType: type,
-    comptime options: ClassOptions,
-    comptime staticFunctions: anytype,
-    comptime properties: anytype,
-) type {
-    return NewClassWithInstanceType(ZigType, options, staticFunctions, properties, void);
-}
-
-pub fn NewClassWithInstanceType(
-    comptime ZigType: type,
-    comptime options: ClassOptions,
-    comptime staticFunctions: anytype,
-    comptime properties: anytype,
-    comptime InstanceType: type,
-) type {
-    return struct {
-        const read_only = options.read_only;
-        const singleton = options.singleton;
-        pub const name = options.name;
-        pub const class_options = options;
-        pub const isJavaScriptCoreClass = true;
-        pub const Zig = ZigType;
-        const ClassDefinitionCreator = @This();
-        const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
-        pub const functionDefinitions = staticFunctions;
-        const function_name_literals = function_names;
-        var function_name_refs: [function_names.len]js.JSStringRef = undefined;
-        var function_name_refs_set = false;
-
-        const property_names = std.meta.fieldNames(@TypeOf(properties));
-        var property_name_refs: [property_names.len]js.JSStringRef = undefined;
-        var property_name_refs_set: bool = false;
-        const property_name_literals = property_names;
-
-        const LazyClassRef = struct {
-            ref: js.JSClassRef = null,
-            loaded: bool = false,
-        };
-
-        threadlocal var lazy_ref: LazyClassRef = LazyClassRef{};
-
-        pub inline fn isLoaded() bool {
-            return lazy_ref.loaded;
-        }
-
-        const ConstructorWrapper = struct {
-            pub fn rfn(
-                ctx: js.JSContextRef,
-                function: js.JSObjectRef,
-                _: js.JSObjectRef,
-                argumentCount: usize,
-                arguments: [*c]const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) callconv(.C) js.JSValueRef {
-                return getClassDefinition().callAsConstructor.?(ctx, function, argumentCount, arguments, exception);
-            }
-        };
-
-        pub fn throwInvalidConstructorError(ctx: js.JSContextRef, _: js.JSObjectRef, _: usize, _: [*c]const js.JSValueRef, exception: js.ExceptionRef) callconv(.C) js.JSObjectRef {
-            JSError(getAllocator(ctx), "" ++ name ++ " is not a constructor", .{}, ctx, exception);
-            return null;
-        }
-
-        pub fn throwInvalidFunctionError(
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: js.JSObjectRef,
-            _: usize,
-            _: [*c]const js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) callconv(.C) js.JSValueRef {
-            JSError(getAllocator(ctx), "" ++ name ++ " is not a function", .{}, ctx, exception);
-            return null;
-        }
-
-        pub const Constructor = ConstructorWrapper.rfn;
-
-        var class_definition: js.JSClassDefinition = undefined;
-        var class_definition_set: bool = false;
-        const static_functions__: [function_name_literals.len + 1]js.JSStaticFunction = if (function_name_literals.len > 0) generateDef([function_name_literals.len + 1]js.JSStaticFunction) else undefined;
-        const static_values_ptr = &static_properties;
-
-        fn generateClassDefinition() void {
-            class_definition = comptime brk: {
-                var def = generateDef(JSC.C.JSClassDefinition);
-                if (function_name_literals.len > 0)
-                    def.staticFunctions = &static_functions__;
-                if (options.no_inheritance) {
-                    def.attributes = JSC.C.JSClassAttributes.kJSClassAttributeNoAutomaticPrototype;
-                }
-                if (property_names.len > 0) {
-                    def.staticValues = static_values_ptr;
-                }
-
-                def.className = options.name.ptr;
-                // def.getProperty = getPropertyCallback;
-
-                if (def.callAsConstructor == null) {
-                    def.callAsConstructor = &throwInvalidConstructorError;
-                }
-
-                if (def.callAsFunction == null) {
-                    def.callAsFunction = &throwInvalidFunctionError;
-                }
-
-                if (def.getPropertyNames == null) {
-                    def.getPropertyNames = &getPropertyNames;
-                }
-
-                if (!singleton and def.hasInstance == null)
-                    def.hasInstance = &customHasInstance;
-                break :brk def;
-            };
-        }
-
-        fn getClassDefinition() *const JSC.C.JSClassDefinition {
-            if (!class_definition_set) {
-                class_definition_set = true;
-                generateClassDefinition();
-            }
-
-            return &class_definition;
-        }
-
-        pub fn get() callconv(.C) [*c]js.JSClassRef {
-            var lazy = lazy_ref;
-
-            if (!lazy.loaded) {
-                lazy = .{
-                    .ref = js.JSClassCreate(getClassDefinition()),
-                    .loaded = true,
-                };
-                lazy_ref = lazy;
-            }
-
-            _ = js.JSClassRetain(lazy.ref);
-
-            return &lazy.ref;
-        }
-
-        pub fn customHasInstance(ctx: js.JSContextRef, _: js.JSObjectRef, value: js.JSValueRef, _: js.ExceptionRef) callconv(.C) bool {
-            if (InstanceType != void) {
-                var current = value;
-                while (current != null) {
-                    if (js.JSValueIsObjectOfClass(ctx, current, InstanceType.Class.get().*)) {
-                        return true;
-                    }
-                    current = js.JSObjectGetPrototype(ctx, current);
-                }
-                return false;
-            }
-
-            return js.JSValueIsObjectOfClass(ctx, value, get().*);
-        }
-
-        pub fn make(ctx: js.JSContextRef, ptr: *ZigType) js.JSObjectRef {
-            var real_ptr = JSPrivateDataPtr.init(ptr).ptr();
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(JSPrivateDataPtr.isValidPtr(real_ptr));
-                std.debug.assert(JSPrivateDataPtr.from(real_ptr).get(ZigType).? == ptr);
-            }
-
-            var result = js.JSObjectMake(
-                ctx,
-                get().*,
-                real_ptr,
-            );
-
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(JSPrivateDataPtr.from(js.JSObjectGetPrivate(result)).ptr() == real_ptr);
-            }
-
-            return result;
-        }
-
-        pub fn putDOMCalls(globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-            inline for (function_name_literals) |functionName| {
-                const Function = comptime @field(staticFunctions, functionName);
-                if (@TypeOf(Function) == type and @hasDecl(Function, "is_dom_call")) {
-                    Function.put(globalThis, value);
-                }
-            }
-        }
-
-        pub fn GetClass(comptime ReceiverType: type) type {
-            const ClassGetter = struct {
-                get: fn (
-                    *ReceiverType,
-                    js.JSContextRef,
-                    js.JSObjectRef,
-                    js.ExceptionRef,
-                ) js.JSValueRef = rfn,
-
-                pub fn rfn(
-                    _: *ReceiverType,
-                    ctx: js.JSContextRef,
-                    _: js.JSObjectRef,
-                    _: js.ExceptionRef,
-                ) js.JSValueRef {
-                    return js.JSObjectMake(ctx, get().*, null);
-                }
-            };
-
-            return ClassGetter;
-        }
-
-        fn StaticProperty(comptime id: usize) type {
-            return struct {
-                pub fn getter(
-                    ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    prop: js.JSStringRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) js.JSValueRef {
-                    var this: ObjectPtrType(ZigType) = if (comptime ZigType == void) {} else GetJSPrivateData(ZigType, obj) orelse return js.JSValueMakeUndefined(ctx);
-
-                    const Field = @TypeOf(@field(
-                        properties,
-                        property_names[id],
-                    ));
-                    switch (comptime @typeInfo(Field)) {
-                        .Fn => {
-                            return @field(
-                                properties,
-                                property_names[id],
-                            )(
-                                this,
-                                ctx,
-                                obj,
-                                exception,
-                            );
-                        },
-                        .Struct => {
-                            comptime {
-                                if (!@hasField(@TypeOf(@field(properties, property_names[id])), "get")) {
-                                    @compileError(
-                                        "Cannot get static property " ++ property_names[id] ++ " of " ++ name ++ " because it is a struct without a getter",
-                                    );
-                                }
-                            }
-                            const func = @field(
-                                @field(
-                                    properties,
-                                    property_names[id],
-                                ),
-                                "get",
-                            );
-
-                            const Func = @typeInfo(@TypeOf(func));
-                            const WithPropFn = fn (
-                                ObjectPtrType(ZigType),
-                                js.JSContextRef,
-                                js.JSObjectRef,
-                                js.JSStringRef,
-                                js.ExceptionRef,
-                            ) js.JSValueRef;
-
-                            if (Func.Fn.params.len == @typeInfo(WithPropFn).Fn.params.len) {
-                                return func(
-                                    this,
-                                    ctx,
-                                    obj,
-                                    prop,
-                                    exception,
-                                );
-                            } else {
-                                return func(
-                                    this,
-                                    ctx,
-                                    obj,
-                                    exception,
-                                );
-                            }
-                        },
-                        else => unreachable,
-                    }
-                }
-
-                pub fn setter(
-                    ctx: js.JSContextRef,
-                    obj: js.JSObjectRef,
-                    prop: js.JSStringRef,
-                    value: js.JSValueRef,
-                    exception: js.ExceptionRef,
-                ) callconv(.C) bool {
-                    var this = GetJSPrivateData(ZigType, obj) orelse return false;
-
-                    switch (comptime @typeInfo(@TypeOf(@field(
-                        properties,
-                        property_names[id],
-                    )))) {
-                        .Struct => {
-                            return @field(
-                                @field(
-                                    properties,
-                                    property_names[id],
-                                ),
-                                "set",
-                            )(
-                                this,
-                                ctx,
-                                obj,
-                                prop,
-                                value,
-                                exception,
-                            );
-                        },
-                        else => unreachable,
-                    }
-                }
-            };
-        }
-
-        pub fn getPropertyNames(
-            _: js.JSContextRef,
-            _: js.JSObjectRef,
-            props: js.JSPropertyNameAccumulatorRef,
-        ) callconv(.C) void {
-            if (comptime property_name_refs.len > 0) {
-                if (!property_name_refs_set) {
-                    comptime var i: usize = 0;
-                    property_name_refs_set = true;
-                    inline while (i < comptime property_name_refs.len) : (i += 1) {
-                        property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
-                    }
-                    comptime i = 0;
-                } else {
-                    comptime var i: usize = 0;
-                    inline while (i < property_name_refs.len) : (i += 1) {
-                        js.JSPropertyNameAccumulatorAddName(props, property_name_refs[i]);
-                    }
-                }
-            }
-
-            const ref_len = comptime function_name_refs.len;
-            if (comptime function_name_refs.len > 0) {
-                if (!function_name_refs_set) {
-                    comptime var j: usize = 0;
-                    function_name_refs_set = true;
-                    inline while (j < ref_len) : (j += 1) {
-                        function_name_refs[j] = js.JSStringCreateStatic(function_names[j].ptr, function_names[j].len);
-                    }
-                    comptime j = 0;
-
-                    inline while (j < ref_len) : (j += 1) {
-                        js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
-                    }
-                } else {
-                    comptime var j: usize = 0;
-                    inline while (j < ref_len) : (j += 1) {
-                        js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
-                    }
-                }
-            }
-        }
-
-        const static_properties: [property_names.len + 1]js.JSStaticValue = brk: {
-            var props: [property_names.len + 1]js.JSStaticValue = undefined;
-            @memset(
-                &props,
-                js.JSStaticValue{
-                    .name = @as([*c]const u8, @ptrFromInt(0)),
-                    .getProperty = null,
-                    .setProperty = null,
-                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                },
-            );
-            if (property_name_literals.len > 0 and @TypeOf(property_name_literals[0]) == [:0]const u8) {
-                @compileError("@typeInfo() struct field names are null-terminated");
-            }
-            for (property_name_literals, 0..) |lit, i| {
-                props[i] = brk2: {
-                    var static_prop = JSC.C.JSStaticValue{
-                        // TODO: update when @typeInfo struct field names are sentinel terminated
-                        // https://github.com/ziglang/zig/issues/16072
-                        .name = lit ++ .{0},
-                        .getProperty = null,
-                        .setProperty = null,
-                        .attributes = @as(js.JSPropertyAttributes, @enumFromInt(0)),
-                    };
-                    static_prop.getProperty = StaticProperty(i).getter;
-
-                    const field = @field(properties, property_names[i]);
-
-                    if (hasSetter(@TypeOf(field))) {
-                        static_prop.setProperty = StaticProperty(i).setter;
-                    }
-                    break :brk2 static_prop;
-                };
-            }
-            break :brk props;
-        };
-
-        // this madness is a workaround for stage1 compiler bugs
-        fn generateDef(comptime ReturnType: type) ReturnType {
-            var count: usize = 0;
-            var def: js.JSClassDefinition = js.JSClassDefinition{
-                .version = 0,
-                .attributes = js.JSClassAttributes.kJSClassAttributeNone,
-                .className = "",
-                .parentClass = null,
-                .staticValues = null,
-                .staticFunctions = null,
-                .initialize = null,
-                .finalize = null,
-                .hasProperty = null,
-                .getProperty = null,
-                .setProperty = null,
-                .deleteProperty = null,
-                .getPropertyNames = null,
-                .callAsFunction = null,
-                .callAsConstructor = null,
-                .hasInstance = null,
-                .convertToType = null,
-            };
-            var __static_functions: [function_name_literals.len + 1]js.JSStaticFunction = undefined;
-            for (__static_functions, 0..) |_, i| {
-                __static_functions[i] = js.JSStaticFunction{
-                    .name = "",
-                    .callAsFunction = null,
-                    .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
-                };
-            }
-
-            @setEvalBranchQuota(50_000);
-            const is_read_only = options.read_only;
-
-            inline for (comptime function_name_literals) |function_name_literal| {
-                const CtxField = comptime @field(staticFunctions, function_name_literal);
-
-                switch (comptime @typeInfo(@TypeOf(CtxField))) {
-                    .Struct => {
-                        if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
-                            def.callAsConstructor = &To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
-                            def.finalize = &To.JS.Finalize(ZigType, staticFunctions.finalize.rfn).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
-                            def.callAsFunction = &To.JS.Callback(ZigType, staticFunctions.call.rfn).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "callAsFunction")) {
-                            const ctxfn = @field(staticFunctions, function_name_literal).rfn;
-                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn)).Fn;
-
-                            const PointerType = std.meta.Child(Func.params[0].type.?);
-
-                            def.callAsFunction = &(if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
-                                PointerType,
-                                ctxfn,
-                            ).rfn);
-                        } else if (comptime strings.eqlComptime(function_name_literal, "hasProperty")) {
-                            def.hasProperty = @field(staticFunctions, "hasProperty").rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "getProperty")) {
-                            def.getProperty = @field(staticFunctions, "getProperty").rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "setProperty")) {
-                            def.setProperty = @field(staticFunctions, "setProperty").rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "deleteProperty")) {
-                            def.deleteProperty = &@field(staticFunctions, "deleteProperty").rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
-                            def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "convertToType")) {
-                            def.convertToType = @field(staticFunctions, "convertToType").rfn;
-                        } else if (comptime !@hasField(@TypeOf(CtxField), "is_dom_call")) {
-                            if (!@hasField(@TypeOf(CtxField), "rfn")) {
-                                @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
-                            }
-                            const ctxfn = CtxField.rfn;
-                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn)).Fn;
-
-                            var attributes: c_uint = @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeNone);
-
-                            if (comptime is_read_only or hasReadOnly(@TypeOf(CtxField))) {
-                                attributes |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
-                            }
-
-                            if (comptime hasEnumerable(@TypeOf(CtxField)) and !CtxField.enumerable) {
-                                attributes |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeDontEnum);
-                            }
-
-                            const PointerType = comptime brk: {
-                                if (Func.params[0].type.? != void) {
-                                    break :brk std.meta.Child(Func.params[0].type.?);
-                                }
-                                break :brk void;
-                            };
-
-                            __static_functions[count] = js.JSStaticFunction{
-                                .name = bun.sliceTo(function_name_literal ++ [_]u8{0}, 0).ptr,
-                                .callAsFunction = if (Func.calling_convention == .C) &CtxField.rfn else &To.JS.Callback(
-                                    PointerType,
-                                    if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn,
-                                ).rfn,
-                                .attributes = @as(js.JSPropertyAttributes, @enumFromInt(attributes)),
-                            };
-
-                            count += 1;
-                        }
-                    },
-                    .Fn => {
-                        if (comptime strings.eqlComptime(function_name_literal, "constructor")) {
-                            def.callAsConstructor = &To.JS.Constructor(staticFunctions.constructor).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "finalize")) {
-                            def.finalize = &To.JS.Finalize(ZigType, staticFunctions.finalize).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "call")) {
-                            def.callAsFunction = &To.JS.Callback(ZigType, staticFunctions.call).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "getPropertyNames")) {
-                            def.getPropertyNames = &To.JS.Callback(ZigType, staticFunctions.getPropertyNames).rfn;
-                        } else if (comptime strings.eqlComptime(function_name_literal, "hasInstance")) {
-                            def.hasInstance = &staticFunctions.hasInstance;
-                        } else {
-                            const attributes: js.JSPropertyAttributes = brk: {
-                                var base = @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeNone);
-
-                                if (is_read_only)
-                                    base |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
-
-                                break :brk @as(js.JSPropertyAttributes, @enumFromInt(base));
-                            };
-
-                            __static_functions[count] = js.JSStaticFunction{
-                                .name = (function_name_literal ++ [_]u8{0})[0..function_name_literal.len :0],
-                                .callAsFunction = &To.JS.Callback(
-                                    ZigType,
-                                    @field(staticFunctions, function_name_literal),
-                                ).rfn,
-                                .attributes = attributes,
-                            };
-
-                            count += 1;
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            if (comptime ReturnType == JSC.C.JSClassDefinition) {
-                return def;
-            } else {
-                return __static_functions;
-            }
-        }
-    };
-}
-
-// pub fn NewInstanceFunction(
-//     comptime className: []const u8,
-//     comptime functionName: []const u8,
-//     comptime InstanceType: type,
-//     comptime target: anytype,
-// ) type {
-//     return struct {
-//         pub const shim = JSC.Shimmer("ZigGenerated__" ++ className, functionName, @This());
-//         pub const name = functionName;
-//         pub const Type = InstanceType;
-
-//         pub fn callAsFunction(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-//             var this = InstanceType.toWrapped(callframe.this()) orelse {
-//                 callframe.toInvalidArguments("Expected this to be a " ++ className, .{}, globalObject);
-//                 return JSC.JSValue.jsUndefined();
-//             };
-
-//             return target(globalObject, this, callframe.arguments());
-//         }
-
-//         pub const Export = shim.exportFunctions(.{
-//             .callAsFunction = callAsFunction,
-//         });
-
-//         pub const symbol = Export[0].symbol_name;
-
-//         comptime {
-//             if (!JSC.is_bindgen) {
-//                 @export(callAsFunction, .{
-//                     .name = Export[0].symbol_name,
-//                 });
-//             }
-//         }
-//     };
-// }
-
-// pub fn NewStaticFunction(
-//     comptime className: []const u8,
-//     comptime functionName: []const u8,
-//     comptime target: anytype,
-// ) type {
-//     return struct {
-//         pub const shim = JSC.Shimmer("ZigGenerated__Static__" ++ className, functionName, @This());
-//         pub const name = functionName;
-
-//         pub fn callAsFunction(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-//             return target(globalObject, callframe.arguments());
-//         }
-
-//         pub const Export = shim.exportFunctions(.{
-//             .callAsFunction = callAsFunction,
-//         });
-
-//         pub const symbol = Export[0].symbol_name;
-
-//         comptime {
-//             if (!JSC.is_bindgen) {
-//                 @export(callAsFunction, .{
-//                     .name = Export[0].symbol_name,
-//                 });
-//             }
-//         }
-//     };
-// }
-
-// pub fn NewStaticConstructor(
-//     comptime className: []const u8,
-//     comptime functionName: []const u8,
-//     comptime target: anytype,
-// ) type {
-//     return struct {
-//         pub const shim = JSC.Shimmer("ZigGenerated__Static__" ++ className, functionName, @This());
-//         pub const name = functionName;
-
-//         pub fn callAsConstructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-//             return target(globalObject, callframe.arguments());
-//         }
-
-//         pub const Export = shim.exportFunctions(.{
-//             .callAsConstructor = callAsConstructor,
-//         });
-
-//         pub const symbol = Export[0].symbol_name;
-
-//         comptime {
-//             if (!JSC.is_bindgen) {
-//                 @export(callAsConstructor, .{
-//                     .name = Export[0].symbol_name,
-//                 });
-//             }
-//         }
-//     };
-// }
-
-// pub fn NewStaticObject(
-//     comptime className: []const u8,
-//     comptime function_definitions: anytype,
-//     comptime property_definitions_: anytype,
-// ) type {
-//     return struct {
-//         const property_definitions = property_definitions_;
-//         pub const shim = JSC.Shimmer("ZigGenerated", name, @This());
-//         pub const name = className;
-//         pub const Type = void;
-
-//         const function_names = std.meta.fieldNames(@TypeOf(function_definitions));
-//         pub fn getFunctions() [function_names.len]type {
-//             var data: [function_names.len]type = undefined;
-//             var i: usize = 0;
-//             while (i < function_names.len) : (i += 1) {
-//                 if (strings.eqlComptime(function_names[i], "constructor")) {
-//                     data[i] = NewStaticConstructor(className, function_names[i], @TypeOf(function_definitions)[function_names[i]]);
-//                 } else {
-//                     data[i] = NewStaticFunction(className, function_names[i], @TypeOf(function_definitions)[function_names[i]]);
-//                 }
-//             }
-
-//             return data;
-//         }
-
-//         const property_names = std.meta.fieldNames(@TypeOf(property_definitions));
-//         pub fn getProperties() [property_definitions.len]type {
-//             var data: [property_definitions.len]type = undefined;
-//             var i: usize = 0;
-//             while (i < property_definitions.len) : (i += 1) {
-//                 const definition = property_definitions[i];
-//                 if (@hasField(definition, "lazyClass")) {
-//                     data[i] = New(className, property_names[i], @field(property_definitions, property_names[i]));
-//                 } else if (@hasField(definition, "lazyProperty")) {
-//                     data[i] = NewLazyProperty(className, property_names[i], @field(property_definitions, property_names[i]));
-//                 } else if (@hasField(definition, "get") and @hasField(definition, "set")) {
-//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, definition.set);
-//                 } else if (@hasField(definition, "get")) {
-//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, {});
-//                 } else if (@hasField(definition, "set")) {
-//                     data[i] = NewStaticProperty(className, property_names[i], {}, definition.set);
-//                 } else {
-//                     @compileError(className ++ "." ++ property_names[i] ++ " missing lazy, get, or set");
-//                 }
-//             }
-
-//             return data;
-//         }
-
-//         pub const entries = getProperties() ++ getFunctions();
-//     };
-// }
 
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
@@ -1765,7 +457,7 @@ pub const ArrayBuffer = extern struct {
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
     extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
         std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
         out.value = value;
@@ -1927,16 +619,16 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.stream();
     }
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
-            .buffer = ArrayBuffer.fromTypedArray(ctx, value, exception),
+            .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
-    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
-            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value, exception),
+            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value),
         };
     }
 
@@ -2079,44 +771,6 @@ comptime {
     std.testing.refAllDecls(RefString);
 }
 
-// TODO: remove this abstraction and make it work directly with
-pub const ExternalBuffer = struct {
-    global: *JSC.JSGlobalObject,
-    ctx: ?*anyopaque = null,
-    function: JSC.napi.napi_finalize = null,
-    allocator: std.mem.Allocator,
-    buf: []u8 = &[_]u8{},
-
-    pub fn create(ctx: ?*anyopaque, buf: []u8, global: *JSC.JSGlobalObject, function: JSC.napi.napi_finalize, allocator: std.mem.Allocator) !*ExternalBuffer {
-        var container = try allocator.create(ExternalBuffer);
-        container.* = .{
-            .ctx = ctx,
-            .global = global,
-            .allocator = allocator,
-            .function = function,
-            .buf = buf,
-        };
-        return container;
-    }
-
-    pub fn toJS(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.createBufferWithCtx(ctx, this.buf, this, ExternalBuffer_deallocator);
-    }
-
-    pub fn toArrayBuffer(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSValue.c(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(ctx.ref(), this.buf.ptr, this.buf.len, ExternalBuffer_deallocator, this, null));
-    }
-};
-pub export fn ExternalBuffer_deallocator(bytes_: *anyopaque, ctx: *anyopaque) callconv(.C) void {
-    var external: *ExternalBuffer = bun.cast(*ExternalBuffer, ctx);
-    if (external.function) |function| {
-        function(external.global, external.ctx, bytes_);
-    }
-
-    const allocator = external.allocator;
-    allocator.destroy(external);
-}
-
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here
@@ -2138,13 +792,6 @@ pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void 
     store.deref();
 }
 
-pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
-    return JSPrivateDataPtr.from(js.JSObjectGetPrivate(obj)).as(Type);
-}
-
-const JSNode = @import("../js_ast.zig").Macro.JSNode;
-const LazyPropertiesObject = @import("../js_ast.zig").Macro.LazyPropertiesObject;
-const ModuleNamespace = @import("../js_ast.zig").Macro.ModuleNamespace;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
@@ -2174,32 +821,6 @@ const SHA256 = JSC.API.Bun.Crypto.SHA256;
 const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
 const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
-pub const JSPrivateDataPtr = TaggedPointerUnion(.{
-    AttributeIterator,
-    Comment,
-    DebugServer,
-    DebugSSLServer,
-    DocEnd,
-    DocType,
-    Element,
-    EndTag,
-    FetchEvent,
-    HTMLRewriter,
-    JSNode,
-    LazyPropertiesObject,
-
-    ModuleNamespace,
-    Router,
-    Server,
-
-    SSLServer,
-    TextChunk,
-    FFI,
-});
-
-pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
-    return JSPrivateDataPtr.from(js.JSObjectGetPrivate(ref)).get(Type);
-}
 
 pub const JSPropertyNameIterator = struct {
     array: js.JSPropertyNameArrayRef,
@@ -2214,108 +835,6 @@ pub const JSPropertyNameIterator = struct {
         return js.JSPropertyNameArrayGetNameAtIndex(this.array, i);
     }
 };
-
-pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Container) {
-    return struct {
-        const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
-        const ArgsTuple = std.meta.ArgsTuple(FunctionType);
-
-        pub fn callback(
-            this: *Container,
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: js.JSStringRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            const result: JSValue = if (comptime std.meta.fields(ArgsTuple).len == 1)
-                @call(.auto, @field(Container, name), .{
-                    this,
-                })
-            else
-                @call(.auto, @field(Container, name), .{ this, ctx.ptr() });
-            if (result.isError()) {
-                exception.* = result.asObjectRef();
-                return null;
-            }
-
-            return result.asObjectRef();
-        }
-    }.callback;
-}
-
-pub fn setterWrap(comptime Container: type, comptime name: string) SetterType(Container) {
-    return struct {
-        const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
-
-        pub fn callback(
-            this: *Container,
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: js.JSStringRef,
-            value: js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) bool {
-            @call(.auto, @field(Container, name), .{ this, JSC.JSValue.fromRef(value), exception, ctx.ptr() });
-            return exception.* == null;
-        }
-    }.callback;
-}
-
-fn GetterType(comptime Container: type) type {
-    return fn (
-        this: *Container,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef;
-}
-
-fn SetterType(comptime Container: type) type {
-    return fn (
-        this: *Container,
-        ctx: js.JSContextRef,
-        obj: js.JSObjectRef,
-        prop: js.JSStringRef,
-        value: js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) bool;
-}
-
-fn MethodType(comptime Container: type, comptime has_container: bool) type {
-    return fn (
-        this: if (has_container) *Container else void,
-        ctx: js.JSContextRef,
-        thisObject: js.JSObjectRef,
-        target: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef;
-}
-
-pub fn wrapSync(
-    comptime Container: type,
-    comptime name: string,
-) MethodType(Container, true) {
-    return wrap(Container, name, false);
-}
-
-pub fn wrapAsync(
-    comptime Container: type,
-    comptime name: string,
-) MethodType(Container, true) {
-    return wrap(Container, name, true);
-}
-
-pub fn wrap(
-    comptime Container: type,
-    comptime name: string,
-    comptime maybe_async: bool,
-) MethodType(Container, true) {
-    return wrapWithHasContainer(Container, name, maybe_async, true, true);
-}
 
 pub const DOMEffect = struct {
     reads: [4]ID = std.mem.zeroes([4]ID),
@@ -2687,202 +1206,6 @@ pub fn DOMCall(
     };
 }
 
-pub fn wrapWithHasContainer(
-    comptime Container: type,
-    comptime name: string,
-    comptime maybe_async: bool,
-    comptime has_container: bool,
-    comptime auto_protect: bool,
-) MethodType(Container, has_container) {
-    return struct {
-        const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
-        const Args = std.meta.ArgsTuple(FunctionType);
-        const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
-
-        pub fn callback(
-            this: if (has_container) *Container else void,
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            thisObject: js.JSObjectRef,
-            arguments: []const js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) js.JSObjectRef {
-            var iter = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
-            defer iter.deinit();
-            var args: Args = undefined;
-
-            comptime var passed_exception_ref = false;
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
-                    *Container => {
-                        args[i] = this;
-                    },
-                    *JSC.JSGlobalObject => {
-                        args[i] = ctx.ptr();
-                    },
-                    JSC.Node.StringOrBuffer => {
-                        const arg = iter.nextEat() orelse {
-                            exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                            return null;
-                        };
-                        args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
-                            exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                            return null;
-                        };
-                    },
-                    ?JSC.Node.StringOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
-                                    exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                                    return null;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    ?JSC.Node.SliceOrBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = JSC.Node.SliceOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
-                                    exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                                    return null;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    JSC.ArrayBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
-                                exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                                return null;
-                            };
-                        } else {
-                            exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                            return null;
-                        }
-                    },
-                    ?JSC.ArrayBuffer => {
-                        if (iter.nextEat()) |arg| {
-                            if (!arg.isEmptyOrUndefinedOrNull()) {
-                                args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
-                                    exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                                    return null;
-                                };
-                            } else {
-                                args[i] = null;
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    ZigString => {
-                        var string_value = eater(&iter) orelse {
-                            JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
-                            return null;
-                        };
-
-                        if (string_value.isUndefinedOrNull()) {
-                            JSC.throwInvalidArguments("Expected string", .{}, ctx, exception);
-                            return null;
-                        }
-
-                        args[i] = string_value.getZigString(ctx.ptr());
-                    },
-                    ?JSC.Cloudflare.ContentOptions => {
-                        if (iter.nextEat()) |content_arg| {
-                            if (content_arg.get(ctx.ptr(), "html")) |html_val| {
-                                args[i] = .{ .html = html_val.toBoolean() };
-                            }
-                        } else {
-                            args[i] = null;
-                        }
-                    },
-                    *Response => {
-                        args[i] = (eater(&iter) orelse {
-                            JSC.throwInvalidArguments("Missing Response object", .{}, ctx, exception);
-                            iter.deinit();
-                            return null;
-                        }).as(Response) orelse {
-                            JSC.throwInvalidArguments("Expected Response object", .{}, ctx, exception);
-                            iter.deinit();
-                            return null;
-                        };
-                    },
-                    *Request => {
-                        args[i] = (eater(&iter) orelse {
-                            JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
-                            return null;
-                        }).as(Request) orelse {
-                            JSC.throwInvalidArguments("Expected Request object", .{}, ctx, exception);
-                            return null;
-                        };
-                    },
-                    js.JSObjectRef => {
-                        args[i] = thisObject;
-                        if (!JSValue.fromRef(thisObject).isCell() or !JSValue.fromRef(thisObject).isObject()) {
-                            JSC.throwInvalidArguments("Expected object", .{}, ctx, exception);
-                            return null;
-                        }
-                    },
-                    js.ExceptionRef => {
-                        args[i] = exception;
-                        passed_exception_ref = true;
-                    },
-                    JSValue => {
-                        const val = eater(&iter) orelse {
-                            JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
-                            return null;
-                        };
-                        args[i] = val;
-                    },
-                    ?JSValue => {
-                        args[i] = eater(&iter);
-                    },
-                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
-                }
-            }
-
-            var result: JSValue = @call(.auto, @field(Container, name), args);
-            if (comptime passed_exception_ref) {
-                if (exception.* != null) {
-                    return null;
-                }
-            } else {
-                if (result.isError()) {
-                    exception.* = result.asObjectRef();
-                    return null;
-                }
-            }
-
-            if (comptime maybe_async) {
-                if (result.asAnyPromise()) |promise| {
-                    var vm = ctx.ptr().bunVM();
-                    vm.waitForPromise(promise);
-                    result = promise.result(ctx.vm());
-                }
-            }
-
-            if (result == .zero) {
-                return null;
-            }
-
-            return result.asObjectRef();
-        }
-    }.callback;
-}
-
 pub fn InstanceMethodType(comptime Container: type) type {
     return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue;
 }
@@ -2907,6 +1230,21 @@ pub fn wrapInstanceMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
             var args: Args = undefined;
 
+            const has_exception_ref: bool = comptime brk: {
+                var i: usize = 0;
+                while (i < FunctionTypeInfo.params.len) : (i += 1) {
+                    const ArgType = FunctionTypeInfo.params[i].type.?;
+
+                    if (ArgType == JSC.C.ExceptionRef) {
+                        break :brk true;
+                    }
+                }
+
+                break :brk false;
+            };
+            var exception_value = [_]JSC.C.JSValueRef{null};
+            var exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
                 const ArgType = comptime FunctionTypeInfo.params[i].type.?;
@@ -2917,6 +1255,9 @@ pub fn wrapInstanceMethod(
                     },
                     *JSC.JSGlobalObject => {
                         args[i] = globalThis.ptr();
+                    },
+                    *JSC.CallFrame => {
+                        args[i] = callframe;
                     },
                     JSC.Node.StringOrBuffer => {
                         const arg = iter.nextEat() orelse {
@@ -3041,11 +1382,22 @@ pub fn wrapInstanceMethod(
                     ?JSValue => {
                         args[i] = eater(&iter);
                     },
+                    JSC.C.ExceptionRef => {
+                        args[i] = exception;
+                    },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }
             }
 
             defer iter.deinit();
+
+            defer {
+                if (comptime has_exception_ref) {
+                    if (exception_value[0] != null) {
+                        globalThis.throwValue(exception_value[0].?.value());
+                    }
+                }
+            }
 
             return @call(.auto, @field(Container, name), args);
         }
@@ -3206,7 +1558,7 @@ pub fn wrapStaticMethod(
                     ?JSValue => {
                         args[i] = eater(&iter);
                     },
-                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
+                    else => @compileError(std.fmt.comptimePrint("Unexpected Type " ++ @typeName(ArgType) ++ " at argument {d} in {s}#{s}", .{ i, @typeName(Container), name })),
                 }
             }
 
@@ -4086,5 +2438,41 @@ pub const BinaryType = enum {
                 return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
             },
         }
+    }
+};
+
+pub const AsyncTaskTracker = struct {
+    id: u64,
+
+    pub fn init(vm: *JSC.VirtualMachine) AsyncTaskTracker {
+        return .{ .id = vm.nextAsyncTaskID() };
+    }
+
+    pub fn didSchedule(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) return;
+
+        bun.JSC.Debugger.didScheduleAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id, true);
+    }
+
+    pub fn didCancel(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) return;
+
+        bun.JSC.Debugger.didCancelAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
+    }
+
+    pub fn willDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) {
+            return;
+        }
+
+        bun.JSC.Debugger.willDispatchAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
+    }
+
+    pub fn didDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) {
+            return;
+        }
+
+        bun.JSC.Debugger.didDispatchAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
     }
 };

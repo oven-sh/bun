@@ -1,6 +1,6 @@
-import fs from "fs";
+import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
-import path from "path";
+import path, { join } from "path";
 import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
 import { tmpdir } from "os";
 
@@ -307,3 +307,77 @@ it("#2674", async () => {
   expect(error?.length).toBeFalsy();
   expect(exitCode).toBe(0);
 });
+
+if (process.platform === "linux") {
+  describe("should work when copyFileRange is not available", () => {
+    it("on large files", () => {
+      var tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/large`;
+      expect(fs.existsSync(tempdir)).toBe(false);
+      expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+      var buffer = new Int32Array(1024 * 1024 * 64);
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] = i % 256;
+      }
+
+      const hash = Bun.hash(buffer.buffer);
+      const src = join(tempdir, "Bun.write.src.blob");
+      const dest = join(tempdir, "Bun.write.dest.blob");
+
+      try {
+        fs.writeFileSync(src, buffer.buffer);
+
+        expect(fs.existsSync(dest)).toBe(false);
+
+        const { exitCode } = Bun.spawnSync({
+          stdio: ["inherit", "inherit", "inherit"],
+          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+          },
+        });
+        expect(exitCode).toBe(0);
+
+        expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
+      } finally {
+        fs.rmSync(src, { force: true });
+        fs.rmSync(dest, { force: true });
+      }
+    });
+
+    it("on small files", () => {
+      const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/small`;
+      expect(fs.existsSync(tempdir)).toBe(false);
+      expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+      var buffer = new Int32Array(1 * 1024);
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] = i % 256;
+      }
+
+      const hash = Bun.hash(buffer.buffer);
+      const src = join(tempdir, "Bun.write.src.blob");
+      const dest = join(tempdir, "Bun.write.dest.blob");
+
+      try {
+        fs.writeFileSync(src, buffer.buffer);
+
+        expect(fs.existsSync(dest)).toBe(false);
+
+        const { exitCode } = Bun.spawnSync({
+          stdio: ["inherit", "inherit", "inherit"],
+          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+          },
+        });
+        expect(exitCode).toBe(0);
+
+        expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
+      } finally {
+        fs.rmSync(src, { force: true });
+        fs.rmSync(dest, { force: true });
+      }
+    });
+  });
+}

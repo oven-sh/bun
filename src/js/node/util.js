@@ -123,6 +123,7 @@ function debuglog(set) {
   }
   return debugs[set];
 }
+var kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 function inspect(obj, opts) {
   var ctx = {
     seen: [],
@@ -167,13 +168,29 @@ inspect.styles = {
   date: "magenta",
   regexp: "red",
 };
+inspect.custom = kInspectCustom;
+// JS polyfill doesnt support all these options
+inspect.defaultOptions = {
+  showHidden: false,
+  depth: 2,
+  colors: false,
+  customInspect: true,
+  showProxy: false,
+  maxArrayLength: 100,
+  maxStringLength: 10000,
+  breakLength: 80,
+  compact: 3,
+  sorted: false,
+  getters: false,
+  numericSeparator: false,
+};
 function stylizeWithColor(str, styleType) {
-  var style = inspect.styles[styleType];
-  if (style) {
-    return "\x1B[" + inspect.colors[style][0] + "m" + str + "\x1B[" + inspect.colors[style][1] + "m";
-  } else {
-    return str;
+  const style = inspect.styles[styleType];
+  if (style !== undefined) {
+    const color = inspect.colors[style];
+    if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
   }
+  return str;
 }
 function stylizeNoColor(str, styleType) {
   return str;
@@ -186,24 +203,21 @@ function arrayToHash(array) {
   return hash;
 }
 function formatValue(ctx, value, recurseTimes) {
-  if (
-    ctx.customInspect &&
-    value &&
-    isFunction(value.inspect) &&
-    value.inspect !== inspect &&
-    !(value.constructor && value.constructor.prototype === value)
-  ) {
-    var ret = value.inspect(recurseTimes, ctx);
-    if (!isString(ret)) {
-      ret = formatValue(ctx, ret, recurseTimes);
+  if (ctx.customInspect && value) {
+    const customInspect = value[kInspectCustom];
+    if (isFunction(customInspect)) {
+      var ret = customInspect.call(value, recurseTimes, ctx, inspect);
+      if (!isString(ret)) {
+        ret = formatValue(ctx, ret, recurseTimes);
+      }
+      return ret;
     }
-    return ret;
   }
   var primitive = formatPrimitive(ctx, value);
   if (primitive) {
     return primitive;
   }
-  var keys = Object.keys(value);
+  var keys = Object.keys(value).concat(Object.getOwnPropertySymbols(value));
   var visibleKeys = arrayToHash(keys);
   if (ctx.showHidden) {
     keys = Object.getOwnPropertyNames(value);
@@ -314,7 +328,10 @@ function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
     }
   }
   if (!hasOwnProperty(visibleKeys, key)) {
-    name = "[" + key + "]";
+    name = "[" + (typeof key === "symbol" ? key.description : key) + "]";
+  }
+  if (typeof key === "symbol") {
+    name = "[" + ctx.stylize(`Symbol(${key.description})`, "string") + "]";
   }
   if (!str) {
     if (ctx.seen.indexOf(desc.value) < 0) {

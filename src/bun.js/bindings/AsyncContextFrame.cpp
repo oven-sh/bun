@@ -81,27 +81,27 @@ extern "C" EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalOb
         restoreAsyncContext = asyncContextData->getInternalField(0);         \
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \
     }                                                                        \
-    auto result = JSC::call(__VA_ARGS__);                                    \
+    auto result = JSC::profiledCall(__VA_ARGS__);                            \
     if (asyncContextData) {                                                  \
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);      \
     }                                                                        \
     return result;
 
-JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
-{
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, args, errorMessage);
-}
-JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
-{
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, thisValue, args, errorMessage);
-}
+// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
+// {
+//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, args, errorMessage);
+// }
+// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
+// {
+//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, thisValue, args, errorMessage);
+// }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, JSC::getCallData(functionObject), thisValue, args);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
 }
 
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

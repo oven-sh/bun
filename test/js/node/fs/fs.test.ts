@@ -134,6 +134,79 @@ describe("copyFileSync", () => {
     copyFileSync(tempdir + "/copyFileSync.src.blob", tempdir + "/copyFileSync.dest.blob");
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
+
+  if (process.platform === "linux") {
+    describe("should work when copyFileRange is not available", () => {
+      it("on large files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/large`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(128 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        writeFileSync(src, buffer.buffer);
+        try {
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+
+      it("on small files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/small`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(1 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        try {
+          writeFileSync(src, buffer.buffer);
+
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+    });
+  }
 });
 
 describe("mkdirSync", () => {
@@ -1691,4 +1764,180 @@ it("createReadStream on a large file emits readable event correctly", () => {
       }
     });
   });
+});
+
+describe("fs.read", () => {
+  it("should work with (fd, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    fs.read(fd, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer).toStrictEqual(Buffer.concat([Buffer.from("bun"), Buffer.alloc(16381)]));
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, options, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-2-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, { buffer: buffer }, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-3-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-4-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with position", done => {
+    const path = `${tmpdir()}/bun-fs-read-5-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with both position and offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+});
+
+it("new Stats", () => {
+  // @ts-expect-error
+  const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+  expect(stats).toBeDefined();
+  // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+  expect(stats.dev).toBe(1);
+  expect(stats.mode).toBe(2);
+  expect(stats.nlink).toBe(3);
+  expect(stats.uid).toBe(4);
+  expect(stats.gid).toBe(5);
+  expect(stats.rdev).toBe(6);
+  expect(stats.blksize).toBe(7);
+  expect(stats.ino).toBe(8);
+  expect(stats.size).toBe(9);
+  expect(stats.blocks).toBe(10);
+  expect(stats.atimeMs).toBe(11);
+  expect(stats.mtimeMs).toBe(12);
+  expect(stats.ctimeMs).toBe(13);
+  expect(stats.birthtimeMs).toBe(14);
+  expect(stats.atime).toEqual(new Date(11));
+  expect(stats.mtime).toEqual(new Date(12));
+  expect(stats.ctime).toEqual(new Date(13));
+  expect(stats.birthtime).toEqual(new Date(14));
+});
+
+it("BigIntStats", () => {
+  const withoutBigInt = statSync(__filename, { bigint: false });
+  const withBigInt = statSync(__filename, { bigint: true });
+
+  expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
+  expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
+  expect(withoutBigInt.isBlockDevice() === withBigInt.isBlockDevice()).toBe(true);
+  expect(withoutBigInt.isCharacterDevice() === withBigInt.isCharacterDevice()).toBe(true);
+  expect(withoutBigInt.isSymbolicLink() === withBigInt.isSymbolicLink()).toBe(true);
+  expect(withoutBigInt.isFIFO() === withBigInt.isFIFO()).toBe(true);
+  expect(withoutBigInt.isSocket() === withBigInt.isSocket()).toBe(true);
+
+  const expectclose = (a: bigint, b: bigint) => expect(Math.abs(Number(a - b))).toBeLessThan(1000);
+
+  expectclose(BigInt(withoutBigInt.dev), withBigInt.dev);
+  expectclose(BigInt(withoutBigInt.ino), withBigInt.ino);
+  expectclose(BigInt(withoutBigInt.mode), withBigInt.mode);
+  expectclose(BigInt(withoutBigInt.nlink), withBigInt.nlink);
+  expectclose(BigInt(withoutBigInt.uid), withBigInt.uid);
+  expectclose(BigInt(withoutBigInt.gid), withBigInt.gid);
+  expectclose(BigInt(withoutBigInt.rdev), withBigInt.rdev);
+  expectclose(BigInt(withoutBigInt.size), withBigInt.size);
+  expectclose(BigInt(withoutBigInt.blksize), withBigInt.blksize);
+  expectclose(BigInt(withoutBigInt.blocks), withBigInt.blocks);
+  expectclose(BigInt(Math.floor(withoutBigInt.atimeMs)), withBigInt.atimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.mtimeMs)), withBigInt.mtimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
+
+  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
+  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
+  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
+  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
 });

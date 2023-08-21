@@ -3762,6 +3762,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@as(i32, @intCast(number))),
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
+            // u0 => jsNumberFromInt32(0),
             else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
         };
     }
@@ -4140,9 +4141,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
+    /// This always returns a JS BigInt
     pub fn fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue {
         return cppFn("fromInt64NoTruncate", .{ globalObject, i });
     }
+    /// This always returns a JS BigInt
     pub fn fromUInt64NoTruncate(globalObject: *JSGlobalObject, i: u64) JSValue {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }
@@ -4240,6 +4243,7 @@ pub const JSValue = enum(JSValueReprInt) {
         data,
         toString,
         redirect,
+        inspectCustom,
     };
 
     // intended to be more lightweight than ZigString
@@ -5119,7 +5123,36 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "setControlFlowProfiler", "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{
+        "setControlFlowProfiler",
+        "collectAsync",
+        "externalMemorySize",
+        "blockBytesAllocated",
+        "heapSize",
+        "releaseWeakRefs",
+        "throwError",
+        "deferGC",
+        "holdAPILock",
+        "runGC",
+        "generateHeapSnapshot",
+        "isJITEnabled",
+        "deleteAllCode",
+        "create",
+        "deinit",
+        "setExecutionForbidden",
+        "executionForbidden",
+        "isEntered",
+        "throwError",
+        "drainMicrotasks",
+        "whenIdle",
+        "shrinkFootprint",
+        "setExecutionTimeLimit",
+        "clearExecutionTimeLimit",
+        "notifyNeedTermination",
+        "notifyNeedWatchdogCheck",
+        "notifyNeedDebuggerBreak",
+        "notifyNeedShellTimeoutCheck",
+    };
 };
 
 pub const ThrowScope = extern struct {
@@ -5328,6 +5361,7 @@ const private = struct {
         argCount: u32,
         functionPointer: JSHostFunctionPtr,
         strong: bool,
+        add_ptr_field: bool,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -5351,7 +5385,16 @@ pub fn NewFunction(
     comptime functionPointer: JSHostFunctionType,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong, false);
+}
+
+pub fn createCallback(
+    globalObject: *JSGlobalObject,
+    symbolName: ?*const ZigString,
+    argCount: u32,
+    comptime functionPointer: *const JSHostFunctionType,
+) JSValue {
+    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
 }
 
 pub fn NewRuntimeFunction(
@@ -5360,9 +5403,10 @@ pub fn NewRuntimeFunction(
     argCount: u32,
     functionPointer: JSHostFunctionPtr,
     strong: bool,
+    add_ptr_property: bool,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {
@@ -5699,27 +5743,22 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
 }
 
 // DOMCall Fields
-pub const __DOMCall_ptr = @import("../api/bun.zig").FFI.Class.functionDefinitions.ptr;
-pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u8;
-pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u16;
-pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u32;
-pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.ptr;
-pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i8;
-pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i16;
-pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i32;
-pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.f32;
-pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.f64;
-pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i64;
-pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u64;
-pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.intptr;
-pub const __Crypto_getRandomValues = @import("../webcore.zig").Crypto.Class.functionDefinitions.getRandomValues;
-pub const __Crypto_randomUUID = @import("../webcore.zig").Crypto.Class.functionDefinitions.randomUUID;
-pub const __Crypto_randomInt = @import("../webcore.zig").Crypto.Class.functionDefinitions.randomInt;
-pub const __Crypto_timingSafeEqual = @import("../webcore.zig").Crypto.Class.functionDefinitions.timingSafeEqual;
-pub const DOMCalls = .{
-    @import("../api/bun.zig").FFI,
-    @import("../api/bun.zig").FFI.Reader,
-    @import("../webcore.zig").Crypto,
+pub const __DOMCall_ptr = @import("../api/bun.zig").FFIObject.dom_call;
+pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u8;
+pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u16;
+pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u32;
+pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.ptr;
+pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i8;
+pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i16;
+pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i32;
+pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.f32;
+pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.f64;
+pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i64;
+pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u64;
+pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.intptr;
+pub const DOMCalls = &.{
+    .{ .ptr = @import("../api/bun.zig").FFIObject.dom_call },
+    @import("../api/bun.zig").FFIObject.Reader.DOMCalls,
 };
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;

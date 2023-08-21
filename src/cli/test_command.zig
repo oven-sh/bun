@@ -636,6 +636,7 @@ pub const TestCommand = struct {
                 // rely on the dir fd yields a performance improvement
                 .store_fd = true,
                 .smol = ctx.runtime_options.smol,
+                .debugger = ctx.runtime_options.debugger,
             },
         );
         vm.argv = ctx.passthrough;
@@ -923,7 +924,6 @@ pub const TestCommand = struct {
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
         const file_prefix = if (Output.is_github_action) "::group::" else "";
 
-        vm.main_hash = @as(u32, @truncate(bun.hash(file_path)));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {

@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "Debug",
+      "program": "${workspaceFolder}/example.js",
+      "stopOnEntry": true
+    },
+    {
+      "type": "bun",
+      "request": "attach",
+      "name": "Attach",
+      "program": "${workspaceFolder}/example.js",
+      "stopOnEntry": true
+    }
+  ]
+}

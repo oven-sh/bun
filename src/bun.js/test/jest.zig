@@ -425,22 +425,22 @@ pub const Jest = struct {
         module.put(
             globalObject,
             ZigString.static("beforeAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeAll"), 1, DescribeScope.beforeAll, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeAll"), 1, DescribeScope.beforeAll, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("beforeEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeEach"), 1, DescribeScope.beforeEach, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeEach"), 1, DescribeScope.beforeEach, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("afterAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterAll"), 1, DescribeScope.afterAll, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterAll"), 1, DescribeScope.afterAll, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("afterEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterEach"), 1, DescribeScope.afterEach, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterEach"), 1, DescribeScope.afterEach, false, false),
         );
         module.put(
             globalObject,
@@ -506,35 +506,31 @@ pub const Jest = struct {
     extern fn JSMock__jsUseRealTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
 
     pub fn call(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments_: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
+        const arguments = callframe.arguments(2).slice();
         var runner_ = runner orelse {
-            JSError(getAllocator(ctx), "Run \"bun test\" to run a test", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
+            globalObject.throw("Run \"bun test\" to run a test", .{});
+            return .undefined;
         };
-        const arguments = @as([]const JSC.JSValue, @ptrCast(arguments_));
 
         if (arguments.len < 1 or !arguments[0].isString()) {
-            JSError(getAllocator(ctx), "Bun.jest() expects a string filename", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
+            globalObject.throw("Bun.jest() expects a string filename", .{});
+            return .undefined;
         }
-        var str = arguments[0].toSlice(ctx, bun.default_allocator);
+        var str = arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         var slice = str.slice();
 
         if (str.len == 0 or slice[0] != '/') {
-            JSError(getAllocator(ctx), "Bun.jest() expects an absolute file path", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
+            globalObject.throw("Bun.jest() expects an absolute file path", .{});
+            return .undefined;
         }
-        var vm = ctx.bunVM();
+        var vm = globalObject.bunVM();
         if (vm.is_in_preload) {
-            return Bun__Jest__testPreloadObject(ctx).asObjectRef();
+            return Bun__Jest__testPreloadObject(globalObject);
         }
 
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
@@ -542,7 +538,7 @@ pub const Jest = struct {
         var scope = runner_.getOrPutFile(filepath);
         scope.push();
 
-        return Bun__Jest__testModuleObject(ctx).asObjectRef();
+        return Bun__Jest__testModuleObject(globalObject);
     }
 
     comptime {

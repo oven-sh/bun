@@ -644,7 +644,7 @@ void JS${controllerName}::detach() {
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
     
     m_weakReadableStream.clear();

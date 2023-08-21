@@ -827,7 +827,7 @@ type ResponseType =
   | "opaque"
   | "opaqueredirect";
 
-type FormDataEntryValue = Blob | string;
+type FormDataEntryValue = File | string;
 
 /** Provides a way to easily construct a set of key/value pairs representing
  * form fields and their values, which can then be easily sent using the
@@ -957,6 +957,28 @@ declare var Blob: {
    * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
    */
   new (parts?: BlobPart[], options?: BlobPropertyBag): Blob;
+};
+
+interface File extends Blob {
+  readonly lastModified: number;
+  readonly name: string;
+}
+
+declare var File: {
+  prototype: File;
+
+  /**
+   * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   *
+   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+   * @param `name` - The name of the file
+   * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   */
+  new (
+    parts: BlobPart[],
+    name: string,
+    options?: BlobPropertyBag & { lastModified?: Date | number },
+  ): File;
 };
 
 interface ResponseInit {

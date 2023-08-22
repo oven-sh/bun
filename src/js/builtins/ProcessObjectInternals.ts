@@ -89,7 +89,6 @@ export function getStdioWriteStream(fd) {
 export function getStdinStream(fd) {
   var reader: ReadableStreamDefaultReader | undefined;
   var readerRef;
-  var unrefOnRead = false;
   function ref() {
     reader ??= Bun.stdin.stream().getReader();
     // TODO: remove this. likely we are dereferencing the stream
@@ -125,7 +124,6 @@ export function getStdinStream(fd) {
     // and does not apply to the underlying Stream implementation.
     if (event === "readable") {
       ref();
-      unrefOnRead = true;
     }
     return originalOn.call(this, event, listener);
   };
@@ -174,10 +172,6 @@ export function getStdinStream(fd) {
   }
 
   stream._read = function (size) {
-    if (unrefOnRead) {
-      unref();
-      unrefOnRead = false;
-    }
     internalRead(this);
   };
 

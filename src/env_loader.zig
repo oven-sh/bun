@@ -876,11 +876,11 @@ pub const Map = struct {
         while (iterator.next()) |entry| {
             _ = try writer.write("\n    ");
 
-            std.json.stringify(entry.key_ptr.*, writer.options, writer) catch unreachable;
+            writer.write(entry.key_ptr.*) catch unreachable;
 
             _ = try writer.write(": ");
 
-            std.json.stringify(entry.value_ptr.*, writer.options, writer) catch unreachable;
+            writer.write(entry.value_ptr.*) catch unreachable;
 
             if (iterator.index <= self.map.count() - 1) {
                 _ = try writer.write(", ");

@@ -85,7 +85,7 @@ pub const Loc = struct {
     }
 
     pub fn jsonStringify(self: *const Loc, writer: anytype) !void {
-        return try std.json.stringify(self.start, writer.options, writer);
+        return try writer.write(self.start);
     }
 };
 
@@ -617,7 +617,7 @@ pub const Range = struct {
     }
 
     pub fn jsonStringify(self: *const Range, writer: anytype) !void {
-        return try std.json.stringify([2]i32{ self.loc.start, self.len + self.loc.start }, writer.options, writer);
+        return try writer.write([2]i32{ self.loc.start, self.len + self.loc.start });
     }
 };
 

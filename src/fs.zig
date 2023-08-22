@@ -1579,7 +1579,7 @@ pub const Path = struct {
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try std.json.stringify(self.text, writer.options, writer);
+        return try writer.write(self.text);
     }
 
     pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {

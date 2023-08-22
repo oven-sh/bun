@@ -262,8 +262,8 @@ pub const ImportItemStatus = enum(u2) {
     // The printer will replace this import with "undefined"
 
     missing,
-    pub fn jsonStringify(self: @This(), o: anytype) !void {
-        return try std.json.stringify(@tagName(self), o.options, o);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 };
 
@@ -271,8 +271,8 @@ pub const AssignTarget = enum(u2) {
     none = 0,
     replace = 1, // "a = b"
     update = 2, // "a += b"
-    pub fn jsonStringify(self: *const @This(), o: anytype) !void {
-        return try std.json.stringify(@tagName(self), o.options, o);
+    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 };
 
@@ -349,7 +349,7 @@ pub const Binding = struct {
     };
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, writer.options, writer);
+        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc });
     }
 
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
@@ -437,8 +437,8 @@ pub const Binding = struct {
         b_object,
         b_missing,
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -844,8 +844,8 @@ pub const G = struct {
             declare,
             class_static_block,
 
-            pub fn jsonStringify(self: @This(), o: anytype) !void {
-                return try std.json.stringify(@tagName(self), o.options, o);
+            pub fn jsonStringify(self: @This(), writer: anytype) !void {
+                return try writer.write(@tagName(self));
             }
         };
     };
@@ -1152,8 +1152,8 @@ pub const Symbol = struct {
         // This annotates all other symbols that don't have special behavior.
         other,
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
 
         pub inline fn isPrivate(kind: Symbol.Kind) bool {
@@ -1371,8 +1371,8 @@ pub const OptionalChain = enum(u2) {
     // "(a?.b).c" => ".c" is OptionalChain null
     ccontinue,
 
-    pub fn jsonStringify(self: @This(), o: anytype) !void {
-        return try std.json.stringify(@tagName(self), o.options, o);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 };
 
@@ -1683,8 +1683,8 @@ pub const E = struct {
     };
 
     pub const Missing = struct {
-        pub fn jsonStringify(_: *const @This(), o: anytype) !void {
-            return try std.json.stringify(null, o.options, o);
+        pub fn jsonStringify(_: *const @This(), writer: anytype) !void {
+            return try writer.write(null);
         }
     };
 
@@ -1754,8 +1754,8 @@ pub const E = struct {
             return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T)))));
         }
 
-        pub fn jsonStringify(self: *const Number, o: anytype) !void {
-            return try std.json.stringify(self.value, o.options, o);
+        pub fn jsonStringify(self: *const Number, writer: anytype) !void {
+            return try writer.write(self.value);
         }
 
         pub fn toJS(this: @This()) JSC.JSValue {
@@ -1768,8 +1768,8 @@ pub const E = struct {
 
         pub var empty = BigInt{ .value = "" };
 
-        pub fn jsonStringify(self: *const @This(), o: anytype) !void {
-            return try std.json.stringify(self.value, o.options, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(self.value);
         }
 
         pub fn toJS(_: @This()) JSC.JSValue {
@@ -2411,7 +2411,7 @@ pub const E = struct {
                 }
             }
 
-            return try std.json.stringify(buf[0..i], writer.options, writer);
+            return try writer.write(buf[0..i]);
         }
     };
 
@@ -2579,8 +2579,8 @@ pub const E = struct {
             return "";
         }
 
-        pub fn jsonStringify(self: *const RegExp, o: anytype) !void {
-            return try std.json.stringify(self.value, o.options, o);
+        pub fn jsonStringify(self: *const RegExp, writer: anytype) !void {
+            return try writer.write(self.value);
         }
     };
 
@@ -2658,7 +2658,7 @@ pub const Stmt = struct {
     };
 
     pub fn jsonStringify(self: *const Stmt, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, writer.options, writer);
+        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc });
     }
 
     pub fn isTypeScript(self: *Stmt) bool {
@@ -2875,8 +2875,8 @@ pub const Stmt = struct {
         s_while,
         s_with,
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
 
         pub fn isExportLike(tag: Tag) bool {
@@ -3367,7 +3367,7 @@ pub const Expr = struct {
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, writer.options, writer);
+        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc });
     }
 
     pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
@@ -4257,8 +4257,8 @@ pub const Expr = struct {
             };
         }
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
 
         pub fn isArray(self: Tag) bool {
@@ -5597,8 +5597,8 @@ pub const S = struct {
             k_var,
             k_let,
             k_const,
-            pub fn jsonStringify(self: @This(), o: anytype) !void {
-                return try std.json.stringify(@tagName(self), o.options, o);
+            pub fn jsonStringify(self: @This(), writer: anytype) !void {
+                return try writer.write(@tagName(self));
             }
         };
     };
@@ -5733,8 +5733,8 @@ pub const Op = struct {
         /// Right-associative
         bin_logical_and_assign,
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
 
         pub fn unaryAssignTarget(code: Op.Code) AssignTarget {
@@ -5834,8 +5834,8 @@ pub const Op = struct {
         };
     }
 
-    pub fn jsonStringify(self: *const @This(), o: anytype) !void {
-        return try std.json.stringify(self.text, o.options, o);
+    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        return try writer.write(self.text);
     }
 
     pub const TableType: std.EnumArray(Op.Code, Op) = undefined;
@@ -6265,8 +6265,8 @@ pub const ExportsKind = enum {
         return dynamic.contains(self);
     }
 
-    pub fn jsonStringify(self: @This(), o: anytype) !void {
-        return try std.json.stringify(@tagName(self), o.options, o);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 
     pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
@@ -6441,7 +6441,7 @@ pub const Part = struct {
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
     pub fn jsonStringify(self: *const Part, writer: anytype) !void {
-        return std.json.stringify(self.stmts, writer.options, writer);
+        return writer.write(self.stmts);
     }
 };
 
@@ -6487,8 +6487,8 @@ pub const StrictModeKind = enum(u4) {
     implicit_strict_mode_export,
     implicit_strict_mode_top_level_await,
     implicit_strict_mode_class,
-    pub fn jsonStringify(self: @This(), o: anytype) !void {
-        return try std.json.stringify(@tagName(self), o.options, o);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 };
 
@@ -6675,8 +6675,8 @@ pub const Scope = struct {
         function_body,
         class_static_init,
 
-        pub fn jsonStringify(self: @This(), o: anytype) !void {
-            return try std.json.stringify(@tagName(self), o.options, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 

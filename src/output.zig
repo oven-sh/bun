@@ -215,7 +215,7 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-pub const WriterType: type = @TypeOf(WriteStream(Source.StreamType, undefined));
+pub const WriterType: type = @TypeOf(Source.StreamType.writer(undefined));
 
 pub fn errorWriter() WriterType {
     std.debug.assert(source_set);
@@ -229,7 +229,7 @@ pub fn errorStream() Source.StreamType {
 
 pub fn writer() WriterType {
     std.debug.assert(source_set);
-    return writeStream(source.stream, .{ .whitespace = .indent_2 });
+    return source.stream.writer();
 }
 
 pub fn resetTerminal() void {

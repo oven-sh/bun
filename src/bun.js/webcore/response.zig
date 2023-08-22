@@ -738,7 +738,7 @@ pub const Fetch = struct {
 
             if (!success) {
                 const err = this.onReject();
-
+                err.ensureStillAlive();
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
                         const body = response.body;
@@ -746,7 +746,7 @@ pub const Fetch = struct {
                             if (body.value.Locked.readable) |readable| {
                                 readable.ptr.Bytes.onData(
                                     .{
-                                        .err = .{ .js_err = err },
+                                        .err = .{ .JSValue = err },
                                     },
                                     bun.default_allocator,
                                 );

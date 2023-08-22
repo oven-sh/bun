@@ -526,16 +526,13 @@ pub const StreamResult = union(Tag) {
     into_array_and_done: IntoArray,
     pending: *Pending,
 
-    err: union(Err) {
-        err: Syscall.Error,
-        js_err: JSC.JSValue,
-    },
+    err: union(Err) { Error: Syscall.Error, JSValue: JSC.JSValue },
 
     done: void,
 
     pub const Err = enum {
-        err,
-        js_err,
+        Error,
+        JSValue,
     };
 
     pub const Tag = enum {
@@ -767,10 +764,13 @@ pub const StreamResult = union(Tag) {
         promise.asValue(globalThis).unprotect();
         switch (result) {
             .err => |err| {
-                if (err == .err) {
-                    promise.reject(globalThis, err.err.toJSC(globalThis));
+                if (err == .Error) {
+                    promise.reject(globalThis, err.Error.toJSC(globalThis));
                 } else {
-                    promise.reject(globalThis, err.js_err);
+                    const js_err = err.JSValue;
+                    js_err.ensureStillAlive();
+                    js_err.unprotect();
+                    promise.reject(globalThis, js_err);
                 }
             },
             .done => {
@@ -817,10 +817,13 @@ pub const StreamResult = union(Tag) {
             },
 
             .err => |err| {
-                if (err == .err) {
-                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.err.toJS(globalThis))).asValue(globalThis);
+                if (err == .Error) {
+                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.Error.toJS(globalThis))).asValue(globalThis);
                 }
-                return JSC.JSPromise.rejectedPromise(globalThis, err.js_err).asValue(globalThis);
+                const js_err = err.JSValue;
+                js_err.ensureStillAlive();
+                js_err.unprotect();
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
             },
 
             // false == controller.close()
@@ -3006,10 +3009,13 @@ pub fn ReadableStreamSource(
             pub fn processResult(globalThis: *JSGlobalObject, flags: JSValue, result: StreamResult) JSC.JSValue {
                 switch (result) {
                     .err => |err| {
-                        if (err == .err) {
-                            globalThis.vm().throwError(globalThis, err.err.toJSC(globalThis));
+                        if (err == .Error) {
+                            globalThis.vm().throwError(globalThis, err.Error.toJSC(globalThis));
                         } else {
-                            globalThis.vm().throwError(globalThis, err.js_err);
+                            const js_err = err.JSValue;
+                            js_err.ensureStillAlive();
+                            js_err.unprotect();
+                            globalThis.vm().throwError(globalThis, js_err);
                         }
                         return JSValue.jsUndefined();
                     },
@@ -3328,7 +3334,13 @@ pub const ByteStream = struct {
 
                 if (to_copy.len == 0) {
                     if (stream == .err) {
-                        this.pending.result = stream;
+                        if (stream.err == .Error) {
+                            this.pending.result = .{ .err = .{ .Error = stream.err.Error } };
+                        }
+                        const js_err = stream.err.JSValue;
+                        js_err.ensureStillAlive();
+                        js_err.protect();
+                        this.pending.result = .{ .err = .{ .JSValue = js_err } };
                     } else {
                         this.pending.result = .{
                             .done = {},
@@ -3523,7 +3535,7 @@ pub const ReadResult = union(enum) {
     pub fn toStreamWithIsDone(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool, is_done: bool) StreamResult {
         return switch (this) {
             .pending => .{ .pending = pending },
-            .err => .{ .err = .{ .err = this.err } },
+            .err => .{ .err = .{ .Error = this.err } },
             .done => .{ .done = {} },
             .read => |slice| brk: {
                 const owned = slice.ptr != buf.ptr;
@@ -4100,7 +4112,7 @@ pub const File = struct {
                 if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                     this.pending.result = .{
                         .err = .{
-                            .err = Syscall.Error{
+                            .Error = Syscall.Error{
                                 .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
                                 .syscall = .read,
                             },
@@ -4109,7 +4121,7 @@ pub const File = struct {
                 } else {
                     this.pending.result = .{
                         .err = .{
-                            .err = Syscall.Error{
+                            .Error = Syscall.Error{
                                 // this is too hacky
                                 .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
                                 .syscall = .read,
@@ -4140,7 +4152,7 @@ pub const File = struct {
                                 else => {},
                             }
 
-                            this.pending.result = .{ .err = .{ .err = err } };
+                            this.pending.result = .{ .err = .{ .Error = err } };
                             scheduleMainThreadTask(this);
                             return;
                         },

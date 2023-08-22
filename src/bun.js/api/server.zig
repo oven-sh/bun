@@ -2925,10 +2925,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 var emptied = this.request_body_buf;
                 this.request_body_buf = .{};
                 return .{
-                    .owned = .{ .list = emptied.toManaged(this.allocator), .size_hint = if (emptied.capacity < max_request_body_preallocate_length)
-                        emptied.capacity
-                    else
-                        0 },
+                    .owned = .{
+                        .list = emptied.toManaged(this.allocator),
+                        .size_hint = if (emptied.capacity < max_request_body_preallocate_length)
+                            emptied.capacity
+                        else
+                            0,
+                    },
                 };
             }
 

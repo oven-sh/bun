@@ -616,8 +616,8 @@ pub const Subprocess = struct {
                     return;
                 },
                 .err => |err| {
-                    if (err == .err) {
-                        this.status = .{ .err = err.err };
+                    if (err == .Error) {
+                        this.status = .{ .err = err.Error };
                     } else {
                         this.status = .{ .err = JSC.Node.Syscall.Error.fromCode(.CANCELED, .read) };
                     }

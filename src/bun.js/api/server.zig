@@ -5077,7 +5077,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_protocol.deref();
 
             if (this.config.hostname) |host| {
-                bun.default_allocator.destroy(host);
+                bun.default_allocator.free(host);
             }
 
             if (this.config.base_url.href.len > 0) {

@@ -594,8 +594,8 @@ pub const JSBundler = struct {
                 external: bool = false,
 
                 pub fn deinit(this: *@This()) void {
-                    bun.default_allocator.destroy(this.path);
-                    bun.default_allocator.destroy(this.namespace);
+                    bun.default_allocator.free(this.path);
+                    bun.default_allocator.free(this.namespace);
                 }
             },
             no_match: void,
@@ -747,7 +747,7 @@ pub const JSBundler = struct {
             pub fn deinit(this: *Value) void {
                 switch (this.*) {
                     .success => |success| {
-                        bun.default_allocator.destroy(success.source_code);
+                        bun.default_allocator.free(success.source_code);
                     },
                     .err => |*err| {
                         err.deinit(bun.default_allocator);

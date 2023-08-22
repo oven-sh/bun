@@ -85,7 +85,7 @@ pub const PathWatcherManager = struct {
             return info.*;
         }
         const cloned_path = try bun.default_allocator.dupeZ(u8, path);
-        errdefer bun.default_allocator.destroy(cloned_path);
+        errdefer bun.default_allocator.free(cloned_path);
 
         if (std.fs.openIterableDirAbsoluteZ(cloned_path, .{
             .access_sub_paths = true,
@@ -657,7 +657,7 @@ pub const PathWatcherManager = struct {
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
             std.os.close(path.fd);
-            bun.default_allocator.destroy(path.path);
+            bun.default_allocator.free(path.path);
         }
 
         this.file_paths.deinit();

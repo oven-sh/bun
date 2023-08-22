@@ -1022,6 +1022,8 @@ fn NewFlags(comptime debug_mode: bool) type {
         is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
         has_written_status: bool = false,
         response_protected: bool = false,
+        is_draining_microtask_queue: bool = false,
+        is_async: bool = false,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
     };
@@ -2049,6 +2051,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
                 if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
+
+                    // We're still the root task in the task queue
+                    // That means draining the microtask here is not re-entrant.
+                    // and thus, safe.
+                    if (!this.flags.is_async and promise.status(this.server.globalThis.vm()) == .Pending) {
+                        this.flags.is_draining_microtask_queue = true;
+                        this.server.globalThis.vm().drainMicrotasks();
+                        this.flags.is_draining_microtask_queue = false;
+                    }
+
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
                             streamLog("promise still Pending", .{});
@@ -2120,6 +2132,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
         }
 
+        // Each HTTP request or TCP socket connection is effectively a "task".
+        //
+        // However, unlike the regular task queue, we don't drain the microtask
+        // queue at the end.
+        //
+        // Instead, we drain it multiple times, at the points that would
+        // otherwise "halt" the Response from being rendered.
+        //
+        // - If you return a Promise, we drain the microtask queue once
+        // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
         pub fn onResponse(
             ctx: *RequestContext,
             this: *ThisServer,
@@ -2159,6 +2181,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
+                if (response.body.value == .Locked) {
+                    response_value.ensureStillAlive();
+                    std.debug.assert(!ctx.flags.is_draining_microtask_queue);
+                    ctx.flags.is_draining_microtask_queue = true;
+                    this.vm.global.vm().drainMicrotasks();
+                    ctx.flags.is_draining_microtask_queue = false;
+                    response_value.ensureStillAlive();
+                }
+
                 response.body.value.toBlobIfPossible();
 
                 switch (response.body.value) {
@@ -2182,6 +2213,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var vm = this.vm;
 
             if (response_value.asAnyPromise()) |promise| {
+                if (promise.status(vm.global.vm()) == .Pending) {
+                    response_value.ensureStillAlive();
+                    std.debug.assert(!ctx.flags.is_draining_microtask_queue);
+                    ctx.flags.is_draining_microtask_queue = true;
+                    this.vm.global.vm().drainMicrotasks();
+                    ctx.flags.is_draining_microtask_queue = false;
+                    response_value.ensureStillAlive();
+                }
+
                 // If we immediately have the value available, we can skip the extra event loop tick
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
@@ -2210,6 +2250,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
                         ctx.response_ptr = response;
+
+                        if (response.body.value == .Locked) {
+                            response_value.ensureStillAlive();
+                            std.debug.assert(!ctx.flags.is_draining_microtask_queue);
+                            ctx.flags.is_draining_microtask_queue = true;
+                            this.vm.global.vm().drainMicrotasks();
+                            ctx.flags.is_draining_microtask_queue = false;
+                            response_value.ensureStillAlive();
+                        }
+
                         response.body.value.toBlobIfPossible();
                         switch (response.body.value) {
                             .Blob => |*blob| {
@@ -2255,6 +2305,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // so we have to clear it in here too
                 request_object.uws_request = null;
 
+                ctx.flags.is_async = true;
                 ctx.setAbortHandler();
                 ctx.pending_promises_for_abort += 1;
 

@@ -2397,6 +2397,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return true;
             } else {
                 this.has_backpressure = !this.res.write(buf);
+                if (comptime Environment.isMac) {
+                    if (this.has_backpressure) {
+                        this.res.onWritable(*@This(), onWritable, this);
+                    }
+                }
                 return true;
             }
 

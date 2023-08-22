@@ -460,7 +460,7 @@ describe("fetch() with streaming", () => {
             }
           }
           gcTick(false);
-          expect(buffer.byteLength).toBe(content.byteLength);
+          expect(buffer).toEqual(content);
         } finally {
           server?.stop();
         }

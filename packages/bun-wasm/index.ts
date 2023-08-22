@@ -10,7 +10,7 @@ import {
   encodeTransform,
   type ScanResult,
   type TransformResponse,
-} from "./schema";
+} from "./schema.js";
 
 export enum Loader {
   jsx = BunLoader.jsx,
@@ -54,16 +54,12 @@ function normalizeLoader(file_name: string, loader?: keyof typeof Loader): BunLo
 
 interface WebAssemblyModule {
   init(heapSize: number): number;
-  transform(a: number): number;
-  bun_malloc(a: number): number;
-  bun_free(a: number): number;
-  scan(a: number): number;
-  getTests(a: number): number;
+  transform(a: bigint): bigint;
+  bun_malloc(a: number | bigint): bigint;
+  bun_free(a: bigint): void;
+  scan(a: bigint): bigint;
+  getTests(a: bigint): bigint;
 }
-
-const ptr_converter = new ArrayBuffer(16);
-const ptr_float = new BigUint64Array(ptr_converter);
-const slice = new Uint32Array(ptr_converter);
 
 const Wasi = {
   clock_time_get(clk_id: unknown, tp: unknown) {
@@ -92,11 +88,8 @@ const Wasi = {
   },
 };
 
-var scratch: Uint8Array;
-var scratch2: Uint8Array;
-
 const env = {
-  console_log(slice: number) {
+  console_log(slice: bigint) {
     // @ts-expect-error
     const text = Bun._wasmPtrLenToString(slice);
     if (captureErrors) {
@@ -105,7 +98,7 @@ const env = {
     }
     console.log(text);
   },
-  console_error(slice: number) {
+  console_error(slice: bigint) {
     // @ts-expect-error
     const text = Bun._wasmPtrLenToString(slice);
     if (captureErrors) {
@@ -114,11 +107,11 @@ const env = {
     }
     console.error(text);
   },
-  console_warn(slice: number) {
+  console_warn(slice: bigint) {
     // @ts-expect-error
     console.warn(Bun._wasmPtrLenToString(slice));
   },
-  console_info(slice: number) {
+  console_info(slice: bigint) {
     // @ts-expect-error
     console.info(Bun._wasmPtrLenToString(slice));
   },
@@ -171,6 +164,7 @@ const env = {
   },
   emscripten_notify_memory_growth() {},
 };
+
 export class Bun {
   private static has_initialized = false;
   private static wasm_source: WebAssembly.WebAssemblyInstantiatedSource;
@@ -182,16 +176,22 @@ export class Bun {
     return Bun.wasm_source.instance.exports.memory as WebAssembly.Memory;
   }
 
+  private static scratch: Uint8Array = new Uint8Array(8096);
   private static memory_array: Uint8Array;
 
   private static _decoder: TextDecoder;
+  private static _encoder: TextEncoder = new TextEncoder();
 
-  private static _wasmPtrToSlice(offset: number | bigint) {
-    ptr_float[0] = typeof offset === "number" ? BigInt(offset) : offset;
-    return new Uint8Array(Bun.memory.buffer, slice[0], slice[1]);
+  private static ptr_converter = new ArrayBuffer(16);
+  private static ptr_float = new BigUint64Array(Bun.ptr_converter);
+  private static ptr_slice = new Uint32Array(Bun.ptr_converter);
+
+  private static _wasmPtrToSlice(offset: bigint) {
+    Bun.ptr_float[0] = typeof offset === "number" ? BigInt(offset) : offset;
+    return new Uint8Array(Bun.memory.buffer, Bun.ptr_slice[0], Bun.ptr_slice[1]);
   }
 
-  private static _wasmPtrLenToString(slice: number) {
+  private static _wasmPtrLenToString(slice: bigint) {
     if (!Bun._decoder) {
       Bun._decoder = new TextDecoder("utf8");
     }
@@ -201,14 +201,11 @@ export class Bun {
   }
 
   static async init(url?: URL | string | null, heapSize = 64_000_000, fetch = globalThis.fetch) {
+    if (Bun.has_initialized) return;
     url ??= new URL("./bun.wasm", import.meta.url);
-    scratch = new Uint8Array(8096);
 
-    if (Bun.has_initialized) {
-      return;
-    }
     if (typeof process === "undefined") {
-      if (globalThis?.WebAssembly?.instantiateStreaming) {
+      if (globalThis.WebAssembly.instantiateStreaming) {
         Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(fetch(url), {
           env: env,
           wasi_snapshot_preview1: Wasi,
@@ -244,7 +241,7 @@ export class Bun {
   }
 
   static getTests(content: Uint8Array, filename = "my.test.tsx") {
-    const bb = new ByteBuffer(scratch);
+    const bb = new ByteBuffer(Bun.scratch);
     bb.length = 0;
     bb.index = 0;
     const contents_buffer = content;
@@ -313,25 +310,12 @@ export class Bun {
   }
 
   static transformSync(content: Uint8Array | string, file_name: string, loader?: keyof typeof Loader): TransformResponse {
-    const bb = new ByteBuffer(scratch);
+    const bb = new ByteBuffer(Bun.scratch);
     bb.length = 0;
     bb.index = 0;
     var contents_buffer;
     if (typeof content === "string") {
-      if (!scratch2) {
-        scratch2 = new Uint8Array(content.length * 2);
-      }
-
-      let i = 0;
-      for (; i < content.length; i++) {
-        if (i > scratch2.length) {
-          var scratch3 = new Uint8Array(scratch2.length * 2);
-          scratch3.set(scratch2);
-          scratch2 = scratch3;
-        }
-        scratch2[i] = content.charCodeAt(i);
-      }
-      contents_buffer = scratch2.subarray(0, i);
+      contents_buffer = Bun._encoder.encode(content);
     } else {
       contents_buffer = content;
     }
@@ -353,21 +337,17 @@ export class Bun {
     var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
     const response = decodeTransformResponse(_bb);
     Bun.wasm_exports.bun_free(input_ptr);
-    scratch = bb.data;
+    Bun.scratch = bb.data;
     return response;
   }
 
   static scan(content: Uint8Array | string, file_name: string, loader?: keyof typeof Loader): ScanResult {
-    const bb = new ByteBuffer(scratch);
+    const bb = new ByteBuffer(Bun.scratch);
     bb.length = 0;
     bb.index = 0;
     var contents_buffer;
     if (typeof content === "string") {
-      if (!scratch2) {
-        scratch2 = new Uint8Array(content.length * 2);
-      }
-      const encode_into = new TextEncoder().encodeInto(content, scratch2);
-      contents_buffer = scratch2.subarray(0, encode_into.written);
+      contents_buffer = Bun._encoder.encode(content);
     } else {
       contents_buffer = content;
     }
@@ -388,9 +368,11 @@ export class Bun {
 
     const resp_ptr = Bun.wasm_exports.scan(input_ptr);
     var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
+    //console.log(resp_ptr, Bun.ptr_slice[0], Bun.ptr_slice[1], new Uint8Array(Bun.memory.buffer, Bun.ptr_slice[0], Bun.ptr_slice[1] + 82));
+    //console.log(_bb);
     const response = decodeScanResult(_bb);
     Bun.wasm_exports.bun_free(input_ptr);
-    scratch = bb.data;
+    Bun.scratch = bb.data;
     return response;
   }
 }

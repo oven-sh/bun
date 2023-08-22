@@ -21,7 +21,7 @@
 // AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
-const { cleanupLater } = $lazy("async_hooks");
+const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
 
 function get(): ReadonlyArray<any> | undefined {
   return $getInternalField($asyncContext, 0);
@@ -34,7 +34,9 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
 class AsyncLocalStorage {
   #disableCalled = false;
 
-  constructor() {}
+  constructor() {
+    setAsyncHooksEnabled(true);
+  }
 
   static bind(fn, ...args: any) {
     return this.snapshot().bind(null, fn, ...args);
@@ -160,6 +162,7 @@ class AsyncResource {
     if (typeof type !== "string") {
       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
     }
+    setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
   }

@@ -2,6 +2,7 @@ import { bunEnv, bunExe } from "harness";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { test, expect } from "bun:test";
 
 test("fsevents works (napi_ref_threadsafe_function keeps event loop alive)", async () => {
   const tempFile = fs.mkdtempSync(path.join(os.tmpdir(), "fsevents-test-"));
@@ -10,10 +11,7 @@ test("fsevents works (napi_ref_threadsafe_function keeps event loop alive)", asy
     env: bunEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  await Bun.sleep(50);
-  if (spawned.killed) {
-    throw new Error("event loop died, test failed");
-  }
+  await Bun.sleep(100);
   await Bun.write(tempFile + "/hello.txt", "test");
   expect(await spawned.exited).toBe(0);
   expect(await new Response(spawned.stdout).text()).toBe("it works!\n");

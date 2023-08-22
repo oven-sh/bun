@@ -1770,10 +1770,11 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     // collected for some unknown reason.
     // See https://github.com/oven-sh/bun/issues/3978 and `fsevents.test.ts`
     JSC::Strong<Unknown>* strong = new JSC::Strong<Unknown>(vm, value);
-    globalObject->scriptExecutionContext()->postTask([strong](auto& context) -> void {
+    globalObject->scriptExecutionContext()->postTaskOnTimeout([strong](auto& context) -> void {
         strong->clear();
         delete strong;
-    });
+    },
+        1_ms);
 
     *result = toNapi(value);
     return napi_ok;

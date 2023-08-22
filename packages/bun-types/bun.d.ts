@@ -2308,7 +2308,7 @@ declare module "bun" {
    *
    * @param args
    */
-  export function inspect(arg: any, options: BunInspectOptions): string;
+  export function inspect(arg: any, options?: BunInspectOptions): string;
   export namespace inspect {
     /**
      * That can be used to declare custom inspect functions.

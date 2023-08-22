@@ -257,7 +257,7 @@ pub const StandaloneModuleGraph = struct {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
                 if (Syscall.clonefile(self_exeZ, zname) == .result) {
-                    switch (Syscall.open(zname, std.os.O.WRONLY | std.os.O.CLOEXEC, 0)) {
+                    switch (Syscall.open(zname, std.os.O.RDWR | std.os.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
                     }
@@ -269,7 +269,7 @@ pub const StandaloneModuleGraph = struct {
             const fd = brk2: {
                 var tried_changing_abs_dir = false;
                 for (0..3) |retry| {
-                    switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.WRONLY | std.os.O.CREAT, 0)) {
+                    switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.RDWR | std.os.O.CREAT, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -439,7 +439,7 @@ pub const StandaloneModuleGraph = struct {
             std.fs.cwd().fd,
             &(try std.os.toPosixPath(temp_location)),
             root_dir.dir.fd,
-            &(try std.os.toPosixPath(outfile)),
+            &(try std.os.toPosixPath(std.fs.path.basename(outfile))),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});

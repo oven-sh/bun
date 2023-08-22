@@ -116,7 +116,8 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
     std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
         switch (err) {
             error.RenameAcrossMountPoints => {
-                try moveFileZSlowWithHandle(from_handle, to_dir, destination);
+                try copyFileZSlowWithHandle(from_handle, to_dir, destination);
+                std.os.unlinkatZ(from_dir, filename, 0) catch {};
             },
             else => {
                 return err;
@@ -129,10 +130,12 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
     const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
-    try moveFileZSlowWithHandle(in_handle, to_dir, destination);
+    defer std.os.close(in_handle);
+    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    std.os.unlinkatZ(from_dir, filename, 0) catch {};
 }
 
-pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
     const stat_ = try std.os.fstat(in_handle);
     // delete if exists, don't care if it fails. it may fail due to the file not existing
     // delete here because we run into weird truncation issues if we do not

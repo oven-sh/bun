@@ -652,7 +652,7 @@ pub const Request = struct {
         const href = JSC.URL.hrefFromString(req.url);
         if (href.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                req.url,
+                req.url.dupeRef(),
             });
             req.finalizeWithoutDeinit();
             _ = req.body.unref();

@@ -31,11 +31,18 @@ const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
 it("new Request(invalid url) throws", () => {
-  expect(() => new Request("http")).toThrow();
-  expect(() => new Request("")).toThrow();
-  expect(() => new Request("http://[::1")).toThrow();
-  expect(() => new Request("https://[::1")).toThrow();
-  expect(() => new Request("!")).toThrow();
+  for (let i = 0; i < 10; i++) {
+    expect(() => new Request("http")).toThrow();
+    gc(true);
+    expect(() => new Request("")).toThrow();
+    gc(true);
+    expect(() => new Request("http://[::1")).toThrow();
+    gc(true);
+    expect(() => new Request("https://[::1")).toThrow();
+    gc(true);
+    expect(() => new Request("!")).toThrow();
+    gc(true);
+  }
 });
 
 describe("fetch data urls", () => {

@@ -739,11 +739,10 @@ interface BlobInterface {
 
 type BlobPart = string | Blob | BufferSource;
 interface BlobPropertyBag {
-  /** Set a default "type" */
-  type?: string;
-
+  /** Set a default "type". Not yet implemented. */
+  // type?: string;
   /** Not implemented in Bun yet. */
-  endings?: "transparent" | "native";
+  // endings?: "transparent" | "native";
 }
 
 /**

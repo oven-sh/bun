@@ -2073,6 +2073,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             streamLog("promise still Pending", .{});
                             // TODO: should this timeout?
                             this.setAbortHandler();
+                            this.pending_promises_for_abort += 1;
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
                                     .readable = stream,
@@ -2354,6 +2355,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             streamLog("onResolveStream", .{});
             var args = callframe.arguments(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            req.pending_promises_for_abort -|= 1;
             req.handleResolveStream();
             return JSValue.jsUndefined();
         }
@@ -2361,6 +2363,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            req.pending_promises_for_abort -|= 1;
             var err = args.ptr[0];
             req.handleRejectStream(globalThis, err);
             return JSValue.jsUndefined();

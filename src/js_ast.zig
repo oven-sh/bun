@@ -5111,7 +5111,7 @@ pub const Expr = struct {
         pub fn toNumber(data: Expr.Data) ?f64 {
             return switch (data) {
                 .e_null => 0,
-                .e_undefined => std.math.nan_f64,
+                .e_undefined => std.math.nan(f64),
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
                 else => null,

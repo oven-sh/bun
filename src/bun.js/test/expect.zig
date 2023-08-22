@@ -1131,12 +1131,12 @@ pub const Expect = struct {
         if (value.isAnyInt()) {
             const _value = value.toInt64();
             pass = @mod(_value, 2) == 0;
-            if (_value == -0) { // negative zero is even
+            if (_value == -0.0) { // negative zero is even
                 pass = true;
             }
         } else if (value.isBigInt() or value.isBigInt32()) {
             const _value = value.toInt64();
-            pass = switch (_value == -0) { // negative zero is even
+            pass = switch (_value == -0.0) { // negative zero is even
                 true => true,
                 else => _value & 1 == 0,
             };

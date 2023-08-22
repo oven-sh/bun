@@ -1,6 +1,0 @@
-{
-  "name": "fsevents-test",
-  "dependencies": {
-    "fsevents": "2.3.2"
-  }
-}

@@ -26,6 +26,28 @@ pub const ResolveMessage = struct {
         return null;
     }
 
+    pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        switch (this.msg.metadata) {
+            .resolve => |resolve| {
+                const label: []const u8 = brk: {
+                    if (resolve.import_kind.isCommonJS()) {
+                        break :brk "MODULE_NOT_FOUND";
+                    }
+
+                    break :brk switch (resolve.import_kind) {
+                        .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
+                        else => "RESOLVE_ERROR",
+                    };
+                };
+
+                var atom = bun.String.createAtom(label);
+                defer atom.deref();
+                return atom.toJS(globalObject);
+            },
+            else => return .undefined,
+        }
+    }
+
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {

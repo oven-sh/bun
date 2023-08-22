@@ -13,6 +13,10 @@ export default [
         getter: "getMessage",
         cache: true,
       },
+      code: {
+        getter: "getCode",
+        cache: true,
+      },
       name: {
         value: "ResolveMessage",
       },
@@ -31,9 +35,6 @@ export default [
       importKind: {
         getter: "getImportKind",
         cache: true,
-      },
-      code: {
-        value: "ERR_MODULE_NOT_FOUND",
       },
       position: {
         getter: "getPosition",

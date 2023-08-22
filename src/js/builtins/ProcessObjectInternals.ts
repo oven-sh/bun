@@ -87,8 +87,6 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
-  var { destroy } = require("node:stream");
-
   var reader: ReadableStreamDefaultReader | undefined;
   var readerRef;
   var unrefOnRead = false;
@@ -103,6 +101,10 @@ export function getStdinStream(fd) {
     if (readerRef) {
       clearInterval(readerRef);
       readerRef = undefined;
+    }
+    if (reader) {
+      reader.cancel();
+      reader = undefined;
     }
   }
 
@@ -163,7 +165,7 @@ export function getStdinStream(fd) {
           stream.push(value[i]);
         }
       } else {
-        stream.push(null);
+        stream.emit("end");
         stream.pause();
       }
     } catch (err) {
@@ -179,15 +181,25 @@ export function getStdinStream(fd) {
     internalRead(this);
   };
 
+  stream.on("resume", () => {
+    ref();
+    stream._undestroy();
+  });
+
+  stream._readableState.reading = false;
+
   stream.on("pause", () => {
     process.nextTick(() => {
-      destroy(stream);
+      if (!stream.readableFlowing) {
+        stream._readableState.reading = false;
+      }
     });
   });
 
   stream.on("close", () => {
     process.nextTick(() => {
-      reader?.cancel();
+      stream.destroy();
+      unref();
     });
   });
 

@@ -428,6 +428,21 @@ const str = Bun.inspect(arr);
 // => "Uint8Array(3) [ 1, 2, 3 ]"
 ```
 
+## `Bun.inspect.custom`
+
+This is the symbol that Bun uses to implement `Bun.inspect`. You can override this to customize how your objects are printed. It is identical to `util.inspect.custom` in Node.js.
+
+```ts
+class Foo {
+  [Bun.inspect.custom]() {
+    return "foo";
+  }
+}
+
+const foo = new Foo();
+console.log(foo); // => "foo"
+```
+
 ## `Bun.nanoseconds()`
 
 Returns the number of nanoseconds since the current `bun` process started, as a `number`. Useful for high-precision timing and benchmarking.

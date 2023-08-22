@@ -9,6 +9,8 @@ const StringTypes = @import("root").bun.StringTypes;
 const Global = @import("root").bun.Global;
 const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
 const use_mimalloc = @import("root").bun.use_mimalloc;
+const writeStream = std.json.writeStream;
+const WriteStream = std.json.WriteStream;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -213,7 +215,7 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-pub const WriterType: type = @TypeOf(Source.StreamType.writer(undefined));
+pub const WriterType: type = @TypeOf(WriteStream(Source.StreamType, undefined));
 
 pub fn errorWriter() WriterType {
     std.debug.assert(source_set);
@@ -227,7 +229,7 @@ pub fn errorStream() Source.StreamType {
 
 pub fn writer() WriterType {
     std.debug.assert(source_set);
-    return source.stream.writer();
+    return writeStream(source.stream, .{ .whitespace = .indent_2 });
 }
 
 pub fn resetTerminal() void {

@@ -2052,14 +2052,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
 
-                    // We're still the root task in the task queue
-                    // That means draining the microtask here is not re-entrant.
-                    // and thus, safe.
-                    if (!this.flags.is_async and promise.status(this.server.globalThis.vm()) == .Pending) {
-                        this.flags.is_draining_microtask_queue = true;
-                        this.server.globalThis.vm().drainMicrotasks();
-                        this.flags.is_draining_microtask_queue = false;
-                    }
+                    // // We're still the root task in the task queue
+                    // // That means draining the microtask here is not re-entrant.
+                    // // and thus, safe.
+                    // if (!this.flags.is_async and promise.status(this.server.globalThis.vm()) == .Pending) {
+                    //     this.flags.is_draining_microtask_queue = true;
+                    //     this.server.globalThis.vm().drainMicrotasks();
+                    //     this.flags.is_draining_microtask_queue = false;
+                    // }
 
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
@@ -2181,14 +2181,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
-                if (response.body.value == .Locked) {
-                    response_value.ensureStillAlive();
-                    std.debug.assert(!ctx.flags.is_draining_microtask_queue);
-                    ctx.flags.is_draining_microtask_queue = true;
-                    this.vm.global.vm().drainMicrotasks();
-                    ctx.flags.is_draining_microtask_queue = false;
-                    response_value.ensureStillAlive();
-                }
 
                 response.body.value.toBlobIfPossible();
 
@@ -2213,14 +2205,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var vm = this.vm;
 
             if (response_value.asAnyPromise()) |promise| {
-                if (promise.status(vm.global.vm()) == .Pending) {
-                    response_value.ensureStillAlive();
-                    std.debug.assert(!ctx.flags.is_draining_microtask_queue);
-                    ctx.flags.is_draining_microtask_queue = true;
-                    this.vm.global.vm().drainMicrotasks();
-                    ctx.flags.is_draining_microtask_queue = false;
-                    response_value.ensureStillAlive();
-                }
 
                 // If we immediately have the value available, we can skip the extra event loop tick
                 switch (promise.status(vm.global.vm())) {
@@ -2251,14 +2235,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         ctx.flags.response_protected = false;
                         ctx.response_ptr = response;
 
-                        if (response.body.value == .Locked) {
-                            response_value.ensureStillAlive();
-                            std.debug.assert(!ctx.flags.is_draining_microtask_queue);
-                            ctx.flags.is_draining_microtask_queue = true;
-                            this.vm.global.vm().drainMicrotasks();
-                            ctx.flags.is_draining_microtask_queue = false;
-                            response_value.ensureStillAlive();
-                        }
+                        // if (response.body.value == .Locked) {
+                        //     response_value.ensureStillAlive();
+                        //     std.debug.assert(!ctx.flags.is_draining_microtask_queue);
+                        //     ctx.flags.is_draining_microtask_queue = true;
+                        //     this.vm.global.vm().drainMicrotasks();
+                        //     ctx.flags.is_draining_microtask_queue = false;
+                        //     response_value.ensureStillAlive();
+                        // }
 
                         response.body.value.toBlobIfPossible();
                         switch (response.body.value) {
@@ -5322,6 +5306,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         ) void {
             JSC.markBinding(@src());
             this.pending_requests += 1;
+            var vm = this.globalThis.vm();
+            defer {
+                vm.drainMicrotasks();
+            }
+
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
@@ -5424,6 +5413,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         ) void {
             JSC.markBinding(@src());
             this.pending_requests += 1;
+            var vm = this.globalThis.vm();
+            defer {
+                vm.drainMicrotasks();
+            }
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);

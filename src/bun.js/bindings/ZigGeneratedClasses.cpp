@@ -17471,6 +17471,9 @@ extern "C" void ResolveMessageClass__finalize(void*);
 extern "C" EncodedJSValue ResolveMessagePrototype__toPrimitive(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ResolveMessagePrototype__toPrimitiveCallback);
 
+extern "C" JSC::EncodedJSValue ResolveMessagePrototype__getCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ResolveMessagePrototype__codeGetterWrap);
+
 extern "C" JSC::EncodedJSValue ResolveMessagePrototype__getImportKind(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ResolveMessagePrototype__importKindGetterWrap);
 
@@ -17498,6 +17501,7 @@ JSC_DECLARE_HOST_FUNCTION(ResolveMessagePrototype__toStringCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResolveMessagePrototype, JSResolveMessagePrototype::Base);
 
 static const HashTableValue JSResolveMessagePrototypeTableValues[] = {
+    { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__codeGetterWrap, 0 } },
     { "importKind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__importKindGetterWrap, 0 } },
     { "level"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__levelGetterWrap, 0 } },
     { "message"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__messageGetterWrap, 0 } },
@@ -17548,6 +17552,37 @@ JSC_DEFINE_HOST_FUNCTION(ResolveMessagePrototype__toPrimitiveCallback, (JSGlobal
 #endif
 
     return ResolveMessagePrototype__toPrimitive(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ResolveMessagePrototype__codeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSResolveMessage* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_code.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        ResolveMessagePrototype__getCode(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_code.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void ResolveMessagePrototype__codeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    thisObject->m_code.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ResolveMessagePrototype__codeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_code.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(ResolveMessagePrototype__importKindGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -17797,7 +17832,6 @@ void JSResolveMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject*
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSResolveMessage::info(), JSResolveMessagePrototypeTableValues, *this);
     this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
-    this->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_MODULE_NOT_FOUND"_s)), PropertyAttribute::ReadOnly | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("ResolveMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -17953,6 +17987,7 @@ void JSResolveMessage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    visitor.append(thisObject->m_code);
     visitor.append(thisObject->m_importKind);
     visitor.append(thisObject->m_level);
     visitor.append(thisObject->m_message);
@@ -17969,6 +18004,7 @@ void JSResolveMessage::visitAdditionalChildren(Visitor& visitor)
     JSResolveMessage* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_code);
     visitor.append(thisObject->m_importKind);
     visitor.append(thisObject->m_level);
     visitor.append(thisObject->m_message);

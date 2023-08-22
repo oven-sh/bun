@@ -29,18 +29,20 @@ pub const ResolveMessage = struct {
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         switch (this.msg.metadata) {
             .resolve => |resolve| {
-                if (resolve.import_kind.isCommonJS()) {
-                    return bun.String.init("MODULE_NOT_FOUND").toJSConst(globalObject);
-                }
+                const label: []const u8 = brk: {
+                    if (resolve.import_kind.isCommonJS()) {
+                        break :brk "MODULE_NOT_FOUND";
+                    }
 
-                switch (resolve.import_kind) {
-                    .stmt, .dynamic => {
-                        return bun.String.init("ERR_MODULE_NOT_FOUND").toJSConst(globalObject);
-                    },
-                    else => {},
-                }
+                    break :brk switch (resolve.import_kind) {
+                        .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
+                        else => "RESOLVE_ERROR",
+                    };
+                };
 
-                return bun.String.init("RESOLVE_ERROR").toJSConst(globalObject);
+                var atom = bun.String.createAtom(label);
+                defer atom.deref();
+                return atom.toJS(globalObject);
             },
             else => return .undefined,
         }

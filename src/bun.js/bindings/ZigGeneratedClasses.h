@@ -1854,6 +1854,7 @@ public:
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
+    mutable JSC::WriteBarrier<JSC::Unknown> m_code;
     mutable JSC::WriteBarrier<JSC::Unknown> m_importKind;
     mutable JSC::WriteBarrier<JSC::Unknown> m_level;
     mutable JSC::WriteBarrier<JSC::Unknown> m_message;

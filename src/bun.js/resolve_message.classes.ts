@@ -36,9 +36,6 @@ export default [
         getter: "getImportKind",
         cache: true,
       },
-      code: {
-        value: "ERR_MODULE_NOT_FOUND",
-      },
       position: {
         getter: "getPosition",
         cache: true,

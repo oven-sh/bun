@@ -82,9 +82,6 @@ export function require(this: CommonJSModuleRecord, id: string) {
 }
 
 export function requireResolve(this: string | { path: string }, id: string) {
-  // This try catch is needed because err.code on ESM resolves is ERR_MODULE_NOT_FOUND
-  // while in require.resolve this error code is only MODULE_NOT_FOUND.
-  // `local-pkg` will check for .code's exact value, and log extra messages if we don't match it.
   return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
 }
 

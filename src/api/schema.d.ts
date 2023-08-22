@@ -579,6 +579,7 @@ export interface Scan {
 export interface ScanResult {
   exports: string[];
   imports: ScannedImport[];
+  errors: Message[];
 }
 
 export interface ScannedImport {

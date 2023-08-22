@@ -2058,6 +2058,9 @@ function decodeScanResult(bb) {
   var length = bb.readVarUint();
   var values = (result["imports"] = Array(length));
   for (var i = 0; i < length; i++) values[i] = decodeScannedImport(bb);
+  var length = bb.readVarUint();
+  var values = (result["errors"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeMessage(bb);
   return result;
 }
 
@@ -2086,6 +2089,19 @@ function encodeScanResult(message, bb) {
     }
   } else {
     throw new Error('Missing required field "imports"');
+  }
+
+  var value = message["errors"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeMessage(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "errors"');
   }
 }
 

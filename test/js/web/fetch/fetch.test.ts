@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { join } from "path";
-import { gc, withoutAggressiveGC } from "harness";
+import { gc, withoutAggressiveGC, gcTick } from "harness";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
@@ -1334,11 +1334,18 @@ it("fetch() file:// works", async () => {
   expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
     await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
   );
-  expect(await (await fetch(new URL("file with space in the name.txt", import.meta.url))).text()).toEqual(
-    await Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url))).text(),
-  );
+  gc(true);
+  var fileResponse = await fetch(new URL("file with space in the name.txt", import.meta.url));
+  gc(true);
+  var fileResponseText = await fileResponse.text();
+  gc(true);
+  var bunFile = Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url)));
+  gc(true);
+  var bunFileText = await bunFile.text();
+  gc(true);
+  expect(fileResponseText).toEqual(bunFileText);
+  gc(true);
 });
-
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {

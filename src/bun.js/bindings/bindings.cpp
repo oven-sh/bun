@@ -1181,7 +1181,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            if (header.value.len == 0)
+            if (header.value.len == 0 || header.name.len == 0)
                 continue;
 
             StringView nameView = StringView(reinterpret_cast<const char*>(header.name.ptr), header.name.len);

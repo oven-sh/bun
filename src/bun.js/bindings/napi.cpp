@@ -1774,7 +1774,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
         strong->clear();
         delete strong;
     },
-        1_ms);
+        0_ms);
 
     *result = toNapi(value);
     return napi_ok;

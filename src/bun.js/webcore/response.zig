@@ -961,13 +961,12 @@ pub const Fetch = struct {
             };
         }
 
-        fn getSizeHint(this: *FetchTasklet) u52 {
-            if (this.body_size == .content_length) {
-                return @as(u52, @intCast(this.body_size.content_length));
-            } else if (this.body_size == .total_received) {
-                return @as(u52, @intCast(this.body_size.total_received));
-            }
-            return 0;
+        fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
+            return switch (this.body_size) {
+                .content_length => @truncate(this.body_size.content_length),
+                .total_received => @truncate(this.body_size.total_received),
+                else => 0,
+            };
         }
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
@@ -1022,7 +1021,7 @@ pub const Fetch = struct {
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
-            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, @ptrCast(this.global_this)), response);
+            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
             this.response = JSC.Strong.create(response_js, this.global_this);
             return response_js;

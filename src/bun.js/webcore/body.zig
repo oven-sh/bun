@@ -397,7 +397,6 @@ pub const Body = struct {
 
         pub fn fastSize(this: *const Value) Blob.SizeType {
             return switch (this.*) {
-                .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
                 .Locked => this.Locked.sizeHint(),
@@ -408,7 +407,6 @@ pub const Body = struct {
 
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
-                .Blob => this.Blob.size,
                 .InternalBlob => this.InternalBlob.sliceConst().len,
                 .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
                 .Locked => this.Locked.sizeHint(),

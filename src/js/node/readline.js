@@ -996,6 +996,9 @@ function* emitKeys(stream) {
       // Escape sequence timeout
       keyName = ch.length ? undefined : "escape";
       keyMeta = true;
+    } else {
+      // Otherwise, unhandled
+      keyName = undefined;
     }
 
     keySeq = s;

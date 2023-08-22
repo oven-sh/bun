@@ -2,7 +2,7 @@
 name: Debugging Bun with the web debugger
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://chromedevtools.github.io/devtools-protocol/). To enable debugging when running code with Bun, use the `--inspect` flag. For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts). To enable debugging when running code with Bun, use the `--inspect` flag. For demonstration purposes, consider the following simple web server.
 
 ```ts#server.ts
 Bun.serve({

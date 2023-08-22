@@ -1,4 +1,4 @@
-Bun's test runner includes a built-in test coverage reporter.
+Bun's test runner now supports built-in _code coverage reporting_. This makes it easy to see how much of the codebase is covered by tests, and find areas that are not currently well-tested.
 
 ## Enabling coverage
 
@@ -37,8 +37,8 @@ coverage = true
 By default coverage reports will _include_ test files and _exclude_ sourcemaps. This is usually what you want, but it can be configured otherwise in `bunfig.toml`.
 
 ```toml
+[test]
 coverageSkipTestFiles = true       # default false
-coverageIgnoreSourcemaps = false   # default true
 ```
 
 ### Coverage thresholds
@@ -57,4 +57,13 @@ coverageThreshold = 0.9
 
 # to set different thresholds for lines and functions
 coverageThreshold = { line = 0.9, function = 0.9 }
+```
+
+### Sourcemaps
+
+Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `false`; this will rarely be desirable outside of advanced use cases.
+
+```toml
+[test]
+coverageIgnoreSourcemaps = true   # default false
 ```

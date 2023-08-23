@@ -409,7 +409,7 @@ declare module "bun:ffi" {
     [FFIType.ptr]: Pointer;
     [FFIType.pointer]: Pointer;
     [FFIType.void]: void;
-    [FFIType.cstring]: string;
+    [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer;

@@ -4,6 +4,7 @@ import {
   suffix,
   CString,
   Pointer,
+  JSCallback,
   // FFIFunction,
   // ConvertFns,
   // Narrow,
@@ -26,6 +27,14 @@ const lib = dlopen(
     add: {
       args: [FFIType.i32, FFIType.i32],
       returns: FFIType.i32,
+    },
+    ptr_type: {
+      args: [FFIType.pointer],
+      returns: FFIType.pointer,
+    },
+    fn_type: {
+      args: [FFIType.function],
+      returns: FFIType.function,
     },
     allArgs: {
       args: [
@@ -66,6 +75,12 @@ const lib = dlopen(
 
 tsd.expectType<CString>(lib.symbols.sqlite3_libversion());
 tsd.expectType<number>(lib.symbols.add(1, 2));
+
+tsd.expectType<Pointer | null>(lib.symbols.ptr_type(0));
+tc.assert<tc.IsExact<(typeof lib)["symbols"]["ptr_type"], TypedArray | Pointer | CString>>;
+
+tsd.expectType<Pointer | null>(lib.symbols.fn_type(0));
+tc.assert<tc.IsExact<(typeof lib)["symbols"]["fn_type"], Pointer | JSCallback>>
 
 tc.assert<
   tc.IsExact<

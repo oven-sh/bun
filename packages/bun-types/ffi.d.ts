@@ -374,13 +374,13 @@ declare module "bun:ffi" {
     [FFIType.float]: number;
     [FFIType.f32]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: TypedArray | Pointer | CString;
-    [FFIType.pointer]: TypedArray | Pointer | CString;
+    [FFIType.ptr]: TypedArray | Pointer | CString | null;
+    [FFIType.pointer]: TypedArray | Pointer | CString | null;
     [FFIType.void]: void;
-    [FFIType.cstring]: TypedArray | Pointer | CString;
+    [FFIType.cstring]: TypedArray | Pointer | CString | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
-    [FFIType.function]: Pointer | JSCallback;
+    [FFIType.function]: Pointer | JSCallback; // cannot be null
   }
   interface FFITypeToReturnsType {
     [FFIType.char]: number;
@@ -406,13 +406,13 @@ declare module "bun:ffi" {
     [FFIType.float]: number;
     [FFIType.f32]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: Pointer;
-    [FFIType.pointer]: Pointer;
+    [FFIType.ptr]: Pointer | null;
+    [FFIType.pointer]: Pointer | null;
     [FFIType.void]: void;
     [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
-    [FFIType.function]: Pointer;
+    [FFIType.function]: Pointer | null;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;

@@ -2778,7 +2778,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .owned = @as(Blob.SizeType, @intCast(written)) };
         }
 
-        fn markDone(this: *@This()) void {
+        pub fn markDone(this: *@This()) void {
             this.done = true;
             this.unregisterAutoFlusher();
         }

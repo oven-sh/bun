@@ -2020,7 +2020,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             );
 
             assignment_result.ensureStillAlive();
-            defer stream.value.unprotect();
 
             // assert that it was updated
             std.debug.assert(!signal.isDead());
@@ -2040,6 +2039,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sink = null;
                 response_stream.sink.destroy();
                 return this.handleReject(err_value);
+            }
+
+            if (resp.hasResponded()) {
+                if (!this.flags.aborted) resp.clearAborted();
+                streamLog("done", .{});
+                response_stream.detach();
+                this.sink = null;
+                response_stream.sink.destroy();
+                this.endStream(this.shouldCloseConnection());
+                this.finalize();
+                stream.value.unprotect();
+                return;
             }
 
             if (!assignment_result.isEmptyOrUndefinedOrNull()) {
@@ -2078,10 +2089,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});
+                            defer stream.value.unprotect();
+
                             this.handleResolveStream();
                         },
                         .Rejected => {
                             streamLog("promise Rejected", .{});
+                            defer stream.value.unprotect();
+
                             this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
                         },
                     }
@@ -2092,7 +2107,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.flags.aborted) {
                 response_stream.detach();
                 stream.cancel(globalThis);
-                response_stream.sink.done = true;
+                defer stream.value.unprotect();
+                response_stream.sink.markDone();
                 this.finalizeForAbort();
 
                 response_stream.sink.finalize();
@@ -2100,6 +2116,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             stream.value.ensureStillAlive();
+            defer stream.value.unprotect();
 
             const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
                 response_stream.sink.buffer.len == 0);

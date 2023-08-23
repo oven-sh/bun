@@ -704,9 +704,9 @@ pub const Fetch = struct {
             this.request_headers.entries.deinit(bun.default_allocator);
             this.request_headers.buf.deinit(bun.default_allocator);
             this.request_headers = Headers{ .allocator = undefined };
+
             if (this.http != null) {
                 this.http.?.clearData();
-                this.http = null;
             }
 
             if (this.metadata != null) {
@@ -716,6 +716,7 @@ pub const Fetch = struct {
 
             this.response_buffer.deinit();
             this.response.deinit();
+
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 

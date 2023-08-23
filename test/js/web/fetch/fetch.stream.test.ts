@@ -412,8 +412,7 @@ describe("fetch() with streaming", () => {
     const fixture = matrix[i];
     for (let j = 0; j < matrix.length; j++) {
       const fixtureb = matrix[j];
-      const test = fixture.name == "empty" && fixtureb.name == "empty" ? it.todo : it;
-      test(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
+      it(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
         let server: Server | null = null;
         try {
           //@ts-ignore
@@ -917,12 +916,11 @@ describe("fetch() with streaming", () => {
             drain(socket) {},
           },
         });
-
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        gcTick(false);
         try {
+          const res = await fetch(`http://${server.hostname}:${server.port}`, {
+            signal: AbortSignal.timeout(1000),
+          });
+          gcTick(false);
           const reader = res.body?.getReader();
 
           let buffer = Buffer.alloc(0);
@@ -995,6 +993,7 @@ describe("fetch() with streaming", () => {
                 compressed[0] = 0; // corrupt data
                 cork = false;
                 for (var i = 0; i < 5; i++) {
+                  compressed[size * i] = 0; // corrupt data even more
                   await write(compressed.slice(size * i, size * (i + 1)));
                 }
                 socket.flush();
@@ -1003,10 +1002,10 @@ describe("fetch() with streaming", () => {
             },
           });
 
-          const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-          gcTick(false);
-
           try {
+            const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+            gcTick(false);
+
             const reader = res.body?.getReader();
 
             let buffer = Buffer.alloc(0);
@@ -1079,23 +1078,27 @@ describe("fetch() with streaming", () => {
               // 10 extra missing bytes that we will never sent in this case we will wait to close
               await write("Content-Length: " + compressed.byteLength + 10 + "\r\n");
               await write("\r\n");
+
+              resolveSocket(socket);
+
               const size = compressed.byteLength / 5;
               for (var i = 0; i < 5; i++) {
                 cork = false;
                 await write(compressed.slice(size * i, size * (i + 1)));
               }
               socket.flush();
-              resolveSocket(socket);
             },
             drain(socket) {},
           },
         });
 
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-        gcTick(false);
+        let socket: Socket | null = null;
 
-        let socket: Socket | null = await promise;
         try {
+          const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+          socket = await promise;
+          gcTick(false);
+
           const reader = res.body?.getReader();
 
           let buffer = Buffer.alloc(0);

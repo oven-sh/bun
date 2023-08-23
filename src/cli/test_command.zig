@@ -955,12 +955,12 @@ pub const TestCommand = struct {
             }
 
             {
-                vm.global.vm().drainMicrotasks();
+                vm.drainMicrotasks();
                 var count = vm.unhandled_error_counter;
                 vm.global.handleRejectedPromises();
                 while (vm.unhandled_error_counter > count) {
                     count = vm.unhandled_error_counter;
-                    vm.global.vm().drainMicrotasks();
+                    vm.drainMicrotasks();
                     vm.global.handleRejectedPromises();
                 }
             }

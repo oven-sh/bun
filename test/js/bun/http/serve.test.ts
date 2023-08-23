@@ -213,63 +213,97 @@ it("request.url should be based on the Host header", async () => {
 
 describe("streaming", () => {
   describe("error handler", () => {
-    it("throw on pull reports an error and close the connection", async () => {
-      var pass = false;
-      await runTest(
-        {
-          error(e) {
-            pass = true;
-            return new Response("PASS", { status: 555 });
-          },
-          fetch(req) {
-            return new Response(
-              new ReadableStream({
-                pull(controller) {
-                  throw new Error("FAIL");
-                },
-              }),
-            );
-          },
-        },
-        async server => {
-          const response = await fetch(`http://${server.hostname}:${server.port}`);
-          if (response.status > 0) {
-            expect(response.status).toBe(555);
-            expect(await response.text()).toBe("PASS");
-          }
-          expect(pass).toBe(true);
-        },
-      );
-    });
-
-    it("throw on pull after writing should not call the error handler", async () => {
+    it("throw on pull renders headers, does not call error handler", async () => {
       var pass = true;
       await runTest(
         {
           error(e) {
             pass = false;
-            return new Response("FAIL", { status: 555 });
+            return new Response("FAIL!", { status: 555 });
           },
           fetch(req) {
             return new Response(
               new ReadableStream({
-                async pull(controller) {
-                  controller.enqueue("PASS");
-                  controller.close();
-                  throw new Error("error");
+                pull(controller) {
+                  throw new Error("Not a real error");
                 },
+                cancel(reason) {},
               }),
+              {
+                status: 402,
+                headers: {
+                  "I-AM": "A-TEAPOT",
+                },
+              },
             );
           },
         },
         async server => {
           const response = await fetch(`http://${server.hostname}:${server.port}`);
-          // connection terminated
-          expect(response.status).toBe(200);
-          expect(await response.text()).toBe("PASS");
+          expect(response.status).toBe(402);
+          expect(response.headers.get("I-AM")).toBe("A-TEAPOT");
+          expect(await response.text()).toBe("");
           expect(pass).toBe(true);
         },
       );
+    });
+
+    describe("throw on pull after writing should not call the error handler", () => {
+      async function execute(options: ResponseInit) {
+        var pass = true;
+        await runTest(
+          {
+            error(e) {
+              pass = false;
+              return new Response("FAIL", { status: 555 });
+            },
+            fetch(req) {
+              const stream = new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue("PASS");
+                  controller.close();
+                  throw new Error("FAIL");
+                },
+              });
+              return new Response(stream, options);
+            },
+          },
+          async server => {
+            const response = await fetch(`http://${server.hostname}:${server.port}`);
+            // connection terminated
+            expect(await response.text()).toBe("");
+            expect(response.status).toBe(options.status ?? 200);
+            expect(pass).toBe(true);
+          },
+        );
+      }
+
+      it("with headers", async () => {
+        await execute({
+          headers: {
+            "X-A": "123",
+          },
+        });
+      });
+
+      it("with headers and status", async () => {
+        await execute({
+          status: 204,
+          headers: {
+            "X-A": "123",
+          },
+        });
+      });
+
+      it("with status", async () => {
+        await execute({
+          status: 204,
+        });
+      });
+
+      it("with empty object", async () => {
+        await execute({});
+      });
     });
   });
 
@@ -1004,19 +1038,26 @@ it("request body and signal life cycle", async () => {
     };
 
     const server = Bun.serve({
+      port: 0,
       async fetch(req) {
-        await queueMicrotask(() => Bun.gc(true));
         return new Response(await renderToReadableStream(app_jsx), headers);
       },
     });
 
     try {
       const requests = [];
-      for (let i = 0; i < 1000; i++) {
-        requests.push(fetch(`http://${server.hostname}:${server.port}`));
+      for (let j = 0; j < 10; j++) {
+        for (let i = 0; i < 250; i++) {
+          requests.push(fetch(`http://${server.hostname}:${server.port}`));
+        }
+
+        await Promise.all(requests);
+        requests.length = 0;
+        Bun.gc(true);
       }
-      await Promise.all(requests);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
     await Bun.sleep(10);
     expect(true).toBe(true);
     server.stop(true);

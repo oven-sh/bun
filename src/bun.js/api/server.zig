@@ -2870,6 +2870,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.flags.is_waiting_for_request_body = last == false;
             if (this.flags.aborted or this.flags.has_marked_complete) return;
+            if (!last and chunk.len == 0) {
+                // Sometimes, we get back an empty chunk
+                // We have to ignore those chunks unless it's the last one
+                return;
+            }
 
             if (this.request_body != null) {
                 var body = this.request_body.?;

@@ -4301,8 +4301,8 @@ const default_trusted_dependencies = brk: {
         while (i < data.len) : (i += 1) {
             if (data[i] == '\n' or data[i] == '\r') break;
         }
+        while (data[i] == '\r' or data[i] == '\n') i += 1;
         const line_slice = data[line_start..i];
-        i += 1;
         if (line_slice.len == 0) break;
         if (map.len == max_values) {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");

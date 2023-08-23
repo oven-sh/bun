@@ -994,8 +994,8 @@ describe("fetch() with streaming", () => {
                 compressed[0] = 0; // corrupt data
                 cork = false;
                 for (var i = 0; i < 5; i++) {
-                  await write(compressed.slice(size * i, size * (i + 1)));
                   compressed[size * i] = 0; // corrupt data even more
+                  await write(compressed.slice(size * i, size * (i + 1)));
                 }
                 socket.flush();
               },

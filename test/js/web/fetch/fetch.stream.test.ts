@@ -1078,22 +1078,25 @@ describe("fetch() with streaming", () => {
               // 10 extra missing bytes that we will never sent in this case we will wait to close
               await write("Content-Length: " + compressed.byteLength + 10 + "\r\n");
               await write("\r\n");
+
+              resolveSocket(socket);
+
               const size = compressed.byteLength / 5;
               for (var i = 0; i < 5; i++) {
                 cork = false;
                 await write(compressed.slice(size * i, size * (i + 1)));
               }
               socket.flush();
-              resolveSocket(socket);
             },
             drain(socket) {},
           },
         });
 
-        let socket: Socket | null = await promise;
+        let socket: Socket | null = null;
 
         try {
           const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+          socket = await promise;
           gcTick(false);
 
           const reader = res.body?.getReader();

@@ -3672,7 +3672,7 @@ declare module "*.txt" {
 }
 
 declare module "*.toml" {
-  var contents: unknown;
+  var contents: any;
   export = contents;
 }
 

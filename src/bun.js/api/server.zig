@@ -2020,6 +2020,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             );
 
             assignment_result.ensureStillAlive();
+            defer stream.value.unprotect();
+
             // assert that it was updated
             std.debug.assert(!signal.isDead());
 
@@ -2037,7 +2039,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 response_stream.detach();
                 this.sink = null;
                 response_stream.sink.destroy();
-                stream.value.unprotect();
                 return this.handleReject(err_value);
             }
 
@@ -2095,7 +2096,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.finalizeForAbort();
 
                 response_stream.sink.finalize();
-                stream.value.unprotect();
                 return;
             }
 
@@ -2117,7 +2117,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             this.finalize();
-            stream.value.unprotect();
         }
 
         const streamLog = Output.scoped(.ReadableStream, false);
@@ -2302,6 +2301,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrote_anything = wrapper.sink.wrote > 0;
+
                 wrapper.sink.finalize();
                 wrapper.detach();
                 req.sink = null;

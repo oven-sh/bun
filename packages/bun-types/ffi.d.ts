@@ -350,7 +350,7 @@ declare module "bun:ffi" {
   type UNTYPED = never;
   export type Pointer = number & {};
 
-  interface FFITypeToType {
+  interface FFITypeToArgsType {
     [FFIType.char]: number;
     [FFIType.int8_t]: number;
     [FFIType.i8]: number;
@@ -365,10 +365,42 @@ declare module "bun:ffi" {
     [FFIType.int]: number;
     [FFIType.uint32_t]: number;
     [FFIType.u32]: number;
-    [FFIType.int64_t]: number;
-    [FFIType.i64]: number;
-    [FFIType.uint64_t]: number;
-    [FFIType.u64]: number;
+    [FFIType.int64_t]: number | bigint;
+    [FFIType.i64]: number | bigint;
+    [FFIType.uint64_t]: number | bigint;
+    [FFIType.u64]: number | bigint;
+    [FFIType.double]: number;
+    [FFIType.f64]: number;
+    [FFIType.float]: number;
+    [FFIType.f32]: number;
+    [FFIType.bool]: boolean;
+    [FFIType.ptr]: TypedArray | Pointer | CString;
+    [FFIType.pointer]: TypedArray | Pointer | CString;
+    [FFIType.void]: void;
+    [FFIType.cstring]: TypedArray | Pointer | CString;
+    [FFIType.i64_fast]: number | bigint;
+    [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: Pointer;
+  }
+  interface FFITypeToReturnsType {
+    [FFIType.char]: number;
+    [FFIType.int8_t]: number;
+    [FFIType.i8]: number;
+    [FFIType.uint8_t]: number;
+    [FFIType.u8]: number;
+    [FFIType.int16_t]: number;
+    [FFIType.i16]: number;
+    [FFIType.uint16_t]: number;
+    [FFIType.u16]: number;
+    [FFIType.int32_t]: number;
+    [FFIType.i32]: number;
+    [FFIType.int]: number;
+    [FFIType.uint32_t]: number;
+    [FFIType.u32]: number;
+    [FFIType.int64_t]: bigint;
+    [FFIType.i64]: bigint;
+    [FFIType.uint64_t]: bigint;
+    [FFIType.u64]: bigint;
     [FFIType.double]: number;
     [FFIType.f64]: number;
     [FFIType.float]: number;
@@ -377,10 +409,10 @@ declare module "bun:ffi" {
     [FFIType.ptr]: Pointer;
     [FFIType.pointer]: Pointer;
     [FFIType.void]: void;
-    [FFIType.cstring]: CString;
+    [FFIType.cstring]: string;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
-    [FFIType.function]: (...args: any[]) => any;
+    [FFIType.function]: Pointer;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -580,9 +612,9 @@ declare module "bun:ffi" {
   type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends FFITypeOrString[]
-        ? { [L in keyof A]: FFITypeToType[ToFFIType<A[L]>] }
+        ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
         : never
-    ) => FFITypeToType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+    ) => FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };
 
   /**

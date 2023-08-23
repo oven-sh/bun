@@ -412,8 +412,7 @@ describe("fetch() with streaming", () => {
     const fixture = matrix[i];
     for (let j = 0; j < matrix.length; j++) {
       const fixtureb = matrix[j];
-      const test = fixture.name == "empty" && fixtureb.name == "empty" ? it.todo : it;
-      test(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
+      it(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
         let server: Server | null = null;
         try {
           //@ts-ignore
@@ -996,6 +995,7 @@ describe("fetch() with streaming", () => {
                 cork = false;
                 for (var i = 0; i < 5; i++) {
                   await write(compressed.slice(size * i, size * (i + 1)));
+                  compressed[size * i] = 0; // corrupt data even more
                 }
                 socket.flush();
               },

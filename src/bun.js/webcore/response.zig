@@ -920,6 +920,7 @@ pub const Fetch = struct {
             }
 
             var path: bun.String = undefined;
+
             if (this.metadata) |metadata| {
                 path = bun.String.create(metadata.href);
             } else if (this.http) |http| {
@@ -1026,10 +1027,6 @@ pub const Fetch = struct {
             if (this.metadata) |metadata| {
                 const http_response = metadata.response;
                 this.is_waiting_body = this.result.has_more;
-                defer {
-                    this.metadata.?.deinit();
-                    this.metadata = null;
-                }
                 return Response{
                     .allocator = allocator,
                     .url = bun.String.createAtomIfPossible(metadata.href),

@@ -77,10 +77,15 @@ tsd.expectType<CString>(lib.symbols.sqlite3_libversion());
 tsd.expectType<number>(lib.symbols.add(1, 2));
 
 tsd.expectType<Pointer | null>(lib.symbols.ptr_type(0));
-tc.assert<tc.IsExact<(typeof lib)["symbols"]["ptr_type"], TypedArray | Pointer | CString>>;
+tc.assert<
+  tc.IsExact<
+    (typeof lib)["symbols"]["ptr_type"],
+    TypedArray | Pointer | CString
+  >
+>;
 
 tsd.expectType<Pointer | null>(lib.symbols.fn_type(0));
-tc.assert<tc.IsExact<(typeof lib)["symbols"]["fn_type"], Pointer | JSCallback>>
+tc.assert<tc.IsExact<(typeof lib)["symbols"]["fn_type"], Pointer | JSCallback>>;
 
 tc.assert<
   tc.IsExact<
@@ -118,3 +123,27 @@ tc.assert<
     ]
   >
 >;
+
+const as_const_test = {
+  sqlite3_libversion: {
+    args: [],
+    returns: FFIType.cstring,
+  },
+  multi_args: {
+    args: [FFIType.i32, FFIType.f32],
+    returns: FFIType.void,
+  },
+  no_returns: {
+    args: [FFIType.i32],
+  },
+  no_args: {
+    returns: FFIType.i32,
+  }
+} as const;
+
+const lib2 = dlopen(path, as_const_test);
+
+tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
+tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
+tc.assert<tc.IsExact<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, void>>;
+tc.assert<tc.IsExact<(typeof lib2)["symbols"]["no_args"], []>>

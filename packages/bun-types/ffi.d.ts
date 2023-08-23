@@ -584,8 +584,10 @@ declare module "bun:ffi" {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
-        : never
-    ) => FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+        : [unknown] extends [Fns[K]["args"]] ? [] : never
+    ) => [unknown] extends [Fns[K]["returns"]]
+      ? void
+      : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };
 
   /**

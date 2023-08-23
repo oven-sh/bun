@@ -916,12 +916,11 @@ describe("fetch() with streaming", () => {
             drain(socket) {},
           },
         });
-
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        gcTick(false);
         try {
+          const res = await fetch(`http://${server.hostname}:${server.port}`, {
+            signal: AbortSignal.timeout(1000),
+          });
+          gcTick(false);
           const reader = res.body?.getReader();
 
           let buffer = Buffer.alloc(0);
@@ -1003,10 +1002,10 @@ describe("fetch() with streaming", () => {
             },
           });
 
-          const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-          gcTick(false);
-
           try {
+            const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+            gcTick(false);
+
             const reader = res.body?.getReader();
 
             let buffer = Buffer.alloc(0);
@@ -1091,11 +1090,12 @@ describe("fetch() with streaming", () => {
           },
         });
 
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-        gcTick(false);
-
         let socket: Socket | null = await promise;
+
         try {
+          const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+          gcTick(false);
+
           const reader = res.body?.getReader();
 
           let buffer = Buffer.alloc(0);

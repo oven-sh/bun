@@ -1672,19 +1672,18 @@ pub const AsyncHTTP = struct {
         if (result.has_more) {
             callback.function(callback.ctx, result);
         } else {
-            this.client.deinit();
+            {
+                this.client.deinit();
+                defer default_allocator.destroy(this);
+                this.real.?.* = this.*;
+                this.real.?.response_buffer = this.response_buffer;
 
-            this.real.?.* = this.*;
-            this.real.?.response_buffer = this.response_buffer;
-
-            log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
-
-            default_allocator.destroy(this);
+                log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+                callback.function(callback.ctx, result);
+            }
 
             const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
             std.debug.assert(active_requests > 0);
-
-            callback.function(callback.ctx, result);
 
             if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
                 http_thread.drainEvents();
@@ -2573,6 +2572,9 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const result = this.toResult(this.cloned_metadata);
         const callback = this.result_callback;
 
+        var did_run_callback = false;
+        defer if (!did_run_callback) callback.run(result);
+
         if (is_done) {
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
@@ -2585,6 +2587,9 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             } else if (!socket.isClosed()) {
                 socket.close(0, null);
             }
+            did_run_callback = true;
+            callback.run(result);
+
             this.state.reset();
             this.state.response_stage = .done;
             this.state.request_stage = .done;
@@ -2610,7 +2615,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 print_every_i = 0;
             }
         }
-        callback.run(result);
     }
 }
 

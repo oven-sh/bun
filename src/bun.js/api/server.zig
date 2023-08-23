@@ -1016,7 +1016,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         is_transfer_encoding: bool = false,
 
         /// Used to identify if request can be safely deinitialized
-        is_waiting_body: bool = false,
+        is_waiting_for_request_body: bool = false,
         /// Used in renderMissing in debug mode to show the user an HTML page
         /// Used to avoid looking at the uws.Request struct after it's been freed
         is_web_browser_navigation: if (debug_mode) bool else void = if (debug_mode) false else {},
@@ -1332,8 +1332,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_body) {
-                    this.flags.is_waiting_body = false;
+                if (this.flags.is_waiting_for_request_body) {
+                    this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
                 resp.end(data, closeConnection);
@@ -1343,8 +1343,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn endStream(this: *RequestContext, closeConnection: bool) void {
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_body) {
-                    this.flags.is_waiting_body = false;
+                if (this.flags.is_waiting_for_request_body) {
+                    this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
                 resp.endStream(closeConnection);
@@ -1354,8 +1354,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_body) {
-                    this.flags.is_waiting_body = false;
+                if (this.flags.is_waiting_for_request_body) {
+                    this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
                 resp.endWithoutBody(closeConnection);
@@ -1574,9 +1574,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // if we are waiting for the body yet and the request was not aborted we can safely clear the onData callback
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_body and this.flags.aborted == false) {
+                if (this.flags.is_waiting_for_request_body and this.flags.aborted == false) {
                     resp.clearOnData();
-                    this.flags.is_waiting_body = false;
+                    this.flags.is_waiting_for_request_body = false;
                 }
             }
         }
@@ -2868,7 +2868,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             std.debug.assert(this.resp == resp);
 
-            this.flags.is_waiting_body = last == false;
+            this.flags.is_waiting_for_request_body = last == false;
             if (this.flags.aborted or this.flags.has_marked_complete) return;
 
             if (this.request_body != null) {
@@ -3291,7 +3291,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @as(u32, @intCast(@max(value.toInt64(), 0)));
+                server.maxPayloadLength = @truncate(@max(value.toInt64(), 0));
             }
         }
 
@@ -3302,7 +3302,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                var idleTimeout = @as(u16, @intCast(@as(u32, @truncate(@max(value.toInt64(), 0)))));
+                var idleTimeout: u16 = @truncate(@max(value.toInt64(), 0));
                 if (idleTimeout > 960) {
                     globalObject.throwInvalidArguments("websocket expects idleTimeout to be 960 or less", .{});
                     return null;
@@ -3322,7 +3322,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @as(u32, @intCast(@max(value.toInt64(), 0)));
+                server.backpressureLimit = @truncate(@max(value.toInt64(), 0));
             }
         }
 
@@ -5375,7 +5375,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
                         },
                     };
-                    ctx.flags.is_waiting_body = true;
+                    ctx.flags.is_waiting_for_request_body = true;
 
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                 }
@@ -5413,7 +5413,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
                 ctx.renderMissing();
                 return;
             }
@@ -5483,7 +5483,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
                 ctx.renderMissing();
                 return;
             }

@@ -582,7 +582,7 @@ declare module "bun:ffi" {
 
   type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
     [K in keyof Fns]: (
-      ...args: Fns[K]["args"] extends infer A extends FFITypeOrString[]
+      ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
         : never
     ) => FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];

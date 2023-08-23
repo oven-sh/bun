@@ -617,6 +617,7 @@ pub const Fetch = struct {
 
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
+        metadata: ?HTTPClient.HTTPClientResult.ResultMetadata = .{},
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
@@ -705,7 +706,11 @@ pub const Fetch = struct {
             this.request_headers = Headers{ .allocator = undefined };
             this.http.?.clearData();
 
-            this.result.deinitMetadata();
+            if (this.metadata != null) {
+                this.metadata.?.deinit();
+                this.metadata = null;
+            }
+
             this.response_buffer.deinit();
             this.response.deinit();
             this.scheduled_response_buffer.deinit();
@@ -1001,21 +1006,31 @@ pub const Fetch = struct {
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
-            const http_response = this.result.response;
-            this.is_waiting_body = this.result.has_more;
-            return Response{
-                .allocator = allocator,
-                .url = bun.String.createAtomIfPossible(this.result.href),
-                .status_text = bun.String.createAtomIfPossible(http_response.status),
-                .redirected = this.result.redirected,
-                .body = .{
-                    .init = .{
-                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @as(u16, @truncate(http_response.status_code)),
+            // at this point we always should have metadata
+            std.debug.assert(this.metadata != null);
+            if (this.metadata) |metadata| {
+                const http_response = metadata.response;
+                this.is_waiting_body = this.result.has_more;
+                defer {
+                    this.metadata.?.deinit();
+                    this.metadata = null;
+                }
+                return Response{
+                    .allocator = allocator,
+                    .url = bun.String.createAtomIfPossible(metadata.href),
+                    .status_text = bun.String.createAtomIfPossible(http_response.status),
+                    .redirected = this.result.redirected,
+                    .body = .{
+                        .init = .{
+                            .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
+                            .status_code = @as(u16, @truncate(http_response.status_code)),
+                        },
+                        .value = this.toBodyValue(),
                     },
-                    .value = this.toBodyValue(),
-                },
-            };
+                };
+            }
+
+            @panic("fetch metadata should be provided");
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
@@ -1187,6 +1202,10 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             task.result = result;
+            // metadata should be provided only once so we preserve it until we consume it
+            if (result.metadata) |metadata| {
+                task.metadata = metadata;
+            }
             task.body_size = result.body_size;
 
             const success = result.isSuccess();

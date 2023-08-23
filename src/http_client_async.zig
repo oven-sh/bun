@@ -1037,7 +1037,7 @@ pub const InternalState = struct {
     fail: anyerror = error.NoError,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
-    headers_sent: bool = false,
+    metadata_sent: bool = false,
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
         return .{
@@ -1181,7 +1181,7 @@ pub const InternalState = struct {
     pub fn postProcessBody(this: *InternalState) usize {
 
         // we only touch it if we did not sent the headers yet
-        if (!this.headers_sent) {
+        if (!this.metadata_sent) {
             var response = &this.pending_response;
             if (this.content_encoding_i < response.headers.len) {
                 // if it compressed with this header, it is no longer
@@ -1684,8 +1684,10 @@ pub const AsyncHTTP = struct {
             if (!result.isSuccess()) {
                 return result.fail;
             }
-
-            return result.response;
+            std.debug.assert(result.metadata != null);
+            if (result.metadata) |metadata| {
+                return metadata.response;
+            }
         }
 
         unreachable;
@@ -1699,7 +1701,9 @@ pub const AsyncHTTP = struct {
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (result.isSuccess()) {
             this.err = null;
-            this.response = result.response;
+            if (result.metadata) |metadata| {
+                this.response = metadata.response;
+            }
             this.state.store(.success, .Monotonic);
         } else {
             this.err = result.fail;
@@ -2643,19 +2647,34 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
-    response: picohttp.Response = .{},
-    metadata_buf: []u8 = &.{},
-    href: []const u8 = "",
-    fail: anyerror = error.NoError,
-    redirected: bool = false,
-    headers_buf: []picohttp.Header = &.{},
     has_more: bool = false,
+    fail: anyerror = error.NoError,
+
+    metadata: ?ResultMetadata = null,
 
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
+    redirected: bool = false,
+
+    pub const ResultMetadata = struct {
+        response: picohttp.Response = .{},
+        metadata_buf: []u8 = &.{},
+        href: []const u8 = "",
+        headers_buf: []picohttp.Header = &.{},
+
+        pub fn deinit(this: *ResultMetadata) void {
+            if (this.metadata_buf.len > 0) bun.default_allocator.free(this.metadata_buf);
+            if (this.headers_buf.len > 0) bun.default_allocator.free(this.headers_buf);
+            this.headers_buf = &.{};
+            this.metadata_buf = &.{};
+            this.href = "";
+            this.response.headers = &.{};
+            this.response.status = "";
+        }
+    };
 
     pub const BodySize = union(enum) {
         total_received: usize,
@@ -2673,17 +2692,6 @@ pub const HTTPClientResult = struct {
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
         return this.fail == error.Aborted;
-    }
-
-    pub fn deinitMetadata(this: *HTTPClientResult) void {
-        if (this.metadata_buf.len > 0) bun.default_allocator.free(this.metadata_buf);
-        if (this.headers_buf.len > 0) bun.default_allocator.free(this.headers_buf);
-
-        this.headers_buf = &.{};
-        this.metadata_buf = &.{};
-        this.href = "";
-        this.response.headers = &.{};
-        this.response.status = "";
     }
 
     pub const Callback = struct {
@@ -2721,16 +2729,26 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
         .{ .content_length = content_length }
     else
         .{ .unknown = {} };
-    this.state.headers_sent = true;
-    // TODO: do not sent headers more than one time
+    if (!this.state.metadata_sent) {
+        this.state.metadata_sent = true;
+        return HTTPClientResult{
+            .metadata = .{
+                .response = metadata.response,
+                .metadata_buf = metadata.owned_buf,
+                .href = metadata.url,
+                .headers_buf = metadata.response.headers,
+            },
+            .body = this.state.body_out_str,
+            .redirected = this.remaining_redirect_count != default_redirect_count,
+            .fail = this.state.fail,
+            .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+            .body_size = body_size,
+        };
+    }
     return HTTPClientResult{
         .body = this.state.body_out_str,
-        .response = metadata.response,
-        .metadata_buf = metadata.owned_buf,
-        .redirected = this.remaining_redirect_count != default_redirect_count,
-        .href = metadata.url,
+        .metadata = null,
         .fail = this.state.fail,
-        .headers_buf = metadata.response.headers,
         .has_more = this.state.fail == error.NoError and !this.state.isDone(),
         .body_size = body_size,
     };

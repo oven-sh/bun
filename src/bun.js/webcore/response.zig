@@ -849,12 +849,12 @@ pub const Fetch = struct {
 
             var ref = this.promise;
             const promise_value = ref.value();
-            defer ref.strong.deinit();
-
+          
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);

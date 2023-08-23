@@ -1037,6 +1037,7 @@ pub const InternalState = struct {
     fail: anyerror = error.NoError,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
+    headers_sent: bool = false,
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
         return .{
@@ -1178,13 +1179,17 @@ pub const InternalState = struct {
     }
 
     pub fn postProcessBody(this: *InternalState) usize {
-        var response = &this.pending_response;
-        // if it compressed with this header, it is no longer
-        if (this.content_encoding_i < response.headers.len) {
-            var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
-            _ = mutable_headers.orderedRemove(this.content_encoding_i);
-            response.headers = mutable_headers.items;
-            this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
+
+        // we only touch it if we did not sent the headers yet
+        if (!this.headers_sent) {
+            var response = &this.pending_response;
+            if (this.content_encoding_i < response.headers.len) {
+                // if it compressed with this header, it is no longer
+                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                _ = mutable_headers.orderedRemove(this.content_encoding_i);
+                response.headers = mutable_headers.items;
+                this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
+            }
         }
 
         return this.body_out_str.?.list.items.len;
@@ -1692,14 +1697,14 @@ pub const AsyncHTTP = struct {
         var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
-        if (!result.isSuccess()) {
-            this.err = result.fail;
-            this.response = null;
-            this.state.store(State.fail, .Monotonic);
-        } else {
+        if (result.isSuccess()) {
             this.err = null;
             this.response = result.response;
             this.state.store(.success, .Monotonic);
+        } else {
+            this.err = result.fail;
+            this.response = null;
+            this.state.store(State.fail, .Monotonic);
         }
 
         if (result.has_more) {
@@ -2601,9 +2606,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const result = this.toResult(this.cloned_metadata);
         const callback = this.result_callback;
 
-        var did_run_callback = false;
-        defer if (!did_run_callback) callback.run(result);
-
         if (is_done) {
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
@@ -2616,25 +2618,17 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             } else if (!socket.isClosed()) {
                 socket.close(0, null);
             }
-            did_run_callback = true;
-            callback.run(result);
 
             this.state.reset();
             this.state.response_stage = .done;
             this.state.request_stage = .done;
             this.state.stage = .done;
             this.proxy_tunneling = false;
-            if (comptime print_every > 0) {
-                print_every_i += 1;
-                if (print_every_i % print_every == 0) {
-                    Output.prettyln("Heap stats for HTTP thread\n", .{});
-                    Output.flush();
-                    default_arena.dumpThreadStats();
-                    print_every_i = 0;
-                }
-            }
         }
+
         result.body.?.* = body;
+        callback.run(result);
+
         if (comptime print_every > 0) {
             print_every_i += 1;
             if (print_every_i % print_every == 0) {
@@ -2727,6 +2721,8 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
         .{ .content_length = content_length }
     else
         .{ .unknown = {} };
+    this.state.headers_sent = true;
+    // TODO: do not sent headers more than one time
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .response = metadata.response,

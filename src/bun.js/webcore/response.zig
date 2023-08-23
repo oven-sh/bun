@@ -1191,7 +1191,6 @@ pub const Fetch = struct {
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }

@@ -449,36 +449,7 @@ declare module "bun:ffi" {
 
   export type FFITypeOrString =
     | FFIType
-    | "char"
-    | "int8_t"
-    | "i8"
-    | "uint8_t"
-    | "u8"
-    | "int16_t"
-    | "i16"
-    | "uint16_t"
-    | "u16"
-    | "int32_t"
-    | "i32"
-    | "int"
-    | "uint32_t"
-    | "u32"
-    | "int64_t"
-    | "i64"
-    | "uint64_t"
-    | "u64"
-    | "double"
-    | "f64"
-    | "float"
-    | "f32"
-    | "bool"
-    | "ptr"
-    | "pointer"
-    | "void"
-    | "cstring"
-    | "function"
-    | "usize"
-    | "callback";
+    | keyof FFITypeStringToType;
 
   interface FFIFunction {
     /**

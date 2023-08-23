@@ -1,4 +1,5 @@
 const std = @import("std");
+const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
 var is_debug_build = false;
 fn moduleSource(comptime out: []const u8) FileSource {
@@ -96,6 +97,7 @@ const BunBuildOptions = struct {
     }
 };
 
+// relative to the prefix
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .optimize = .read_only }) catch |err| {
@@ -172,13 +174,12 @@ pub fn build(b: *Build) !void {
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
-        output_dir = b.pathFromRoot(output_dir_);
+        output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-        output_dir = b.pathFromRoot(output_dir_base);
+        output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_base);
     }
 
-    std.fs.cwd().makePath(output_dir) catch {};
     is_debug_build = optimize == OptimizeMode.Debug;
     const bun_executable_name = if (optimize == std.builtin.OptimizeMode.Debug) "bun-debug" else "bun";
     const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
@@ -273,11 +274,11 @@ pub fn build(b: *Build) !void {
 
         var install = b.addInstallFileWithDir(
             obj.getEmittedBin(),
-            .{.custom = output_dir},
+            .{ .custom = output_dir },
             b.fmt("{s}.o", .{bun_executable_name}),
         );
         install.step.dependOn(&obj.step);
-        defer obj_step.dependOn(&install.step);
+        obj_step.dependOn(&install.step);
 
         var actual_build_options = default_build_options;
         if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
@@ -459,13 +460,12 @@ pub fn build(b: *Build) !void {
             if (std.fs.path.dirname(test_bin)) |dir| {
                 var install = b.addInstallFileWithDir(
                     headers_obj.getEmittedBin(),
-                    .{.custom = dir},
+                    .{ .custom = try std.fs.path.relative(b.allocator, output_dir, dir) },
                     headers_obj.name,
                 );
                 install.step.dependOn(&headers_obj.step);
                 headers_step.dependOn(&install.step);
             }
-                
         }
 
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
@@ -490,7 +490,7 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, obj_step: *
     if (obj.emit_directory == null) {
         var install = b.addInstallFileWithDir(
             obj.getEmittedBin(),
-            .{.custom = output_dir},
+            .{ .custom = output_dir },
             b.fmt("{s}.o", .{obj.name}),
         );
 

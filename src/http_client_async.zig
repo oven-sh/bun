@@ -60,6 +60,31 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
+pub const Signals = struct {
+    header_progress: ?*std.atomic.Atomic(bool) = null,
+    body_streaming: ?*std.atomic.Atomic(bool) = null,
+    aborted: ?*std.atomic.Atomic(bool) = null,
+
+    pub const Store = struct {
+        header_progress: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        body_streaming: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+
+        pub fn to(this: *Store) Signals {
+            return .{
+                .header_progress = &this.header_progress,
+                .body_streaming = &this.body_streaming,
+                .aborted = &this.aborted,
+            };
+        }
+    };
+
+    pub fn get(this: Signals, comptime field: std.meta.FieldEnum(Signals)) bool {
+        var ptr: *std.atomic.Atomic(bool) = @field(this, @tagName(field)) orelse return false;
+        return ptr.load(.Monotonic);
+    }
+};
+
 pub const FetchRedirect = enum(u8) {
     follow,
     manual,
@@ -761,12 +786,12 @@ pub fn onOpen(
             std.debug.assert(is_ssl == client.url.isHTTPS());
         }
     }
-    if (client.aborted != null) {
+    if (client.signals.aborted != null) {
         socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
     }
     log("Connected {s} \n", .{client.url.href});
 
-    if (client.hasSignalAborted()) {
+    if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
         return;
     }
@@ -1201,11 +1226,9 @@ http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
-aborted: ?*std.atomic.Atomic(bool) = null,
+signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-signal_header_progress: *std.atomic.Atomic(bool),
-enable_body_stream: *std.atomic.Atomic(bool),
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1213,10 +1236,8 @@ pub fn init(
     url: URL,
     header_entries: Headers.Entries,
     header_buf: string,
-    signal: ?*std.atomic.Atomic(bool),
     hostname: ?[]u8,
-    signal_header_progress: *std.atomic.Atomic(bool),
-    enable_body_stream: *std.atomic.Atomic(bool),
+    signals: Signals,
 ) HTTPClient {
     return HTTPClient{
         .allocator = allocator,
@@ -1224,10 +1245,8 @@ pub fn init(
         .url = url,
         .header_entries = header_entries,
         .header_buf = header_buf,
-        .aborted = signal,
         .hostname = hostname,
-        .signal_header_progress = signal_header_progress,
-        .enable_body_stream = enable_body_stream,
+        .signals = signals,
     };
 }
 
@@ -1384,8 +1403,7 @@ pub const AsyncHTTP = struct {
     elapsed: u64 = 0,
     gzip_elapsed: u64 = 0,
 
-    signal_header_progress: std.atomic.Atomic(bool),
-    enable_body_stream: std.atomic.Atomic(bool),
+    signals: Signals = .{},
 
     pub var active_requests_count = std.atomic.Atomic(usize).init(0);
     pub var max_simultaneous_requests = std.atomic.Atomic(usize).init(256);
@@ -1418,12 +1436,14 @@ pub const AsyncHTTP = struct {
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
         @fence(.Release);
-        this.client.signal_header_progress.store(true, .Release);
+        var progress = this.signals.header_progress orelse return;
+        progress.store(true, .Release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
         @fence(.Release);
-        this.client.enable_body_stream.store(true, .Release);
+        var stream = this.signals.body_streaming orelse return;
+        stream.store(true, .Release);
     }
 
     pub fn clearData(this: *AsyncHTTP) void {
@@ -1453,9 +1473,9 @@ pub const AsyncHTTP = struct {
         timeout: usize,
         callback: HTTPClientResult.Callback,
         http_proxy: ?URL,
-        signal: ?*std.atomic.Atomic(bool),
         hostname: ?[]u8,
         redirect_type: FetchRedirect,
+        signals: ?Signals,
     ) AsyncHTTP {
         var this = AsyncHTTP{
             .allocator = allocator,
@@ -1467,12 +1487,11 @@ pub const AsyncHTTP = struct {
             .response_buffer = response_buffer,
             .result_callback = callback,
             .http_proxy = http_proxy,
-            .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
-            .signal_header_progress = std.atomic.Atomic(bool).init(false),
-            .enable_body_stream = std.atomic.Atomic(bool).init(false),
+            .signals = signals orelse .{},
+            .async_http_id = if (signals != null and signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
         };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname, &this.signal_header_progress, &this.enable_body_stream);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, hostname, signals orelse this.signals);
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1544,7 +1563,21 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, hostname, redirect_type);
+        return @This().init(
+            allocator,
+            method,
+            url,
+            headers,
+            headers_buf,
+            response_buffer,
+            request_body,
+            timeout,
+            undefined,
+            http_proxy,
+            hostname,
+            redirect_type,
+            null,
+        );
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -1714,10 +1747,6 @@ pub const AsyncHTTP = struct {
     }
 };
 
-pub fn hasSignalAborted(this: *const HTTPClient) bool {
-    return (this.aborted orelse return false).load(.Monotonic);
-}
-
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
@@ -1841,7 +1870,7 @@ pub fn doRedirect(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
-    if (this.aborted != null) {
+    if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
     return this.start(.{ .bytes = "" }, body_out_str);
@@ -1873,7 +1902,7 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     // Aborted before connecting
-    if (this.hasSignalAborted()) {
+    if (this.signals.get(.aborted)) {
         this.fail(error.Aborted);
         return;
     }
@@ -1911,7 +1940,7 @@ fn printResponse(response: picohttp.Response) void {
 }
 
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.hasSignalAborted()) {
+    if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
     }
@@ -2255,7 +2284,7 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onData {}", .{incoming_data.len});
-    if (this.hasSignalAborted()) {
+    if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
     }
@@ -2358,7 +2387,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (body_buf.len == 0) {
                 // no body data yet, but we can report the headers
-                if (this.signal_header_progress.load(.Acquire)) {
+                if (this.signals.get(.header_progress)) {
                     this.progressUpdate(is_ssl, ctx, socket);
                 }
                 return;
@@ -2392,7 +2421,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             }
 
             // if not reported we report partially now
-            if (this.signal_header_progress.load(.Acquire)) {
+            if (this.signals.get(.header_progress)) {
                 this.progressUpdate(is_ssl, ctx, socket);
                 return;
             }
@@ -2511,7 +2540,7 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 }
 
 fn fail(this: *HTTPClient, err: anyerror) void {
-    if (this.aborted != null) {
+    if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
     this.state.request_stage = .fail;
@@ -2560,7 +2589,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
     if (this.state.stage != .done and this.state.stage != .fail) {
         const is_done = this.state.isDone();
 
-        if (this.aborted != null and is_done) {
+        if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }
 
@@ -2790,7 +2819,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     // done or streaming
     const is_done = this.state.total_body_received >= content_length;
-    if (is_done or this.enable_body_stream.load(.Acquire)) {
+    if (is_done or this.signals.get(.body_streaming)) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
@@ -2852,7 +2881,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 progress.context.maybeRefresh();
             }
             // streaming chunks
-            if (this.enable_body_stream.load(.Acquire)) {
+            if (this.signals.get(.body_streaming)) {
                 const processed = try this.state.processBodyBuffer(buffer);
                 return processed > 0;
             }
@@ -2931,7 +2960,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             try body_buffer.appendSliceExact(buffer);
 
             // streaming chunks
-            if (this.enable_body_stream.load(.Acquire)) {
+            if (this.signals.get(.body_streaming)) {
                 const processed = try this.state.processBodyBuffer(body_buffer.*);
                 return processed > 0;
             }

@@ -641,7 +641,8 @@ pub const Fetch = struct {
         url_proxy_buffer: []const u8 = "",
 
         signal: ?*JSC.WebCore.AbortSignal = null,
-        aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        signals: HTTPClient.Signals = .{},
+        signal_store: HTTPClient.Signals.Store = .{},
         has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
@@ -927,7 +928,7 @@ pub const Fetch = struct {
             if (this.http) |http| {
                 http.enableBodyStreaming();
             }
-            if (this.aborted.load(.Acquire)) {
+            if (this.signal_store.aborted.load(.Monotonic)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
@@ -1063,6 +1064,7 @@ pub const Fetch = struct {
                 .hostname = fetch_options.hostname,
                 .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
             };
+            fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
             fetch_tasklet.tracker.didSchedule(globalThis);
 
@@ -1077,6 +1079,10 @@ pub const Fetch = struct {
                 }
             } else {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+            }
+
+            if (fetch_tasklet.signal == null) {
+                fetch_tasklet.signals.aborted = null;
             }
 
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
@@ -1095,9 +1101,10 @@ pub const Fetch = struct {
                     fetch_tasklet,
                 ),
                 proxy,
-                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
+
                 fetch_options.hostname,
                 fetch_options.redirect_type,
+                fetch_tasklet.signals,
             );
 
             if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -1108,7 +1115,7 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
             // we wanna to return after headers are received
-            fetch_tasklet.http.?.signalHeaderProgress();
+            fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
                 std.debug.assert(fetch_options.url.isHTTP());
@@ -1127,7 +1134,7 @@ pub const Fetch = struct {
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.aborted.store(true, .Monotonic);
+            this.signal_store.aborted.store(true, .Monotonic);
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {

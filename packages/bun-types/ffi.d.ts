@@ -782,6 +782,165 @@ declare module "bun:ffi" {
     byteLength?: number,
   ): ArrayBuffer;
 
+  export namespace read {
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u8(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i8(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u16(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i16(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function f32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u64(ptr: Pointer, byteOffset?: number): bigint;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i64(ptr: Pointer, byteOffset?: number): bigint;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function f64(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function ptr(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     * 
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function intptr(ptr: Pointer, byteOffset?: number): number;
+  }
+
   /**
    * Get the pointer backing a {@link TypedArray} or {@link ArrayBuffer}
    *

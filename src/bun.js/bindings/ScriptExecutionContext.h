@@ -173,22 +173,24 @@ public:
     {
         auto* task = new EventLoopTask(WTFMove(lambda));
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
-    } // Executes the task on context's thread asynchronously.
-
+    }
+    // Executes the task on context's thread asynchronously.
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda)
     {
         auto* task = new EventLoopTask(WTFMove(lambda));
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-    } // Executes the task on context's thread asynchronously.
+    }
+    // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task)
     {
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-    } // Executes the task on context's thread asynchronously.
-
+    }
+    // Executes the task on context's thread asynchronously.
     void postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
     {
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
-    } // Executes the task on context's thread asynchronously.
+    }
+    // Executes the task on context's thread asynchronously.
     void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
     {
         auto* task = new EventLoopTask(WTFMove(lambda));

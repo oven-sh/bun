@@ -8739,6 +8739,7 @@ var require_curves = __commonJS({
         assert(this.g.validate(), "Invalid curve"),
         assert(this.g.mul(this.n).isInfinity(), "Invalid curve, G*N != O");
     }
+    PresetCurve.prototype = {};
     curves.PresetCurve = PresetCurve;
     function defineCurve(name, options) {
       Object.defineProperty(curves, name, {

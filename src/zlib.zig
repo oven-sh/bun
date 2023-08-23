@@ -3,6 +3,8 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
+pub const MAX_WBITS = 15;
+
 test "Zlib Read" {
     const expected_text = @embedFile("./zlib.test.txt");
     const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
@@ -525,7 +527,11 @@ pub const ZlibReaderArrayList = struct {
 
     pub fn readAll(this: *ZlibReader) ZlibError!void {
         defer {
-            this.list.shrinkRetainingCapacity(this.zlib.total_out);
+            if (this.list.items.len > this.zlib.total_out) {
+                this.list.shrinkRetainingCapacity(this.zlib.total_out);
+            } else if (this.zlib.total_out < this.list.capacity) {
+                this.list.items.len = this.zlib.total_out;
+            }
             this.list_ptr.* = this.list;
         }
 

@@ -599,7 +599,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
-    inspect                                        BunObject_callback_inspect                                          DontDelete|Function 1
+    inspect                                        BunObject_getter_wrap_inspect                                            DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1

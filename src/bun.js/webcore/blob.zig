@@ -3794,6 +3794,10 @@ pub const Blob = struct {
                         } else {
                             return build.blob.dupe();
                         }
+                    } else if (current.toSliceClone(global)) |sliced| {
+                        if (sliced.allocator.get()) |allocator| {
+                            return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), allocator, global, false);
+                        }
                     }
                 },
 
@@ -3886,6 +3890,14 @@ pub const Blob = struct {
                                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                                         joiner.append(blob.sharedView(), 0, null);
                                         continue;
+                                    } else if (current.toSliceClone(global)) |sliced| {
+                                        const allocator = sliced.allocator.get();
+                                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                        joiner.append(
+                                            sliced.slice(),
+                                            0,
+                                            allocator,
+                                        );
                                     }
                                 },
                                 else => {},
@@ -3900,6 +3912,14 @@ pub const Blob = struct {
                     if (current.as(Blob)) |blob| {
                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                         joiner.append(blob.sharedView(), 0, null);
+                    } else if (current.toSliceClone(global)) |sliced| {
+                        const allocator = sliced.allocator.get();
+                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                        joiner.append(
+                            sliced.slice(),
+                            0,
+                            allocator,
+                        );
                     }
                 },
 

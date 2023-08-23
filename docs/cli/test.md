@@ -30,13 +30,49 @@ The runner recursively searches the working directory for files that match the f
 - `*.spec.{js|jsx|ts|tsx}`
 - `*_spec.{js|jsx|ts|tsx}`
 
-You can filter the set of tests to run by passing additional positional arguments to `bun test`. Any file in the directory with an _absolute path_ that contains one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
+You can filter the set of _test files_ to run by passing additional positional arguments to `bun test`. Any test file with a path that matches one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
 
 ```bash
 $ bun test <filter> <filter> ...
 ```
 
+To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
+
+```sh
+# run all tests or test suites with "addition" in the name
+$ bun test --test-name-pattern addition
+```
+
 The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+
+## Timeouts
+
+Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, it will be marked as failed. The default value is `5000`.
+
+```bash
+# default value is 5000
+$ bun test --timeout 20
+```
+
+## Rerun tests
+
+Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.
+
+```sh
+$ bun test --rerun-each 100
+```
+
+## Bail out with `--bail`
+
+Use the `--bail` flag to abort the test run early after a pre-determined number of test failures. By default Bun will run all tests and report all failures, but sometimes in CI environments it's preferable to terminate earlier to reduce CPU usage.
+
+```sh
+# bail after 1 failure
+$ bun test --bail
+
+# bail after 10 failure
+$ bun test --bail 10
+```
 
 ## Watch mode
 

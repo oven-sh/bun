@@ -315,7 +315,7 @@ static const struct HashTableValue bunObjectTableValues[81] = {
    { "hash"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject_getter_wrap_hash } },
    { "indexOfLine"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject_callback_indexOfLine, 1 } },
    { "inflateSync"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject_callback_inflateSync, 1 } },
-   { "inspect"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject_callback_inspect, 1 } },
+   { "inspect"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject_getter_wrap_inspect } },
    { "isMainThread"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
    { "jest"_s, static_cast<unsigned>(PropertyAttribute::DontEnum|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject_callback_jest, 1 } },
    { "listen"_s, static_cast<unsigned>(PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject_callback_listen, 1 } },

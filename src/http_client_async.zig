@@ -30,6 +30,7 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
+
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
@@ -723,6 +724,11 @@ pub const HTTPThread = struct {
             this.loop.wakeup();
     }
 
+    pub fn wakeup(this: *@This()) void {
+        if (this.has_awoken.load(.Monotonic))
+            this.loop.wakeup();
+    }
+
     pub fn schedule(this: *@This(), batch: Batch) void {
         if (batch.len == 0)
             return;
@@ -808,11 +814,12 @@ pub fn onClose(
     // if the peer closed after a full chunk, treat this
     // as if the transfer had complete, browsers appear to ignore
     // a missing 0\r\n chunk
-    if (in_progress and client.state.transfer_encoding == .chunked) {
+    if (in_progress and client.state.isChunkedEncoding()) {
         if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
             var buf = client.state.getBodyBuffer();
             if (buf.list.items.len > 0) {
-                client.done(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                client.state.received_last_chunk = true;
+                client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
                 return;
             }
         }
@@ -988,14 +995,17 @@ pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     pending_response: picohttp.Response = undefined,
     allow_keepalive: bool = true,
+    received_last_chunk: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
     chunked_decoder: picohttp.phr_chunked_decoder = .{},
+    zlib_reader: ?*Zlib.ZlibReaderArrayList = null,
     stage: Stage = Stage.pending,
     body_out_str: ?*MutableString = null,
     compressed_body: MutableString = undefined,
-    body_size: usize = 0,
+    content_length: ?usize = null,
+    total_body_received: usize = 0,
     request_body: []const u8 = "",
     original_request_body: HTTPRequestBody = .{ .bytes = "" },
     request_sent_len: usize = 0,
@@ -1015,12 +1025,20 @@ pub const InternalState = struct {
         };
     }
 
+    pub fn isChunkedEncoding(this: *InternalState) bool {
+        return this.transfer_encoding == Encoding.chunked;
+    }
+
     pub fn reset(this: *InternalState) void {
         this.compressed_body.deinit();
         this.response_message_buffer.deinit();
 
         var body_msg = this.body_out_str;
         if (body_msg) |body| body.reset();
+        if (this.zlib_reader) |reader| {
+            this.zlib_reader = null;
+            reader.deinit();
+        }
 
         this.* = .{
             .body_out_str = body_msg,
@@ -1042,27 +1060,78 @@ pub const InternalState = struct {
         }
     }
 
-    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
-        defer this.compressed_body.deinit();
+    fn isDone(this: *InternalState) bool {
+        if (this.isChunkedEncoding()) {
+            return this.received_last_chunk;
+        }
 
+        if (this.content_length) |content_length| {
+            return this.total_body_received >= content_length;
+        }
+
+        // TODO: in future to handle Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
+        return true;
+    }
+
+    fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
+        defer this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
         if (extremely_verbose)
             gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
 
-        body_out_str.list.expandToCapacity();
+        var reader: *Zlib.ZlibReaderArrayList = undefined;
+        if (this.zlib_reader) |current_reader| {
+            reader = current_reader;
+            reader.zlib.next_in = buffer.ptr;
+            reader.zlib.avail_in = @as(u32, @truncate(buffer.len));
 
-        ZlibPool.decompress(buffer.list.items, body_out_str, default_allocator) catch |err| {
-            Output.prettyErrorln("<r><red>Zlib error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
-            Output.flush();
-            return err;
+            reader.list = body_out_str.list;
+            const initial = body_out_str.list.items.len;
+            body_out_str.list.expandToCapacity();
+            if (body_out_str.list.capacity == initial) {
+                try body_out_str.list.ensureUnusedCapacity(body_out_str.allocator, 4096);
+                body_out_str.list.expandToCapacity();
+            }
+            reader.zlib.next_out = &body_out_str.list.items[initial];
+            reader.zlib.avail_out = @as(u32, @truncate(body_out_str.list.capacity - initial));
+            // we reset the total out so we can track how much we decompressed this time
+            reader.zlib.total_out = initial;
+        } else {
+            reader = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
+                buffer,
+                &body_out_str.list,
+                body_out_str.allocator,
+                default_allocator,
+                .{
+                    // TODO: add br support today we support gzip and deflate only
+                    // zlib.MAX_WBITS = 15
+                    // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
+                    // to (de-)compress zlib format, use wbits = zlib.MAX_WBITS
+                    // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else -Zlib.MAX_WBITS,
+                },
+            );
+            this.zlib_reader = reader;
+        }
+
+        reader.readAll() catch |err| {
+            if (this.isDone() or error.ShortRead != err) {
+                Output.prettyErrorln("<r><red>Zlib error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                Output.flush();
+                return err;
+            }
         };
 
         if (extremely_verbose)
             this.gzip_elapsed = gzip_timer.read();
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !void {
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
+        try this.decompressConst(buffer.list.items, body_out_str);
+    }
+
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !usize {
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
@@ -1080,10 +1149,10 @@ pub const InternalState = struct {
             },
         }
 
-        this.postProcessBody(body_out_str);
+        return this.postProcessBody();
     }
 
-    pub fn postProcessBody(this: *InternalState, body_out_str: *MutableString) void {
+    pub fn postProcessBody(this: *InternalState) usize {
         var response = &this.pending_response;
         // if it compressed with this header, it is no longer
         if (this.content_encoding_i < response.headers.len) {
@@ -1093,7 +1162,7 @@ pub const InternalState = struct {
             this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
         }
 
-        this.body_size = @as(usize, @truncate(body_out_str.list.items.len));
+        return this.body_out_str.?.list.items.len;
     }
 };
 
@@ -1119,7 +1188,7 @@ disable_keepalive: bool = false,
 
 state: InternalState = .{},
 
-completion_callback: HTTPClientResult.Callback = undefined,
+result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
 /// This is a workaround for that.
@@ -1135,7 +1204,20 @@ proxy_tunnel: ?ProxyTunnel = null,
 aborted: ?*std.atomic.Atomic(bool) = null,
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool), hostname: ?[]u8) HTTPClient {
+signal_header_progress: *std.atomic.Atomic(bool),
+enable_body_stream: *std.atomic.Atomic(bool),
+
+pub fn init(
+    allocator: std.mem.Allocator,
+    method: Method,
+    url: URL,
+    header_entries: Headers.Entries,
+    header_buf: string,
+    signal: ?*std.atomic.Atomic(bool),
+    hostname: ?[]u8,
+    signal_header_progress: *std.atomic.Atomic(bool),
+    enable_body_stream: *std.atomic.Atomic(bool),
+) HTTPClient {
     return HTTPClient{
         .allocator = allocator,
         .method = method,
@@ -1144,6 +1226,8 @@ pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entri
         .header_buf = header_buf,
         .aborted = signal,
         .hostname = hostname,
+        .signal_header_progress = signal_header_progress,
+        .enable_body_stream = enable_body_stream,
     };
 }
 
@@ -1160,9 +1244,6 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
-
-    this.state.compressed_body.deinit();
-    this.state.response_message_buffer.deinit();
 }
 
 const Stage = enum(u8) {
@@ -1286,7 +1367,7 @@ pub const AsyncHTTP = struct {
     next: ?*AsyncHTTP = null,
 
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
-    completion_callback: HTTPClientResult.Callback = undefined,
+    result_callback: HTTPClientResult.Callback = undefined,
 
     /// Timeout in nanoseconds
     timeout: usize = 0,
@@ -1302,6 +1383,9 @@ pub const AsyncHTTP = struct {
     state: AtomicState = AtomicState.init(State.pending),
     elapsed: u64 = 0,
     gzip_elapsed: u64 = 0,
+
+    signal_header_progress: std.atomic.Atomic(bool),
+    enable_body_stream: std.atomic.Atomic(bool),
 
     pub var active_requests_count = std.atomic.Atomic(usize).init(0);
     pub var max_simultaneous_requests = std.atomic.Atomic(usize).init(256);
@@ -1330,6 +1414,16 @@ pub const AsyncHTTP = struct {
             }
             AsyncHTTP.max_simultaneous_requests.store(max, .Monotonic);
         }
+    }
+
+    pub fn signalHeaderProgress(this: *AsyncHTTP) void {
+        @fence(.Release);
+        this.client.signal_header_progress.store(true, .Release);
+    }
+
+    pub fn enableBodyStreaming(this: *AsyncHTTP) void {
+        @fence(.Release);
+        this.client.enable_body_stream.store(true, .Release);
     }
 
     pub fn clearData(this: *AsyncHTTP) void {
@@ -1371,12 +1465,14 @@ pub const AsyncHTTP = struct {
             .request_header_buf = headers_buf,
             .request_body = .{ .bytes = request_body },
             .response_buffer = response_buffer,
-            .completion_callback = callback,
+            .result_callback = callback,
             .http_proxy = http_proxy,
             .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .signal_header_progress = std.atomic.Atomic(bool).init(false),
+            .enable_body_stream = std.atomic.Atomic(bool).init(false),
         };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname, &this.signal_header_progress, &this.enable_body_stream);
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1537,7 +1633,7 @@ pub const AsyncHTTP = struct {
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();
-        this.completion_callback = HTTPClientResult.Callback.New(
+        this.result_callback = HTTPClientResult.Callback.New(
             *SingleHTTPChannel,
             sendSyncCallback,
         ).init(ctx);
@@ -1557,12 +1653,10 @@ pub const AsyncHTTP = struct {
         unreachable;
     }
 
-    pub fn onAsyncHTTPComplete(this: *AsyncHTTP, result: HTTPClientResult) void {
+    pub fn onAsyncHTTPCallback(this: *AsyncHTTP, result: HTTPClientResult) void {
         std.debug.assert(this.real != null);
-        const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
-        std.debug.assert(active_requests > 0);
 
-        var completion = this.completion_callback;
+        var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (!result.isSuccess()) {
@@ -1574,19 +1668,27 @@ pub const AsyncHTTP = struct {
             this.response = result.response;
             this.state.store(.success, .Monotonic);
         }
-        this.client.deinit();
 
-        this.real.?.* = this.*;
-        this.real.?.response_buffer = this.response_buffer;
+        if (result.has_more) {
+            callback.function(callback.ctx, result);
+        } else {
+            this.client.deinit();
 
-        log("onAsyncHTTPComplete: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+            this.real.?.* = this.*;
+            this.real.?.response_buffer = this.response_buffer;
 
-        default_allocator.destroy(this);
+            log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
 
-        completion.function(completion.ctx, result);
+            default_allocator.destroy(this);
 
-        if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
-            http_thread.drainEvents();
+            const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
+            std.debug.assert(active_requests > 0);
+
+            callback.function(callback.ctx, result);
+
+            if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
+                http_thread.drainEvents();
+            }
         }
     }
 
@@ -1599,7 +1701,7 @@ pub const AsyncHTTP = struct {
         _ = active_requests_count.fetchAdd(1, .Monotonic);
         this.err = null;
         this.state.store(.sending, .Monotonic);
-        this.client.completion_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPComplete).init(
+        this.client.result_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPCallback).init(
             this,
         );
 
@@ -2153,6 +2255,7 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
 }
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onData {}", .{incoming_data.len});
     if (this.hasSignalAborted()) {
         this.closeAndAbort(is_ssl, socket);
         return;
@@ -2241,7 +2344,11 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.cloneMetadata();
 
             if (!can_continue) {
-                this.done(is_ssl, ctx, socket);
+                // if is chuncked but no body is expected we mark the last chunk
+                this.state.received_last_chunk = true;
+                // if is not we ignore the content_length
+                this.state.content_length = 0;
+                this.progressUpdate(is_ssl, ctx, socket);
                 return;
             }
 
@@ -2251,34 +2358,44 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             }
 
             if (body_buf.len == 0) {
+                // no body data yet, but we can report the headers
+                if (this.signal_header_progress.load(.Acquire)) {
+                    this.progressUpdate(is_ssl, ctx, socket);
+                }
                 return;
             }
 
             if (this.state.response_stage == .body) {
                 {
-                    const is_done = this.handleResponseBody(body_buf, true) catch |err| {
+                    const report_progress = this.handleResponseBody(body_buf, true) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
 
-                    if (is_done) {
-                        this.done(is_ssl, ctx, socket);
+                    if (report_progress) {
+                        this.progressUpdate(is_ssl, ctx, socket);
                         return;
                     }
                 }
             } else if (this.state.response_stage == .body_chunk) {
                 this.setTimeout(socket, 500);
                 {
-                    const is_done = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
+                    const report_progress = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
 
-                    if (is_done) {
-                        this.done(is_ssl, ctx, socket);
+                    if (report_progress) {
+                        this.progressUpdate(is_ssl, ctx, socket);
                         return;
                     }
                 }
+            }
+
+            // if not reported we report partially now
+            if (this.signal_header_progress.load(.Acquire)) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
             }
         },
 
@@ -2295,23 +2412,23 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 defer data.deinit();
                 const decoded_data = data.slice();
                 if (decoded_data.len == 0) return;
-                const is_done = this.handleResponseBody(decoded_data, false) catch |err| {
+                const report_progress = this.handleResponseBody(decoded_data, false) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
-                    this.done(is_ssl, ctx, socket);
+                if (report_progress) {
+                    this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             } else {
-                const is_done = this.handleResponseBody(incoming_data, false) catch |err| {
+                const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
-                    this.done(is_ssl, ctx, socket);
+                if (report_progress) {
+                    this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             }
@@ -2331,23 +2448,23 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 const decoded_data = data.slice();
                 if (decoded_data.len == 0) return;
 
-                const is_done = this.handleResponseBodyChunkedEncoding(decoded_data) catch |err| {
+                const report_progress = this.handleResponseBodyChunkedEncoding(decoded_data) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
-                    this.done(is_ssl, ctx, socket);
+                if (report_progress) {
+                    this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             } else {
-                const is_done = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
+                const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
-                    this.done(is_ssl, ctx, socket);
+                if (report_progress) {
+                    this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             }
@@ -2403,7 +2520,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.fail = err;
     this.state.stage = .fail;
 
-    const callback = this.completion_callback;
+    const callback = this.result_callback;
     const result = this.toResult(this.cloned_metadata);
     this.state.reset();
     this.proxy_tunneling = false;
@@ -2440,39 +2557,50 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
     socket.timeout(amount);
 }
 
-pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
-        if (this.aborted != null) {
+        const is_done = this.state.isDone();
+
+        if (this.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }
 
-        log("done", .{});
+        log("progressUpdate {}", .{is_done});
 
         var out_str = this.state.body_out_str.?;
         var body = out_str.*;
         this.cloned_metadata.response = this.state.pending_response;
         const result = this.toResult(this.cloned_metadata);
-        const callback = this.completion_callback;
+        const callback = this.result_callback;
 
-        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
+        if (is_done) {
+            socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
-        if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
-            ctx.releaseSocket(
-                socket,
-                this.connected_url.hostname,
-                this.connected_url.getPortAuto(),
-            );
-        } else if (!socket.isClosed()) {
-            socket.close(0, null);
+            if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
+                ctx.releaseSocket(
+                    socket,
+                    this.connected_url.hostname,
+                    this.connected_url.getPortAuto(),
+                );
+            } else if (!socket.isClosed()) {
+                socket.close(0, null);
+            }
+            this.state.reset();
+            this.state.response_stage = .done;
+            this.state.request_stage = .done;
+            this.state.stage = .done;
+            this.proxy_tunneling = false;
+            if (comptime print_every > 0) {
+                print_every_i += 1;
+                if (print_every_i % print_every == 0) {
+                    Output.prettyln("Heap stats for HTTP thread\n", .{});
+                    Output.flush();
+                    default_arena.dumpThreadStats();
+                    print_every_i = 0;
+                }
+            }
         }
-
-        this.state.reset();
         result.body.?.* = body;
-        std.debug.assert(this.state.stage != .done);
-        this.state.response_stage = .done;
-        this.state.request_stage = .done;
-        this.state.stage = .done;
-        this.proxy_tunneling = false;
         if (comptime print_every > 0) {
             print_every_i += 1;
             if (print_every_i % print_every == 0) {
@@ -2494,6 +2622,19 @@ pub const HTTPClientResult = struct {
     fail: anyerror = error.NoError,
     redirected: bool = false,
     headers_buf: []picohttp.Header = &.{},
+    has_more: bool = false,
+
+    /// For Http Client requests
+    /// when Content-Length is provided this represents the whole size of the request
+    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+    /// If is not chunked encoded and Content-Length is not provided this will be unknown
+    body_size: BodySize = .unknown,
+
+    pub const BodySize = union(enum) {
+        total_received: usize,
+        content_length: usize,
+        unknown: void,
+    };
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
         return this.fail == error.NoError;
@@ -2547,6 +2688,12 @@ pub const HTTPClientResult = struct {
 };
 
 pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientResult {
+    const body_size: HTTPClientResult.BodySize = if (this.state.isChunkedEncoding())
+        .{ .total_received = this.state.total_body_received }
+    else if (this.state.content_length) |content_length|
+        .{ .content_length = content_length }
+    else
+        .{ .unknown = {} };
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .response = metadata.response,
@@ -2555,6 +2702,8 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
         .href = metadata.url,
         .fail = this.state.fail,
         .headers_buf = metadata.response.headers,
+        .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+        .body_size = body_size,
     };
 }
 
@@ -2566,10 +2715,10 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
-
+    const content_length = this.state.content_length orelse 0;
     // is it exactly as much as we need?
-    if (is_only_buffer and incoming_data.len >= this.state.body_size) {
-        try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
+    if (is_only_buffer and incoming_data.len >= content_length) {
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length]);
         return true;
     } else {
         return handleResponseBodyFromMultiplePackets(this, incoming_data);
@@ -2577,6 +2726,10 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_
 }
 
 fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
+    if (!this.state.isChunkedEncoding()) {
+        this.state.total_body_received += incoming_data.len;
+    }
+
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
@@ -2584,7 +2737,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
             try body_buffer.growBy(@max(@as(usize, @intFromFloat(min)), 32));
         }
 
-        try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
+        try this.state.decompressConst(incoming_data, body_buffer);
     } else {
         try this.state.getBodyBuffer().appendSliceExact(incoming_data);
     }
@@ -2605,42 +2758,44 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         progress.context.maybeRefresh();
     }
 
-    this.state.postProcessBody(this.state.getBodyBuffer());
+    _ = this.state.postProcessBody();
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
+    const content_length = this.state.content_length orelse 0;
 
     if (buffer.list.items.len == 0 and
-        this.state.body_size > 0 and this.state.body_size < preallocate_max)
+        content_length > 0 and incoming_data.len < preallocate_max)
     {
-        // since we don't do streaming yet, we might as well just allocate the whole thing
-        // when we know the expected size
-        buffer.list.ensureTotalCapacityPrecise(buffer.allocator, this.state.body_size) catch {};
+        buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
     }
 
-    const remaining_content_length = this.state.body_size -| buffer.list.items.len;
+    const remaining_content_length = content_length -| this.state.total_body_received;
     var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
 
     _ = try buffer.write(remainder);
 
+    this.state.total_body_received += remainder.len;
+
     if (this.progress_node) |progress| {
         progress.activate();
-        progress.setCompletedItems(buffer.list.items.len);
+        progress.setCompletedItems(this.state.total_body_received);
         progress.context.maybeRefresh();
     }
 
-    if (buffer.list.items.len == this.state.body_size) {
-        try this.state.processBodyBuffer(buffer.*);
+    // done or streaming
+    const is_done = this.state.total_body_received >= content_length;
+    if (is_done or this.enable_body_stream.load(.Acquire)) {
+        const processed = try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
             progress.activate();
-            progress.setCompletedItems(buffer.list.items.len);
+            progress.setCompletedItems(this.state.total_body_received);
             progress.context.maybeRefresh();
         }
-        return true;
+        return is_done or processed > 0;
     }
-
     return false;
 }
 
@@ -2676,6 +2831,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         &bytes_decoded,
     );
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
+
     buffer_.* = buffer;
 
     switch (pret) {
@@ -2690,12 +2847,18 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 progress.setCompletedItems(buffer.list.items.len);
                 progress.context.maybeRefresh();
             }
+            // streaming chunks
+            if (this.enable_body_stream.load(.Acquire)) {
+                const processed = try this.state.processBodyBuffer(buffer);
+                return processed > 0;
+            }
 
             return false;
         },
         // Done
         else => {
-            try this.state.processBodyBuffer(
+            this.state.received_last_chunk = true;
+            _ = try this.state.processBodyBuffer(
                 buffer,
             );
 
@@ -2746,6 +2909,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         &bytes_decoded,
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -2759,12 +2923,21 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
                 progress.setCompletedItems(buffer.len);
                 progress.context.maybeRefresh();
             }
-            try this.state.getBodyBuffer().appendSliceExact(buffer);
+            const body_buffer = this.state.getBodyBuffer();
+            try body_buffer.appendSliceExact(buffer);
+
+            // streaming chunks
+            if (this.enable_body_stream.load(.Acquire)) {
+                const processed = try this.state.processBodyBuffer(body_buffer.*);
+                return processed > 0;
+            }
 
             return false;
         },
         // Done
         else => {
+            this.state.received_last_chunk = true;
+
             try this.handleResponseBodyFromSinglePacket(buffer);
             std.debug.assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             if (this.progress_node) |progress| {
@@ -2790,8 +2963,13 @@ pub fn handleResponseMetadata(
     for (response.headers, 0..) |header, header_i| {
         switch (hashHeaderName(header.name)) {
             hashHeaderConst("Content-Length") => {
-                const content_length = std.fmt.parseInt(@TypeOf(this.state.body_size), header.value, 10) catch 0;
-                this.state.body_size = content_length;
+                const content_length = std.fmt.parseInt(usize, header.value, 10) catch 0;
+                if (this.method.hasBody()) {
+                    this.state.content_length = content_length;
+                } else {
+                    // ignore body size for HEAD requests
+                    this.state.content_length = content_length;
+                }
             },
             hashHeaderConst("Content-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
@@ -2968,6 +3146,7 @@ pub fn handleResponseMetadata(
 
     // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
+    const content_length = this.state.content_length orelse 0;
     // if no body is expected we should stop processing
-    return this.method.hasBody() and (this.state.body_size > 0 or this.state.transfer_encoding == .chunked);
+    return this.method.hasBody() and (content_length > 0 or this.state.transfer_encoding == .chunked);
 }

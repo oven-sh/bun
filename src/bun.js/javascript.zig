@@ -1652,7 +1652,7 @@ pub const VirtualMachine = struct {
                     ),
                     .metadata = .{
                         // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = .stmt },
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = if (is_esm) .stmt else .require },
                     },
                 };
             };

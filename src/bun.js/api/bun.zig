@@ -3,9 +3,9 @@
 /// - Add a callback or property to the below struct
 /// - @export it in the appropriate place
 /// - Update "@begin bunObjectTable" in BunObject.cpp
+///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run "make dev"
-///
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
@@ -25,7 +25,6 @@ pub const BunObject = struct {
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const indexOfLine = Bun.indexOfLine;
     pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
-    pub const inspect = Bun.inspect;
     pub const jest = @import("../test/jest.zig").Jest.call;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
     pub const mmap = Bun.mmapFile;
@@ -63,6 +62,7 @@ pub const BunObject = struct {
     pub const cwd = Bun.getCWD;
     pub const enableANSIColors = Bun.enableANSIColors;
     pub const hash = Bun.getHashObject;
+    pub const inspect = Bun.getInspect;
     pub const main = Bun.getMain;
     pub const origin = Bun.getOrigin;
     pub const stderr = Bun.getStderr;
@@ -107,6 +107,7 @@ pub const BunObject = struct {
         @export(BunObject.cwd, .{ .name = getterName("cwd") });
         @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
         @export(BunObject.hash, .{ .name = getterName("hash") });
+        @export(BunObject.inspect, .{ .name = getterName("inspect") });
         @export(BunObject.main, .{ .name = getterName("main") });
         @export(BunObject.origin, .{ .name = getterName("origin") });
         @export(BunObject.stderr, .{ .name = getterName("stderr") });
@@ -132,7 +133,6 @@ pub const BunObject = struct {
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
-        @export(BunObject.inspect, .{ .name = callbackName("inspect") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
@@ -463,6 +463,13 @@ pub fn inspect(
     const ret = out.toValueGC(globalThis);
     array.deinit();
     return ret;
+}
+
+pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) callconv(.C) JSC.JSValue {
+    const fun = JSC.createCallback(globalObject, ZigString.static("inspect"), 2, &inspect);
+    var str = ZigString.init("nodejs.util.inspect.custom");
+    fun.put(globalObject, ZigString.static("custom"), JSC.JSValue.symbolFor(globalObject, &str));
+    return fun;
 }
 
 pub fn registerMacro(

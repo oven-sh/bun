@@ -996,6 +996,9 @@ function* emitKeys(stream) {
       // Escape sequence timeout
       keyName = ch.length ? undefined : "escape";
       keyMeta = true;
+    } else {
+      // Otherwise, unhandled
+      keyName = undefined;
     }
 
     keySeq = s;
@@ -1605,11 +1608,12 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kSetRawMode](flag) {
-    const mode = flag ? 1 : 0;
+    const mode = flag + 0;
     const wasInRawMode = this.input.isRaw;
 
-    if (typeof this.input.setRawMode === "function") {
-      this.input.setRawMode(mode);
+    var setRawMode = this.input.setRawMode;
+    if (typeof setRawMode === "function") {
+      setRawMode.call(this.input, mode);
     }
 
     return wasInRawMode;

@@ -602,9 +602,9 @@ interface Process {
   getgroups: () => number[];
   // setgroups?: (groups: ReadonlyArray<string | number>) => void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Duplex & { isTTY: boolean };
-  stdout: import("stream").Writable & { isTTY: boolean };
-  stderr: import("stream").Writable & { isTTY: boolean };
+  stdin: import("tty").ReadStream;
+  stdout: import("tty").WriteStream;
+  stderr: import("tty").WriteStream;
 
   /**
    *
@@ -739,11 +739,10 @@ interface BlobInterface {
 
 type BlobPart = string | Blob | BufferSource;
 interface BlobPropertyBag {
-  /** Set a default "type" */
-  type?: string;
-
+  /** Set a default "type". Not yet implemented. */
+  // type?: string;
   /** Not implemented in Bun yet. */
-  endings?: "transparent" | "native";
+  // endings?: "transparent" | "native";
 }
 
 /**

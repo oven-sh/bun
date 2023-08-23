@@ -866,12 +866,14 @@ pub const Encoder = struct {
                 }
 
                 var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer str.deref();
+
                 strings.copyLatin1IntoASCII(@constCast(str.latin1()), input);
                 return str.toJS(global);
             },
             .latin1 => {
                 var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
-
+                defer str.deref();
                 @memcpy(@constCast(str.latin1()), input_ptr[0..len]);
 
                 return str.toJS(global);
@@ -901,6 +903,8 @@ pub const Encoder = struct {
 
             .hex => {
                 var str = bun.String.createUninitialized(.latin1, len * 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer str.deref();
+
                 var output = @constCast(str.latin1());
                 const wrote = strings.encodeBytesToHex(output, input);
                 std.debug.assert(wrote == output.len);

@@ -4357,6 +4357,28 @@ pub const JSResolveMessage = struct {
         return ResolveMessage__fromJS(value);
     }
 
+    extern fn ResolveMessagePrototype__codeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__codeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.code` setter
+    /// This value will be visited by the garbage collector.
+    pub fn codeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__codeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.code` getter
+    /// This value will be visited by the garbage collector.
+    pub fn codeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__codeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ResolveMessagePrototype__importKindSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn ResolveMessagePrototype__importKindGetCachedValue(JSC.JSValue) JSC.JSValue;
@@ -4538,6 +4560,9 @@ pub const JSResolveMessage = struct {
 
         if (@TypeOf(ResolveMessage.toPrimitive) != CallbackType)
             @compileLog("Expected ResolveMessage.toPrimitive to be a callback but received " ++ @typeName(@TypeOf(ResolveMessage.toPrimitive)));
+        if (@TypeOf(ResolveMessage.getCode) != GetterType)
+            @compileLog("Expected ResolveMessage.getCode to be a getter");
+
         if (@TypeOf(ResolveMessage.getImportKind) != GetterType)
             @compileLog("Expected ResolveMessage.getImportKind to be a getter");
 
@@ -4563,6 +4588,7 @@ pub const JSResolveMessage = struct {
         if (!JSC.is_bindgen) {
             @export(ResolveMessage.constructor, .{ .name = "ResolveMessageClass__construct" });
             @export(ResolveMessage.finalize, .{ .name = "ResolveMessageClass__finalize" });
+            @export(ResolveMessage.getCode, .{ .name = "ResolveMessagePrototype__getCode" });
             @export(ResolveMessage.getImportKind, .{ .name = "ResolveMessagePrototype__getImportKind" });
             @export(ResolveMessage.getLevel, .{ .name = "ResolveMessagePrototype__getLevel" });
             @export(ResolveMessage.getMessage, .{ .name = "ResolveMessagePrototype__getMessage" });

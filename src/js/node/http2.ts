@@ -276,9 +276,11 @@ const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 function Http2ServerRequest() {
   throwNotImplemented("node:http2 Http2ServerRequest", 887);
 }
+Http2ServerRequest.prototype = {};
 function Http2ServerResponse() {
   throwNotImplemented("node:http2 Http2ServerResponse", 887);
 }
+Http2ServerResponse.prototype = {};
 
 export default {
   constants,

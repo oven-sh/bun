@@ -1033,7 +1033,6 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    ${values}
     ${
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
@@ -1041,8 +1040,7 @@ visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
 }`
         : ""
     }
-${DEFINE_VISIT_CHILDREN_LIST}
-${hasPendingActivity ? `visitor.addOpaqueRoot(thisObject->wrapped());` : ""}
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(${name});

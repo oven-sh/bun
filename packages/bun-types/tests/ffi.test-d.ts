@@ -146,4 +146,4 @@ const lib2 = dlopen(path, as_const_test);
 tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
 tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
 tc.assert<tc.IsExact<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, void>>;
-tc.assert<tc.IsExact<(typeof lib2)["symbols"]["no_args"], []>>
+tc.assert<tc.IsExact<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>>

@@ -7,6 +7,8 @@
     "target": "esnext",
     "moduleResolution": "nodenext",
     "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
+    "composite": true,
     "strict": true,
     "noImplicitAny": false,
     "allowJs": true,

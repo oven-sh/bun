@@ -78,6 +78,8 @@ These are the recommended `compilerOptions` for a Bun project.
     "moduleResolution": "bundler",
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
+    "composite": true,
     "moduleDetection": "force",
     // if TS 4.x or earlier
     "moduleResolution": "nodenext",

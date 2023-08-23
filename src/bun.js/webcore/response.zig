@@ -704,7 +704,9 @@ pub const Fetch = struct {
             this.request_headers.entries.deinit(bun.default_allocator);
             this.request_headers.buf.deinit(bun.default_allocator);
             this.request_headers = Headers{ .allocator = undefined };
-            this.http.?.clearData();
+            if (this.http != null) {
+                this.http.?.clearData();
+            }
 
             if (this.metadata != null) {
                 this.metadata.?.deinit();
@@ -849,7 +851,6 @@ pub const Fetch = struct {
 
             var ref = this.promise;
             const promise_value = ref.value();
-          
 
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();

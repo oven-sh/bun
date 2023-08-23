@@ -123,7 +123,6 @@ bun upgrade --canary
   - [HTMLRewriter](https://bun.sh/docs/api/html-rewriter)
   - [Testing](https://bun.sh/docs/api/test)
   - [Utils](https://bun.sh/docs/api/utils)
-  - [DNS](https://bun.sh/docs/api/dns)
   - [Node-API](https://bun.sh/docs/api/node-api)
 
 ## Contributing

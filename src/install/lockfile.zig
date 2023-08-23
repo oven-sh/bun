@@ -81,6 +81,7 @@ const PackageNameHash = Install.PackageNameHash;
 const Resolution = @import("./resolution.zig").Resolution;
 const Crypto = @import("../sha.zig").Hashers;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
 
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
@@ -105,9 +106,11 @@ allocator: Allocator,
 scratch: Scratch = .{},
 
 scripts: Scripts = .{},
-trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
+
+has_trusted_dependencies: bool = false,
+trusted_dependencies: NameHashSet = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -3379,6 +3382,7 @@ pub const Package = extern struct {
                             };
                             lockfile.trusted_dependencies.putAssumeCapacity(@as(u32, @truncate(String.Builder.stringHash(name))), {});
                         }
+                        lockfile.has_trusted_dependencies = true;
                     },
                     else => {
                         log.addErrorFmt(&source, q.loc, allocator,
@@ -4280,4 +4284,41 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     }
 
     return null;
+}
+
+/// The default list of trusted dependencies is a static hashmap
+const default_trusted_dependencies = brk: {
+    const max_values = 512;
+
+    var map: StaticHashMap([]const u8, u0, std.hash_map.StringContext, max_values) = .{};
+
+    // This file contains a list of dependencies that Bun runs `postinstall` on by default.
+    const data = @embedFile("./default-trusted-dependencies.txt");
+    comptime var line_start = 0;
+    comptime var i = 0;
+    @setEvalBranchQuota(123456);
+    while (i < data.len) {
+        while (i < data.len) : (i += 1) {
+            if (data[i] == '\n' or data[i] == '\r') break;
+        }
+        const line_slice = data[line_start..i];
+        i += 1;
+        if (line_slice.len == 0) break;
+        if (map.len == max_values) {
+            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");
+        }
+        line_start = i;
+        map.putAssumeCapacity(line_slice, 0);
+    }
+
+    break :brk &map;
+};
+
+pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+    if (this.has_trusted_dependencies) {
+        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+        return this.trusted_dependencies.contains(hash);
+    } else {
+        return default_trusted_dependencies.has(name);
+    }
 }

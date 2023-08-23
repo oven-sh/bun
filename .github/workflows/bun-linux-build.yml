@@ -198,9 +198,9 @@ jobs:
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           sudo apt-get update && sudo apt-get install -y openssl
-          bun install --verbose
-          bun install --cwd test --verbose
-          bun install --cwd packages/bun-internal-test --verbose
+          bun install
+          bun install --cwd test
+          bun install --cwd packages/bun-internal-test
           node packages/bun-internal-test/src/runner.node.mjs || true
       - name: Comment on PR
         if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'

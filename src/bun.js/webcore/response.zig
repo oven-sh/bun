@@ -731,9 +731,13 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
+            this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             defer {
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
+
                 if (!success or !this.result.has_more) {
                     var vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
@@ -837,14 +841,13 @@ pub const Fetch = struct {
 
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
+            if (this.is_waiting_body) {
+                return this.onBodyReceived();
+            }
             this.mutex.lock();
             defer {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
-            }
-
-            if (this.is_waiting_body) {
-                return this.onBodyReceived();
             }
             const globalThis = this.global_this;
 

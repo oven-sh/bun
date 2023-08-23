@@ -380,7 +380,7 @@ declare module "bun:ffi" {
     [FFIType.cstring]: TypedArray | Pointer | CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
-    [FFIType.function]: Pointer;
+    [FFIType.function]: Pointer | JSCallback;
   }
   interface FFITypeToReturnsType {
     [FFIType.char]: number;

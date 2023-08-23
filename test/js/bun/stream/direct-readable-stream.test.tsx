@@ -229,12 +229,17 @@ describe("ReactDOM", () => {
               server = serve({
                 port: 0,
                 async fetch(req) {
-                  return new Response(await renderToReadableStream(reactElement));
+                  return new Response(await renderToReadableStream(reactElement), {
+                    headers: {
+                      "X-React": "1",
+                    },
+                  });
                 },
               });
               const response = await fetch("http://localhost:" + server.port + "/");
               const result = await response.text();
               expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+              expect(response.headers.get("X-React")).toBe("1");
             } finally {
               server?.stop(true);
             }

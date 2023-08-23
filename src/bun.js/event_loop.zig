@@ -528,6 +528,49 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn drainMicrotasksWithVM(this: *EventLoop, vm: *JSC.VM) void {
+        vm.drainMicrotasks();
+        this.drainDeferredTasks();
+    }
+
+    pub fn drainMicrotasks(this: *EventLoop) void {
+        this.drainMicrotasksWithVM(this.global.vm());
+    }
+
+    pub fn ensureAliveForOneTick(this: *EventLoop) void {
+        if (this.noop_task.scheduled) return;
+        this.enqueueTask(Task.init(&this.noop_task));
+        this.noop_task.scheduled = true;
+    }
+
+    pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
+        const existing = this.deferred_microtask_map.getOrPutValue(this.virtual_machine.allocator, ctx, task) catch unreachable;
+        return existing.found_existing;
+    }
+
+    pub fn unregisterDeferredTask(this: *EventLoop, ctx: ?*anyopaque) bool {
+        return this.deferred_microtask_map.swapRemove(ctx);
+    }
+
+    fn drainDeferredTasks(this: *EventLoop) void {
+        var i: usize = 0;
+        var last = this.deferred_microtask_map.count();
+        while (i < last) {
+            var key = this.deferred_microtask_map.keys()[i] orelse {
+                this.deferred_microtask_map.swapRemoveAt(i);
+                last = this.deferred_microtask_map.count();
+                continue;
+            };
+
+            if (!this.deferred_microtask_map.values()[i](key)) {
+                this.deferred_microtask_map.swapRemoveAt(i);
+                last = this.deferred_microtask_map.count();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;
         var global_vm = global.vm();
@@ -621,7 +664,7 @@ pub const EventLoop = struct {
             }
 
             global_vm.releaseWeakRefs();
-            global_vm.drainMicrotasks();
+            this.drainMicrotasksWithVM(global_vm);
         }
 
         this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
@@ -758,7 +801,7 @@ pub const EventLoop = struct {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();
-                global_vm.drainMicrotasks();
+                this.drainMicrotasksWithVM(global_vm);
                 this.tickConcurrent();
                 if (this.tasks.count > 0) continue;
             }

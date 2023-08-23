@@ -1742,6 +1742,10 @@ pub const VirtualMachine = struct {
         ret.success = true;
     }
 
+    pub fn drainMicrotasks(this: *VirtualMachine) void {
+        this.eventLoop().drainMicrotasks();
+    }
+
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {

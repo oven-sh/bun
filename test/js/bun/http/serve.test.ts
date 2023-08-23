@@ -227,6 +227,7 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("FAIL");
                 },
+                cancel(reason) {},
               }),
             );
           },
@@ -242,34 +243,62 @@ describe("streaming", () => {
       );
     });
 
-    it("throw on pull after writing should not call the error handler", async () => {
-      var pass = true;
-      await runTest(
-        {
-          error(e) {
-            pass = false;
-            return new Response("FAIL", { status: 555 });
-          },
-          fetch(req) {
-            return new Response(
-              new ReadableStream({
+    describe("throw on pull after writing should not call the error handler", () => {
+      async function execute(options: ResponseInit) {
+        var pass = true;
+        await runTest(
+          {
+            error(e) {
+              pass = false;
+              return new Response("FAIL", { status: 555 });
+            },
+            fetch(req) {
+              const stream = new ReadableStream({
                 async pull(controller) {
                   controller.enqueue("PASS");
                   controller.close();
-                  throw new Error("error");
+                  throw new Error("FAIL");
                 },
-              }),
-            );
+              });
+              return new Response(stream, options);
+            },
           },
-        },
-        async server => {
-          const response = await fetch(`http://${server.hostname}:${server.port}`);
-          // connection terminated
-          expect(response.status).toBe(200);
-          expect(await response.text()).toBe("PASS");
-          expect(pass).toBe(true);
-        },
-      );
+          async server => {
+            const response = await fetch(`http://${server.hostname}:${server.port}`);
+            // connection terminated
+            expect(await response.text()).toBe("");
+            expect(response.status).toBe(options.status ?? 200);
+            expect(pass).toBe(true);
+          },
+        );
+      }
+
+      it("with headers", async () => {
+        await execute({
+          headers: {
+            "X-A": "123",
+          },
+        });
+      });
+
+      it("with headers and status", async () => {
+        await execute({
+          status: 204,
+          headers: {
+            "X-A": "123",
+          },
+        });
+      });
+
+      it("with status", async () => {
+        await execute({
+          status: 204,
+        });
+      });
+
+      it("with empty object", async () => {
+        await execute({});
+      });
     });
   });
 

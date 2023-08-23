@@ -587,7 +587,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -600,7 +600,7 @@ pub const Request = struct {
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = str;
+                    req.url = str.dupeRef();
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }

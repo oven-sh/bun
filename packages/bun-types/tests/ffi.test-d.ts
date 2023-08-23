@@ -151,3 +151,14 @@ tc.assert<tc.IsExact<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>>;
 
 tsd.expectType<number>(read.u8(0));
 tsd.expectType<number>(read.u8(0, 0));
+tsd.expectType<number>(read.i8(0, 0));
+tsd.expectType<number>(read.u16(0, 0));
+tsd.expectType<number>(read.i16(0, 0));
+tsd.expectType<number>(read.u32(0, 0));
+tsd.expectType<number>(read.i32(0, 0));
+tsd.expectType<bigint>(read.u64(0, 0));
+tsd.expectType<bigint>(read.i64(0, 0));
+tsd.expectType<number>(read.f32(0, 0));
+tsd.expectType<number>(read.f64(0, 0));
+tsd.expectType<number>(read.ptr(0, 0));
+tsd.expectType<number>(read.intptr(0, 0));

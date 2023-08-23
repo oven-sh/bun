@@ -5,6 +5,7 @@ import {
   CString,
   Pointer,
   JSCallback,
+  read,
   // FFIFunction,
   // ConvertFns,
   // Narrow,
@@ -138,7 +139,7 @@ const as_const_test = {
   },
   no_args: {
     returns: FFIType.i32,
-  }
+  },
 } as const;
 
 const lib2 = dlopen(path, as_const_test);
@@ -146,4 +147,7 @@ const lib2 = dlopen(path, as_const_test);
 tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
 tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
 tc.assert<tc.IsExact<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, void>>;
-tc.assert<tc.IsExact<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>>
+tc.assert<tc.IsExact<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>>;
+
+tsd.expectType<number>(read.u8(0));
+tsd.expectType<number>(read.u8(0, 0));

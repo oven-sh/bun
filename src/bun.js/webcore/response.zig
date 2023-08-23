@@ -706,6 +706,7 @@ pub const Fetch = struct {
             this.request_headers = Headers{ .allocator = undefined };
             if (this.http != null) {
                 this.http.?.clearData();
+                this.http = null;
             }
 
             if (this.metadata != null) {
@@ -918,6 +919,15 @@ pub const Fetch = struct {
                 return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
+            var path: bun.String = undefined;
+            if (this.metadata) |metadata| {
+                path = bun.String.create(metadata.href);
+            } else if (this.http) |http| {
+                path = bun.String.create(http.url.href);
+            } else {
+                path = bun.String.empty;
+            }
+
             const fetch_error = JSC.SystemError{
                 .code = bun.String.static(@errorName(this.result.fail)),
                 .message = switch (this.result.fail) {
@@ -927,7 +937,7 @@ pub const Fetch = struct {
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
                     else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
-                .path = bun.String.create(this.http.?.url.href),
+                .path = path,
             };
 
             return fetch_error.toErrorInstance(this.global_this);

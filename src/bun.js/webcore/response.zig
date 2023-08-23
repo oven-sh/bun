@@ -845,10 +845,6 @@ pub const Fetch = struct {
                 return this.onBodyReceived();
             }
             this.mutex.lock();
-            defer {
-                this.has_schedule_callback.store(false, .Monotonic);
-                this.mutex.unlock();
-            }
             const globalThis = this.global_this;
 
             var ref = this.promise;
@@ -859,24 +855,28 @@ pub const Fetch = struct {
             var vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
                 poll_ref.unref(vm);
                 this.clearData();
                 this.deinit();
                 return;
             }
 
+            const promise = promise_value.asAnyPromise().?;
+            const tracker = this.tracker;
+            tracker.willDispatch(globalThis);
             defer {
+                tracker.didDispatch(globalThis);
+
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
                 }
             }
-
-            const promise = promise_value.asAnyPromise().?;
-            const tracker = this.tracker;
-            tracker.willDispatch(globalThis);
-            defer tracker.didDispatch(globalThis);
             const success = this.result.isSuccess();
             const result = switch (success) {
                 true => this.onResolve(),

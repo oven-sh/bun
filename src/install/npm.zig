@@ -847,7 +847,7 @@ pub const PackageManifest = struct {
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
 
-                    if (strings.indexOfChar(version_name, '-') != null) {
+                    if (Semver.Version.stringHasPrereleaseTag(version_name)) {
                         pre_versions_len += 1;
                         extern_string_count += 1;
                     } else {

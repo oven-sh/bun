@@ -1151,6 +1151,37 @@ pub const Version = extern struct {
 
         return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch 0;
     }
+
+    /// Without doing a full semver parse, will this string parse to contain a pre-release tag?
+    /// Does not check for a valid semver, return value is only valid if the input is a valid semver.
+    ///
+    /// This is used by PackageManifest.parse() to classify strings, and determines how
+    /// much memory to allocate for package version entries in two lists.
+    ///
+    /// If all npm packages were strict semvers, this test would only do "contains('-')", but some
+    /// packages expect a version like "1.0.0rc7" which wouldn't work here. A mismatch between this
+    /// pre-prediction function and the actual semver parser will end up causing a segfault due to
+    /// incorrect memory allocation later on.
+    ///
+    /// Strings that contain a pre-release tag:
+    ///     "1.0.0-hello" (there is a dash)
+    ///     "1.0.0-0" (there is a dash)
+    ///     "3.7.5rc" (there is letters A-Z or a-z)
+    /// Strings that do not contain a pre-release tag:
+    ///     "1.0.0" (no dash or letters)
+    ///     "1.0.0+hello" (a plus is a post-release)
+    pub fn stringHasPrereleaseTag(input: []const u8) bool {
+        var i: usize = 0;
+        while (i < input.len) {
+            switch (input[i]) {
+                '-', 'A'...'Z', 'a'...'z' => return true,
+                '+' => return false,
+                else => {},
+            }
+            i += 1;
+        }
+        return false;
+    }
 };
 
 pub const Range = struct {

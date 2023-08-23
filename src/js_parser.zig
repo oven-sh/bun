@@ -11325,7 +11325,7 @@ fn NewParser_(
 
             var value: ?ExprNodeIndex = null;
             switch (p.lexer.token) {
-                .t_close_brace, .t_close_paren, .t_colon, .t_comma, .t_semicolon => {},
+                .t_close_brace, .t_close_paren, .t_close_bracket, .t_colon, .t_comma, .t_semicolon => {},
                 else => {
                     if (isStar or !p.lexer.has_newline_before) {
                         value = try p.parseExpr(.yield);

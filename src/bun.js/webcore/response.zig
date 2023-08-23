@@ -850,6 +850,7 @@ pub const Fetch = struct {
             var ref = this.promise;
             const promise_value = ref.value();
           
+
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
 
@@ -868,7 +869,7 @@ pub const Fetch = struct {
             tracker.willDispatch(globalThis);
             defer {
                 tracker.didDispatch(globalThis);
-
+                ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {

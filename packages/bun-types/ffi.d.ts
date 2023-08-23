@@ -477,7 +477,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    args?: FFITypeOrString[];
+    readonly args?: readonly FFITypeOrString[];
     /**
      * Return type to a FFI function (C ABI)
      *
@@ -505,7 +505,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    returns?: FFITypeOrString;
+    readonly returns?: FFITypeOrString;
 
     /**
      * Function pointer to the native function
@@ -516,7 +516,7 @@ declare module "bun:ffi" {
      * This is useful if the library has already been loaded
      * or if the module is also using Node-API.
      */
-    ptr?: number | bigint;
+    readonly ptr?: number | bigint;
 
     /**
      * Can C/FFI code call this function from a separate thread?
@@ -533,10 +533,10 @@ declare module "bun:ffi" {
      *
      * @default false
      */
-    threadsafe?: boolean;
+    readonly threadsafe?: boolean;
   }
 
-  type Symbols = Record<string, FFIFunction>;
+  type Symbols = Readonly<Record<string, FFIFunction>>;
 
   // /**
   //  * Compile a callback function
@@ -546,7 +546,7 @@ declare module "bun:ffi" {
   //  */
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
-  export interface Library<Fns extends Record<string, Narrow<FFIFunction>>> {
+  export interface Library<Fns extends Readonly<Record<string, Narrow<FFIFunction>>>> {
     symbols: ConvertFns<Fns>;
 
     /**
@@ -577,7 +577,7 @@ declare module "bun:ffi" {
     | (T extends object ? { [K in keyof T]: Narrow<T[K]> } : never)
     | Extract<{} | null | undefined, T>;
 
-  type ConvertFns<Fns extends Record<string, FFIFunction>> = {
+  type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToType[ToFFIType<A[L]>] }

@@ -34,6 +34,104 @@ test("uploads roundtrip", async () => {
   server.stop(true);
 });
 
+// https://github.com/oven-sh/bun/issues/3969
+test("formData uploads roundtrip, with a call to .body", async () => {
+  const file = Bun.file(import.meta.dir + "/fetch.js.txt");
+  const body = new FormData();
+  body.append("file", file, "fetch.js.txt");
+
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      req.body;
+
+      return new Response(await req.formData());
+    },
+  });
+
+  // @ts-ignore
+  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    body,
+    method: "POST",
+  });
+  const res = await fetch(reqBody);
+  expect(res.status).toBe(200);
+
+  // but it does for Response
+  expect(res.headers.get("Content-Type")).toStartWith("multipart/form-data; boundary=");
+  res.body;
+  const resData = await res.formData();
+  expect(await (resData.get("file") as Blob).arrayBuffer()).toEqual(await file.arrayBuffer());
+
+  server.stop(true);
+});
+
+test("req.formData throws error when stream is in use", async () => {
+  const file = Bun.file(import.meta.dir + "/fetch.js.txt");
+  const body = new FormData();
+  body.append("file", file, "fetch.js.txt");
+  var pass = false;
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    error(fail) {
+      pass = true;
+      if (fail.toString().includes("is already used")) {
+        return new Response("pass");
+      }
+      return new Response("fail");
+    },
+    async fetch(req) {
+      var reader = req.body?.getReader();
+      await reader?.read();
+      await req.formData();
+      throw new Error("should not reach here");
+    },
+  });
+
+  // @ts-ignore
+  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    body,
+    method: "POST",
+  });
+  const res = await fetch(reqBody);
+  expect(res.status).toBe(200);
+
+  // but it does for Response
+  expect(await res.text()).toBe("pass");
+  server.stop(true);
+});
+
+test("formData uploads roundtrip, without a call to .body", async () => {
+  const file = Bun.file(import.meta.dir + "/fetch.js.txt");
+  const body = new FormData();
+  body.append("file", file, "fetch.js.txt");
+
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      return new Response(await req.formData());
+    },
+  });
+
+  // @ts-ignore
+  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+    body,
+    method: "POST",
+  });
+  const res = await fetch(reqBody);
+  expect(res.status).toBe(200);
+
+  // but it does for Response
+  expect(res.headers.get("Content-Type")).toStartWith("multipart/form-data; boundary=");
+  const resData = await res.formData();
+  expect(await (resData.get("file") as Blob).arrayBuffer()).toEqual(await file.arrayBuffer());
+
+  server.stop(true);
+});
+
 test("uploads roundtrip with sendfile()", async () => {
   var hugeTxt = "huge".repeat(1024 * 1024 * 32);
   const path = join(tmpdir(), "huge.txt");

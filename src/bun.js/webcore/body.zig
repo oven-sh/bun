@@ -249,10 +249,7 @@ pub const Body = struct {
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
 
-            if (value.readable) |readable| {
-                // switch (readable.ptr) {
-                //     .JavaScript
-                // }
+            if (value.readable) |readable| handle_stream: {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
@@ -261,6 +258,20 @@ pub const Body = struct {
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
                             .getFormData => |form_data| brk: {
+                                if (value.onStartBuffering != null) {
+                                    if (readable.isDisturbed(globalThis)) {
+                                        form_data.?.deinit();
+                                        readable.value.unprotect();
+                                        value.readable = null;
+                                        value.action = .{ .none = {} };
+                                        return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
+                                    } else {
+                                        readable.detach(globalThis);
+                                        value.readable = null;
+                                    }
+
+                                    break :handle_stream;
+                                }
                                 defer {
                                     form_data.?.deinit();
                                     value.action.getFormData = null;

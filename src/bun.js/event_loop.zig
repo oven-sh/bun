@@ -545,8 +545,7 @@ pub const EventLoop = struct {
                 },
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
-                    fetch_task.onDone();
-                    fetch_task.deinit();
+                    fetch_task.onProgressUpdate();
                 },
                 @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                     var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;

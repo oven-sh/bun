@@ -86,7 +86,7 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
   server.stop();
 });
 
-it("fetch() with a gzip response works (one chunk, streamed, with a delay", async () => {
+it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
   var server = Bun.serve({
     port: 0,
 
@@ -121,7 +121,7 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay", asyn
   server.stop();
 });
 
-it("fetch() with a gzip response works (multiple chunks, TCP server", async done => {
+it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
   const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
   var socketToClose!: Socket;
   const server = Bun.listen({

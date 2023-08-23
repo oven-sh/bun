@@ -952,4 +952,20 @@ describe("bundler", () => {
       stdout: "pass",
     },
   });
+  itBundled("edgecase/YieldKeyword", {
+    files: {
+      "/entry.js": /* js */ `
+        function* foo() {
+          yield 1;
+          [yield];
+          yield yield yield;
+          [yield * 2];
+          [yield (yield)];
+          { x: yield };
+          (yield).hello
+          yield+1
+        }
+      `,
+    },
+  });
 });

@@ -88,7 +88,12 @@ pub const Blob = struct {
     /// When UTF-16, they're nearly always due to non-ascii characters
     is_all_ascii: ?bool = null,
 
+    /// Was it created via file constructor?
+    is_jsdom_file: bool = false,
+
     globalThis: *JSGlobalObject = undefined,
+
+    last_modified: f64 = 0.0,
 
     /// Max int of double precision
     /// 9 petabytes is probably enough for awhile
@@ -478,6 +483,22 @@ pub const Blob = struct {
         return Blob__dupe(this);
     }
 
+    export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) *Blob {
+        this.is_jsdom_file = true;
+
+        // This is not 100% correct...
+        if (this.store) |store| {
+            if (store.data == .bytes) {
+                if (store.data.bytes.stored_name.len == 0) {
+                    var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable;
+                    store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
+                }
+            }
+        }
+
+        return this;
+    }
+
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
         var new = bun.default_allocator.create(Blob) catch unreachable;
@@ -494,6 +515,7 @@ pub const Blob = struct {
         _ = Blob__dupeFromJS;
         _ = Blob__destroy;
         _ = Blob__dupe;
+        _ = Blob__setAsFile;
     }
 
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -1123,7 +1145,102 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
-    pub fn constructFile(
+    pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+        JSC.markBinding(@src());
+        var blob = value.as(Blob) orelse return false;
+        return blob.is_jsdom_file;
+    }
+
+    pub export fn JSDOMFile__construct(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Blob {
+        JSC.markBinding(@src());
+        var allocator = bun.default_allocator;
+        var blob: Blob = undefined;
+        var arguments = callframe.arguments(3);
+        var args = arguments.ptr[0..arguments.len];
+
+        if (args.len < 2) {
+            globalThis.throwInvalidArguments("new File(bits, name) expects at least 2 arguments", .{});
+            return null;
+        }
+
+        const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
+            globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
+            return null;
+        };
+
+        blob = get(globalThis, args[0], false, true) catch |err| {
+            if (err == error.InvalidArguments) {
+                globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                return null;
+            }
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+
+        if (blob.store) |store_| {
+            store_.data.bytes.stored_name = bun.PathString.init(
+                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+            );
+        }
+
+        if (args.len > 2) {
+            const options = args[2];
+            if (options.isObject()) {
+                // type, the ASCII-encoded string in lower case
+                // representing the media type of the Blob.
+                // Normative conditions for this member are provided
+                // in the § 3.1 Constructors.
+                if (options.get(globalThis, "type")) |content_type| {
+                    inner: {
+                        if (content_type.isString()) {
+                            var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                            defer content_type_str.deinit();
+                            var slice = content_type_str.slice();
+                            if (!strings.isAllASCII(slice)) {
+                                break :inner;
+                            }
+                            blob.content_type_was_set = true;
+
+                            if (globalThis.bunVM().mimeType(slice)) |mime| {
+                                blob.content_type = mime.value;
+                                break :inner;
+                            }
+                            var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                            blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                            blob.content_type_allocated = true;
+                        }
+                    }
+                }
+
+                if (options.getTruthy(globalThis, "lastModified")) |last_modified| {
+                    blob.last_modified = last_modified.coerce(f64, globalThis);
+                }
+            }
+        }
+
+        if (blob.content_type.len == 0) {
+            blob.content_type = "";
+            blob.content_type_was_set = false;
+        }
+
+        var blob_ = allocator.create(Blob) catch unreachable;
+        blob_.* = blob;
+        blob_.allocator = allocator;
+        blob_.is_jsdom_file = true;
+        return blob_;
+    }
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            _ = JSDOMFile__hasInstance;
+            _ = JSDOMFile__construct;
+        }
+    }
+
+    pub fn constructBunFile(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
@@ -2484,7 +2601,7 @@ pub const Blob = struct {
         cap: SizeType = 0,
         allocator: std.mem.Allocator,
 
-        /// Used by standalone module graph
+        /// Used by standalone module graph and the File constructor
         stored_name: bun.PathString = bun.PathString.empty,
 
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
@@ -2505,6 +2622,7 @@ pub const Blob = struct {
         }
 
         pub fn deinit(this: *ByteStore) void {
+            bun.default_allocator.free(this.stored_name.slice());
             this.allocator.free(this.ptr[0..this.cap]);
         }
 
@@ -2909,6 +3027,10 @@ pub const Blob = struct {
                 }
                 return JSValue.jsNumber(store.data.file.last_modified);
             }
+        }
+
+        if (this.is_jsdom_file) {
+            return JSValue.jsNumber(this.last_modified);
         }
 
         return JSValue.jsNumber(init_timestamp);
@@ -3672,6 +3794,10 @@ pub const Blob = struct {
                         } else {
                             return build.blob.dupe();
                         }
+                    } else if (current.toSliceClone(global)) |sliced| {
+                        if (sliced.allocator.get()) |allocator| {
+                            return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), allocator, global, false);
+                        }
                     }
                 },
 
@@ -3764,6 +3890,14 @@ pub const Blob = struct {
                                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                                         joiner.append(blob.sharedView(), 0, null);
                                         continue;
+                                    } else if (current.toSliceClone(global)) |sliced| {
+                                        const allocator = sliced.allocator.get();
+                                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                        joiner.append(
+                                            sliced.slice(),
+                                            0,
+                                            allocator,
+                                        );
                                     }
                                 },
                                 else => {},
@@ -3778,6 +3912,14 @@ pub const Blob = struct {
                     if (current.as(Blob)) |blob| {
                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                         joiner.append(blob.sharedView(), 0, null);
+                    } else if (current.toSliceClone(global)) |sliced| {
+                        const allocator = sliced.allocator.get();
+                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                        joiner.append(
+                            sliced.slice(),
+                            0,
+                            allocator,
+                        );
                     }
                 },
 

@@ -501,6 +501,7 @@ pub const Options = struct {
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
     transform_only: bool = false,
+    inline_require_and_import_errors: bool = true,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
@@ -1827,7 +1828,7 @@ fn NewPrinter(
             if (record.kind != .dynamic) {
                 p.printSpaceBeforeIdentifier();
 
-                if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                if (record.path.is_disabled and record.handles_import_errors and !is_external and p.options.inline_require_and_import_errors) {
                     p.printRequireError(record.path.text);
                     return;
                 }

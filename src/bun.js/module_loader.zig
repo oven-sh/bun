@@ -403,7 +403,7 @@ pub const RuntimeTranspilerStore = struct {
                     vm.main.len == path.text.len and
                     vm.main_hash == hash and
                     strings.eqlLong(vm.main, path.text, false),
-                .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, false),
+                .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, true),
             };
 
             defer {

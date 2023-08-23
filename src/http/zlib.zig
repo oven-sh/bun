@@ -11,7 +11,6 @@ fn initMutableString(allocator: std.mem.Allocator) anyerror!MutableString {
 }
 
 const BufferPool = bun.ObjectPool(MutableString, initMutableString, false, 4);
-
 pub fn get(allocator: std.mem.Allocator) *MutableString {
     return &BufferPool.get(allocator).data;
 }

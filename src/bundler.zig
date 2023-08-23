@@ -1126,6 +1126,7 @@ pub const Bundler = struct {
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
                         .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .inline_require_and_import_errors = false,
                     },
                     enable_source_map,
                 ),

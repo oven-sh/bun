@@ -1,4 +1,5 @@
 import { it, expect, describe } from "bun:test";
+import util from "util";
 
 it("getters", () => {
   const obj = {
@@ -356,4 +357,8 @@ it("new Date(..)", () => {
   expect(Bun.inspect(new Date("1679911059000"))).toBe("Invalid Date");
   expect(Bun.inspect(new Date("hello world"))).toBe("Invalid Date");
   expect(Bun.inspect(new Date("Invalid Date"))).toBe("Invalid Date");
+});
+
+it("Bun.inspect.custom exists", () => {
+  expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });

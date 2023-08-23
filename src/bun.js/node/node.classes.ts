@@ -200,7 +200,7 @@ export default [
   }),
   define({
     name: "BigIntStats",
-    construct: false,
+    construct: true,
     finalize: true,
     klass: {},
     JSType: "0b11101110",

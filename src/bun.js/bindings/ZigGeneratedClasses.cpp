@@ -560,7 +560,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsConstructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<JSBigIntStatsPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for BigIntStats"_s);
     return JSValue::encode(globalObject->JSBigIntStatsConstructor());
 }
 
@@ -797,7 +797,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isBlockDeviceCallback, (JSGlobalO
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -824,7 +825,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isCharacterDeviceCallback, (JSGlo
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -851,7 +853,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isDirectoryCallback, (JSGlobalObj
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -878,7 +881,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFIFOCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -905,7 +909,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isFileCallback, (JSGlobalObject *
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -932,7 +937,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSocketCallback, (JSGlobalObject
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -959,7 +965,8 @@ JSC_DEFINE_HOST_FUNCTION(BigIntStatsPrototype__isSymbolicLinkCallback, (JSGlobal
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof BigIntStats"_s);
+        return JSValue::encode({});
     }
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1251,10 +1258,7 @@ void JSBigIntStats::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_atime);
-    visitor.append(thisObject->m_birthtime);
-    visitor.append(thisObject->m_ctime);
-    visitor.append(thisObject->m_mtime);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSBigIntStats);
@@ -1875,7 +1879,7 @@ void JSBlob::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_name);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSBlob);
@@ -2417,12 +2421,7 @@ void JSBuildArtifact::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hash);
-    visitor.append(thisObject->m_kind);
-    visitor.append(thisObject->m_loader);
-    visitor.append(thisObject->m_path);
-    visitor.append(thisObject->m_sourcemap);
-    visitor.append(thisObject->m_type);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSBuildArtifact);
@@ -2904,9 +2903,7 @@ void JSBuildMessage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_level);
-    visitor.append(thisObject->m_message);
-    visitor.append(thisObject->m_position);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSBuildMessage);
@@ -4103,8 +4100,7 @@ void JSCryptoHasher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_algorithms);
-    visitor.append(thisObject->m_algorithm);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSCryptoHasher);
@@ -4551,7 +4547,7 @@ void JSDebugHTTPSServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hostname);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDebugHTTPSServer);
@@ -4997,7 +4993,7 @@ void JSDebugHTTPServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hostname);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDebugHTTPServer);
@@ -5531,7 +5527,7 @@ void JSDirent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_name);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDirent);
@@ -5977,9 +5973,7 @@ void JSDocType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_name);
-    visitor.append(thisObject->m_publicId);
-    visitor.append(thisObject->m_systemId);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDocType);
@@ -6697,7 +6691,7 @@ void JSElement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_namespaceURI);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSElement);
@@ -9324,8 +9318,8 @@ void JSExpect::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSExpect* thisObject = jsCast<JSExpect*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_capturedValue);
-    visitor.append(thisObject->m_resultValue);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSExpect);
@@ -9493,7 +9487,8 @@ void JSExpectAny::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSExpectAny* thisObject = jsCast<JSExpectAny*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_constructorValue);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSExpectAny);
@@ -9783,7 +9778,8 @@ void JSExpectStringContaining::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSExpectStringContaining* thisObject = jsCast<JSExpectStringContaining*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stringValue);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSExpectStringContaining);
@@ -9950,7 +9946,8 @@ void JSExpectStringMatching::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSExpectStringMatching* thisObject = jsCast<JSExpectStringMatching*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_testValue);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSExpectStringMatching);
@@ -10199,7 +10196,8 @@ void JSFFI::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSFFI* thisObject = jsCast<JSFFI*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_symbolsValue);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSFFI);
@@ -10500,9 +10498,8 @@ void JSFSWatcher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSFSWatcher* thisObject = jsCast<JSFSWatcher*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_listener);
 
-    visitor.addOpaqueRoot(thisObject->wrapped());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSFSWatcher);
@@ -10947,9 +10944,7 @@ void JSFileSystemRouter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_origin);
-    visitor.append(thisObject->m_routes);
-    visitor.append(thisObject->m_style);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSFileSystemRouter);
@@ -11735,7 +11730,7 @@ void JSHTTPSServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hostname);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSHTTPSServer);
@@ -12181,7 +12176,7 @@ void JSHTTPServer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hostname);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSHTTPServer);
@@ -12596,8 +12591,7 @@ void JSListener::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_hostname);
-    visitor.append(thisObject->m_unix);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSListener);
@@ -13709,13 +13703,7 @@ void JSMatchedRoute::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_filePath);
-    visitor.append(thisObject->m_kind);
-    visitor.append(thisObject->m_name);
-    visitor.append(thisObject->m_params);
-    visitor.append(thisObject->m_pathname);
-    visitor.append(thisObject->m_query);
-    visitor.append(thisObject->m_scriptSrc);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMatchedRoute);
@@ -17353,14 +17341,10 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSRequest* thisObject = jsCast<JSRequest*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-
     if (auto* ptr = thisObject->wrapped()) {
         visitor.reportExtraMemoryVisited(Request__estimatedSize(ptr));
     }
-    visitor.append(thisObject->m_body);
-    visitor.append(thisObject->m_headers);
-    visitor.append(thisObject->m_signal);
-    visitor.append(thisObject->m_url);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSRequest);
@@ -17464,6 +17448,9 @@ extern "C" void ResolveMessageClass__finalize(void*);
 extern "C" EncodedJSValue ResolveMessagePrototype__toPrimitive(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ResolveMessagePrototype__toPrimitiveCallback);
 
+extern "C" JSC::EncodedJSValue ResolveMessagePrototype__getCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ResolveMessagePrototype__codeGetterWrap);
+
 extern "C" JSC::EncodedJSValue ResolveMessagePrototype__getImportKind(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ResolveMessagePrototype__importKindGetterWrap);
 
@@ -17491,6 +17478,7 @@ JSC_DECLARE_HOST_FUNCTION(ResolveMessagePrototype__toStringCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResolveMessagePrototype, JSResolveMessagePrototype::Base);
 
 static const HashTableValue JSResolveMessagePrototypeTableValues[] = {
+    { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__codeGetterWrap, 0 } },
     { "importKind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__importKindGetterWrap, 0 } },
     { "level"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__levelGetterWrap, 0 } },
     { "message"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__messageGetterWrap, 0 } },
@@ -17541,6 +17529,37 @@ JSC_DEFINE_HOST_FUNCTION(ResolveMessagePrototype__toPrimitiveCallback, (JSGlobal
 #endif
 
     return ResolveMessagePrototype__toPrimitive(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ResolveMessagePrototype__codeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSResolveMessage* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_code.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        ResolveMessagePrototype__getCode(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_code.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void ResolveMessagePrototype__codeSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    thisObject->m_code.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ResolveMessagePrototype__codeGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSResolveMessage*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_code.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(ResolveMessagePrototype__importKindGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -17790,7 +17809,6 @@ void JSResolveMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject*
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSResolveMessage::info(), JSResolveMessagePrototypeTableValues, *this);
     this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
-    this->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_MODULE_NOT_FOUND"_s)), PropertyAttribute::ReadOnly | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("ResolveMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -17946,12 +17964,7 @@ void JSResolveMessage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_importKind);
-    visitor.append(thisObject->m_level);
-    visitor.append(thisObject->m_message);
-    visitor.append(thisObject->m_position);
-    visitor.append(thisObject->m_referrer);
-    visitor.append(thisObject->m_specifier);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSResolveMessage);
@@ -17962,6 +17975,7 @@ void JSResolveMessage::visitAdditionalChildren(Visitor& visitor)
     JSResolveMessage* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
+    visitor.append(thisObject->m_code);
     visitor.append(thisObject->m_importKind);
     visitor.append(thisObject->m_level);
     visitor.append(thisObject->m_message);
@@ -18654,14 +18668,10 @@ void JSResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSResponse* thisObject = jsCast<JSResponse*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-
     if (auto* ptr = thisObject->wrapped()) {
         visitor.reportExtraMemoryVisited(Response__estimatedSize(ptr));
     }
-    visitor.append(thisObject->m_body);
-    visitor.append(thisObject->m_headers);
-    visitor.append(thisObject->m_statusText);
-    visitor.append(thisObject->m_url);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSResponse);
@@ -21601,8 +21611,7 @@ void JSServerWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_data);
-    visitor.append(thisObject->m_remoteAddress);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSServerWebSocket);
@@ -22573,9 +22582,7 @@ void JSStats::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_atime);
-    visitor.append(thisObject->m_ctime);
-    visitor.append(thisObject->m_mtime);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSStats);
@@ -23105,10 +23112,7 @@ void JSSubprocess::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_stderr);
-    visitor.append(thisObject->m_stdin);
-    visitor.append(thisObject->m_stdout);
-    visitor.addOpaqueRoot(thisObject->wrapped());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSSubprocess);
@@ -24220,9 +24224,7 @@ void JSTCPSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_data);
-    visitor.append(thisObject->m_remoteAddress);
-    visitor.addOpaqueRoot(thisObject->wrapped());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSTCPSocket);
@@ -25333,9 +25335,7 @@ void JSTLSSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_data);
-    visitor.append(thisObject->m_remoteAddress);
-    visitor.addOpaqueRoot(thisObject->wrapped());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSTLSSocket);
@@ -25703,7 +25703,7 @@ void JSTextChunk::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_lastInTextNode);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSTextChunk);
@@ -26079,7 +26079,7 @@ void JSTextDecoder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_encoding);
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSTextDecoder);
@@ -26420,8 +26420,8 @@ void JSTimeout::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSTimeout* thisObject = jsCast<JSTimeout*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_arguments);
-    visitor.append(thisObject->m_callback);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSTimeout);

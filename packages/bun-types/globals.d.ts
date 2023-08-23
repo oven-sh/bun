@@ -602,9 +602,9 @@ interface Process {
   getgroups: () => number[];
   // setgroups?: (groups: ReadonlyArray<string | number>) => void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Duplex & { isTTY: boolean };
-  stdout: import("stream").Writable & { isTTY: boolean };
-  stderr: import("stream").Writable & { isTTY: boolean };
+  stdin: import("tty").ReadStream;
+  stdout: import("tty").WriteStream;
+  stderr: import("tty").WriteStream;
 
   /**
    *
@@ -739,11 +739,10 @@ interface BlobInterface {
 
 type BlobPart = string | Blob | BufferSource;
 interface BlobPropertyBag {
-  /** Set a default "type" */
-  type?: string;
-
+  /** Set a default "type". Not yet implemented. */
+  // type?: string;
   /** Not implemented in Bun yet. */
-  endings?: "transparent" | "native";
+  // endings?: "transparent" | "native";
 }
 
 /**
@@ -827,7 +826,7 @@ type ResponseType =
   | "opaque"
   | "opaqueredirect";
 
-type FormDataEntryValue = Blob | string;
+type FormDataEntryValue = File | string;
 
 /** Provides a way to easily construct a set of key/value pairs representing
  * form fields and their values, which can then be easily sent using the
@@ -957,6 +956,28 @@ declare var Blob: {
    * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
    */
   new (parts?: BlobPart[], options?: BlobPropertyBag): Blob;
+};
+
+interface File extends Blob {
+  readonly lastModified: number;
+  readonly name: string;
+}
+
+declare var File: {
+  prototype: File;
+
+  /**
+   * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   *
+   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+   * @param `name` - The name of the file
+   * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   */
+  new (
+    parts: BlobPart[],
+    name: string,
+    options?: BlobPropertyBag & { lastModified?: Date | number },
+  ): File;
 };
 
 interface ResponseInit {

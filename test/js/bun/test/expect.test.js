@@ -955,6 +955,34 @@ describe("expect()", () => {
     }).toThrow();
   });
 
+  test("deepEquals URLs", () => {
+    const equals = [
+      [
+        [new URL("https://example.com"), new URL("https://example.com")],
+        [new URL("https://example.com"), new URL("https://example.com/")],
+        [Object.fromEntries(Object.entries(new URL("https://example.com"))), new URL("https://example.com/")],
+      ],
+    ];
+    const not = [
+      [new URL("https://example.com"), new URL("https://example.com/1")],
+      [new URL("https://example.com"), new URL("https://example.com/1")],
+    ];
+
+    for (let [first, second] of equals) {
+      expect(first).toEqual(second);
+      expect(second).toEqual(first);
+    }
+
+    for (let [first, second] of not) {
+      expect(first).not.toEqual(second);
+      expect(second).not.toEqual(first);
+    }
+
+    expect(Object.fromEntries(Object.entries(new URL("https://example.com")))).not.toStrictEqual(
+      new URL("https://example.com/"),
+    );
+  });
+
   test("toEqual objects and arrays", () => {
     {
       let obj = { 0: 4, 1: 3, length: 2 };

@@ -223,7 +223,19 @@ pub const UpgradeCommand = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy, null, HTTP.FetchRedirect.follow);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            allocator,
+            .GET,
+            api_url,
+            header_entries,
+            headers_buf,
+            &metadata_body,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -454,7 +466,19 @@ pub const UpgradeCommand = struct {
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy, null, HTTP.FetchRedirect.follow);
+            async_http.* = HTTP.AsyncHTTP.initSync(
+                ctx.allocator,
+                .GET,
+                zip_url,
+                .{},
+                "",
+                zip_file_buffer,
+                "",
+                timeout,
+                http_proxy,
+                null,
+                HTTP.FetchRedirect.follow,
+            );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);

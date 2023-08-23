@@ -134,8 +134,8 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["--inspect=127.0.0.1:9232", "run", "/Users/jarred/Code/bun/packages/bun-vscode/example/example.js"],
-      "cwd": "/Users/jarred/Code/bun/packages/bun-vscode/example",
+      "args": ["run", "${file}", "${file}"],
+      "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
         "NODE_ENV": "development"

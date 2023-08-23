@@ -188,12 +188,12 @@ export default {
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
     }),
-    page("test/hot", "Watch mode", {
-      description: "Reload your tests automatically on change.",
-    }),
     page("test/writing", "Writing tests", {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
+    }),
+    page("test/hot", "Watch mode", {
+      description: "Reload your tests automatically on change.",
     }),
     page("test/lifecycle", "Lifecycle hooks", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",

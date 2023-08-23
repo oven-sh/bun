@@ -1,5 +1,6 @@
 // clang-format off
 
+// --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(CryptoHasher) \
     macro(FFI) \
@@ -19,14 +20,15 @@
     macro(cwd) \
     macro(enableANSIColors) \
     macro(hash) \
+    macro(inspect) \
     macro(main) \
     macro(origin) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
-// --- Getters ---
 
+// --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump) \
     macro(_Os) \
@@ -44,7 +46,6 @@
     macro(gzipSync) \
     macro(indexOfLine) \
     macro(inflateSync) \
-    macro(inspect) \
     macro(jest) \
     macro(listen) \
     macro(mmap) \
@@ -61,7 +62,6 @@
     macro(spawnSync) \
     macro(which) \
     macro(write) \
-
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern "C" JSC::EncodedJSValue BunObject_callback_##name(JSC::JSGlobalObject*, JSC::CallFrame*);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

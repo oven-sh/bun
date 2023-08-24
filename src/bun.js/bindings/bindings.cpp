@@ -3968,6 +3968,11 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
     arg1->heap.reportAbandonedObjectGraph();
 }
 
+void JSC__VM__reportExtraMemory(JSC__VM* arg0, size_t arg1)
+{
+    arg0->heap.deprecatedReportExtraMemory(arg1);
+}
+
 void JSC__VM__deinit(JSC__VM* arg1, JSC__JSGlobalObject* globalObject) {}
 void JSC__VM__drainMicrotasks(JSC__VM* arg0) { arg0->drainMicrotasks(); }
 

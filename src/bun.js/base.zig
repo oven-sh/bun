@@ -2484,3 +2484,51 @@ pub const AsyncTaskTracker = struct {
         bun.JSC.Debugger.didDispatchAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
     }
 };
+
+pub const MemoryReportingAllocator = struct {
+    child_allocator: std.mem.Allocator,
+    memory_cost: usize = 0,
+
+    fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
+        var result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+        this.memory_cost +|= n;
+        return result;
+    }
+
+    fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+        if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+            this.memory_cost +|= new_len -| buf.len;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
+        this.child_allocator.rawFree(buf, buf_align, ret_addr);
+        this.memory_cost -|= buf.len;
+    }
+
+    pub fn wrap(this: *MemoryReportingAllocator, allocator: std.mem.Allocator) std.mem.Allocator {
+        this.* = .{
+            .child_allocator = allocator,
+        };
+
+        return std.mem.Allocator{
+            .ptr = this,
+            .vtable = &MemoryReportingAllocator.VTable,
+        };
+    }
+
+    pub fn report(this: *MemoryReportingAllocator, vm: *JSC.VM) void {
+        if (this.memory_cost > 0)
+            vm.reportExtraMemory(this.memory_cost);
+    }
+
+    pub const VTable = std.mem.Allocator.VTable{
+        .alloc = @ptrCast(&MemoryReportingAllocator.alloc),
+        .resize = @ptrCast(&MemoryReportingAllocator.resize),
+        .free = @ptrCast(&MemoryReportingAllocator.free),
+    };
+};
+

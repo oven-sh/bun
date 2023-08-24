@@ -1233,6 +1233,20 @@ pub const Blob = struct {
         return blob_;
     }
 
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        // in-memory size. not the size on disk.
+        if (this.size != Blob.max_size) {
+            return this.size;
+        }
+
+        var store = this.store orelse return 0;
+        if (store.data == .bytes) {
+            return store.data.bytes.len;
+        }
+
+        return 0;
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = JSDOMFile__hasInstance;

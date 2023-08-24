@@ -446,6 +446,9 @@ pub const TypeScript = struct {
         // Look ahead to see if this should be an arrow function instead
         var is_ts_arrow_fn = false;
 
+        if (p.lexer.token == .t_const) {
+            try p.lexer.next();
+        }
         if (p.lexer.token == .t_identifier) {
             try p.lexer.next();
             if (p.lexer.token == .t_comma) {

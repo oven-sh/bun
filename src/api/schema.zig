@@ -2117,17 +2117,22 @@ pub const Api = struct {
         /// imports
         imports: []const ScannedImport,
 
+        /// errors
+        errors: []const Message,
+
         pub fn decode(reader: anytype) anyerror!ScanResult {
             var this = std.mem.zeroes(ScanResult);
 
             this.exports = try reader.readArray([]const u8);
             this.imports = try reader.readArray(ScannedImport);
+            this.errors = try reader.readArray(Message);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeArray([]const u8, this.exports);
             try writer.writeArray(ScannedImport, this.imports);
+            try writer.writeArray(Message, this.errors);
         }
     };
 

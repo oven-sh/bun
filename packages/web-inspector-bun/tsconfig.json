@@ -6,6 +6,8 @@
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
+    "composite": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
     "jsx": "preserve",

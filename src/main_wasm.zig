@@ -604,26 +604,44 @@ export fn scan(opts_array: u64) u64 {
     parser.options.ts = loader.isTypeScript();
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
-    var scan_result = std.mem.zeroes(Api.ScanResult);
-    var output = std.ArrayList(u8).init(default_allocator);
-    var output_writer = output.writer();
-    const Encoder = ApiWriter(@TypeOf(output_writer));
+    if (log.errors == 0) {
+        var scan_result = std.mem.zeroes(Api.ScanResult);
+        var output = std.ArrayList(u8).init(default_allocator);
+        var output_writer = output.writer();
+        const Encoder = ApiWriter(@TypeOf(output_writer));
 
-    if (result == .ast) {
-        var scanned_imports = allocator.alloc(Api.ScannedImport, result.ast.import_records.len) catch unreachable;
-        var scanned_i: usize = 0;
-        for (result.ast.import_records.slice()) |import_record| {
-            if (import_record.kind == .internal) continue;
-            scanned_imports[scanned_i] = Api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
-            scanned_i += 1;
+        if (result == .ast) {
+            var scanned_imports = allocator.alloc(Api.ScannedImport, result.ast.import_records.len) catch unreachable;
+            var scanned_i: usize = 0;
+            for (result.ast.import_records.slice()) |import_record| {
+                if (import_record.kind == .internal) continue;
+                scanned_imports[scanned_i] = Api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
+                scanned_i += 1;
+            }
+
+            scan_result = Api.ScanResult{
+                .exports = result.ast.named_exports.keys(),
+                .imports = scanned_imports[0..scanned_i],
+                .errors = (log.toAPI(allocator) catch unreachable).msgs,
+            };
         }
 
-        scan_result = Api.ScanResult{ .exports = result.ast.named_exports.keys(), .imports = scanned_imports[0..scanned_i] };
+        var encoder = Encoder.init(output_writer);
+        scan_result.encode(&encoder) catch unreachable;
+        return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
+    } else {
+        var output = std.ArrayList(u8).init(default_allocator);
+        var output_writer = output.writer();
+        const Encoder = ApiWriter(@TypeOf(output_writer));
+        var scan_result = Api.ScanResult{
+            .exports = &.{},
+            .imports = &.{},
+            .errors = (log.toAPI(allocator) catch unreachable).msgs,
+        };
+        var encoder = Encoder.init(output_writer);
+        scan_result.encode(&encoder) catch unreachable;
+        return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
     }
-
-    var encoder = Encoder.init(output_writer);
-    scan_result.encode(&encoder) catch unreachable;
-    return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
 }
 
 // pub fn main() anyerror!void {}

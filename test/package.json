@@ -10,7 +10,6 @@
   "dependencies": {
     "@prisma/client": "5.1.1",
     "@swc/core": "1.3.38",
-    "bktree-fast": "0.0.7",
     "body-parser": "1.20.2",
     "comlink": "4.4.1",
     "dedent": "0.7.0",
@@ -39,7 +38,6 @@
   },
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "postinstall": "cd node_modules/bktree-fast && npx node-gyp configure build"
+    "typecheck": "tsc --noEmit"
   }
 }

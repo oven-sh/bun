@@ -1122,6 +1122,24 @@ pub const Chunk = struct {
         include_sources_contents: bool,
         comptime ascii_only: bool,
     ) !MutableString {
+        return printSourceMapContentsAtOffset(
+            chunk,
+            source,
+            mutable,
+            include_sources_contents,
+            0,
+            ascii_only,
+        );
+    }
+
+    pub fn printSourceMapContentsAtOffset(
+        chunk: Chunk,
+        source: Logger.Source,
+        mutable: MutableString,
+        include_sources_contents: bool,
+        offset: usize,
+        comptime ascii_only: bool,
+    ) !MutableString {
         var output = mutable;
 
         // attempt to pre-allocate
@@ -1137,7 +1155,7 @@ pub const Chunk = struct {
         }
 
         output.growIfNeeded(
-            filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
+            filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
         try output.append("{\n  \"version\":3,\n  \"sources\": [");
 
@@ -1149,7 +1167,7 @@ pub const Chunk = struct {
         }
 
         try output.append("],\n  \"mappings\": ");
-        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items, output, ascii_only);
+        output = try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], output, ascii_only);
         try output.append(", \"names\": []\n}");
 
         return output;

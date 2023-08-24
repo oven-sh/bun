@@ -1915,6 +1915,34 @@ pub const ArrayBufferSink = struct {
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
+const AutoFlusher = struct {
+    registered: bool = false,
+
+    pub fn registerDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
+        if (this.auto_flusher.registered) return;
+        this.auto_flusher.registered = true;
+        std.debug.assert(!vm.eventLoop().registerDeferredTask(this, @ptrCast(&Type.onAutoFlush)));
+    }
+
+    pub fn unregisterDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
+        if (!this.auto_flusher.registered) return;
+        this.auto_flusher.registered = false;
+        std.debug.assert(vm.eventLoop().unregisterDeferredTask(this));
+    }
+
+    pub fn unregisterDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
+        std.debug.assert(this.auto_flusher.registered);
+        std.debug.assert(vm.eventLoop().unregisterDeferredTask(this));
+        this.auto_flusher.registered = false;
+    }
+
+    pub fn registerDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
+        std.debug.assert(!this.auto_flusher.registered);
+        this.auto_flusher.registered = true;
+        std.debug.assert(!vm.eventLoop().registerDeferredTask(this, @ptrCast(&Type.onAutoFlush)));
+    }
+};
+
 pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
     return struct {
         sink: SinkType,
@@ -2357,6 +2385,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         end_len: usize = 0,
         aborted: bool = false,
 
+        onFirstWrite: ?*const fn (?*anyopaque) void = null,
+        ctx: ?*anyopaque = null,
+
+        auto_flusher: AutoFlusher = AutoFlusher{},
+
         const log = Output.scoped(.HTTPServerWritable, false);
 
         pub fn connect(this: *@This(), signal: Signal) void {
@@ -2375,15 +2408,25 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
+        fn handleFirstWriteIfNecessary(this: *@This()) void {
+            if (this.onFirstWrite) |onFirstWrite| {
+                var ctx = this.ctx;
+                this.ctx = null;
+                this.onFirstWrite = null;
+                onFirstWrite(ctx);
+            }
+        }
+
         fn hasBackpressure(this: *const @This()) bool {
             return this.has_backpressure;
         }
 
-        fn send(this: *@This(), buf: []const u8) bool {
+        fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
+                this.handleFirstWriteIfNecessary();
                 const success = this.res.tryEnd(buf, this.end_len, false);
                 this.has_backpressure = !success;
                 return success;
@@ -2395,10 +2438,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // so in this scenario, we just append to the buffer
             // and report success
             if (this.requested_end) {
+                this.handleFirstWriteIfNecessary();
                 this.res.end(buf, false);
                 this.has_backpressure = false;
                 return true;
             } else {
+                this.handleFirstWriteIfNecessary();
                 this.has_backpressure = !this.res.write(buf);
                 if (this.has_backpressure) {
                     this.res.onWritable(*@This(), onWritable, this);
@@ -2407,6 +2452,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             unreachable;
+        }
+
+        fn send(this: *@This(), buf: []const u8) bool {
+            this.unregisterAutoFlusher();
+            return this.sendWithoutAutoFlusher(buf);
         }
 
         fn readableSlice(this: *@This()) []const u8 {
@@ -2464,7 +2514,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn start(this: *@This(), stream_start: StreamStart) JSC.Node.Maybe(void) {
             if (this.aborted or this.res.hasResponded()) {
-                this.done = true;
+                this.markDone();
                 this.signal.close(null);
                 return .{ .result = {} };
             }
@@ -2529,6 +2579,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
             log("flushFromJS({any})", .{wait});
+            this.unregisterAutoFlusher();
+
             if (!wait) {
                 return this.flushFromJSNoWait();
             }
@@ -2563,12 +2615,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn flush(this: *@This()) JSC.Node.Maybe(void) {
             log("flush()", .{});
+            this.unregisterAutoFlusher();
+
             if (!this.hasBackpressure() or this.done) {
                 return .{ .result = {} };
             }
 
             if (this.res.hasResponded()) {
-                this.done = true;
+                this.markDone();
                 this.signal.close(null);
             }
 
@@ -2596,6 +2650,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
+                this.registerAutoFlusher();
             } else if (this.buffer.len + len >= this.highWaterMark) {
                 // TODO: attempt to write both in a corked buffer?
                 _ = this.buffer.write(this.allocator, bytes) catch {
@@ -2613,9 +2668,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
+                this.registerAutoFlusher();
                 return .{ .owned = len };
             }
 
+            this.registerAutoFlusher();
             this.res.onWritable(*@This(), onWritable, this);
 
             return .{ .owned = len };
@@ -2628,7 +2685,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.res.hasResponded()) {
                 this.signal.close(null);
-                this.done = true;
+                this.markDone();
                 return .{ .done = {} };
             }
 
@@ -2676,9 +2733,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
+                this.registerAutoFlusher();
                 return .{ .owned = len };
             }
 
+            this.registerAutoFlusher();
             this.res.onWritable(*@This(), onWritable, this);
 
             return .{ .owned = len };
@@ -2690,7 +2749,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.res.hasResponded()) {
                 this.signal.close(null);
-                this.done = true;
+                this.markDone();
                 return .{ .done = {} };
             }
 
@@ -2715,7 +2774,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.res.onWritable(*@This(), onWritable, this);
             }
 
+            this.registerAutoFlusher();
             return .{ .owned = @as(Blob.SizeType, @intCast(written)) };
+        }
+
+        pub fn markDone(this: *@This()) void {
+            this.done = true;
+            this.unregisterAutoFlusher();
         }
 
         // In this case, it's always an error
@@ -2728,7 +2793,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (this.done or this.res.hasResponded()) {
                 this.signal.close(err);
-                this.done = true;
+                this.markDone();
                 this.finalize();
                 return .{ .result = {} };
             }
@@ -2739,7 +2804,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (readable.len == 0) {
                 this.signal.close(err);
-                this.done = true;
+                this.markDone();
                 // we do not close the stream here
                 // this.res.endStream(false);
                 this.finalize();
@@ -2759,7 +2824,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.done or this.res.hasResponded()) {
                 this.requested_end = true;
                 this.signal.close(null);
-                this.done = true;
+                this.markDone();
                 this.finalize();
                 return .{ .result = JSC.JSValue.jsNumber(0) };
             }
@@ -2780,10 +2845,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.res.end("", false);
             }
 
-            this.done = true;
+            this.markDone();
             this.flushPromise();
             this.signal.close(null);
-            this.done = true;
             this.finalize();
 
             return .{ .result = JSC.JSValue.jsNumber(this.wrote) };
@@ -2796,10 +2860,48 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn abort(this: *@This()) void {
             log("onAborted()", .{});
             this.done = true;
+            this.unregisterAutoFlusher();
+
             this.aborted = true;
             this.signal.close(null);
+
             this.flushPromise();
             this.finalize();
+        }
+
+        fn unregisterAutoFlusher(this: *@This()) void {
+            if (this.auto_flusher.registered)
+                AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+        }
+
+        fn registerAutoFlusher(this: *@This()) void {
+            if (!this.auto_flusher.registered)
+                AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+        }
+
+        pub fn onAutoFlush(this: *@This()) bool {
+            log("onAutoFlush()", .{});
+            if (this.done) {
+                this.auto_flusher.registered = false;
+                return false;
+            }
+
+            const readable = this.readableSlice();
+
+            if (this.hasBackpressure() or readable.len == 0) {
+                this.auto_flusher.registered = false;
+                return false;
+            }
+
+            if (!this.sendWithoutAutoFlusher(readable)) {
+                this.auto_flusher.registered = true;
+                this.res.onWritable(*@This(), onWritable, this);
+                return true;
+            }
+
+            this.handleWrote(readable.len);
+            this.auto_flusher.registered = false;
+            return false;
         }
 
         pub fn destroy(this: *@This()) void {
@@ -2809,6 +2911,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.buffer = bun.ByteList.init("");
                 bytes.deinit();
             }
+
+            this.unregisterAutoFlusher();
 
             this.allocator.destroy(this);
         }
@@ -2820,6 +2924,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             if (!this.done) {
                 this.done = true;
+                this.unregisterAutoFlusher();
                 this.res.endStream(false);
             }
 
@@ -3758,6 +3863,8 @@ pub const FIFO = struct {
             return;
         }
 
+        defer JSC.VirtualMachine.get().drainMicrotasks();
+
         if (comptime Environment.isMac) {
             if (sizeOrOffset == 0 and is_hup and this.drained) {
                 this.close();
@@ -4645,6 +4752,7 @@ pub fn NewReadyWatcher(
         }
 
         pub fn onPoll(this: *Context, sizeOrOffset: i64, _: u16) void {
+            defer JSC.VirtualMachine.get().drainMicrotasks();
             ready(this, sizeOrOffset);
         }
 

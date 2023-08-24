@@ -740,7 +740,7 @@ interface BlobInterface {
 type BlobPart = string | Blob | BufferSource;
 interface BlobPropertyBag {
   /** Set a default "type". Not yet implemented. */
-  // type?: string;
+  type?: string;
   /** Not implemented in Bun yet. */
   // endings?: "transparent" | "native";
 }
@@ -3672,7 +3672,7 @@ declare module "*.txt" {
 }
 
 declare module "*.toml" {
-  var contents: unknown;
+  var contents: any;
   export = contents;
 }
 

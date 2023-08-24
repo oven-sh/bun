@@ -113,6 +113,8 @@ const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 
 pub const SavedSourceMap = struct {
+    pub const vlq_offset = 24;
+
     // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
@@ -120,7 +122,7 @@ pub const SavedSourceMap = struct {
         data: [*]u8,
 
         pub fn vlq(this: SavedMappings) []u8 {
-            return this.data[24..this.len()];
+            return this.data[vlq_offset..this.len()];
         }
 
         pub inline fn len(this: SavedMappings) usize {
@@ -134,7 +136,7 @@ pub const SavedSourceMap = struct {
         pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
             const result = SourceMap.Mapping.parse(
                 allocator,
-                this.data[24..this.len()],
+                this.data[vlq_offset..this.len()],
                 @as(usize, @bitCast(this.data[8..16].*)),
                 1,
                 @as(usize, @bitCast(this.data[16..24].*)),
@@ -527,7 +529,7 @@ pub const VirtualMachine = struct {
         pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
             var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
             defer temp_json_buffer.deinit();
-            temp_json_buffer = try chunk.printSourceMapContents(source, temp_json_buffer, true, true);
+            temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
             const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
             // TODO: do we need to %-encode the path?
             const source_url_len = source.path.text.len;
@@ -1740,6 +1742,10 @@ pub const VirtualMachine = struct {
         }
 
         ret.success = true;
+    }
+
+    pub fn drainMicrotasks(this: *VirtualMachine) void {
+        this.eventLoop().drainMicrotasks();
     }
 
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {

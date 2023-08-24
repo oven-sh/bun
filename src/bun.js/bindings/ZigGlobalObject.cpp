@@ -1411,6 +1411,16 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(asyncHooksSetEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    // assumptions and notes:
+    // - nobody else uses setOnEachMicrotaskTick
+    // - this is called by js if we set async context in a way we may not clear it
+    // - AsyncLocalStorage.prototype.run cleans up after itself and does not call this cb
+    globalObject->setAsyncContextTrackingEnabled(callFrame->argument(0).toBoolean(globalObject));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 extern "C" int Bun__ttySetMode(int fd, int mode);
 
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1688,6 +1698,10 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 
         if (string == "async_hooks"_s) {
             auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setAsyncHooksEnabled"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "setAsyncHooksEnabled"_s, asyncHooksSetEnabled, ImplementationVisibility::Public), 0);
+
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "cleanupLater"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, asyncHooksCleanupLater, ImplementationVisibility::Public), 0);
@@ -3484,15 +3498,18 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
         this->m_assignToStream.set(vm, this, function);
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(stream);
     arguments.append(controller);
 
-    auto result = call(this, function, callData, JSC::jsUndefined(), arguments);
-    if (scope.exception())
-        return JSC::JSValue::encode(scope.exception());
+    WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
+
+    auto result = JSC::profiledCall(this, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
+    if (returnedException.get()) {
+        auto* exception = WTFMove(returnedException.get());
+        return JSC::JSValue::encode(exception);
+    }
 
     return JSC::JSValue::encode(result);
 }

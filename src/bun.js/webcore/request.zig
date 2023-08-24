@@ -485,7 +485,8 @@ pub const Request = struct {
                 _ = req.body.unref();
                 return null;
             };
-            req.url = str;
+            req.url = str.dupeRef();
+
             if (!req.url.isEmpty())
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
@@ -554,7 +555,7 @@ pub const Request = struct {
 
                     if (!fields.contains(.url)) {
                         if (!response.url.isEmpty()) {
-                            req.url = response.url;
+                            req.url = response.url.dupeRef();
                             fields.insert(.url);
                         }
                     }
@@ -586,7 +587,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis);
+                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -599,7 +600,7 @@ pub const Request = struct {
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = str;
+                    req.url = str.dupeRef();
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
@@ -648,9 +649,10 @@ pub const Request = struct {
             return null;
         }
 
-        // Note that the string is going to be ref'd here, so we don't need to ref it above.
         const href = JSC.URL.hrefFromString(req.url);
         if (href.isEmpty()) {
+            // globalThis.throw can cause GC, which could cause the above string to be freed.
+            // so we must increment the reference count before calling it.
             globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
                 req.url,
             });
@@ -658,6 +660,14 @@ pub const Request = struct {
             _ = req.body.unref();
             return null;
         }
+
+        // hrefFromString increments the reference count if they end up being
+        // the same
+        //
+        // we increment the reference count on usage above, so we must
+        // decrement it to be perfectly balanced.
+        req.url.deref();
+
         req.url = href;
 
         if (req.body.value == .Blob and

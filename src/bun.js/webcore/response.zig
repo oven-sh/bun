@@ -617,6 +617,7 @@ pub const Fetch = struct {
 
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
+        metadata: ?HTTPClient.HTTPClientResult.ResultMetadata = .{},
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
@@ -641,7 +642,8 @@ pub const Fetch = struct {
         url_proxy_buffer: []const u8 = "",
 
         signal: ?*JSC.WebCore.AbortSignal = null,
-        aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        signals: HTTPClient.Signals = .{},
+        signal_store: HTTPClient.Signals.Store = .{},
         has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
@@ -702,11 +704,19 @@ pub const Fetch = struct {
             this.request_headers.entries.deinit(bun.default_allocator);
             this.request_headers.buf.deinit(bun.default_allocator);
             this.request_headers = Headers{ .allocator = undefined };
-            this.http.?.clearData();
 
-            this.result.deinitMetadata();
+            if (this.http != null) {
+                this.http.?.clearData();
+            }
+
+            if (this.metadata != null) {
+                this.metadata.?.deinit();
+                this.metadata = null;
+            }
+
             this.response_buffer.deinit();
             this.response.deinit();
+
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
@@ -725,9 +735,13 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
+            this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             defer {
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
+
                 if (!success or !this.result.has_more) {
                     var vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
@@ -831,43 +845,42 @@ pub const Fetch = struct {
 
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
-            this.mutex.lock();
-            defer {
-                this.has_schedule_callback.store(false, .Monotonic);
-                this.mutex.unlock();
-            }
-
             if (this.is_waiting_body) {
                 return this.onBodyReceived();
             }
+            this.mutex.lock();
             const globalThis = this.global_this;
 
             var ref = this.promise;
             const promise_value = ref.value();
-            defer ref.strong.deinit();
 
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                ref.strong.deinit();
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
                 poll_ref.unref(vm);
                 this.clearData();
                 this.deinit();
                 return;
             }
 
+            const promise = promise_value.asAnyPromise().?;
+            const tracker = this.tracker;
+            tracker.willDispatch(globalThis);
             defer {
+                tracker.didDispatch(globalThis);
+                ref.strong.deinit();
+                this.has_schedule_callback.store(false, .Monotonic);
+                this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
                 }
             }
-
-            const promise = promise_value.asAnyPromise().?;
-            const tracker = this.tracker;
-            tracker.willDispatch(globalThis);
-            defer tracker.didDispatch(globalThis);
             const success = this.result.isSuccess();
             const result = switch (success) {
                 true => this.onResolve(),
@@ -907,6 +920,16 @@ pub const Fetch = struct {
                 return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
+            var path: bun.String = undefined;
+
+            if (this.metadata) |metadata| {
+                path = bun.String.create(metadata.href);
+            } else if (this.http) |http| {
+                path = bun.String.create(http.url.href);
+            } else {
+                path = bun.String.empty;
+            }
+
             const fetch_error = JSC.SystemError{
                 .code = bun.String.static(@errorName(this.result.fail)),
                 .message = switch (this.result.fail) {
@@ -916,7 +939,7 @@ pub const Fetch = struct {
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
                     else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
-                .path = bun.String.create(this.http.?.url.href),
+                .path = path,
             };
 
             return fetch_error.toErrorInstance(this.global_this);
@@ -927,7 +950,7 @@ pub const Fetch = struct {
             if (this.http) |http| {
                 http.enableBodyStreaming();
             }
-            if (this.aborted.load(.Acquire)) {
+            if (this.signal_store.aborted.load(.Monotonic)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
@@ -1000,21 +1023,27 @@ pub const Fetch = struct {
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
-            const http_response = this.result.response;
-            this.is_waiting_body = this.result.has_more;
-            return Response{
-                .allocator = allocator,
-                .url = bun.String.createAtomIfPossible(this.result.href),
-                .status_text = bun.String.createAtomIfPossible(http_response.status),
-                .redirected = this.result.redirected,
-                .body = .{
-                    .init = .{
-                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @as(u16, @truncate(http_response.status_code)),
+            // at this point we always should have metadata
+            std.debug.assert(this.metadata != null);
+            if (this.metadata) |metadata| {
+                const http_response = metadata.response;
+                this.is_waiting_body = this.result.has_more;
+                return Response{
+                    .allocator = allocator,
+                    .url = bun.String.createAtomIfPossible(metadata.href),
+                    .status_text = bun.String.createAtomIfPossible(http_response.status),
+                    .redirected = this.result.redirected,
+                    .body = .{
+                        .init = .{
+                            .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
+                            .status_code = @as(u16, @truncate(http_response.status_code)),
+                        },
+                        .value = this.toBodyValue(),
                     },
-                    .value = this.toBodyValue(),
-                },
-            };
+                };
+            }
+
+            @panic("fetch metadata should be provided");
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
@@ -1063,6 +1092,7 @@ pub const Fetch = struct {
                 .hostname = fetch_options.hostname,
                 .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
             };
+            fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
             fetch_tasklet.tracker.didSchedule(globalThis);
 
@@ -1077,6 +1107,10 @@ pub const Fetch = struct {
                 }
             } else {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+            }
+
+            if (fetch_tasklet.signal == null) {
+                fetch_tasklet.signals.aborted = null;
             }
 
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
@@ -1095,9 +1129,10 @@ pub const Fetch = struct {
                     fetch_tasklet,
                 ),
                 proxy,
-                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
+
                 fetch_options.hostname,
                 fetch_options.redirect_type,
+                fetch_tasklet.signals,
             );
 
             if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -1108,7 +1143,7 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
             // we wanna to return after headers are received
-            fetch_tasklet.http.?.signalHeaderProgress();
+            fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
                 std.debug.assert(fetch_options.url.isHTTP());
@@ -1127,7 +1162,7 @@ pub const Fetch = struct {
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.aborted.store(true, .Monotonic);
+            this.signal_store.aborted.store(true, .Monotonic);
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
@@ -1180,11 +1215,14 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             task.result = result;
+            // metadata should be provided only once so we preserve it until we consume it
+            if (result.metadata) |metadata| {
+                task.metadata = metadata;
+            }
             task.body_size = result.body_size;
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }

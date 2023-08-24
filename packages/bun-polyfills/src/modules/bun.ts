@@ -16,6 +16,7 @@ import {
 } from './bun/hashes.js';
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
+import TranspilerImpl from './bun/transpiler.js';
 import fs from 'node:fs';
 import v8 from 'node:v8';
 import path from 'node:path';
@@ -32,7 +33,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '0.7.4' satisfies typeof Bun.version;
-export const revision = '7088d7e182635a58a50860302da0b1abc42c7ce7' satisfies typeof Bun.revision;
+export const revision = '56816a3ec845a4b9fc40ade34dbe5c0033433d51' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -70,6 +71,8 @@ export const unsafe = {
         process.exit(1);
     }
 } satisfies typeof Bun['unsafe'];
+
+export const Transpiler = TranspilerImpl satisfies typeof Bun.Transpiler;
 
 export const SHA1 = SHA1Polyfill satisfies typeof Bun.SHA1;
 export const MD5 = MD5Polyfill satisfies typeof Bun.MD5;

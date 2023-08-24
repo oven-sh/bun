@@ -370,8 +370,8 @@ const NetworkTask = struct {
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
             null,
-            null,
             HTTP.FetchRedirect.follow,
+            null,
         );
         this.callback = .{
             .package_manifest = .{
@@ -448,8 +448,8 @@ const NetworkTask = struct {
             this.getCompletionCallback(),
             this.package_manager.httpProxy(url),
             null,
-            null,
             HTTP.FetchRedirect.follow,
+            null,
         );
         this.callback = .{ .extract = tarball };
     }

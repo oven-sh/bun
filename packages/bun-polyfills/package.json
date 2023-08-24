@@ -15,11 +15,13 @@
     "node": "node --enable-source-maps --import ./dist/src/repl.js",
     "clean": "rm -rf dist",
     "preprocess": "bun tools/updateversions.ts",
-    "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./**/*.wasm\" dist",
+    "build": "bun run clean && bun run preprocess && bunx tsc && bunx copyfiles \"./lib/**/*.wasm\" dist",
     "build/wasm": "bun run build/zighash",
     "build/zighash": "cd lib/zighash && bun run build && cd ../.."
   },
   "dependencies": {
+    "bun-wasm": "link:bun-wasm",
+    "chalk": "^5.3.0",
     "js-md4": "^0.3.2",
     "open-editor": "^4.0.0",
     "supports-color": "^9.4.0",

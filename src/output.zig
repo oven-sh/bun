@@ -9,6 +9,8 @@ const StringTypes = @import("root").bun.StringTypes;
 const Global = @import("root").bun.Global;
 const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
 const use_mimalloc = @import("root").bun.use_mimalloc;
+const writeStream = std.json.writeStream;
+const WriteStream = std.json.WriteStream;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 

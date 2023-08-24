@@ -24,7 +24,7 @@ const CopyFileError = error{SystemResources} || CopyFileRangeError || os.SendFil
 // No metadata is transferred over.
 pub fn copyFile(fd_in: os.fd_t, fd_out: os.fd_t) CopyFileError!void {
     if (comptime bun.Environment.isMac) {
-        const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE.DATA);
+        const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
         switch (os.errno(rc)) {
             .SUCCESS => return,
             .INVAL => unreachable,

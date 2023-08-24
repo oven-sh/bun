@@ -2656,7 +2656,7 @@ pub const Parser = struct {
         }
     };
 
-    pub fn scanImports(self: *Parser, scan_pass: *ScanPassResult) !void {
+    pub fn scanImports(self: *Parser, scan_pass: *ScanPassResult) anyerror!void {
         if (self.options.ts and self.options.jsx.parse) {
             return try self._scanImports(TSXImportScanner, scan_pass);
         } else if (self.options.ts) {
@@ -2668,7 +2668,7 @@ pub const Parser = struct {
         }
     }
 
-    fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) !void {
+    fn _scanImports(self: *Parser, comptime ParserType: type, scan_pass: *ScanPassResult) anyerror!void {
         var p: ParserType = undefined;
 
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -5169,7 +5169,7 @@ fn NewParser_(
             return p.callRuntime(require_args[0].loc, "__require", require_args);
         }
 
-        pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) !void {
+        pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) anyerror!void {
             if (p.named_exports.get(alias)) |name| {
                 // Duplicate exports are an error
                 var notes = try p.allocator.alloc(logger.Data, 1);
@@ -5320,7 +5320,7 @@ fn NewParser_(
             additional_stmt: ?Stmt,
             comptime suffix: string,
             comptime is_internal: bool,
-        ) !void {
+        ) anyerror!void {
             const allocator = p.allocator;
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
@@ -5874,7 +5874,7 @@ fn NewParser_(
             return .{ .failure = expr };
         }
 
-        pub fn prepareForVisitPass(p: *P) !void {
+        pub fn prepareForVisitPass(p: *P) anyerror!void {
             {
                 var count: usize = 0;
                 for (p.scopes_in_order.items) |item| {
@@ -6306,7 +6306,7 @@ fn NewParser_(
             return head;
         }
 
-        fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) !void {
+        fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) anyerror!void {
             // Output.print("\n+Loc: {d}\n", .{loc.start});
             // for (p.scopes_in_order.items[p.scopes_in_order_visitor_index..p.scopes_in_order.items.len]) |scope_order, i| {
             //     if (scope_order) |ord| {
@@ -6518,7 +6518,7 @@ fn NewParser_(
             return ExprBindingTuple{ .binding = bind, .expr = initializer };
         }
 
-        fn forbidLexicalDecl(p: *P, loc: logger.Loc) !void {
+        fn forbidLexicalDecl(p: *P, loc: logger.Loc) anyerror!void {
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
         }
 
@@ -9479,7 +9479,7 @@ fn NewParser_(
             );
         }
 
-        fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) !void {
+        fn skipTypeScriptInterfaceStmt(p: *P, opts: *ParseStatementOptions) anyerror!void {
             const name = p.lexer.identifier;
             try p.lexer.expect(.t_identifier);
 
@@ -9750,7 +9750,7 @@ fn NewParser_(
             };
         }
 
-        fn forbidInitializers(p: *P, decls: []G.Decl, comptime loop_type: string, is_var: bool) !void {
+        fn forbidInitializers(p: *P, decls: []G.Decl, comptime loop_type: string, is_var: bool) anyerror!void {
             switch (decls.len) {
                 0 => {},
                 1 => {
@@ -9810,7 +9810,7 @@ fn NewParser_(
             return ExprOrLetStmt{ .stmt_or_expr = js_ast.StmtOrExpr{ .expr = try p.parseSuffix(expr, .lowest, null, Expr.EFlags.none) } };
         }
 
-        fn requireInitializers(p: *P, decls: []G.Decl) !void {
+        fn requireInitializers(p: *P, decls: []G.Decl) anyerror!void {
             for (decls) |decl| {
                 if (decl.value == null) {
                     switch (decl.binding.data) {
@@ -10553,7 +10553,7 @@ fn NewParser_(
             return stmts.items;
         }
 
-        fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
+        fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) anyerror!void {
             const can_be_transformed = feature == StrictModeFeature.for_in_var_init;
             const text = switch (feature) {
                 .with_statement => "With statements",
@@ -10866,7 +10866,7 @@ fn NewParser_(
             return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
         }
 
-        fn declareBinding(p: *P, kind: Symbol.Kind, binding: *BindingNodeIndex, opts: *ParseStatementOptions) !void {
+        fn declareBinding(p: *P, kind: Symbol.Kind, binding: *BindingNodeIndex, opts: *ParseStatementOptions) anyerror!void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |bind| {
@@ -13956,7 +13956,7 @@ fn NewParser_(
             };
         }
 
-        fn appendPart(p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) !void {
+        fn appendPart(p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) anyerror!void {
             // Reuse the memory if possible
             // This is reusable if the last part turned out to be dead
             p.symbol_uses.clearRetainingCapacity();
@@ -14180,7 +14180,7 @@ fn NewParser_(
             }
         }
 
-        fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
+        fn recordDeclaredSymbol(p: *P, ref: Ref) anyerror!void {
             std.debug.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
@@ -17109,7 +17109,7 @@ fn NewParser_(
             // the value is ignored because that's what the TypeScript compiler does.
         }
 
-        fn visitAndAppendStmt(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt) !void {
+        fn visitAndAppendStmt(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt) anyerror!void {
             // By default any statement ends the const local prefix
             const was_after_after_const_local_prefix = p.current_scope.is_after_const_local_prefix;
             p.current_scope.is_after_const_local_prefix = true;
@@ -18537,7 +18537,7 @@ fn NewParser_(
             }
         }
 
-        pub fn appendIfBodyPreservingScope(p: *P, stmts: *ListManaged(Stmt), body: Stmt) !void {
+        pub fn appendIfBodyPreservingScope(p: *P, stmts: *ListManaged(Stmt), body: Stmt) anyerror!void {
             switch (body.data) {
                 .s_block => |block| {
                     var keep_block = false;
@@ -19551,7 +19551,7 @@ fn NewParser_(
         }
 
         // Try separating the list for appending, so that it's not a pointer.
-        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), _: StmtsKind) !void {
+        fn visitStmts(p: *P, stmts: *ListManaged(Stmt), _: StmtsKind) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -20049,7 +20049,7 @@ fn NewParser_(
             stmts.* = output;
         }
 
-        fn extractDeclsForBinding(binding: Binding, decls: *ListManaged(G.Decl)) !void {
+        fn extractDeclsForBinding(binding: Binding, decls: *ListManaged(G.Decl)) anyerror!void {
             switch (binding.data) {
                 .b_property, .b_missing => {},
                 .b_identifier => {
@@ -21239,7 +21239,7 @@ fn NewParser_(
             lexer: js_lexer.Lexer,
             opts: Parser.Options,
             this: *P,
-        ) !void {
+        ) anyerror!void {
             var scope_order = try ScopeOrderList.initCapacity(allocator, 1);
             var scope = try allocator.create(Scope);
             scope.* = Scope{

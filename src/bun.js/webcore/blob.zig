@@ -2361,7 +2361,7 @@ pub const Blob = struct {
             }
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
-                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE.DATA)) {
+                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
 

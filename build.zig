@@ -1,4 +1,5 @@
 const std = @import("std");
+const pathRel = std.fs.path.relative;
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
 var is_debug_build = false;
 fn moduleSource(comptime out: []const u8) FileSource {
@@ -96,6 +97,7 @@ const BunBuildOptions = struct {
     }
 };
 
+// relative to the prefix
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .optimize = .read_only }) catch |err| {
@@ -172,13 +174,12 @@ pub fn build(b: *Build) !void {
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
-        output_dir = b.pathFromRoot(output_dir_);
+        output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-        output_dir = b.pathFromRoot(output_dir_base);
+        output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_base);
     }
 
-    std.fs.cwd().makePath(output_dir) catch {};
     is_debug_build = optimize == OptimizeMode.Debug;
     const bun_executable_name = if (optimize == std.builtin.OptimizeMode.Debug) "bun-debug" else "bun";
     const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
@@ -186,12 +187,12 @@ pub fn build(b: *Build) !void {
     else
         "root.zig";
 
-    const min_version: std.SemanticVersion = if (target.getOsTag() != .freestanding and !target.isWindows())
+    const min_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
 
-    const max_version: std.SemanticVersion = if (target.getOsTag() != .freestanding and !target.isWindows())
+    const max_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
         target.getOsVersionMax().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
@@ -202,6 +203,7 @@ pub fn build(b: *Build) !void {
         .root_source_file = FileSource.relative(root_src),
         .target = target,
         .optimize = optimize,
+        .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
 
     var default_build_options: BunBuildOptions = brk: {
@@ -239,8 +241,6 @@ pub fn build(b: *Build) !void {
     };
 
     {
-        obj.setMainPkgPath(b.pathFromRoot("."));
-
         try addInternalPackages(
             b,
             obj,
@@ -271,9 +271,15 @@ pub fn build(b: *Build) !void {
         std.io.getStdErr().writer().print("Output: {s}/{s}\n\n", .{ output_dir, bun_executable_name }) catch unreachable;
 
         defer obj_step.dependOn(&obj.step);
-        obj.emit_bin = .{
-            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, bun_executable_name }),
-        };
+
+        var install = b.addInstallFileWithDir(
+            obj.getEmittedBin(),
+            .{ .custom = output_dir },
+            b.fmt("{s}.o", .{bun_executable_name}),
+        );
+        install.step.dependOn(&obj.step);
+        obj_step.dependOn(&install.step);
+
         var actual_build_options = default_build_options;
         if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
             actual_build_options.sizegen = true;
@@ -290,7 +296,8 @@ pub fn build(b: *Build) !void {
         if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
-            obj.emit_bin = .no_emit;
+            // obj.emit_bin = .no_emit;
+            obj.generated_bin = null;
         }
 
         if (target.getOsTag() == .linux) {
@@ -308,9 +315,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("src/bindgen.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         var headers_build_options = default_build_options;
         headers_build_options.bindgen = true;
         headers_obj.addOptions("build_options", default_build_options.step(b));
@@ -318,21 +326,22 @@ pub fn build(b: *Build) !void {
     }
 
     {
-        const wasm = b.step("bun-wasm", "Build WASM");
-        var wasm_step = b.addStaticLibrary(.{
+        const wasm_step = b.step("bun-wasm", "Build WASM");
+        var wasm = b.addStaticLibrary(.{
             .name = "bun-wasm",
             .root_source_file = FileSource.relative("root_wasm.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
-        defer wasm.dependOn(&wasm_step.step);
-        wasm_step.strip = false;
+        defer wasm_step.dependOn(&wasm.step);
+        wasm.strip = false;
         // wasm_step.link_function_sections = true;
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
-        try configureObjectStep(b, wasm_step, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, wasm, wasm_step, @TypeOf(target), target);
         var build_opts = default_build_options;
-        wasm_step.addOptions("build_options", build_opts.step(b));
+        wasm.addOptions("build_options", build_opts.step(b));
     }
 
     {
@@ -342,9 +351,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/http_bench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -355,9 +365,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/machbench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -368,9 +379,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/fetch.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -381,9 +393,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("src/bench/string-handling.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -394,9 +407,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("src/sha.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -407,9 +421,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("src/sourcemap/vlq_bench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -420,9 +435,10 @@ pub fn build(b: *Build) !void {
             .root_source_file = FileSource.relative("misctools/tgz.zig"),
             .target = target,
             .optimize = optimize,
+            .main_pkg_path = obj.main_pkg_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -436,16 +452,23 @@ pub fn build(b: *Build) !void {
         var headers_obj: *CompileStep = b.addTest(.{
             .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),
             .target = target,
+            .main_pkg_path = obj.main_pkg_path,
         });
         headers_obj.filter = test_filter;
         if (test_bin_) |test_bin| {
             headers_obj.name = std.fs.path.basename(test_bin);
-            if (std.fs.path.dirname(test_bin)) |dir| headers_obj.emit_bin = .{
-                .emit_to = b.fmt("{s}/{s}", .{ dir, headers_obj.name }),
-            };
+            if (std.fs.path.dirname(test_bin)) |dir| {
+                var install = b.addInstallFileWithDir(
+                    headers_obj.getEmittedBin(),
+                    .{ .custom = try std.fs.path.relative(b.allocator, output_dir, dir) },
+                    headers_obj.name,
+                );
+                install.step.dependOn(&headers_obj.step);
+                headers_step.dependOn(&install.step);
+            }
         }
 
-        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
 
         headers_step.dependOn(&headers_obj.step);
         headers_obj.addOptions("build_options", default_build_options.step(b));
@@ -456,9 +479,7 @@ pub fn build(b: *Build) !void {
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
 
-pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
-    obj.setMainPkgPath(main_pkg_path);
-
+pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, obj_step: *std.build.Step, comptime Target: type, target: Target) !void {
     // obj.setTarget(target);
     try addInternalPackages(b, obj, std.heap.page_allocator, b.zig_exe, target);
 
@@ -466,11 +487,16 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     // obj.setBuildMode(optimize);
     obj.bundle_compiler_rt = false;
-    if (obj.emit_bin == .default)
-        obj.emit_bin = .{
-            .emit_to = b.fmt("{s}/{s}.o", .{ output_dir, obj.name }),
-        };
+    if (obj.emit_directory == null) {
+        var install = b.addInstallFileWithDir(
+            obj.getEmittedBin(),
+            .{ .custom = output_dir },
+            b.fmt("{s}.o", .{obj.name}),
+        );
 
+        install.step.dependOn(&obj.step);
+        obj_step.dependOn(&install.step);
+    }
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
 

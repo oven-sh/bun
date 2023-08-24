@@ -373,8 +373,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -391,8 +391,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -418,8 +418,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -648,8 +648,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -799,8 +799,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -820,8 +820,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -838,8 +838,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -856,8 +856,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1124,8 +1124,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1139,8 +1139,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1246,8 +1246,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1953,8 +1953,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2185,8 +2185,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2200,8 +2200,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2271,8 +2271,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2478,8 +2478,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2511,8 +2511,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2529,8 +2529,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -3147,8 +3147,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 

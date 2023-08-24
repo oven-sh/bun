@@ -488,7 +488,7 @@ pub const FSEventsLoop = struct {
         CS.FSEventStreamScheduleWithRunLoop(ref, this.loop, CF.RunLoopDefaultMode.*);
         if (CS.FSEventStreamStart(ref) == 0) {
             //clean in case of failure
-            bun.default_allocator.destroy(paths);
+            bun.default_allocator.free(paths);
             CF.Release(cf_paths);
             CS.FSEventStreamInvalidate(ref);
             CS.FSEventStreamRelease(ref);

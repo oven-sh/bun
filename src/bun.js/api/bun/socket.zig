@@ -499,10 +499,10 @@ pub const Listener = struct {
         pub fn deinit(this: UnixOrHost) void {
             switch (this) {
                 .unix => |u| {
-                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(u.ptr))));
+                    bun.default_allocator.free(u);
                 },
                 .host => |h| {
-                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(h.host.ptr))));
+                    bun.default_allocator.free(h.host);
                 },
             }
         }
@@ -833,7 +833,7 @@ pub const Listener = struct {
         this.connection.deinit();
         if (this.protos) |protos| {
             this.protos = null;
-            bun.default_allocator.destroy(protos);
+            bun.default_allocator.free(protos);
         }
         bun.default_allocator.destroy(this);
     }

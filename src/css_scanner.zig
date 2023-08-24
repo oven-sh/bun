@@ -346,7 +346,7 @@ pub const Scanner = struct {
         comptime WriterType: type,
         writer: WriterType,
         writeChunk: (fn (ctx: WriterType, Chunk) anyerror!void),
-    ) !void {
+    ) anyerror!void {
         scanner.has_newline_before = scanner.end == 0;
         scanner.has_delimiter_before = false;
         scanner.step();
@@ -899,7 +899,7 @@ pub fn NewWriter(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
-        ) !void {
+        ) anyerror!void {
             std.debug.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
@@ -937,7 +937,7 @@ pub fn NewWriter(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
-        ) !void {
+        ) anyerror!void {
             std.debug.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
@@ -950,7 +950,7 @@ pub fn NewWriter(
             try scanner.next(.keep, @TypeOf(writer), writer, commitChunk);
         }
 
-        fn writeString(writer: *Writer, str: string, quote: Chunk.TextContent.Quote) !void {
+        fn writeString(writer: *Writer, str: string, quote: Chunk.TextContent.Quote) anyerror!void {
             switch (quote) {
                 .none => {
                     try writer.ctx.writeAll(str);
@@ -974,7 +974,7 @@ pub fn NewWriter(
             }
         }
 
-        fn writeURL(writer: *Writer, url_str: string, text: Chunk.TextContent) !void {
+        fn writeURL(writer: *Writer, url_str: string, text: Chunk.TextContent) anyerror!void {
             switch (text.quote) {
                 .none => {
                     try writer.ctx.writeAll("url(");
@@ -1001,7 +1001,7 @@ pub fn NewWriter(
             }
         }
 
-        pub fn scanChunk(writer: *Writer, chunk: Chunk) !void {
+        pub fn scanChunk(writer: *Writer, chunk: Chunk) anyerror!void {
             switch (chunk.content) {
                 .t_url => {},
                 .t_import => |import| {
@@ -1042,15 +1042,15 @@ pub fn NewWriter(
             }
         }
 
-        pub fn commitChunk(writer: *Writer, chunk: Chunk) !void {
+        pub fn commitChunk(writer: *Writer, chunk: Chunk) anyerror!void {
             return try writeChunk(writer, chunk, false);
         }
 
-        pub fn writeBundledChunk(writer: *Writer, chunk: Chunk) !void {
+        pub fn writeBundledChunk(writer: *Writer, chunk: Chunk) anyerror!void {
             return try writeChunk(writer, chunk, true);
         }
 
-        pub fn writeChunk(writer: *Writer, chunk: Chunk, comptime omit_imports: bool) !void {
+        pub fn writeChunk(writer: *Writer, chunk: Chunk, comptime omit_imports: bool) anyerror!void {
             switch (chunk.content) {
                 .t_url => |url| {
                     const url_str = try writer.linker.resolveCSS(
@@ -1259,7 +1259,7 @@ pub fn NewBundler(
             return logger.Source.initFile(file, this.allocator);
         }
 
-        pub fn addCSSImport(this: *CSSBundler, absolute_path: string) !void {
+        pub fn addCSSImport(this: *CSSBundler, absolute_path: string) anyerror!void {
             const hash = Watcher.getHash(absolute_path);
             if (this.queued.items.len > 0 and std.mem.indexOfScalar(u32, this.queued.items, hash) != null) {
                 return;
@@ -1281,7 +1281,7 @@ pub fn NewBundler(
             try this.bundle_queue.append(hash);
         }
 
-        pub fn writeAll(this: *CSSBundler, buf: anytype) !void {
+        pub fn writeAll(this: *CSSBundler, buf: anytype) anyerror!void {
             _ = try this.writer.writeAll(buf);
         }
 

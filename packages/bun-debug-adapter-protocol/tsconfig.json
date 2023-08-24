@@ -18,5 +18,5 @@
     "types": ["bun-types"],
     "outDir": "dist",
   },
-  "include": [".", "../bun-types/index.d.ts"]
+  "include": [".", "../bun-types/index.d.ts", "../bun-inspector-protocol/index"]
 }

@@ -1,4 +1,5 @@
 import type { DAP } from "..";
+// @ts-ignore: FIXME - there is something wrong with the types
 import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
 import { WebSocketInspector } from "../../bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
@@ -6,6 +7,10 @@ import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { SourceMap } from "./sourcemap";
 import { compare, parse } from "semver";
+
+type InitializeRequest = DAP.InitializeRequest & {
+  supportsConfigurationDoneRequest?: boolean;
+};
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
@@ -90,6 +95,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #variables: (Variable | Variable[])[];
   #process?: ChildProcess;
+  #initialized?: InitializeRequest;
   #terminated?: boolean;
 
   constructor({ sendToAdapter }: DebugAdapterOptions) {
@@ -115,6 +121,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
     this.#variables.length = 1;
+    this.#initialized = undefined;
   }
 
   /**
@@ -207,8 +214,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     });
   }
 
-  async initialize(request: DAP.InitializeRequest): Promise<DAP.InitializeResponse> {
-    const { clientID, supportsConfigurationDoneRequest } = request as any;
+  async initialize(request: InitializeRequest): Promise<DAP.InitializeResponse> {
+    const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
 
     this.#send("Inspector.enable");
     this.#send("Runtime.enable");
@@ -264,7 +271,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const subprocess = spawn(runtime, ["--inspect-wait", "--inspect=0", ...args, program], {
+    const subprocess = spawn(runtime, ["--inspect-wait=0", ...args, program], {
       stdio: ["ignore", "pipe", "pipe", "pipe"],
       cwd,
       env: inheritEnv ? { ...process.env, ...env } : env,
@@ -502,13 +509,31 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   #generatedLocation(source: Source, line?: number, column?: number): JSC.Debugger.Location {
     const { sourceMap, scriptId, path } = source;
-    const { line: line0, column: column0 } = sourceMap.generatedPosition(line, column, path);
+    const { line: line0, column: column0 } = sourceMap.generatedLocation(
+      this.#lineTo0BasedLine(line),
+      this.#columnTo0BasedColumn(column),
+      path,
+    );
 
     return {
       scriptId,
       lineNumber: line0,
       columnNumber: column0,
     };
+  }
+
+  #lineTo0BasedLine(line?: number): number {
+    if (this.#initialized?.linesStartAt1) {
+      return line ? line - 1 : 0;
+    }
+    return line ?? 0;
+  }
+
+  #columnTo0BasedColumn(column?: number): number {
+    if (this.#initialized?.columnsStartAt1) {
+      return column ? column - 1 : 0;
+    }
+    return column ?? 0;
   }
 
   #originalLocation(
@@ -523,12 +548,26 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     }
 
     const { sourceMap } = source;
-    const { line: line0, column: column0 } = sourceMap.originalPosition(line, column);
+    const { line: line0, column: column0 } = sourceMap.originalLocation(line, column);
 
     return {
-      line: line0,
-      column: column0,
+      line: this.#lineFrom0BasedLine(line0),
+      column: this.#columnFrom0BasedColumn(column0),
     };
+  }
+
+  #lineFrom0BasedLine(line?: number): number {
+    if (this.#initialized?.linesStartAt1) {
+      return line ? line + 1 : 1;
+    }
+    return line ?? 0;
+  }
+
+  #columnFrom0BasedColumn(column?: number): number {
+    if (this.#initialized?.columnsStartAt1) {
+      return column ? column + 1 : 1;
+    }
+    return column ?? 0;
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
@@ -853,12 +892,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
-    // HACK: remove once Bun starts sending correct source map urls
-    if (event.url && event.url.startsWith("/") && event.url.endsWith(".ts")) {
-      event.sourceMapURL = generateSourceMapUrl(event.url);
-    } else {
-      event.sourceMapURL = undefined;
-    }
     const { url, scriptId, sourceMapURL } = event;
 
     // If no url is present, the script is from a `evaluate` request.
@@ -966,10 +999,9 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   ["Console.messageAdded"](event: JSC.Console.MessageAddedEvent): void {
     const { message } = event;
-    const { type, text, parameters, line, column, stackTrace } = message;
+    const { type, level, text, parameters, line, column, stackTrace } = message;
 
     let output: string;
-    let isError: boolean | undefined;
     let variablesReference: number | undefined;
 
     if (parameters?.length) {
@@ -978,9 +1010,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       const variables = parameters.map((parameter, i) => {
         const variable = this.#addVariable(parameter, { name: `${i}` });
 
-        const { value, type } = variable;
+        const { value } = variable;
         output += value + " ";
-        isError ||= type === "error";
 
         return variable;
       });
@@ -999,6 +1030,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       output += "\n";
     }
 
+    const color = consoleLevelToAnsiColor(level);
+    if (color) {
+      output = `${color}${output}`;
+    }
+
     if (variablesReference) {
       variablesReference = this.#setVariable([
         {
@@ -1014,13 +1050,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (stackTrace) {
       const { callFrames } = stackTrace;
       if (callFrames.length) {
-        const [{ scriptId }] = callFrames.slice(0, -1);
+        const { scriptId } = callFrames.at(-1)!;
         source = this.#getSourceIfPresent(scriptId);
       }
     }
 
     this.#emit("output", {
-      category: isError ? "stderr" : "debug console",
+      category: "debug console",
       group: consoleMessageGroup(type),
       output,
       variablesReference,
@@ -1680,21 +1716,18 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
   return 0;
 }
 
-// HACK: this will be removed once Bun starts sending source maps
-// with the `Debugger.scriptParsed` event.
-function generateSourceMapUrl(path: string): string | undefined {
-  const { stdout } = spawnSync("bunx", ["esbuild", path, "--sourcemap=inline"], {
-    stdio: "pipe",
-    encoding: "utf-8",
-  });
-  const match = /sourceMappingURL=(.*)/im.exec(stdout);
-  if (!match) {
-    return undefined;
-  }
-  const [_, sourceMapUrl] = match;
-  return sourceMapUrl;
-}
-
 function isSameLocation(a: { line?: number; column?: number }, b: { line?: number; column?: number }): boolean {
   return (a.line === b.line || (!a.line && !b.line)) && (a.column === b.column || (!a.column && !b.column));
+}
+
+function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): string | undefined {
+  switch (level) {
+    case "warning":
+      return "\u001b[33m";
+    case "error":
+      return "\u001b[31m";
+    case "debug":
+      return "\u001b[36m";
+  }
+  return undefined;
 }

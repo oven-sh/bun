@@ -43,7 +43,11 @@ export class WebSocketInspector implements Inspector {
     let webSocket: WebSocket;
     try {
       console.log("[jsc] connecting", this.#url.href);
-      webSocket = new WebSocket(this.#url);
+      webSocket = new WebSocket(this.#url, {
+        headers: {
+          "Ref-Event-Loop": "0",
+        },
+      });
     } catch (error) {
       this.#close(unknownToError(error));
       return;

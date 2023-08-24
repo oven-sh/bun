@@ -1,13 +1,13 @@
 import { SourceMapConsumer } from "source-map-js";
 
-export type Position = {
+export type Location = {
   line: number;
   column: number;
 };
 
 export interface SourceMap {
-  generatedPosition(line?: number, column?: number, url?: string): Position;
-  originalPosition(line?: number, column?: number): Position;
+  generatedLocation(line?: number, column?: number, url?: string): Location;
+  originalLocation(line?: number, column?: number): Location;
 }
 
 class ActualSourceMap implements SourceMap {
@@ -16,8 +16,7 @@ class ActualSourceMap implements SourceMap {
 
   constructor(sourceMap: SourceMapConsumer) {
     this.#sourceMap = sourceMap;
-    // @ts-ignore
-    this.#sources = sourceMap._absoluteSources;
+    this.#sources = (sourceMap as any)._absoluteSources;
   }
 
   #getSource(url?: string): string {
@@ -36,61 +35,61 @@ class ActualSourceMap implements SourceMap {
     return "";
   }
 
-  generatedPosition(line?: number, column?: number, url?: string): Position {
+  generatedLocation(line?: number, column?: number, url?: string): Location {
     try {
       const source = this.#getSource(url);
       const { line: gline, column: gcolumn } = this.#sourceMap.generatedPositionFor({
-        line: line ?? 0,
-        column: column ?? 0,
+        line: lineTo1BasedLine(line),
+        column: columnToColumn(column),
         source,
       });
       console.log(`[sourcemap] -->`, { source, url, line, column }, { gline, gcolumn });
       return {
-        line: gline || 0,
-        column: gcolumn || 0,
+        line: lineTo0BasedLine(gline),
+        column: columnToColumn(gcolumn),
       };
     } catch (error) {
-      console.error(error);
+      console.warn(error);
       return {
-        line: line || 0,
-        column: column || 0,
+        line: lineToLine(line),
+        column: columnToColumn(column),
       };
     }
   }
 
-  originalPosition(line?: number, column?: number): Position {
+  originalLocation(line?: number, column?: number): Location {
     try {
       const { line: oline, column: ocolumn } = this.#sourceMap.originalPositionFor({
-        line: line ?? 0,
-        column: column ?? 0,
+        line: lineTo1BasedLine(line),
+        column: columnToColumn(column),
       });
       console.log(`[sourcemap] <--`, { line, column }, { oline, ocolumn });
       return {
-        line: oline || 0,
-        column: ocolumn || 0,
+        line: lineTo0BasedLine(oline),
+        column: columnToColumn(ocolumn),
       };
     } catch (error) {
-      console.error(error);
+      console.warn(error);
       return {
-        line: line || 0,
-        column: column || 0,
+        line: lineToLine(line),
+        column: columnToColumn(column),
       };
     }
   }
 }
 
 class NoopSourceMap implements SourceMap {
-  generatedPosition(line?: number, column?: number, url?: string): Position {
+  generatedLocation(line?: number, column?: number, url?: string): Location {
     return {
-      line: line ?? 0,
-      column: column ?? 0,
+      line: lineToLine(line),
+      column: columnToColumn(column),
     };
   }
 
-  originalPosition(line?: number, column?: number): Position {
+  originalLocation(line?: number, column?: number): Location {
     return {
-      line: line ?? 0,
-      column: column ?? 0,
+      line: lineToLine(line),
+      column: columnToColumn(column),
     };
   }
 }
@@ -103,11 +102,32 @@ export function SourceMap(url?: string): SourceMap {
   }
   try {
     const [_, base64] = url.split(",", 2);
-    const decoded = Buffer.from(base64, "base64").toString("utf8");
-    const sourceMap = new SourceMapConsumer(JSON.parse(decoded));
+    const decoded = Buffer.from(base64, "base64url").toString("utf8");
+    const schema = JSON.parse(decoded);
+    // HACK: Bun is sometimes sending invalid mappings
+    try {
+      schema.mappings = schema.mappings.replace(/[^a-z,;]/gi, "").slice(1);
+    } catch {}
+    const sourceMap = new SourceMapConsumer(schema);
     return new ActualSourceMap(sourceMap);
   } catch (error) {
     console.warn("Failed to parse source map URL", url);
   }
   return defaultSourceMap;
+}
+
+function lineTo1BasedLine(line?: number): number {
+  return line ? line + 1 : 1;
+}
+
+function lineTo0BasedLine(line?: number): number {
+  return line ? line - 1 : 0;
+}
+
+function lineToLine(line?: number): number {
+  return line ?? 0;
+}
+
+function columnToColumn(column?: number): number {
+  return column ?? 0;
 }

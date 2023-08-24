@@ -2287,7 +2287,7 @@ pub const PackageManager = struct {
             if (entry.kind != .directory and entry.kind != .sym_link) continue;
             const name = entry.name;
             const sliced = SlicedString.init(name, name);
-            const parsed = Semver.Version.parse(sliced, allocator);
+            const parsed = Semver.Version.parse(sliced);
             if (!parsed.valid or parsed.wildcard != .none) continue;
             // not handling OOM
             // TODO: wildcard

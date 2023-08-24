@@ -2860,7 +2860,7 @@ pub const Package = extern struct {
         };
         if (workspace_json.has_found_version) {
             const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
-            const result = Semver.Version.parse(version, allocator);
+            const result = Semver.Version.parse(version);
             if (result.valid and result.wildcard == .none) {
                 entry.version = result.version.fill();
             }

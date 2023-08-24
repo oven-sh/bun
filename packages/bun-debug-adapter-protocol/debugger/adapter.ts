@@ -58,6 +58,11 @@ type Scope = DAP.Scope & {
   source?: Source;
 };
 
+type Variable = DAP.Variable & {
+  objectId?: string;
+  type: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+};
+
 type IDebugAdapter = {
   [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void;
 } & {
@@ -83,9 +88,9 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #breakpointId: number;
   #breakpoints: Breakpoint[];
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
-  #variableId: number;
-  #variables: Map<number, JSC.Runtime.RemoteObject>;
+  #variables: (Variable | Variable[])[];
   #process?: ChildProcess;
+  #terminated?: boolean;
 
   constructor({ sendToAdapter }: DebugAdapterOptions) {
     this.#inspector = new WebSocketInspector({ listener: this });
@@ -98,8 +103,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpointId = 1;
     this.#breakpoints = [];
     this.#functionBreakpoints = new Map();
-    this.#variableId = 1;
-    this.#variables = new Map();
+    this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
   }
 
   #reset(): void {
@@ -110,8 +114,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpointId = 1;
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
-    this.#variableId = 1;
-    this.#variables.clear();
+    this.#variables.length = 1;
   }
 
   /**
@@ -164,6 +167,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
    * Closes the inspector and adapter.
    */
   close(): void {
+    this.#terminated = true;
     this.#process?.kill();
     this.#inspector.close();
     this.#reset();
@@ -215,22 +219,17 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.#send("Debugger.setBreakpointsActive", { active: true });
 
-    // If the client will send a `configurationDone` request, pause execution
-    // until it is received, so any breakpoints can be set before the program continues.
-    if (supportsConfigurationDoneRequest || clientID === "vscode") {
-      this.#send("Debugger.pause");
-      this.#stopped = "entry";
+    // If the client will not send a `configurationDone` request, then we need to
+    // tell the debugger that everything is ready.
+    if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
+      this.#send("Inspector.initialized");
     }
 
     return capabilities;
   }
 
   async configurationDone(request: DAP.ConfigurationDoneRequest): Promise<DAP.ConfigurationDoneResponse> {
-    // Now that the client has finished configuring the debugger, resume execution.
-    if (this.#stopped === "entry") {
-      this.#send("Debugger.resume");
-      this.#stopped = undefined;
-    }
+    this.#send("Inspector.initialized");
 
     return {};
   }
@@ -378,13 +377,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async attach(request: AttachRequest): Promise<DAP.AttachResponse> {
     const { url } = request;
-
     this.#inspector.start(parseUrl(url));
 
     return {};
   }
 
   async terminate(request: DAP.TerminateRequest): Promise<DAP.TerminateResponse> {
+    this.#terminated = true;
     this.#process?.kill();
 
     return {};
@@ -392,9 +391,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async disconnect(request: DAP.DisconnectRequest): Promise<DAP.DisconnectResponse> {
     const { terminateDebuggee } = request;
-
     if (terminateDebuggee) {
-      this.#process?.kill();
+      this.terminate(request);
     }
     this.close();
 
@@ -748,7 +746,17 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
     const { variablesReference, start, count } = request;
-    const variables = await this.#listVariables(variablesReference, start, count);
+    const variable = this.#variables[variablesReference];
+
+    let variables: Variable[];
+    if (!variable) {
+      variables = [];
+    } else if (Array.isArray(variable)) {
+      variables = variable;
+    } else {
+      variables = await this.#getVariables(variable, start, count);
+    }
+
     return {
       variables: variables.sort(variablesSortBy),
     };
@@ -757,15 +765,18 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async evaluate(request: DAP.EvaluateRequest): Promise<DAP.EvaluateResponse> {
     const { expression, frameId, context } = request;
     const callFrameId = this.#getCallFrameId(frameId);
+
     const { result, wasThrown } = await this.#evaluate(expression, callFrameId);
     const { className } = result;
+
     if (context === "hover" && wasThrown && (className === "SyntaxError" || className === "ReferenceError")) {
       return {
         result: "",
         variablesReference: 0,
       };
     }
-    const { name, value, ...variable } = this.#getVariable(result);
+
+    const { name, value, ...variable } = this.#addVariable(result);
     return {
       ...variable,
       result: value,
@@ -774,6 +785,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async #evaluate(expression: string, callFrameId?: string): Promise<JSC.Runtime.EvaluateResponse> {
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
+
     return this.#send(method, {
       callFrameId,
       expression: sanitizeExpression(expression),
@@ -828,7 +840,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       output: "Debugger detached.\n",
     });
 
-    if (error) {
+    if (error && !this.#terminated) {
       const { message } = error;
       this.#emit("output", {
         category: "stderr",
@@ -899,13 +911,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    // If the debugger was paused on entry, don't emit an event.
-    // When the client sends the `configurationDone` request, then
-    // the debugger will be resumed.
-    if (this.#stopped === "entry") {
-      return;
-    }
-
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
     for (const callFrame of callFrames) {
@@ -963,14 +968,46 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { message } = event;
     const { type, text, parameters, line, column, stackTrace } = message;
 
+    let output: string;
     let isError: boolean | undefined;
     let variablesReference: number | undefined;
-    let output = text;
-    for (const parameter of parameters ?? []) {
-      isError = parameter.subtype === "error";
-      variablesReference = this.#addVariable(parameter);
-      output = remoteObjectToString(parameter);
-      break;
+
+    if (parameters?.length) {
+      output = "";
+
+      const variables = parameters.map((parameter, i) => {
+        const variable = this.#addVariable(parameter, { name: `${i}` });
+
+        const { value, type } = variable;
+        output += value + " ";
+        isError ||= type === "error";
+
+        return variable;
+      });
+
+      if (variables.length === 1) {
+        const [{ variablesReference: reference }] = variables;
+        variablesReference = reference;
+      } else {
+        variablesReference = this.#setVariable(variables);
+      }
+    } else {
+      output = text;
+    }
+
+    if (!output.endsWith("\n")) {
+      output += "\n";
+    }
+
+    if (variablesReference) {
+      variablesReference = this.#setVariable([
+        {
+          name: "",
+          value: "",
+          type: undefined,
+          variablesReference,
+        },
+      ]);
     }
 
     let source: Source | undefined;
@@ -983,7 +1020,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     }
 
     this.#emit("output", {
-      category: isError ? "stderr" : "console",
+      category: isError ? "stderr" : "debug console",
       group: consoleMessageGroup(type),
       output,
       variablesReference,
@@ -1098,7 +1135,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }
       const { scriptId } = location;
       const source = this.#getSourceIfPresent(scriptId);
-      const variablesReference = this.#addVariable(object);
+      const { variablesReference } = this.#addVariable(object);
       const presentationHint = scopePresentationHint(type);
       const title = presentationHint ? titleize(presentationHint) : "Unknown";
       const displayName = name ? `${title}: ${name}` : title;
@@ -1164,23 +1201,20 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     return stackFrame;
   }
 
-  #addVariable(remoteObject: JSC.Runtime.RemoteObject): number {
-    const objectId = remoteObjectToObjectId(remoteObject);
-    if (!objectId) {
-      return 0;
-    }
-    const variableReference = this.#variableId++;
-    this.#variables.set(variableReference, remoteObject);
-    return variableReference;
+  #setVariable(variable: Variable | Variable[]): number {
+    const variablesReference = this.#variables.length;
+
+    this.#variables.push(variable);
+
+    return variablesReference;
   }
 
-  #getVariable(
-    remoteObject: JSC.Runtime.RemoteObject,
-    propertyDescriptor?: JSC.Runtime.PropertyDescriptor,
-  ): DAP.Variable {
-    const { type, subtype, size } = remoteObject;
-    const variablesReference = this.#addVariable(remoteObject);
-    return {
+  #addVariable(remoteObject: JSC.Runtime.RemoteObject, propertyDescriptor?: JSC.Runtime.PropertyDescriptor): Variable {
+    const { objectId, type, subtype, size } = remoteObject;
+    const variablesReference = objectId ? this.#variables.length : 0;
+
+    const variable: Variable = {
+      objectId,
       name: propertyDescriptorToName(propertyDescriptor),
       type: subtype || type,
       value: remoteObjectToString(remoteObject),
@@ -1189,43 +1223,15 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       namedVariables: isNamedIndexed(subtype) ? size : undefined,
       presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
+    this.#setVariable(variable);
+
+    return variable;
   }
 
-  #getVariables(
-    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
-  ): DAP.Variable[] {
-    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
-    const variables: DAP.Variable[] = [];
-    if (value) {
-      variables.push(this.#getVariable(value, propertyDescriptor));
-    }
-    if (get) {
-      const { type } = get;
-      if (type !== "undefined") {
-        variables.push(this.#getVariable(get, propertyDescriptor));
-      }
-    }
-    if (set) {
-      const { type } = set;
-      if (type !== "undefined") {
-        variables.push(this.#getVariable(set, propertyDescriptor));
-      }
-    }
-    if (symbol) {
-      variables.push(this.#getVariable(symbol, propertyDescriptor));
-    }
-    return variables;
-  }
+  async #getVariables(variable: Variable, offset?: number, count?: number): Promise<Variable[]> {
+    const { objectId, type, indexedVariables, namedVariables } = variable;
 
-  async #listVariables(variableReference: number, offset?: number, count?: number): Promise<DAP.Variable[]> {
-    const remoteObject = this.#variables.get(variableReference);
-
-    if (!remoteObject) {
-      return [];
-    }
-
-    const { objectId, subtype, size } = remoteObject;
-    if (!objectId) {
+    if (!objectId || type === "symbol") {
       return [];
     }
 
@@ -1234,18 +1240,18 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       generatePreview: true,
     });
 
-    const variables: DAP.Variable[] = [];
+    const variables: Variable[] = [];
     for (const property of properties) {
-      variables.push(...this.#getVariables(property));
+      variables.push(...this.#getVariable(property));
     }
 
     if (internalProperties) {
       for (const property of internalProperties) {
-        variables.push(...this.#getVariables(property));
+        variables.push(...this.#getVariable({ ...property, configurable: false }));
       }
     }
 
-    const hasEntries = !!size && subtype !== "array" && (isIndexed(subtype) || isNamedIndexed(subtype));
+    const hasEntries = type !== "array" && (indexedVariables || namedVariables);
     if (hasEntries) {
       const { entries } = await this.#send("Runtime.getCollectionEntries", {
         objectId,
@@ -1260,8 +1266,39 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
           const { value, description } = key;
           name = String(value ?? description);
         }
-        variables.push(this.#getVariable(value, { name }));
+        variables.push(this.#addVariable(value, { name }));
       }
+    }
+
+    return variables;
+  }
+
+  #getVariable(
+    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
+  ): Variable[] {
+    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
+    const variables: Variable[] = [];
+
+    if (value) {
+      variables.push(this.#addVariable(value, propertyDescriptor));
+    }
+
+    if (get) {
+      const { type } = get;
+      if (type !== "undefined") {
+        variables.push(this.#addVariable(get, propertyDescriptor));
+      }
+    }
+
+    if (set) {
+      const { type } = set;
+      if (type !== "undefined") {
+        variables.push(this.#addVariable(set, propertyDescriptor));
+      }
+    }
+
+    if (symbol) {
+      variables.push(this.#addVariable(symbol, propertyDescriptor));
     }
 
     return variables;
@@ -1524,13 +1561,13 @@ function remoteObjectToVariablePresentationHint(
   if (subtype === "class") {
     kind = "class";
   }
-  if (isPrivate || !configurable || hasSymbol || name === "__proto__") {
+  if (isPrivate || configurable === false || hasSymbol || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {
     attributes.push("rawString");
   }
-  if (!writable || (hasGetter && !hasSetter)) {
+  if (writable === false || (hasGetter && !hasSetter)) {
     attributes.push("readOnly");
   }
   if (wasThrown || hasGetter) {
@@ -1543,14 +1580,6 @@ function remoteObjectToVariablePresentationHint(
     lazy,
     attributes,
   };
-}
-
-function remoteObjectToObjectId(remoteObject: JSC.Runtime.RemoteObject): string | undefined {
-  const { objectId, type } = remoteObject;
-  if (!objectId || type === "symbol") {
-    return undefined;
-  }
-  return objectId;
 }
 
 function propertyDescriptorToName(propertyDescriptor?: JSC.Runtime.PropertyDescriptor): string {

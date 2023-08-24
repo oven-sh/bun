@@ -132,6 +132,9 @@ export default {
     page("runtime/configuration", "Configuration", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
+    page("runtime/debugger", "Debugger", {
+      description: `Debug your code with Bun's web-based debugger or VS Code extension`,
+    }),
     page("runtime/framework", "Framework API", {
       disabled: true,
       description:

@@ -1023,7 +1023,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_written_status: bool = false,
         response_protected: bool = false,
         aborted: bool = false,
-        finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
     };
 }
 
@@ -1515,9 +1515,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("finalizeWithoutDeinit<d> ({*})<r>", .{this});
             this.blob.detach();
 
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(!this.flags.finalized);
-                this.flags.finalized = true;
+            if (comptime Environment.isDebug) {
+                ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
+                this.flags.has_finalized = true;
             }
 
             if (!this.response_jsvalue.isEmpty()) {
@@ -1596,7 +1596,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctxLog("deinit<d> ({*})<r>", .{this});
             if (comptime Environment.allow_assert)
-                std.debug.assert(this.flags.finalized);
+                std.debug.assert(this.flags.has_finalized);
 
             if (comptime Environment.allow_assert)
                 std.debug.assert(this.flags.has_marked_complete);

@@ -372,6 +372,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
+            defer JSC.VirtualMachine.get().drainMicrotasks();
             std.debug.assert(socket.socket == this.tcp.socket);
             if (this.outgoing_websocket == null) {
                 this.clearData();
@@ -1047,6 +1048,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+            // This is the start of a task, so we need to drain the microtask queue at the end
+            defer JSC.VirtualMachine.get().drainMicrotasks();
+
             // Due to scheduling, it is possible for the websocket onData
             // handler to run with additional data before the microtask queue is
             // drained.

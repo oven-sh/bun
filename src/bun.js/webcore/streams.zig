@@ -3863,6 +3863,8 @@ pub const FIFO = struct {
             return;
         }
 
+        defer JSC.VirtualMachine.get().drainMicrotasks();
+
         if (comptime Environment.isMac) {
             if (sizeOrOffset == 0 and is_hup and this.drained) {
                 this.close();
@@ -4750,6 +4752,7 @@ pub fn NewReadyWatcher(
         }
 
         pub fn onPoll(this: *Context, sizeOrOffset: i64, _: u16) void {
+            defer JSC.VirtualMachine.get().drainMicrotasks();
             ready(this, sizeOrOffset);
         }
 

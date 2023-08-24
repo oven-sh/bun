@@ -1395,6 +1395,9 @@ pub const DNSResolver = struct {
         this: *DNSResolver,
         poll: *JSC.FilePoll,
     ) void {
+        var vm = this.vm;
+        defer vm.drainMicrotasks();
+
         var channel = this.channel orelse {
             _ = this.polls.orderedRemove(@as(i32, @intCast(poll.fd)));
             poll.deinit();

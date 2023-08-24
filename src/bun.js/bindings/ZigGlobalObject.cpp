@@ -3498,15 +3498,18 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
         this->m_assignToStream.set(vm, this, function);
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(stream);
     arguments.append(controller);
 
-    auto result = call(this, function, callData, JSC::jsUndefined(), arguments);
-    if (scope.exception())
-        return JSC::JSValue::encode(scope.exception());
+    WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
+
+    auto result = JSC::profiledCall(this, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
+    if (returnedException.get()) {
+        auto* exception = WTFMove(returnedException.get());
+        return JSC::JSValue::encode(exception);
+    }
 
     return JSC::JSValue::encode(result);
 }

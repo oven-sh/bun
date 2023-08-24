@@ -5,7 +5,7 @@ import { WebSocketInspector } from "../../bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
-import { SourceMap } from "./sourcemap";
+import { Location, SourceMap } from "./sourcemap";
 import { compare, parse } from "semver";
 
 type InitializeRequest = DAP.InitializeRequest & {
@@ -509,31 +509,37 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   #generatedLocation(source: Source, line?: number, column?: number): JSC.Debugger.Location {
     const { sourceMap, scriptId, path } = source;
-    const { line: line0, column: column0 } = sourceMap.generatedLocation(
-      this.#lineTo0BasedLine(line),
-      this.#columnTo0BasedColumn(column),
-      path,
-    );
+    const { line: gline, column: gcolumn } = sourceMap.generatedLocation({
+      line: this.#lineTo0BasedLine(line),
+      column: this.#columnTo0BasedColumn(column),
+      url: path,
+    });
 
     return {
       scriptId,
-      lineNumber: line0,
-      columnNumber: column0,
+      lineNumber: gline,
+      columnNumber: gcolumn,
     };
   }
 
   #lineTo0BasedLine(line?: number): number {
-    if (this.#initialized?.linesStartAt1) {
-      return line ? line - 1 : 0;
+    if (!numberIsValid(line)) {
+      return 0;
     }
-    return line ?? 0;
+    if (this.#initialized?.linesStartAt1) {
+      return line - 1;
+    }
+    return line;
   }
 
   #columnTo0BasedColumn(column?: number): number {
-    if (this.#initialized?.columnsStartAt1) {
-      return column ? column - 1 : 0;
+    if (!numberIsValid(column)) {
+      return 0;
     }
-    return column ?? 0;
+    if (this.#initialized?.columnsStartAt1) {
+      return column - 1;
+    }
+    return column;
   }
 
   #originalLocation(
@@ -548,26 +554,26 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     }
 
     const { sourceMap } = source;
-    const { line: line0, column: column0 } = sourceMap.originalLocation(line, column);
+    const { line: oline, column: ocolumn } = sourceMap.originalLocation({ line, column });
 
     return {
-      line: this.#lineFrom0BasedLine(line0),
-      column: this.#columnFrom0BasedColumn(column0),
+      line: this.#lineFrom0BasedLine(oline),
+      column: this.#columnFrom0BasedColumn(ocolumn),
     };
   }
 
   #lineFrom0BasedLine(line?: number): number {
     if (this.#initialized?.linesStartAt1) {
-      return line ? line + 1 : 1;
+      return numberIsValid(line) ? line + 1 : 1;
     }
-    return line ?? 0;
+    return numberIsValid(line) ? line : 0;
   }
 
   #columnFrom0BasedColumn(column?: number): number {
     if (this.#initialized?.columnsStartAt1) {
-      return column ? column + 1 : 1;
+      return numberIsValid(column) ? column + 1 : 1;
     }
-    return column ?? 0;
+    return numberIsValid(column) ? column : 0;
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
@@ -944,6 +950,15 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
+    if (reason === "PauseOnNextStatement") {
+      for (const { functionName } of callFrames) {
+        if (functionName === "module code") {
+          this.#send("Debugger.resume");
+          return;
+        }
+      }
+    }
+
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
     for (const callFrame of callFrames) {
@@ -1143,21 +1158,26 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { scriptId } = location;
     const source = this.#getSourceIfPresent(scriptId);
 
-    let { lineNumber, columnNumber } = location;
+    let originalLocation: Location;
     if (source) {
-      const { line, column } = this.#originalLocation(source, location);
-      lineNumber = line;
-      columnNumber = column;
+      originalLocation = this.#originalLocation(source, location);
+    } else {
+      const { lineNumber, columnNumber } = location;
+      originalLocation = {
+        line: this.#lineFrom0BasedLine(lineNumber),
+        column: this.#columnFrom0BasedColumn(columnNumber),
+      };
     }
 
+    const { line, column } = originalLocation;
     const scopes: Scope[] = [];
     const stackFrame: StackFrame = {
       callFrameId,
       scriptId,
       id: this.#stackFrames.length,
       name: functionName || "<anonymous>",
-      line: lineNumber,
-      column: columnNumber || 0,
+      line,
+      column,
       presentationHint: stackFramePresentationHint(source?.path),
       source,
       scopes,
@@ -1166,30 +1186,39 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     for (const scope of scopeChain) {
       const { name, type, location, object, empty } = scope;
-      if (empty || !location) {
+      if (empty) {
         continue;
       }
-      const { scriptId } = location;
-      const source = this.#getSourceIfPresent(scriptId);
+
       const { variablesReference } = this.#addVariable(object);
       const presentationHint = scopePresentationHint(type);
       const title = presentationHint ? titleize(presentationHint) : "Unknown";
       const displayName = name ? `${title}: ${name}` : title;
 
-      let { lineNumber, columnNumber } = location;
-      if (source) {
-        const { line, column } = this.#originalLocation(source, location);
-        lineNumber = line;
-        columnNumber = column;
+      let originalLocation: Location | undefined;
+      if (location) {
+        const { scriptId } = location;
+        const source = this.#getSourceIfPresent(scriptId);
+
+        if (source) {
+          originalLocation = this.#originalLocation(source, location);
+        } else {
+          const { lineNumber, columnNumber } = location;
+          originalLocation = {
+            line: this.#lineFrom0BasedLine(lineNumber),
+            column: this.#columnFrom0BasedColumn(columnNumber),
+          };
+        }
       }
 
+      const { line, column } = originalLocation ?? {};
       scopes.push({
         name: displayName,
         presentationHint,
         expensive: presentationHint === "globals",
         variablesReference,
-        line: lineNumber,
-        column: columnNumber,
+        line,
+        column,
         source,
       });
     }
@@ -1214,20 +1243,25 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const callFrameId = callFrameToId(callFrame);
     const source = this.#getSourceIfPresent(scriptId);
 
-    let { lineNumber, columnNumber } = callFrame;
+    let originalLocation: Location;
     if (source) {
-      const { line, column } = this.#originalLocation(source, callFrame);
-      lineNumber = line;
-      columnNumber = column;
+      originalLocation = this.#originalLocation(source, callFrame);
+    } else {
+      const { lineNumber, columnNumber } = callFrame;
+      originalLocation = {
+        line: this.#lineFrom0BasedLine(lineNumber),
+        column: this.#columnFrom0BasedColumn(columnNumber),
+      };
     }
 
+    const { line, column } = originalLocation;
     const stackFrame: StackFrame = {
       callFrameId,
       scriptId,
       id: this.#stackFrames.length,
       name: functionName || "<anonymous>",
-      line: lineNumber,
-      column: columnNumber,
+      line,
+      column,
       source,
       presentationHint: stackFramePresentationHint(source?.path),
       canRestart: false,
@@ -1730,4 +1764,8 @@ function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): st
       return "\u001b[36m";
   }
   return undefined;
+}
+
+function numberIsValid(number?: number): number is number {
+  return typeof number === "number" && isFinite(number) && number >= 0;
 }

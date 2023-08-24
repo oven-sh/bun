@@ -1,13 +1,28 @@
+import type { LineRange, MappedPosition } from "source-map-js";
 import { SourceMapConsumer } from "source-map-js";
 
-export type Location = {
-  line: number;
-  column: number;
+export type LocationRequest = {
+  line?: number;
+  column?: number;
+  url?: string;
 };
 
+export type Location = {
+  line: number; // 0-based
+  column: number; // 0-based
+} & (
+  | {
+      verified: true;
+    }
+  | {
+      verified?: false;
+      message?: string;
+    }
+);
+
 export interface SourceMap {
-  generatedLocation(line?: number, column?: number, url?: string): Location;
-  originalLocation(line?: number, column?: number): Location;
+  generatedLocation(request: LocationRequest): Location;
+  originalLocation(request: LocationRequest): Location;
 }
 
 class ActualSourceMap implements SourceMap {
@@ -21,11 +36,11 @@ class ActualSourceMap implements SourceMap {
 
   #getSource(url?: string): string {
     const sources = this.#sources;
-    if (sources.length === 1) {
-      return sources[0];
+    if (!sources.length) {
+      return "";
     }
-    if (!url) {
-      return sources[0] ?? "";
+    if (sources.length === 1 || !url) {
+      return sources[0];
     }
     for (const source of sources) {
       if (url.endsWith(source)) {
@@ -35,61 +50,87 @@ class ActualSourceMap implements SourceMap {
     return "";
   }
 
-  generatedLocation(line?: number, column?: number, url?: string): Location {
+  generatedLocation(request: LocationRequest): Location {
+    const { line, column, url } = request;
+    let lineRange: LineRange;
     try {
       const source = this.#getSource(url);
-      const { line: gline, column: gcolumn } = this.#sourceMap.generatedPositionFor({
+      lineRange = this.#sourceMap.generatedPositionFor({
         line: lineTo1BasedLine(line),
         column: columnToColumn(column),
         source,
       });
-      console.log(`[sourcemap] -->`, { source, url, line, column }, { gline, gcolumn });
-      return {
-        line: lineTo0BasedLine(gline),
-        column: columnToColumn(gcolumn),
-      };
     } catch (error) {
-      console.warn(error);
       return {
         line: lineToLine(line),
         column: columnToColumn(column),
+        verified: false,
+        message: unknownToError(error),
       };
     }
+    if (!locationIsValid(lineRange)) {
+      return {
+        line: lineToLine(line),
+        column: columnToColumn(column),
+        verified: false,
+      };
+    }
+    const { line: gline, column: gcolumn } = lineRange;
+    return {
+      line: lineToLine(gline),
+      column: columnToColumn(gcolumn),
+      verified: true,
+    };
   }
 
-  originalLocation(line?: number, column?: number): Location {
+  originalLocation(request: LocationRequest): Location {
+    const { line, column } = request;
+    let mappedPosition: MappedPosition;
     try {
-      const { line: oline, column: ocolumn } = this.#sourceMap.originalPositionFor({
+      mappedPosition = this.#sourceMap.originalPositionFor({
         line: lineTo1BasedLine(line),
         column: columnToColumn(column),
       });
-      console.log(`[sourcemap] <--`, { line, column }, { oline, ocolumn });
-      return {
-        line: lineTo0BasedLine(oline),
-        column: columnToColumn(ocolumn),
-      };
     } catch (error) {
-      console.warn(error);
       return {
         line: lineToLine(line),
         column: columnToColumn(column),
+        verified: false,
+        message: unknownToError(error),
       };
     }
+    if (!locationIsValid(mappedPosition)) {
+      return {
+        line: lineToLine(line),
+        column: columnToColumn(column),
+        verified: false,
+      };
+    }
+    const { line: oline, column: ocolumn } = mappedPosition;
+    return {
+      line: lineTo0BasedLine(oline),
+      column: columnToColumn(ocolumn),
+      verified: true,
+    };
   }
 }
 
 class NoopSourceMap implements SourceMap {
-  generatedLocation(line?: number, column?: number, url?: string): Location {
+  generatedLocation(request: LocationRequest): Location {
+    const { line, column } = request;
     return {
       line: lineToLine(line),
       column: columnToColumn(column),
+      verified: true,
     };
   }
 
-  originalLocation(line?: number, column?: number): Location {
+  originalLocation(request: LocationRequest): Location {
+    const { line, column } = request;
     return {
       line: lineToLine(line),
       column: columnToColumn(column),
+      verified: true,
     };
   }
 }
@@ -104,10 +145,6 @@ export function SourceMap(url?: string): SourceMap {
     const [_, base64] = url.split(",", 2);
     const decoded = Buffer.from(base64, "base64url").toString("utf8");
     const schema = JSON.parse(decoded);
-    // HACK: Bun is sometimes sending invalid mappings
-    try {
-      schema.mappings = schema.mappings.replace(/[^a-z,;]/gi, "").slice(1);
-    } catch {}
     const sourceMap = new SourceMapConsumer(schema);
     return new ActualSourceMap(sourceMap);
   } catch (error) {
@@ -117,17 +154,34 @@ export function SourceMap(url?: string): SourceMap {
 }
 
 function lineTo1BasedLine(line?: number): number {
-  return line ? line + 1 : 1;
+  return numberIsValid(line) ? line + 1 : 1;
 }
 
 function lineTo0BasedLine(line?: number): number {
-  return line ? line - 1 : 0;
+  return numberIsValid(line) ? line - 1 : 0;
 }
 
 function lineToLine(line?: number): number {
-  return line ?? 0;
+  return numberIsValid(line) ? line : 0;
 }
 
 function columnToColumn(column?: number): number {
-  return column ?? 0;
+  return numberIsValid(column) ? column : 0;
+}
+
+function locationIsValid(location: Location): location is Location {
+  const { line, column } = location;
+  return numberIsValid(line) && numberIsValid(column);
+}
+
+function numberIsValid(number?: number): number is number {
+  return typeof number === "number" && isFinite(number) && number >= 0;
+}
+
+function unknownToError(error: unknown): string {
+  if (error instanceof Error) {
+    const { message } = error;
+    return message;
+  }
+  return String(error);
 }

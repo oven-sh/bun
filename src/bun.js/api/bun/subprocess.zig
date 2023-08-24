@@ -1392,6 +1392,8 @@ pub const Subprocess = struct {
             JSValue.zero;
         subprocess.this_jsvalue = out;
 
+        var send_exit_notification = false;
+
         if (comptime !is_sync) {
             var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
@@ -1406,10 +1408,17 @@ pub const Subprocess = struct {
                         @panic("This shouldn't happen");
                     }
 
-                    // process has already exited
-                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                    subprocess.onExitNotification();
+                    send_exit_notification = true;
+                    lazy = false;
                 },
+            }
+        }
+
+        defer {
+            if (send_exit_notification) {
+                // process has already exited
+                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                subprocess.onExitNotification();
             }
         }
 
@@ -1493,6 +1502,13 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
         return sync_value;
+    }
+
+    pub fn onExitNotificationTask(this: *Subprocess) void {
+        var vm = this.globalThis.bunVM();
+        defer vm.drainMicrotasks();
+        std.debug.assert(!this.is_sync);
+        this.wait(false);
     }
 
     pub fn onExitNotification(

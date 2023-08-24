@@ -178,6 +178,8 @@ const Handlers = struct {
         socket_context: *uws.SocketContext,
 
         pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
+            var vm = this.handlers.vm;
+            defer vm.drainMicrotasks();
             this.handlers.markInactive(ssl, this.socket_context, wrapped);
         }
     };
@@ -1144,6 +1146,8 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
+            var vm = handlers.vm;
+            defer vm.drainMicrotasks();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1170,6 +1174,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             const callback = handlers.onTimeout;
             if (callback == .zero) return;
+            var vm = handlers.vm;
+            defer vm.drainMicrotasks();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1189,10 +1195,12 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.markInactive();
 
             const handlers = this.handlers;
-            this.poll_ref.unrefOnNextTick(handlers.vm);
+            var vm = handlers.vm;
+            this.poll_ref.unrefOnNextTick(vm);
 
             const callback = handlers.onConnectError;
             var globalObject = handlers.globalObject;
+            defer vm.drainMicrotasks();
             const err = JSC.SystemError{
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
@@ -1361,6 +1369,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             const callback = handlers.onEnd;
             if (callback == .zero) return;
+
+            var vm = handlers.vm;
+            defer vm.drainMicrotasks();
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can

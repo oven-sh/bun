@@ -3480,6 +3480,8 @@ pub const ServerWebSocket = struct {
         const onMessageHandler = this.handler.onMessage;
         if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
         var globalObject = this.handler.globalObject;
+        // This is the start of a task.
+        defer globalObject.bunVM().drainMicrotasks();
 
         const arguments = [_]JSValue{
             this.getThisValue(),
@@ -3587,8 +3589,11 @@ pub const ServerWebSocket = struct {
         var handler = this.handler;
         var cb = handler.onPing;
         if (cb.isEmptyOrUndefinedOrNull()) return;
-
         var globalThis = handler.globalObject;
+
+        // This is the start of a task.
+        defer globalThis.bunVM().drainMicrotasks();
+
         const result = cb.call(
             globalThis,
             &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)
@@ -3625,6 +3630,10 @@ pub const ServerWebSocket = struct {
         if (cb.isEmptyOrUndefinedOrNull()) return;
 
         var globalThis = handler.globalObject;
+
+        // This is the start of a task.
+        defer globalThis.bunVM().drainMicrotasks();
+
         const result = cb.call(
             globalThis,
             &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)

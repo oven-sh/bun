@@ -1087,8 +1087,16 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
 JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* lexicalGlobalObject)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    bool needsMemoryCost = headers->hasOneRef();
 
-    return JSC::JSValue::encode(WebCore::toJS(lexicalGlobalObject, globalObject, headers));
+    JSValue value = WebCore::toJS(lexicalGlobalObject, globalObject, headers);
+
+    if (needsMemoryCost) {
+        JSFetchHeaders* jsHeaders = jsCast<JSFetchHeaders*>(value);
+        jsHeaders->computeMemoryCost();
+    }
+
+    return JSC::JSValue::encode(value);
 }
 JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* arg1)
 {
@@ -1263,7 +1271,11 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     WebCore::propagateException(*arg0, throwScope,
         headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
     pairs.releaseBuffer();
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
+    JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
+
+    JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
+    fetchHeaders->computeMemoryCost();
+    return JSC::JSValue::encode(value);
 }
 void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC__JSGlobalObject* global)
 {

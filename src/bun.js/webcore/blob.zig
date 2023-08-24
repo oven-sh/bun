@@ -1233,7 +1233,7 @@ pub const Blob = struct {
         return blob_;
     }
 
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+    fn estimatedByteSize(this: *Blob) usize {
         // in-memory size. not the size on disk.
         if (this.size != Blob.max_size) {
             return this.size;
@@ -1245,6 +1245,20 @@ pub const Blob = struct {
         }
 
         return 0;
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        var size = this.estimatedByteSize() + @sizeOf(Blob);
+
+        if (this.store) |store| {
+            size += @sizeOf(Blob.Store);
+            size += switch (store.data) {
+                .bytes => store.data.bytes.stored_name.len,
+                .file => store.data.file.pathlike.path.slice().len,
+            };
+        }
+
+        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
     }
 
     comptime {

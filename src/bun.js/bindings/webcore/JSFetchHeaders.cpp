@@ -317,6 +317,12 @@ void JSFetchHeaders::finishCreation(VM& vm)
     // static_assert(!std::is_base_of<ActiveDOMObject, FetchHeaders>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
+void JSFetchHeaders::computeMemoryCost()
+{
+    m_memoryCost = wrapped().memoryCost();
+    globalObject()->vm().heap.reportExtraMemoryAllocated(m_memoryCost);
+}
+
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     return JSFetchHeadersPrototype::create(vm, &globalObject, JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
@@ -644,6 +650,17 @@ bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
     UNUSED_PARAM(reason);
     return false;
 }
+
+template<typename Visitor>
+void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.reportExtraMemoryVisited(thisObject->m_memoryCost);
+}
+
+DEFINE_VISIT_CHILDREN(JSFetchHeaders);
 
 void JSFetchHeadersOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {

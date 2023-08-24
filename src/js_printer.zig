@@ -1828,14 +1828,16 @@ fn NewPrinter(
             if (record.kind != .dynamic) {
                 p.printSpaceBeforeIdentifier();
 
-                if (record.path.is_disabled and record.handles_import_errors and !is_external and p.options.inline_require_and_import_errors) {
-                    p.printRequireError(record.path.text);
-                    return;
-                }
+                if (p.options.inline_require_and_import_errors) {
+                    if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                        p.printRequireError(record.path.text);
+                        return;
+                    }
 
-                if (record.path.is_disabled) {
-                    p.printDisabledImport();
-                    return;
+                    if (record.path.is_disabled) {
+                        p.printDisabledImport();
+                        return;
+                    }
                 }
 
                 if (comptime is_bun_platform) {

@@ -2665,9 +2665,9 @@ pub const HTTPClientResult = struct {
         href: []const u8 = "",
         headers_buf: []picohttp.Header = &.{},
 
-        pub fn deinit(this: *ResultMetadata) void {
-            if (this.metadata_buf.len > 0) bun.default_allocator.free(this.metadata_buf);
-            if (this.headers_buf.len > 0) bun.default_allocator.free(this.headers_buf);
+        pub fn deinit(this: *ResultMetadata, allocator: std.mem.Allocator) void {
+            if (this.metadata_buf.len > 0) allocator.free(this.metadata_buf);
+            if (this.headers_buf.len > 0) allocator.free(this.headers_buf);
             this.headers_buf = &.{};
             this.metadata_buf = &.{};
             this.href = "";

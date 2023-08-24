@@ -185,10 +185,12 @@ pub const FolderResolution = union(Tag) {
         );
 
         if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
+            package.meta.id = existing_id;
+            manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);
         }
 
-        return manager.lockfile.appendPackage(package) catch unreachable;
+        return manager.lockfile.appendPackage(package);
     }
 
     pub const GlobalOrRelative = union(enum) {

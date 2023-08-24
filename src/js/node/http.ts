@@ -1266,21 +1266,27 @@ class ClientRequest extends OutgoingMessage {
     var method = this.#method,
       body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);
 
+    let url: string;
+    let proxy: string | undefined;
+    if (this.#path.startsWith("http://") || this.#path.startsWith("https://")) {
+      url = this.#path;
+      proxy = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
+    } else {
+      url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
+    }
     try {
-      this.#fetchRequest = fetch(
-        `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`,
-        {
-          method,
-          headers: this.getHeaders(),
-          body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
-          redirect: "manual",
-          verbose: !!$debug,
-          signal: this[kAbortController].signal,
+      this.#fetchRequest = fetch(url, {
+        method,
+        headers: this.getHeaders(),
+        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
+        redirect: "manual",
+        verbose: !!$debug,
+        signal: this[kAbortController].signal,
+        proxy: proxy,
 
-          // Timeouts are handled via this.setTimeout.
-          timeout: false,
-        },
-      )
+        // Timeouts are handled via this.setTimeout.
+        timeout: false,
+      })
         .then(response => {
           var res = (this.#res = new IncomingMessage(response, {
             type: "response",

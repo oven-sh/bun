@@ -10,6 +10,7 @@ import {
   validateHeaderValue,
 } from "node:http";
 import { createTest } from "node-harness";
+import url from "node:url";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server): Promise<URL> {
@@ -592,6 +593,62 @@ describe("node:http", () => {
         req.write(formDataBegin); // string
         req.write(fileData); // Buffer
         req.write(formDataEnd); // string
+        req.end();
+      });
+    });
+    it("request via http proxy, issue#4295", done => {
+      const proxyServer = createServer(function (req, res) {
+        let option = url.parse(req.url);
+        option.host = req.headers.host;
+        option.headers = req.headers;
+
+        const proxyRequest = request(option, function (proxyResponse) {
+          res.writeHead(proxyResponse.statusCode, proxyResponse.headers);
+          proxyResponse.on("data", function (chunk) {
+            res.write(chunk, "binary");
+          });
+          proxyResponse.on("end", function () {
+            res.end();
+          });
+        });
+        req.on("data", function (chunk) {
+          proxyRequest.write(chunk, "binary");
+        });
+        req.on("end", function () {
+          proxyRequest.end();
+        });
+      });
+
+      proxyServer.listen({ port: 0 }, async (_err, hostname, port) => {
+        const options = {
+          protocol: "http:",
+          hostname: hostname,
+          port: port,
+          path: "http://example.com",
+          headers: {
+            Host: "example.com",
+          },
+        };
+
+        const req = request(options, res => {
+          let data = "";
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            try {
+              expect(res.statusCode).toBe(200);
+              expect(data.length).toBeGreaterThan(0);
+              expect(data).toContain("This domain is for use in illustrative examples in documents");
+              done();
+            } catch (err) {
+              done(err);
+            }
+          });
+        });
+        req.on("error", err => {
+          done(err);
+        });
         req.end();
       });
     });

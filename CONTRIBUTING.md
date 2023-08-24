@@ -47,13 +47,13 @@ TODO: document this (see [`bindings.zig`](src/bun.js/bindings/bindings.zig) and 
 
 Copy from examples like `Subprocess` or `Response`.
 
-### ESM Modules and Builtins JS
+### ESM and Bun/Node.js Built-in modules
 
-Bun implements ESM modules in a mix of native code and JavaScript.
+Bun implements ECMAScript modules in a mix of native code and JavaScript.
 
-Several Node.js modules are implemented in JavaScript and loosely based on browserify polyfills.
+Several Node.js built-in modules are implemented in JavaScript and loosely based on browserify polyfills.
 
-Builtin modules in Bun are located in [`src/js`](src/js/). These files are transpiled and support a JavaScriptCore-only syntax for internal slots, which is explained further in [`src/js/README.md`](src/js/README.md).
+Bun built-in modules are located in [`src/js`](src/js/). These files are transpiled and support a JavaScriptCore-only syntax for internal slots, which is explained further in [`src/js/README.md`](src/js/README.md).
 
 Native C++ modules are in `src/bun.js/modules/`.
 

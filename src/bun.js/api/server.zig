@@ -2876,6 +2876,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
+            // This is the start of a task, so it's a good time to drain
             if (this.request_body != null) {
                 var body = this.request_body.?;
 
@@ -2883,6 +2884,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (body.value.Locked.readable) |readable| {
                         if (readable.ptr == .Bytes) {
                             std.debug.assert(this.request_body_buf.items.len == 0);
+                            var vm = this.server.vm;
+                            defer vm.drainMicrotasks();
 
                             if (!last) {
                                 readable.ptr.Bytes.onData(
@@ -2940,8 +2943,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     if (old == .Locked) {
-                        defer this.drainMicrotasks();
-
+                        var vm = this.server.vm;
+                        defer vm.drainMicrotasks();
                         old.resolve(&body.value, this.server.globalThis);
                     }
                     return;

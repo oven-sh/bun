@@ -95,6 +95,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #variables: (Variable | Variable[])[];
   #process?: ChildProcess;
+  #launched?: LaunchRequest;
   #initialized?: InitializeRequest;
   #terminated?: boolean;
 
@@ -121,6 +122,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
     this.#variables.length = 1;
+    this.#launched = undefined;
     this.#initialized = undefined;
   }
 
@@ -236,12 +238,23 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async configurationDone(request: DAP.ConfigurationDoneRequest): Promise<DAP.ConfigurationDoneResponse> {
+    if (this.#launched?.noDebug) {
+      this.#send("Debugger.setBreakpointsActive", { active: false });
+      this.#send("Debugger.setPauseOnExceptions", { state: "none" });
+      this.#send("Debugger.setPauseOnDebuggerStatements", { enabled: false });
+      this.#send("Debugger.setPauseOnMicrotasks", { enabled: false });
+      this.#send("Debugger.setPauseForInternalScripts", { shouldPause: false });
+      this.#send("Debugger.setPauseOnAssertions", { enabled: false });
+    }
+
     this.#send("Inspector.initialized");
 
     return {};
   }
 
   async launch(request: DAP.LaunchRequest): Promise<DAP.LaunchResponse> {
+    this.#launched = request;
+
     try {
       await this.#launch(request);
     } catch (error) {
@@ -254,6 +267,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
       this.#emit("terminated");
     }
+
     return {};
   }
 

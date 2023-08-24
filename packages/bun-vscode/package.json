@@ -1,66 +1,103 @@
 {
   "name": "bun-vscode",
+  "displayName": "Bun",
+  "description": "The Visual Studio Code extension for Bun.",
   "version": "0.0.1",
-  "main": "dist/extension.js",
-  "devDependencies": {
-    "@types/vscode": "^1.81.0",
-    "@vscode/debugadapter": "^1.56.0",
-    "@vscode/debugadapter-testsupport": "^1.56.0",
-    "bun-types": "^0.7.3",
-    "typescript": "^5.0.0",
-    "esbuild": "^0.19.2"
-  },
-  "activationEvents": [
-    "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun",
-    "onCommand:extension.bun.getProgramName"
+  "license": "MIT",
+  "author": "oven",
+  "publisher": "oven",
+  "keywords": [
+    "bun",
+    "node.js",
+    "javascript",
+    "typescript",
+    "vscode"
   ],
-  "browser": "dist/web-extension.js",
+  "icon": "src/assets/icon.png",
+  "galleryBanner": {
+    "color": "#C80000",
+    "theme": "dark"
+  },
+  "homepage": "https://bun.sh/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun"
+  },
+  "bugs": {
+    "url": "https://github.com/oven-sh/bun/issues"
+  },
+  "engines": {
+    "vscode": "^1.81.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
   "categories": [
     "Programming Languages",
-    "Debuggers"
+    "Debuggers",
+    "Testing"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "workspaceContains:**/.lockb",
+    "onDebugResolve:bun",
+    "onDebugDynamicConfigurations:bun"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Bun",
+      "properties": {
+        "bun.path": {
+          "type": "string",
+          "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
+          "scope": "window",
+          "default": null
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "extension.bun.runFile",
+        "title": "Run File",
+        "category": "Bun",
+        "enablement": "!inDebugMode",
+        "icon": "$(play)"
+      },
+      {
+        "command": "extension.bun.debugFile",
+        "title": "Debug File",
+        "category": "Bun",
+        "enablement": "!inDebugMode",
+        "icon": "$(debug-alt)"
+      }
+    ],
     "menus": {
       "editor/title/run": [
         {
-          "command": "extension.bun.runEditorContents",
-          "when": "resourceLangId == javascript",
+          "command": "extension.bun.runFile",
+          "when": "resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == typescript || resourceLangId == typescriptreact",
           "group": "navigation@1"
         },
         {
-          "command": "extension.bun.debugEditorContents",
-          "when": "resourceLangId == javascript",
+          "command": "extension.bun.debugFile",
+          "when": "resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == typescript || resourceLangId == typescriptreact",
           "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "extension.bun.debugEditorContents",
-          "when": "resourceLangId == javascript"
+          "command": "extension.bun.runFile",
+          "when": "resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == typescript || resourceLangId == typescriptreact"
         },
         {
-          "command": "extension.bun.runEditorContents",
-          "when": "resourceLangId == javascript"
+          "command": "extension.bun.debugFile",
+          "when": "resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == typescript || resourceLangId == typescriptreact"
         }
       ]
     },
-    "commands": [
-      {
-        "command": "extension.bun.debugEditorContents",
-        "title": "Debug File",
-        "category": "Bun",
-        "enablement": "!inDebugMode",
-        "icon": "$(debug-alt)"
-      },
-      {
-        "command": "extension.bun.runEditorContents",
-        "title": "Run File",
-        "category": "Bun",
-        "enablement": "!inDebugMode",
-        "icon": "$(play)"
-      }
-    ],
     "breakpoints": [
       {
         "language": "javascript"
@@ -101,7 +138,7 @@
               "program": {
                 "type": "string",
                 "description": "The file to debug.",
-                "default": "${workspaceFolder}/${command:AskForProgramName}"
+                "default": "${file}"
               },
               "cwd": {
                 "type": "string",
@@ -123,7 +160,7 @@
               },
               "inheritEnv": {
                 "type": "boolean",
-                "description": "Whether environment variables should be inherited from the parent process.",
+                "description": "If environment variables should be inherited from the parent process.",
                 "default": true
               }
             }
@@ -143,12 +180,13 @@
             "type": "bun",
             "request": "launch",
             "name": "Bun: Debug",
-            "program": "${workspaceFolder}/${command:AskForProgramName}"
+            "program": "${file}"
           },
           {
             "type": "bun",
             "request": "attach",
-            "name": "Bun: Attach"
+            "name": "Bun: Attach",
+            "url": "ws://localhost:6499/"
           }
         ],
         "configurationSnippets": [
@@ -159,7 +197,7 @@
               "type": "bun",
               "request": "launch",
               "name": "Ask for file name",
-              "program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\""
+              "program": "^\"\\${file}\""
             }
           },
           {
@@ -169,14 +207,10 @@
               "type": "bun",
               "request": "attach",
               "name": "Attach to Bun",
-              "port": 6499,
-              "hostname": "localhost"
+              "url": "ws://localhost:6499/"
             }
           }
-        ],
-        "variables": {
-          "AskForProgramName": "extension.bun.getProgramName"
-        }
+        ]
       }
     ],
     "languages": [
@@ -213,33 +247,34 @@
       }
     ]
   },
-  "description": "Visual Studio Code extension for Bun.",
-  "engines": {
-    "vscode": "^1.81.0"
-  },
-  "galleryBanner": {
-    "color": "#C80000",
-    "theme": "dark"
-  },
-  "icon": "src/assets/icon.png",
-  "license": "MIT",
-  "private": true,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/oven-sh/bun"
-  },
-  "publisher": "oven",
-  "scripts": {
-    "bundle": "./node_modules/.bin/esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
-    "prebuild": "bun run bundle && rm -rf extension && mkdir -p extension/src && cp -r dist extension/dist && cp -r src/assets extension/src/assets && cp package.json extension && cp README.md extension",
-    "build": "cd extension && vsce package",
-    "build:watch": "bunx esbuild --watch src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs"
-  },
   "workspaceTrust": {
     "request": "never"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "This extension needs to be able to run your code using Bun."
+    }
+  },
+  "main": "dist/extension.js",
+  "browser": "dist/web-extension.js",
   "workspaces": [
     "../bun-debug-adapter-protocol",
     "../bun-inspector-protocol"
-  ]
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@types/vscode": "^1.81.0",
+    "@vscode/debugadapter": "^1.56.0",
+    "@vscode/debugadapter-testsupport": "^1.56.0",
+    "bun-types": "^0.7.3",
+    "typescript": "^5.0.0",
+    "esbuild": "^0.19.2"
+  },
+  "scripts": {
+    "bundle": "esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
+    "prebuild": "bun run bundle && rm -rf extension && mkdir -p extension/src && cp -r dist extension/dist && cp -r src/assets extension/src/assets && cp package.json extension && cp README.md extension",
+    "build": "cd extension && vsce package",
+    "build:watch": "esbuild --watch src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs"
+  }
 }

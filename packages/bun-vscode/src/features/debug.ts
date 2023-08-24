@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
-import { CancellationToken, DebugConfiguration, ProviderResult, WorkspaceFolder } from "vscode";
-import lockfile from "./lockfile";
-import { VSCodeAdapter } from "./adapter";
+import type { CancellationToken, DebugConfiguration, ProviderResult, WorkspaceFolder } from "vscode";
+import type { DAP } from "../../../bun-debug-adapter-protocol";
+import { DebugAdapter } from "../../../bun-debug-adapter-protocol";
+import { DebugSession } from "@vscode/debugadapter";
 
 const debugConfiguration: vscode.DebugConfiguration = {
   type: "bun",
@@ -21,17 +22,14 @@ const attachConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "attach",
   name: "Attach to Bun",
-  hostname: "localhost",
-  port: 6499,
+  url: "ws://localhost:6499/",
 };
 
 const debugConfigurations: vscode.DebugConfiguration[] = [debugConfiguration, attachConfiguration];
 
-export function activateBunDebug(context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
-  lockfile(context);
-
+export default function (context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   context.subscriptions.push(
-    vscode.commands.registerCommand("extension.bun.runEditorContents", (resource: vscode.Uri) => {
+    vscode.commands.registerCommand("extension.bun.runFile", (resource: vscode.Uri) => {
       let targetResource = resource;
       if (!targetResource && vscode.window.activeTextEditor) {
         targetResource = vscode.window.activeTextEditor.document.uri;
@@ -42,7 +40,7 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
         });
       }
     }),
-    vscode.commands.registerCommand("extension.bun.debugEditorContents", (resource: vscode.Uri) => {
+    vscode.commands.registerCommand("extension.bun.debugFile", (resource: vscode.Uri) => {
       let targetResource = resource;
       if (!targetResource && vscode.window.activeTextEditor) {
         targetResource = vscode.window.activeTextEditor.document.uri;
@@ -53,15 +51,6 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
           program: targetResource.fsPath,
         });
       }
-    }),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("extension.bun.getProgramName", config => {
-      return vscode.window.showInputBox({
-        placeHolder: "Please enter the name of a file in the workspace folder",
-        value: "src/index.js",
-      });
     }),
   );
 
@@ -120,4 +109,39 @@ function isJavaScript(languageId: string): boolean {
     languageId === "typescript" ||
     languageId === "typescriptreact"
   );
+}
+
+export class VSCodeAdapter extends DebugSession {
+  #adapter: DebugAdapter;
+  #dap: vscode.OutputChannel;
+
+  constructor(session: vscode.DebugSession) {
+    super();
+    this.#dap = vscode.window.createOutputChannel("Debug Adapter Protocol");
+    this.#adapter = new DebugAdapter({
+      sendToAdapter: this.sendMessage.bind(this),
+    });
+  }
+
+  sendMessage(message: DAP.Request | DAP.Response | DAP.Event): void {
+    this.#dap.appendLine("--> " + JSON.stringify(message));
+    const { type } = message;
+    if (type === "response") {
+      this.sendResponse(message);
+    } else if (type === "event") {
+      this.sendEvent(message);
+    } else {
+      throw new Error(`Not supported: ${type}`);
+    }
+  }
+
+  handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
+    this.#dap.appendLine("<-- " + JSON.stringify(message));
+    this.#adapter.accept(message);
+  }
+
+  dispose() {
+    this.#adapter.close();
+    this.#dap.dispose();
+  }
 }

@@ -929,6 +929,76 @@ describe("bundler", () => {
       stdout: "pass",
     },
   });
+  itBundled("edgecase/TS_LessThanAmbiguity", {
+    files: {
+      "/entry.ts": `
+        function expectArrow(item) {
+          if(typeof item !== 'function') {
+            throw new Error('Expected arrow function');
+          }
+        }
+        function expectTypeCast(item) {
+          if(typeof item !== 'number') {
+            throw new Error('Expected arrow function');
+          }
+        }
+        const x = 1;
+        expectTypeCast(<A>(x));
+        expectTypeCast(<[]>(x));
+        expectTypeCast(<A[]>(x));
+
+        expectArrow(<A>(x) => {})
+        expectArrow(<A, B>(x) => {})
+        expectArrow(<A = B>(x) => {})
+        expectArrow(<A extends B>(x) => {})
+        expectArrow(<const A extends B>(x) => {})
+
+        console.log('pass');
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/TSX_LessThanAmbiguity", {
+    files: {
+      "/entry.tsx": `
+        function expectJSX(item) {
+          if(typeof item !== 'object') {
+            throw new Error('Expected JSX');
+          }
+        }
+        function expectArrow(item) {
+          if(typeof item !== 'function') {
+            throw new Error('Expected arrow function');
+          }
+        }
+
+        const A = 1;
+        expectJSX(<A>(x) ...</A>);
+        expectJSX(<A extends>(x) ... </A>);
+        expectJSX(<A extends={false}>(x) ... </A>);
+        expectJSX(<const A extends>(x) ...</const>);
+        expectJSX(<const extends T>(x) ...</const>);
+        expectJSX(<const A B>(x) ...</const>);
+        expectJSX(<const A B C>(x) ...</const>);
+
+        expectArrow(<A, B>(x) => {});
+        expectArrow(<A extends B>(x) => {});
+        expectArrow(<const A extends B>(x) => {});
+
+        console.log('pass');
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        export function jsxDEV(type, props, key, isStaticChildren, source, self) {
+          return {};
+        }
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
   itBundled("edgecase/IsBuffer2", {
     files: {
       "/entry.js": /* js */ `

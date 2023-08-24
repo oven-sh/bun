@@ -377,6 +377,7 @@ message Scan {
 struct ScanResult {
     string[] exports;
     ScannedImport[] imports;
+    Message[] errors;
 }
 
 struct ScannedImport {
@@ -414,7 +415,7 @@ struct TransformResponse {
 
 enum MessageLevel {
   err = 1;
-  warn  =2;
+  warn = 2;
   note = 3;
   info = 4;
   debug = 5;

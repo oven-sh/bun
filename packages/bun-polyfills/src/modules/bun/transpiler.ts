@@ -1,103 +1,96 @@
 import type { JavaScriptLoader, TranspilerOptions, Transpiler as BunTranspiler, Import } from 'bun';
-import { NotImplementedError } from '../../utils/errors.js';
+import { transformSync, scan, init } from 'bun-wasm';
+import { Message } from 'bun-wasm/schema';
+import $ from 'chalk';
 
-// TODO: Possible implementation with WASM builds of bun with just the transpiler?
-// NOTE: This is possible to implement with something like SWC, and was previously done,
-// but it has lots of quirks due to the differences between SWC and Bun, so the plan is
-// to not do that unless there is actual demand for using Bun.Transpiler in Node.js before
-// the WASM build is worked on. The signatures are here for now as a placeholder.
+await init();
+
+enum InternalImportKind {
+    'entry-point' = 1, // entry_point
+    'import-statement' = 2, // stmt
+    'require-call' = 3, // require
+    'dynamic-import' = 4, // dynamic
+    'require-resolve' = 5, // require_resolve
+    'import-rule' = 6, // at
+    'url-token' = 7, // url
+    'internal' = 8, // internal
+}
+
+export type ScanImportsEntry = {
+    kind: 'import-statement' | 'dynamic-import';
+    path: string;
+};
 
 export default class Transpiler implements BunTranspiler {
     constructor(options?: TranspilerOptions) {
         this.#options = options ?? {};
+        this.#rootFile = 'input.tsx'; // + (this.#options.loader ?? 'tsx');
+        //? ^ NOTE: with current bun-wasm builds, the loader option is ignored and hardcoded to tsx
     }
+    #options: TranspilerOptions;
+    #rootFile: string;
+    #decoder?: TextDecoder;
+    #internallyCalled: boolean = false;
 
     async transform(code: StringOrBuffer, loader: JavaScriptLoader): Promise<string> {
-        if (typeof code !== 'string') code = new TextDecoder().decode(code);
-        throw new NotImplementedError('Bun.Transpiler', this.transform);
+        this.#internallyCalled = true;
+        return this.transformSync(code, loader);
     }
 
     transformSync(code: StringOrBuffer, ctx: object): string;
     transformSync(code: StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     transformSync(code: StringOrBuffer, loader?: JavaScriptLoader | undefined): string;
     transformSync(code: StringOrBuffer, loader?: JavaScriptLoader | object, ctx: object = {}): string {
-        if (typeof code !== 'string') code = new TextDecoder().decode(code);
-        if (typeof loader !== 'string') loader = 'js';
-        throw new NotImplementedError('Bun.Transpiler', this.transformSync);
+        if (!code) return ''; // wasm dies with empty string input
+        if (typeof code !== 'string' && !(code instanceof Uint8Array)) throw new TypeError('code must be a string or Uint8Array');
+        if (typeof loader !== 'string') loader = this.#options.loader;
+        const result = transformSync(code, this.#rootFile, loader);
+        // status 1 = success, status 2 = error
+        if (result.status === 2) throw formatBuildErrors(result.errors, this.#internallyCalled ? this.transform : this.transformSync);
+        this.#internallyCalled = false;
+        this.#decoder ??= new TextDecoder();
+        return this.#decoder.decode(result.files[0].data);
     }
 
     scan(code: StringOrBuffer): { exports: string[]; imports: Import[]; } {
-        if (typeof code !== 'string') code = new TextDecoder().decode(code);
-        throw new NotImplementedError('Bun.Transpiler', this.scan);
-        //return {
-        //    imports: this.scanImports(code),
-        //    exports: this.#scanExports(code)
-        //};
+        if (!code) return { exports: [], imports: [] }; // wasm dies with empty string input
+        if (typeof code !== 'string' && !(code instanceof Uint8Array)) throw new TypeError('code must be a string or Uint8Array');
+
+        const result = scan(code, this.#rootFile, this.#options.loader);
+        if (result.errors.length) throw formatBuildErrors(result.errors, this.#internallyCalled ? this.scanImports : this.scan);
+        this.#internallyCalled = false;
+
+        result.imports.forEach(imp => (imp.kind as unknown) = InternalImportKind[imp.kind]);
+        return {
+            exports: result.exports,
+            imports: result.imports as unknown as Import[],
+        };
     }
 
-    scanImports(code: StringOrBuffer): {
-        kind: 'import-statement' | 'dynamic-import';
-        path: string;
-    }[] {
-        if (typeof code !== 'string') code = new TextDecoder().decode(code);
-        throw new NotImplementedError('Bun.Transpiler', this.scanImports);
-        //const imports: { kind: 'import-statement' | 'dynamic-import', path: string }[] = [];
-        //this.#scanTopLevelImports(code).forEach(x => imports.push({ kind: 'import-statement', path: x }));
-        //this.#scanDynamicImports(code).forEach(x => imports.push({ kind: 'dynamic-import', path: x }));
-        //return imports;
+    scanImports(code: StringOrBuffer): ScanImportsEntry[] {
+        this.#internallyCalled = true;
+        return this.scan(code).imports.filter(imp => imp.kind === 'import-statement' || imp.kind === 'dynamic-import') as ScanImportsEntry[];
     }
+}
 
-    /*#scanDynamicImports(code: string): string[] {
-        return this.parseSync(code, {
-            syntax: this.#syntax, target: 'es2022', tsx: this.#options.loader === 'tsx'
-        }).body.filter(x => x.type === 'ExpressionStatement' && x.expression.type === 'CallExpression' && x.expression.callee.type === 'Import')
-            .map(i => (((i as swc.ExpressionStatement).expression as swc.CallExpression).arguments[0].expression as swc.StringLiteral).value);
-    }*/
-
-    /*#scanTopLevelImports(code: string): string[] {
-        return this.parseSync(code, {
-            syntax: this.#syntax, target: 'es2022', tsx: this.#options.loader === 'tsx'
-        }).body.filter(x => x.type === 'ImportDeclaration' || x.type === 'ExportAllDeclaration' || x.type === 'ExportNamedDeclaration')
-            .filter(i => !(i as swc.ImportDeclaration).typeOnly)
-            .map(i => (i as swc.ImportDeclaration).source.value);
-    }*/
-
-    /*#scanExports(code: string, includeDefault: boolean = false): string[] {
-        const parsed = this.parseSync(code, {
-            syntax: this.#syntax, target: 'es2022', tsx: this.#options.loader === 'tsx'
-        }).body;
-        const exports = [];
-        exports.push(parsed.filter(x => x.type === 'ExportDeclaration' && !x.declaration.declare)
-            .flatMap(i => ((i as swc.ExportDeclaration).declaration as swc.ClassDeclaration).identifier?.value ??
-                ((i as swc.ExportDeclaration).declaration as swc.VariableDeclaration).declarations.map(d => (d.id as swc.Identifier).value)
-            )
+function formatBuildErrors(buildErrors: Message[], caller: Transpiler[keyof Transpiler]): AggregateError {
+    const formatted = buildErrors.map(err => {
+        const loc = err.data.location;
+        const str = `${$.redBright('error')}${$.gray(':')} ${$.bold(err.data.text)}\n` +
+        (loc
+            ? `${highlightErrorChar(loc.line_text, loc.offset)}\n` +
+                $.redBright.bold('^'.padStart(loc.column)) + '\n' +
+                `${$.bold(loc.file)}${$.gray(':')}${$.yellowBright(loc.line)}${$.gray(':')}${$.yellowBright(loc.column)} ${$.gray(loc.offset)}`
+            : ''
         );
-        exports.push(parsed.filter(x => x.type === 'ExportNamedDeclaration')
-            .flatMap(i => (i as swc.ExportNamedDeclaration).specifiers
-                .filter(s => s.type === 'ExportSpecifier' && !s.isTypeOnly)
-                .map(s => (s as swc.NamedExportSpecifier).exported?.value ?? (s as swc.NamedExportSpecifier).orig.value)
-            )
-        );
-        if (includeDefault) exports.push(this.#scanDefaultExport(code) ?? []);
-        return exports.flat();
-    }*/
+        return { __proto__: Error.prototype, stack: str };
+    });
+    const aggregate = new AggregateError(formatted, `Input code has ${formatted.length} error${formatted.length === 1 ? '' : 's'}`);
+    Error.captureStackTrace(aggregate, caller);
+    aggregate.name = 'BuildError';
+    return aggregate;
+}
 
-    /*#scanDefaultExport(code: string): 'default' | undefined {
-        const parsed = this.parseSync(code, {
-            syntax: this.#syntax, target: 'es2022', tsx: this.#options.loader === 'tsx'
-        }).body;
-        
-        const defaultExportDecl = parsed.find(x => x.type === 'ExportDefaultDeclaration') as swc.ExportDefaultDeclaration | undefined;
-        if (!defaultExportDecl) {
-            const defaultExportExpr = parsed.find(x => x.type === 'ExportDefaultExpression') as swc.ExportDefaultExpression | undefined;
-            if (!defaultExportExpr) return undefined;
-            if (!defaultExportExpr.expression.type.startsWith('Ts')) return 'default';
-            else return undefined;
-        }
-
-        if (!defaultExportDecl.decl.type.startsWith('Ts') && !Reflect.get(defaultExportDecl.decl, 'declare')) return 'default';
-        else return undefined;
-    }*/
-
-    #options: TranspilerOptions;
+function highlightErrorChar(str: string, at: number): string {
+    return str.slice(0, at) + $.red(str[at]) + str.slice(at + 1);
 }

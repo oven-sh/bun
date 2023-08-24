@@ -15,7 +15,6 @@ globalThis.Bun = bun as typeof bun & {
     mmap: typeof import('bun').mmap;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;
-    Transpiler: typeof import('bun').Transpiler;
     password: typeof import('bun').password;
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;
     CryptoHasher: typeof import('bun').CryptoHasher;

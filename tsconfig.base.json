@@ -1,13 +1,11 @@
 {
   "compilerOptions": {
-    "lib": [
-      "ESNext"
-    ],
+    "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "nodenext",
     "allowImportingTsExtensions": true,
-    "emitDeclarationOnly": true,
+    "noEmit": true,
     "composite": true,
     "strict": true,
     "noImplicitAny": false,
@@ -16,11 +14,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "types": [
-      "bun-types"
-    ],
-    "typeRoots": [
-      "./packages"
-    ],
+    "types": ["bun-types"],
+    "typeRoots": ["./packages"]
   }
 }

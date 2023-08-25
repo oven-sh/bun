@@ -179,6 +179,21 @@ function lookupService(address, port, callback) {
   callback(null, address, port);
 }
 
+function reverse(ip, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.reverse(ip, callback).then(
+    results => {
+      callback(null, results);
+    },
+    error => {
+      callback(error);
+    },
+  );
+}
+
 var InternalResolver = class Resolver {
   constructor(options) {}
 
@@ -395,7 +410,18 @@ var InternalResolver = class Resolver {
   }
 
   reverse(ip, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.reverse(ip, callback).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(error);
+      },
+    );
   }
 
   setServers(servers) {}
@@ -549,6 +575,9 @@ const promises = {
   resolveCname(hostname) {
     return dns.resolveCname(hostname);
   },
+  reverse(ip) {
+    return dns.reverse(ip);
+  },
 
   Resolver: class Resolver {
     constructor(options) {}
@@ -627,13 +656,13 @@ const promises = {
     }
 
     reverse(ip) {
-      return Promise.resolve([]);
+      return dns.reverse(ip);
     }
 
     setServers(servers) {}
   },
 };
-for (const key of ["resolveAny", "reverse"]) {
+for (const key of ["resolveAny"]) {
   promises[key] = () => Promise.resolve(undefined);
 }
 

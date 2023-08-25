@@ -1370,6 +1370,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 free_memory_reporter = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -1393,6 +1394,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 free_memory_reporter = true;
                 return JSPromise.rejectedPromiseValue(
@@ -1423,6 +1425,7 @@ pub const Fetch = struct {
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     allocator.free(host);
+                                    hostname = null;
                                 }
                                 // an error was thrown
                                 return JSC.JSValue.jsUndefined();
@@ -1434,18 +1437,27 @@ pub const Fetch = struct {
                         if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 // TODO: make this one pass
                             } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 headers__.deref();
                             } else if (request.headers) |head| {
                                 if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
@@ -1493,6 +1505,7 @@ pub const Fetch = struct {
                                     // clean hostname if any
                                     if (hostname) |host| {
                                         allocator.free(host);
+                                        hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
 
@@ -1517,6 +1530,9 @@ pub const Fetch = struct {
                     body = request.body.value.useAsAnyBlob();
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                            if (hostname) |host| {
+                                allocator.free(host);
+                            }
                             hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                         }
                         headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
@@ -1533,6 +1549,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
@@ -1554,6 +1571,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
                 return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -1580,6 +1598,7 @@ pub const Fetch = struct {
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     allocator.free(host);
+                                    hostname = null;
                                 }
                                 // an error was thrown
                                 return JSC.JSValue.jsUndefined();
@@ -1589,6 +1608,9 @@ pub const Fetch = struct {
                         if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
@@ -1596,6 +1618,9 @@ pub const Fetch = struct {
                             } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
                                 defer headers__.deref();
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
@@ -1646,6 +1671,7 @@ pub const Fetch = struct {
                                     // clean hostname if any
                                     if (hostname) |host| {
                                         allocator.free(host);
+                                        hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
                                     free_memory_reporter = true;

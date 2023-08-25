@@ -172,11 +172,11 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install ccache rust llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: ccache (dependencies)
         uses: hendrikmuhs/ccache-action@v1.2
         if: matrix.dependencies
@@ -291,10 +291,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install ccache rust llvm@6 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: ccache (link)
         uses: hendrikmuhs/ccache-action@v1.2
         with:

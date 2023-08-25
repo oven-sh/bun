@@ -450,8 +450,8 @@ pub const Body = struct {
 
         pub const Tag = enum {
             Blob,
-            InternalBlob,
             WTFStringImpl,
+            InternalBlob,
             // InlineBlob,
             Locked,
             Used,

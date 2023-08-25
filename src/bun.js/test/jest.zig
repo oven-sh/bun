@@ -1449,9 +1449,9 @@ pub const TestRunnerTask = struct {
 };
 
 pub const Result = union(TestRunner.Test.Status) {
-    fail: u32,
-    pass: u32, // assertion count
     pending: void,
+    pass: u32, // assertion count
+    fail: u32,
     skip: void,
     todo: void,
     fail_because_todo_passed: u32,

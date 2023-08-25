@@ -1015,9 +1015,7 @@ const PackageInstall = struct {
     }
 
     pub const Result = union(Tag) {
-        pending: void,
         success: void,
-        skip: void,
         fail: struct {
             err: anyerror,
             step: Step,
@@ -1026,6 +1024,8 @@ const PackageInstall = struct {
                 return this.err == error.FileNotFound and this.step == .opening_cache_dir;
             }
         },
+        pending: void,
+        skip: void,
 
         pub const Tag = enum {
             success,
@@ -1586,9 +1586,9 @@ const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
     dependency: DependencyID,
+    node_modules_folder: std.os.fd_t,
     root_dependency: DependencyID,
     root_request_id: PackageID,
-    node_modules_folder: std.os.fd_t,
     pub const Tag = enum {
         dependency,
         node_modules_folder,

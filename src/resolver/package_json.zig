@@ -1194,12 +1194,12 @@ pub const ExportsMap = struct {
             map: Map,
 
             pub const Tag = enum {
+                invalid,
                 null,
-                string,
                 boolean,
+                string,
                 array,
                 map,
-                invalid,
             };
 
             pub const Map = struct {

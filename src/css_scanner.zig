@@ -29,8 +29,8 @@ pub const Chunk = struct {
 
     pub const Content = union(Tag) {
         t_url: TextContent,
-        t_import: Import,
         t_verbatim: Verbatim,
+        t_import: Import,
     };
 
     pub fn raw(chunk: *const Chunk, source: *const logger.Source) string {

@@ -1044,8 +1044,8 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    path: PathLike,
     fd: bun.FileDescriptor,
+    path: PathLike,
 
     pub const Tag = enum { fd, path };
 

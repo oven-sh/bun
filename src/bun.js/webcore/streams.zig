@@ -518,17 +518,15 @@ pub const DrainResult = union(enum) {
 };
 
 pub const StreamResult = union(Tag) {
+    pending: *Pending,
+    err: union(Err) { Error: Syscall.Error, JSValue: JSC.JSValue },
+    done: void,
     owned: bun.ByteList,
     owned_and_done: bun.ByteList,
     temporary_and_done: bun.ByteList,
     temporary: bun.ByteList,
     into_array: IntoArray,
     into_array_and_done: IntoArray,
-    pending: *Pending,
-
-    err: union(Err) { Error: Syscall.Error, JSValue: JSC.JSValue },
-
-    done: void,
 
     pub const Err = enum {
         Error,
@@ -536,15 +534,15 @@ pub const StreamResult = union(Tag) {
     };
 
     pub const Tag = enum {
+        pending,
+        err,
+        done,
         owned,
         owned_and_done,
         temporary_and_done,
         temporary,
         into_array,
         into_array_and_done,
-        pending,
-        err,
-        done,
     };
 
     pub fn slice(this: *const StreamResult) []const u8 {

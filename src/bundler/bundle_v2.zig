@@ -2327,8 +2327,8 @@ pub const ParseTask = struct {
         task: EventLoop.Task = undefined,
 
         value: union(Tag) {
-            err: Error,
             success: Success,
+            err: Error,
             empty: struct {
                 source_index: Index,
 

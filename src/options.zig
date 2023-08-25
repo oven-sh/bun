@@ -1974,15 +1974,15 @@ pub const OutputFile = struct {
     };
 
     pub const Value = union(Kind) {
+        move: FileOperation,
+        copy: FileOperation,
+        noop: u0,
         buffer: struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
         },
-        saved: SavedFile,
-        move: FileOperation,
-        copy: FileOperation,
-        noop: u0,
         pending: resolver.Result,
+        saved: SavedFile,
     };
 
     pub const SavedFile = struct {

@@ -733,9 +733,11 @@ pub const Fetch = struct {
 
         pub fn deinit(this: *FetchTasklet) void {
             var reporter = this.memory_reporter;
-            if (this.http) |http| reporter.allocator().destroy(http);
-            reporter.allocator().destroy(this);
-            // reporter.assert();
+            const allocator = reporter.allocator();
+
+            if (this.http) |http| allocator.destroy(http);
+            allocator.destroy(this);
+            reporter.assert();
             bun.default_allocator.destroy(reporter);
         }
 
@@ -833,7 +835,7 @@ pub const Fetch = struct {
                             response.body.value = body_value;
 
                             this.scheduled_response_buffer = .{
-                                .allocator = bun.default_allocator,
+                                .allocator = this.memory_reporter.allocator(),
                                 .list = .{
                                     .items = &.{},
                                     .capacity = 0,
@@ -970,8 +972,9 @@ pub const Fetch = struct {
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
+                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                 this.scheduled_response_buffer = .{
-                    .allocator = default_allocator,
+                    .allocator = this.memory_reporter.allocator(),
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -1020,7 +1023,7 @@ pub const Fetch = struct {
                 },
             };
             this.scheduled_response_buffer = .{
-                .allocator = default_allocator,
+                .allocator = this.memory_reporter.allocator(),
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1244,6 +1247,7 @@ pub const Fetch = struct {
                     return;
                 }
             }
+            log("task scheduled!", .{});
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };

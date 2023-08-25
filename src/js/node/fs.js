@@ -80,7 +80,13 @@ var access = function access(...args) {
     callbackify(fs.rmdirSync, args);
   },
   copyFile = function copyFile(...args) {
-    callbackify(fs.copyFileSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.copyFile(...args).then(result => callback(null, result), callback);
   },
   exists = function exists(...args) {
     callbackify(fs.existsSync, args);

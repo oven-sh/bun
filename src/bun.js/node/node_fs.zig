@@ -419,6 +419,95 @@ pub const AsyncReadFileTask = struct {
     }
 };
 
+pub const AsyncCopyFileTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.CopyFile,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.CopyFile),
+    ref: JSC.PollRef = .{},
+    arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        readdir_args: Arguments.CopyFile,
+        vm: *JSC.VirtualMachine,
+        arena: bun.ArenaAllocator,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncCopyFileTask) catch @panic("out of memory");
+        task.* = AsyncCopyFileTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = readdir_args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
+            .arena = arena,
+        };
+        task.ref.ref(vm);
+        task.args.src.toThreadSafe();
+        task.args.dest.toThreadSafe();
+        task.tracker.didSchedule(globalObject);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncCopyFileTask = @fieldParentPtr(AsyncCopyFileTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.copyFile(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncCopyFileTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.CopyFile).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.CopyFile, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncCopyFileTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        this.promise.strong.deinit();
+        this.arena.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
 // TODO: to improve performance for all of these
 // The tagged unions for each type should become regular unions
 // and the tags should be passed in as comptime arguments to the functions performing the syscalls
@@ -3263,24 +3352,15 @@ pub const NodeFS = struct {
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
-        const ret = Maybe(Return.CopyFile);
-        _ = ret;
+        _ = flavor;
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src = args.src.sliceZ(&src_buf);
+        var dest = args.dest.sliceZ(&dest_buf);
 
-        switch (comptime flavor) {
-            .sync => {
-                var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var src = args.src.sliceZ(&src_buf);
-                var dest = args.dest.sliceZ(&dest_buf);
+        // TODO: do we need to fchown?
 
-                // TODO: do we need to fchown?
-
-                return _copySingleFile(src, dest, args.mode);
-            },
-            else => {},
-        }
-
-        return Maybe(Return.CopyFile).todo;
+        return _copySingleFile(src, dest, args.mode);
     }
 
     fn _copySingleFile(src: [:0]const u8, dest: [:0]const u8, mode: Constants.Copyfile) Maybe(void) {

@@ -118,7 +118,7 @@ export default {
   access: promisify(fs.accessSync),
   appendFile: promisify(fs.appendFileSync),
   close: promisify(fs.closeSync),
-  copyFile: promisify(fs.copyFileSync),
+  copyFile: fs.copyFile.bind(fs),
   cp,
   exists: promisify(fs.existsSync),
   chown: promisify(fs.chownSync),

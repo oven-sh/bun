@@ -108,9 +108,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile and FunctionEnum != .realpath) {
-                globalObject.throw("Not implemented yet", .{});
-                return .zero;
+            switch (comptime FunctionEnum) {
+                .readdir, .lstat, .stat, .readFile, .realpath, .copyFile => {},
+                else => {
+                    globalObject.throw("Not implemented yet", .{});
+                    return .zero;
+                },
             }
 
             var arguments = callframe.arguments(8);
@@ -153,6 +156,10 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {
                 return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat, slice.arena);
+            }
+
+            if (comptime FunctionEnum == .copyFile) {
+                return JSC.Node.AsyncCopyFileTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
             // defer {

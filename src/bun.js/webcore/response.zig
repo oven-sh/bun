@@ -617,7 +617,7 @@ pub const Fetch = struct {
 
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
-        metadata: ?HTTPClient.HTTPClientResult.ResultMetadata = .{},
+        metadata: ?HTTPClient.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
@@ -928,8 +928,9 @@ pub const Fetch = struct {
 
             var path: bun.String = undefined;
 
+            // some times we don't have metadata so we also check http.url
             if (this.metadata) |metadata| {
-                path = bun.String.create(metadata.href);
+                path = bun.String.create(metadata.url);
             } else if (this.http) |http| {
                 path = bun.String.create(http.url.href);
             } else {
@@ -1030,13 +1031,14 @@ pub const Fetch = struct {
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+            std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
             var metadata = this.metadata.?;
             const http_response = metadata.response;
             this.is_waiting_body = this.result.has_more;
             return Response{
                 .allocator = allocator,
-                .url = bun.String.createAtomIfPossible(metadata.href),
+                .url = bun.String.createAtomIfPossible(metadata.url),
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
                 .redirected = this.result.redirected,
                 .body = .{
@@ -1223,6 +1225,7 @@ pub const Fetch = struct {
             task.result = result;
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
+                std.debug.assert(task.metadata == null);
                 task.metadata = metadata;
             }
             task.body_size = result.body_size;

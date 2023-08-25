@@ -162,6 +162,16 @@
                 "type": "boolean",
                 "description": "If environment variables should be inherited from the parent process.",
                 "default": true
+              },
+              "watch": {
+                "type": ["boolean", "string"],
+                "description": "If the process should be restarted when files change.",
+                "enum": [
+                  true,
+                  false,
+                  "hot"
+                ],
+                "default": true
               }
             }
           },

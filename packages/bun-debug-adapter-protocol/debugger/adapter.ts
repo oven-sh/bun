@@ -19,6 +19,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   args?: string[];
   env?: Record<string, string>;
   inheritEnv?: boolean;
+  watch?: boolean | "hot";
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -71,7 +72,9 @@ type Variable = DAP.Variable & {
 type IDebugAdapter = {
   [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void;
 } & {
-  [R in keyof DAP.RequestMap]?: (request: DAP.RequestMap[R]) => DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]>;
+  [R in keyof DAP.RequestMap]?: (
+    request: DAP.RequestMap[R],
+  ) => void | DAP.ResponseMap[R] | Promise<void | DAP.ResponseMap[R]>;
 };
 
 export type DebugAdapterOptions = {
@@ -95,9 +98,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #variables: (Variable | Variable[])[];
   #process?: ChildProcess;
-  #launched?: LaunchRequest;
   #initialized?: InitializeRequest;
+  #launched?: LaunchRequest;
+  #connected?: boolean;
   #terminated?: boolean;
+  #url?: URL;
 
   constructor({ sendToAdapter }: DebugAdapterOptions) {
     this.#inspector = new WebSocketInspector({ listener: this });
@@ -113,22 +118,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
   }
 
-  #reset(): void {
-    this.#pendingSources.clear();
-    this.#sources.clear();
-    this.#stackFrames.length = 0;
-    this.#stopped = undefined;
-    this.#breakpointId = 1;
-    this.#breakpoints.length = 0;
-    this.#functionBreakpoints.clear();
-    this.#variables.length = 1;
-    this.#launched = undefined;
-    this.#initialized = undefined;
-  }
-
-  /**
-   * Accepts a message from the adapter.
-   */
   async accept(message: DAP.Request | DAP.Response | DAP.Event): Promise<void> {
     const { type } = message;
 
@@ -172,41 +161,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     });
   }
 
-  /**
-   * Closes the inspector and adapter.
-   */
-  close(): void {
-    this.#terminated = true;
-    this.#process?.kill();
-    this.#inspector.close();
-    this.#reset();
-  }
-
   async #send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
-    params?: JSC.RequestMap[M] & { errorsToIgnore?: string[] },
+    params?: JSC.RequestMap[M],
   ): Promise<JSC.ResponseMap[M]> {
-    const { errorsToIgnore, ...options } = params ?? {};
-
-    try {
-      // @ts-ignore
-      return await this.#inspector.send(method, options);
-    } catch (cause) {
-      const { message } = unknownToError(cause);
-      for (const error of errorsToIgnore ?? []) {
-        if (message.includes(error)) {
-          console.warn("Ignored error:", message);
-          // @ts-ignore
-          return {};
-        }
-      }
-      throw cause;
-    }
+    return this.#inspector.send(method, params);
   }
 
-  /**
-   * Emits an event to the adapter.
-   */
   async #emit<E extends keyof DAP.EventMap>(name: E, body?: DAP.EventMap[E]): Promise<void> {
     await this.#sendToAdapter({
       type: "event",
@@ -216,7 +177,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     });
   }
 
-  async initialize(request: InitializeRequest): Promise<DAP.InitializeResponse> {
+  initialize(request: InitializeRequest): DAP.InitializeResponse {
     const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
 
     this.#send("Inspector.enable");
@@ -234,10 +195,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       this.#send("Inspector.initialized");
     }
 
+    // Tell the client what capabilities this adapter supports.
     return capabilities;
   }
 
-  async configurationDone(request: DAP.ConfigurationDoneRequest): Promise<DAP.ConfigurationDoneResponse> {
+  configurationDone(): void {
+    // If the client requested that `noDebug` mode be enabled,
+    // then we need to disable all breakpoints and pause on statements.
     if (this.#launched?.noDebug) {
       this.#send("Debugger.setBreakpointsActive", { active: false });
       this.#send("Debugger.setPauseOnExceptions", { state: "none" });
@@ -247,12 +211,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       this.#send("Debugger.setPauseOnAssertions", { enabled: false });
     }
 
+    // Tell the debugger that everything is ready.
     this.#send("Inspector.initialized");
-
-    return {};
   }
 
-  async launch(request: DAP.LaunchRequest): Promise<DAP.LaunchResponse> {
+  async launch(request: DAP.LaunchRequest): Promise<void> {
     this.#launched = request;
 
     try {
@@ -267,8 +230,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
       this.#emit("terminated");
     }
-
-    return {};
   }
 
   async #launch(request: LaunchRequest): Promise<void> {
@@ -276,7 +237,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Another program is already running. Did you terminate the last session?");
     }
 
-    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true } = request;
+    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = true } = request;
     if (!program) {
       throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
@@ -285,7 +246,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const subprocess = spawn(runtime, ["--inspect-wait=0", ...args, program], {
+    const argz = ["--inspect-wait=0", ...args];
+    if (watch) {
+      argz.push(watch === "hot" ? "--hot" : "--watch");
+    }
+    console.log(argz);
+
+    const subprocess = spawn(runtime, [...argz, program], {
       stdio: ["ignore", "pipe", "pipe", "pipe"],
       cwd,
       env: inheritEnv ? { ...process.env, ...env } : env,
@@ -308,17 +275,24 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       this.#process = undefined;
     });
 
-    let stdout: string[] | undefined = [];
+    const stdout: string[] = [];
     subprocess.stdout!.on("data", data => {
-      if (stdout) {
-        stdout.push(data.toString());
+      if (!this.#url) {
+        const text = data.toString();
+        stdout.push(text);
+        const url = (this.#url = parseUrlMaybe(text));
+        this.#inspector.start(url);
+      } else if (stdout.length) {
+        stdout.length = 0;
       }
     });
 
-    let stderr: string[] | undefined = [];
+    const stderr: string[] = [];
     subprocess.stderr!.on("data", data => {
-      if (stderr) {
+      if (!this.#url) {
         stderr.push(data.toString());
+      } else if (stderr.length) {
+        stderr.length = 0;
       }
     });
 
@@ -342,19 +316,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
     }
 
-    let retries = 0;
-    while (retries++ < 10) {
-      const url = lookForUrl(stdout);
-      if (!url) {
-        await new Promise(resolve => setTimeout(resolve, 100 * retries));
-        continue;
-      }
+    for (let retries = 0; !this.#url && retries < 10; retries++) {
+      await new Promise(resolve => setTimeout(resolve, 100 * retries));
+    }
 
-      // Since a url was found, stop buffering stdout and stderr.
-      stdout = undefined;
-      stderr = undefined;
-
-      this.#inspector.start(url);
+    if (this.#url) {
       return;
     }
 
@@ -396,43 +362,24 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     throw new Error("Program started, but the debugger could not be attached.");
   }
 
-  async attach(request: AttachRequest): Promise<DAP.AttachResponse> {
+  attach(request: AttachRequest): void {
     const { url } = request;
     this.#inspector.start(parseUrl(url));
-
-    return {};
   }
 
-  async terminate(request: DAP.TerminateRequest): Promise<DAP.TerminateResponse> {
+  terminate(): void {
     this.#terminated = true;
     this.#process?.kill();
-
-    return {};
   }
 
-  async disconnect(request: DAP.DisconnectRequest): Promise<DAP.DisconnectResponse> {
+  disconnect(request: DAP.DisconnectRequest): void {
     const { terminateDebuggee } = request;
+
     if (terminateDebuggee) {
-      this.terminate(request);
+      this.terminate();
     }
+
     this.close();
-
-    return {};
-  }
-
-  async loadedSources(request: DAP.LoadedSourcesRequest): Promise<DAP.LoadedSourcesResponse> {
-    const sources = new Map();
-
-    // Since there are duplicate keys for each source,
-    // (e.g. scriptId, path, sourceReference, etc.) it needs to be deduped.
-    for (const source of this.#sources.values()) {
-      const { sourceId } = source;
-      sources.set(sourceId, source);
-    }
-
-    return {
-      sources: [...sources.values()],
-    };
   }
 
   async source(request: DAP.SourceRequest): Promise<DAP.SourceResponse> {
@@ -457,49 +404,29 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     };
   }
 
-  async pause(request: DAP.PauseRequest): Promise<DAP.PauseResponse> {
-    const { threadId } = request;
-
+  async pause(): Promise<void> {
     await this.#send("Debugger.pause");
     this.#stopped = "pause";
-
-    return {};
   }
 
-  async continue(request: DAP.ContinueRequest): Promise<DAP.ContinueResponse> {
-    const { threadId } = request;
-
+  async continue(): Promise<void> {
     await this.#send("Debugger.resume");
     this.#stopped = undefined;
-
-    return {};
   }
 
-  async next(request: DAP.NextRequest): Promise<DAP.NextResponse> {
-    const { threadId, granularity } = request;
-
+  async next(): Promise<void> {
     await this.#send("Debugger.stepNext");
     this.#stopped = "step";
-
-    return {};
   }
 
-  async stepIn(request: DAP.StepInRequest): Promise<DAP.StepInResponse> {
-    const { threadId, granularity } = request;
-
+  async stepIn(): Promise<void> {
     await this.#send("Debugger.stepInto");
     this.#stopped = "step";
-
-    return {};
   }
 
-  async stepOut(request: DAP.StepOutRequest): Promise<DAP.StepOutResponse> {
-    const { threadId, granularity } = request;
-
+  async stepOut(): Promise<void> {
     await this.#send("Debugger.stepOut");
     this.#stopped = "step";
-
-    return {};
   }
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
@@ -787,10 +714,9 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     });
   }
 
-  async setExceptionBreakpoints(
-    request: DAP.SetExceptionBreakpointsRequest,
-  ): Promise<DAP.SetExceptionBreakpointsResponse> {
+  async setExceptionBreakpoints(request: DAP.SetExceptionBreakpointsRequest): Promise<void> {
     const { filters, filterOptions } = request;
+
     const filterIds = [...filters];
     if (filterOptions) {
       filterIds.push(...filterOptions.map(({ filterId }) => filterId));
@@ -799,26 +725,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     await this.#send("Debugger.setPauseOnExceptions", {
       state: exceptionFiltersToPauseOnExceptionsState(filterIds),
     });
-
-    return {};
-  }
-
-  async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
-    const { variablesReference, start, count } = request;
-    const variable = this.#variables[variablesReference];
-
-    let variables: Variable[];
-    if (!variable) {
-      variables = [];
-    } else if (Array.isArray(variable)) {
-      variables = variable;
-    } else {
-      variables = await this.#getVariables(variable, start, count);
-    }
-
-    return {
-      variables: variables.sort(variablesSortBy),
-    };
   }
 
   async evaluate(request: DAP.EvaluateRequest): Promise<DAP.EvaluateResponse> {
@@ -855,36 +761,24 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     });
   }
 
-  async stackTrace(request: DAP.StackTraceRequest): Promise<DAP.StackTraceResponse> {
-    const { length } = this.#stackFrames;
-    const { startFrame = 0, levels } = request;
-    const endFrame = levels ? startFrame + levels : length;
+  restart(): void {
+    this.initialize(this.#initialized!);
+    this.configurationDone();
 
-    return {
-      totalFrames: length,
-      stackFrames: this.#stackFrames.slice(startFrame, endFrame),
-    };
-  }
-
-  async scopes(request: DAP.ScopesRequest): Promise<DAP.ScopesResponse> {
-    const { frameId } = request;
-
-    for (const stackFrame of this.#stackFrames) {
-      const { id, scopes } = stackFrame;
-      if (id !== frameId || !scopes) {
-        continue;
-      }
-      return {
-        scopes,
-      };
-    }
-
-    return {
-      scopes: [],
-    };
+    this.#emit("output", {
+      category: "debug console",
+      output: "Debugger reloaded.\n",
+    });
   }
 
   ["Inspector.connected"](): void {
+    if (this.#connected) {
+      this.restart();
+      return;
+    }
+
+    this.#connected = true;
+
     this.#emit("output", {
       category: "debug console",
       output: "Debugger attached.\n",
@@ -894,6 +788,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   ["Inspector.disconnected"](error?: Error): void {
+    if (this.#connected && this.#process?.exitCode === null) {
+      this.#url = undefined;
+      return;
+    }
+
     this.#emit("output", {
       category: "debug console",
       output: "Debugger detached.\n",
@@ -925,12 +824,14 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     //    Moreover, the code is usually shown in a read-only editor.
     const isUserCode = url.startsWith("/");
     const sourceMap = SourceMap(sourceMapURL);
+    const name = sourceName(url);
     const presentationHint = sourcePresentationHint(url);
 
     if (isUserCode) {
       this.#addSource({
         sourceId: url,
         scriptId,
+        name,
         path: url,
         presentationHint,
         sourceMap,
@@ -942,6 +843,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#addSource({
       sourceId: sourceReference,
       scriptId,
+      name,
       sourceReference,
       presentationHint,
       sourceMap,
@@ -954,7 +856,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#emit("output", {
       category: "stderr",
       output: errorMessage,
-      line: errorLine,
+      line: this.#lineFrom0BasedLine(errorLine),
       source: {
         path: url || undefined,
       },
@@ -1084,19 +986,23 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }
     }
 
+    let location: Location | {} = {};
+    if (source) {
+      location = this.#originalLocation(source, line, column);
+    }
+
     this.#emit("output", {
       category: "debug console",
       group: consoleMessageGroup(type),
       output,
       variablesReference,
       source,
-      line,
-      column,
+      ...location,
     });
   }
 
   #addSource(source: Source): Source {
-    const { scriptId, sourceId, path, sourceReference } = source;
+    const { sourceId, scriptId, path, sourceReference } = source;
 
     const oldSource = this.#getSourceIfPresent(sourceId);
     if (oldSource) {
@@ -1117,8 +1023,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     this.#sources.set(sourceId, source);
     this.#sources.set(scriptId, source);
+
     this.#emit("loadedSource", {
-      reason: oldSource ? "changed" : "new",
+      // If the reason is "changed", the source will be retrieved using
+      // the `source` command, which is why it cannot be set when `path` is present.
+      reason: oldSource && !path ? "changed" : "new",
       source,
     });
 
@@ -1126,9 +1035,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       return source;
     }
 
-    const resolves = this.#pendingSources.get(sourceId);
+    // If there are any pending requests for this source by its path,
+    // resolve them now that the source has been loaded.
+    const resolves = this.#pendingSources.get(path);
     if (resolves) {
-      this.#pendingSources.delete(sourceId);
+      this.#pendingSources.delete(path);
       for (const resolve of resolves) {
         resolve(source);
       }
@@ -1137,25 +1048,77 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     return source;
   }
 
+  loadedSources(): DAP.LoadedSourcesResponse {
+    const sources = new Map();
+
+    // Since there are duplicate keys for each source,
+    // (e.g. scriptId, path, sourceReference, etc.) it needs to be deduped.
+    for (const source of this.#sources.values()) {
+      const { sourceId } = source;
+      sources.set(sourceId, source);
+    }
+
+    return {
+      sources: [...sources.values()],
+    };
+  }
+
   #getSourceIfPresent(sourceId: string | number): Source | undefined {
     return this.#sources.get(sourceId);
   }
 
   async #getSource(sourceId: string | number): Promise<Source> {
     const source = this.#getSourceIfPresent(sourceId);
+
     if (source) {
       return source;
     }
+
+    // If the source does not have a path or is a builtin module,
+    // it cannot be retrieved from the file system.
     if (typeof sourceId === "number" || !sourceId.startsWith("/")) {
       throw new Error(`Source not found: ${sourceId}`);
     }
+
+    // If the source is not present, it may not have been loaded yet.
+    // In that case, wait for it to be loaded.
     let resolves = this.#pendingSources.get(sourceId);
     if (!resolves) {
       this.#pendingSources.set(sourceId, (resolves = []));
     }
+
     return new Promise(resolve => {
       resolves!.push(resolve);
     });
+  }
+
+  async stackTrace(request: DAP.StackTraceRequest): Promise<DAP.StackTraceResponse> {
+    const { length } = this.#stackFrames;
+    const { startFrame = 0, levels } = request;
+    const endFrame = levels ? startFrame + levels : length;
+
+    return {
+      totalFrames: length,
+      stackFrames: this.#stackFrames.slice(startFrame, endFrame),
+    };
+  }
+
+  async scopes(request: DAP.ScopesRequest): Promise<DAP.ScopesResponse> {
+    const { frameId } = request;
+
+    for (const stackFrame of this.#stackFrames) {
+      const { id, scopes } = stackFrame;
+      if (id !== frameId || !scopes) {
+        continue;
+      }
+      return {
+        scopes,
+      };
+    }
+
+    return {
+      scopes: [],
+    };
   }
 
   #getCallFrameId(frameId?: number): string | undefined {
@@ -1285,6 +1248,24 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     return stackFrame;
   }
 
+  async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
+    const { variablesReference, start, count } = request;
+    const variable = this.#variables[variablesReference];
+
+    let variables: Variable[];
+    if (!variable) {
+      variables = [];
+    } else if (Array.isArray(variable)) {
+      variables = variable;
+    } else {
+      variables = await this.#getVariables(variable, start, count);
+    }
+
+    return {
+      variables: variables.sort(variablesSortBy),
+    };
+  }
+
   #setVariable(variable: Variable | Variable[]): number {
     const variablesReference = this.#variables.length;
 
@@ -1387,6 +1368,29 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     return variables;
   }
+
+  close(): void {
+    this.#terminated = true;
+    this.#process?.kill();
+    this.#inspector.close();
+    this.#reset();
+  }
+
+  #reset(): void {
+    this.#pendingSources.clear();
+    this.#sources.clear();
+    this.#stackFrames.length = 0;
+    this.#stopped = undefined;
+    this.#breakpointId = 1;
+    this.#breakpoints.length = 0;
+    this.#functionBreakpoints.clear();
+    this.#variables.length = 1;
+    this.#launched = undefined;
+    this.#initialized = undefined;
+    this.#connected = undefined;
+    this.#terminated = undefined;
+    this.#url = undefined;
+  }
 }
 
 function stoppedReason(reason: JSC.Debugger.PausedEvent["reason"]): DAP.StoppedEvent["reason"] {
@@ -1418,6 +1422,16 @@ function sourcePresentationHint(url?: string): DAP.Source["presentationHint"] {
     return "normal";
   }
   return "emphasize";
+}
+
+function sourceName(url?: string): string {
+  if (!url) {
+    return "unknown.js";
+  }
+  if (isJavaScript(url)) {
+    return url.split("/").pop() || url;
+  }
+  return `${url}.js`;
 }
 
 function stackFramePresentationHint(path?: string): DAP.StackFrame["presentationHint"] {
@@ -1710,20 +1724,17 @@ function parseUrl(hostname?: string, port?: number): URL {
   return url;
 }
 
-function lookForUrl(messages?: string[]): URL | undefined {
-  for (const message of messages ?? []) {
-    const match = /(wss?:\/\/.*)/im.exec(message);
-    if (!match) {
-      continue;
-    }
-    const [_, href] = match;
-    try {
-      return parseUrl(href);
-    } catch {
-      throw new Error(`Invalid URL: ${href}`);
-    }
+function parseUrlMaybe(string: string): URL | undefined {
+  const match = /(wss?:\/\/.*)/im.exec(string);
+  if (!match) {
+    return undefined;
   }
-  return undefined;
+  const [_, href] = match;
+  try {
+    return parseUrl(href);
+  } catch {
+    return undefined;
+  }
 }
 
 function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {

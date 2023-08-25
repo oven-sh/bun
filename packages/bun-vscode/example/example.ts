@@ -4,7 +4,7 @@ export default {
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();
     debugger;
-    return new Response(request.url);
+    return new Response("HELLO WORLD");
   },
 };
 
@@ -29,6 +29,6 @@ interface CoolThing {
 
 class SuperCoolThing implements CoolThing {
   doCoolThing(): void {
-    console.log("super cool thing!");
+    console.log("BLAH BLAH");
   }
 }

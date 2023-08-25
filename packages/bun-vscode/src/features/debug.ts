@@ -9,6 +9,7 @@ const debugConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Debug Bun",
   program: "${file}",
+  watch: true,
 };
 
 const runConfiguration: vscode.DebugConfiguration = {
@@ -16,6 +17,7 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
+  watch: true,
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {
@@ -124,7 +126,9 @@ export class VSCodeAdapter extends DebugSession {
   }
 
   sendMessage(message: DAP.Request | DAP.Response | DAP.Event): void {
+    console.log("[dap] -->", message);
     this.#dap.appendLine("--> " + JSON.stringify(message));
+
     const { type } = message;
     if (type === "response") {
       this.sendResponse(message);
@@ -136,7 +140,9 @@ export class VSCodeAdapter extends DebugSession {
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
+    console.log("[dap] <--", message);
     this.#dap.appendLine("<-- " + JSON.stringify(message));
+
     this.#adapter.accept(message);
   }
 

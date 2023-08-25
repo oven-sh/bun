@@ -6,6 +6,7 @@
       "request": "launch",
       "name": "Debug Bun",
       "program": "${file}",
+      "watch": "hot"
     },
     {
       "type": "bun",

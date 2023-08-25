@@ -35,8 +35,19 @@ To configure which port and hostname the server will listen on:
 
 ```ts
 Bun.serve({
-  port: 8080, // defaults to $PORT, then 3000
+  port: 8080, // defaults to $BUN_PORT, $PORT, $NODE_PORT otherwise 3000
   hostname: "mydomain.com", // defaults to "0.0.0.0"
+  fetch(req) {
+    return new Response(`404!`);
+  },
+});
+```
+
+To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket):
+
+```ts
+Bun.serve({
+  unix: "/tmp/my-socket.sock", // path to socket
   fetch(req) {
     return new Response(`404!`);
   },
@@ -78,7 +89,7 @@ Bun.serve({
 ```
 
 {% callout %}
-**Note** — Full debugger support is planned.
+[Learn more about debugging in Bun](https://bun.sh/docs/runtime/debugger)
 {% /callout %}
 
 The call to `Bun.serve` returns a `Server` object. To stop the server, call the `.stop()` method.

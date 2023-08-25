@@ -1051,16 +1051,7 @@ pub const InternalState = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString, allocator: std.mem.Allocator) InternalState {
-        return .{
-            .original_request_body = body,
-            .request_body = if (body == .bytes) body.bytes else "",
-            .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
-            .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
-            .body_out_str = body_out_str,
-            .stage = Stage.pending,
-            .pending_response = null,
-            .allocator = allocator
-        };
+        return .{ .original_request_body = body, .request_body = if (body == .bytes) body.bytes else "", .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} }, .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} }, .body_out_str = body_out_str, .stage = Stage.pending, .pending_response = null, .allocator = allocator };
     }
 
     pub fn isChunkedEncoding(this: *InternalState) bool {
@@ -1195,24 +1186,6 @@ pub const InternalState = struct {
                     };
                 }
             },
-        }
-
-        return this.postProcessBody();
-    }
-
-    pub fn postProcessBody(this: *InternalState) usize {
-
-        // we only touch it if we did not sent the headers yet
-        if (this.cloned_metadata != null) {
-            var metadata = &this.cloned_metadata.?;
-            var response = &metadata.response;
-            if (this.content_encoding_i < response.headers.len) {
-                // if it compressed with this header, it is no longer
-                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
-                _ = mutable_headers.orderedRemove(this.content_encoding_i);
-                response.headers = mutable_headers.items;
-                this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
-            }
         }
 
         return this.body_out_str.?.list.items.len;
@@ -2346,7 +2319,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             // we reset the pending_response each time wich means that on parse error this will be always be empty
             this.state.pending_response = picohttp.Response{};
 
-            const response = picohttp.Response.parseParts(
+            var response = picohttp.Response.parseParts(
                 to_read,
                 &shared_response_headers_buf,
                 &amount_read,
@@ -2370,6 +2343,14 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 }
                 return;
             };
+
+            // we always decompress gzip and deflate so we remove the response header
+            if (this.state.content_encoding_i < response.headers.len) {
+                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                _ = mutable_headers.orderedRemove(this.state.content_encoding_i);
+                response.headers = mutable_headers.items;
+                this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
+            }
 
             // we save the successful parsed response
             this.state.pending_response = response;
@@ -2839,8 +2820,6 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         progress.setCompletedItems(incoming_data.len);
         progress.context.maybeRefresh();
     }
-
-    _ = this.state.postProcessBody();
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {

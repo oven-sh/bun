@@ -1247,7 +1247,7 @@ pub const Fetch = struct {
                     return;
                 }
             }
-            log("task scheduled!", .{});
+
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };

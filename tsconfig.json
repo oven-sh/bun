@@ -2,7 +2,6 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "experimentalDecorators": true,
-    "noEmit": true,
     // "skipLibCheck": true,
     "allowJs": true
   },

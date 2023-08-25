@@ -73,8 +73,12 @@ declare module "bun" {
   export type Serve<WebSocketDataType = undefined> =
     | ServeOptions
     | TLSServeOptions
+    | UnixServeOptions
+    | UnixTLSServeOptions
     | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>;
+    | TLSWebSocketServeOptions<WebSocketDataType>
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
 
   /**
    * Start a fast HTTP server.
@@ -112,13 +116,7 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<T>(
-    options:
-      | ServeOptions
-      | TLSServeOptions
-      | WebSocketServeOptions<T>
-      | TLSWebSocketServeOptions<T>,
-  ): Server;
+  export function serve<T>(options: Serve<T>): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -1784,6 +1782,49 @@ declare module "bun" {
 
   interface GenericServeOptions {
     /**
+     *
+     * What URI should be used to make {@link Request.url} absolute?
+     *
+     * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
+     *
+     * @example
+     *```js
+     * "http://my-app.com"
+     * ```
+     *
+     * @example
+     *```js
+     * "https://wongmjane.com/"
+     * ```
+     *
+     * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
+     *
+     * @example
+     * "http://localhost:3000"
+     */
+    // baseURI?: string;
+
+    /**
+     * What is the maximum size of a request body? (in bytes)
+     * @default 1024 * 1024 * 128 // 128MB
+     */
+    maxRequestBodySize?: number;
+
+    /**
+     * Render contextual errors? This enables bun's error page
+     * @default process.env.NODE_ENV !== 'production'
+     */
+    development?: boolean;
+
+    error?: (
+      this: Server,
+      request: Errorlike,
+    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
+  }
+
+  export type AnyFunction = (..._: any[]) => any;
+  export interface ServeOptions extends GenericServeOptions {
+    /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
      */
@@ -1810,48 +1851,11 @@ declare module "bun" {
     hostname?: string;
 
     /**
-     * What URI should be used to make {@link Request.url} absolute?
-     *
-     * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
-     *
-     * @example
-     *```js
-     * "http://my-app.com"
-     * ```
-     *
-     * @example
-     *```js
-     * "https://wongmjane.com/"
-     * ```
-     *
-     * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
-     *
-     * @example
-     * "http://localhost:3000"
-     *
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
      */
-    // baseURI?: string;
+    unix?: never;
 
-    /**
-     * What is the maximum size of a request body? (in bytes)
-     * @default 1024 * 1024 * 128 // 128MB
-     */
-    maxRequestBodySize?: number;
-
-    /**
-     * Render contextual errors? This enables bun's error page
-     * @default process.env.NODE_ENV !== 'production'
-     */
-    development?: boolean;
-
-    error?: (
-      this: Server,
-      request: Errorlike,
-    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
-  }
-
-  export type AnyFunction = (..._: any[]) => any;
-  export interface ServeOptions extends GenericServeOptions {
     /**
      * Handle HTTP requests
      *
@@ -1865,8 +1869,113 @@ declare module "bun" {
     ): Response | Promise<Response>;
   }
 
+  export interface UnixServeOptions extends GenericServeOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
+    /**
+     * Handle HTTP requests
+     *
+     * Respond to {@link Request} objects with a {@link Response} object.
+     */
+    fetch(
+      this: Server,
+      request: Request,
+      server: Server,
+    ): Response | Promise<Response>;
+  }
+
   export interface WebSocketServeOptions<WebSocketDataType = undefined>
     extends GenericServeOptions {
+    /**
+     * What port should the server listen on?
+     * @default process.env.PORT || "3000"
+     */
+    port?: string | number;
+
+    /**
+     * What hostname should the server listen on?
+     *
+     * @default
+     * ```js
+     * "0.0.0.0" // listen on all interfaces
+     * ```
+     * @example
+     *  ```js
+     * "127.0.0.1" // Only listen locally
+     * ```
+     * @example
+     * ```js
+     * "remix.run" // Only listen on remix.run
+     * ````
+     *
+     * note: hostname should not include a {@link port}
+     */
+    hostname?: string;
+
+    /**
+     * Enable websockets with {@link Bun.serve}
+     *
+     * For simpler type safety, see {@link Bun.websocket}
+     *
+     * @example
+     * ```js
+     *import { serve } from "bun";
+     *serve({
+     *  websocket: {
+     *    open: (ws) => {
+     *      console.log("Client connected");
+     *    },
+     *    message: (ws, message) => {
+     *      console.log("Client sent message", message);
+     *    },
+     *    close: (ws) => {
+     *      console.log("Client disconnected");
+     *    },
+     *  },
+     *  fetch(req, server) {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
+     *      const upgraded = server.upgrade(req);
+     *      if (!upgraded) {
+     *        return new Response("Upgrade failed", { status: 400 });
+     *      }
+     *    }
+     *    return new Response("Hello World");
+     *  },
+     *});
+     *```
+     * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+     *
+     * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
+     *
+     *
+     */
+    websocket: WebSocketHandler<WebSocketDataType>;
+
+    /**
+     * Handle HTTP requests or upgrade them to a {@link ServerWebSocket}
+     *
+     * Respond to {@link Request} objects with a {@link Response} object.
+     *
+     */
+    fetch(
+      this: Server,
+      request: Request,
+      server: Server,
+    ): Response | undefined | Promise<Response | undefined>;
+  }
+
+  export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
+    extends GenericServeOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
+
     /**
      * Enable websockets with {@link Bun.serve}
      *
@@ -1923,6 +2032,17 @@ declare module "bun" {
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
+    unix?: never;
+    tls?: TLSOptions;
+  }
+  export interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
+    extends UnixWebSocketServeOptions<WebSocketDataType>,
+      TLSOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
     tls?: TLSOptions;
   }
   export interface Errorlike extends Error {
@@ -2039,6 +2159,16 @@ declare module "bun" {
     tls?: TLSOptions;
   }
 
+  export interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
+    /**
+     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+     *  The values are SSL options objects.
+     */
+    serverNames?: Record<string, TLSOptions>;
+
+    tls?: TLSOptions;
+  }
+
   /**
    * HTTP & HTTPS Server
    *
@@ -2049,7 +2179,6 @@ declare module "bun" {
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
-   *
    */
   export interface Server {
     /**

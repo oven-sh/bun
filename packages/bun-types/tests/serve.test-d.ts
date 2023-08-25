@@ -121,23 +121,23 @@ Bun.serve({
   websocket: { message() {} },
 });
 
-Bun.serve({
-  unix: "/tmp/bun.sock",
-  // @ts-expect-error
-  port: 1234,
-  fetch() {
-    return new Response();
-  },
-});
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   // @ts-expect-error
+//   port: 1234,
+//   fetch() {
+//     return new Response();
+//   },
+// });
 
-Bun.serve({
-  unix: "/tmp/bun.sock",
-  // @ts-expect-error
-  port: 1234,
-  fetch(req, server) {
-    server.upgrade(req);
-    if (Math.random() > 0.5) return undefined;
-    return new Response();
-  },
-  websocket: { message() {} },
-});
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   // @ts-expect-error
+//   port: 1234,
+//   fetch(req, server) {
+//     server.upgrade(req);
+//     if (Math.random() > 0.5) return undefined;
+//     return new Response();
+//   },
+//   websocket: { message() {} },
+// });

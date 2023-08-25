@@ -89,10 +89,10 @@ const Socket = (function (InternalSocket) {
   class Socket extends Duplex {
     static #Handlers = {
       close: Socket.#Close,
-      connectError(socket, error) {
-        const self = socket.data;
-        self.emit("error", error);
-      },
+      // connectError(socket, error) {
+      //   const self = socket.data;
+      //   self.emit("error", error);
+      // },
       data({ data: self }, buffer) {
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
@@ -448,8 +448,8 @@ const Socket = (function (InternalSocket) {
 
         if (connectListener) this.on("secureConnect", connectListener);
       } else if (connectListener) this.on("connect", connectListener);
-      // start using existing connection
 
+      // start using existing connection
       if (connection) {
         const socket = connection[bunSocketInternal];
 
@@ -508,6 +508,7 @@ const Socket = (function (InternalSocket) {
           tls,
         }).catch(error => {
           this.emit("error", error);
+          this.emit("close");
         });
       } else {
         // default start
@@ -519,6 +520,7 @@ const Socket = (function (InternalSocket) {
           tls,
         }).catch(error => {
           this.emit("error", error);
+          this.emit("close");
         });
       }
       return this;

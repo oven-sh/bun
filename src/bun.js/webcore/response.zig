@@ -692,6 +692,7 @@ pub const Fetch = struct {
         }
 
         fn clearData(this: *FetchTasklet) void {
+            log("clearData", .{});
             const allocator = this.memory_reporter.allocator();
             if (this.url_proxy_buffer.len > 0) {
                 allocator.free(this.url_proxy_buffer);
@@ -732,6 +733,7 @@ pub const Fetch = struct {
         }
 
         pub fn deinit(this: *FetchTasklet) void {
+            log("deinit", .{});
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
@@ -745,11 +747,11 @@ pub const Fetch = struct {
             this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
+            const is_done = !success or !this.result.has_more;
             defer {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
-
-                if (!success or !this.result.has_more) {
+                if (is_done) {
                     var vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
                     this.clearData();
@@ -853,6 +855,7 @@ pub const Fetch = struct {
 
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
+            log("onProgressUpdate", .{});
             if (this.is_waiting_body) {
                 return this.onBodyReceived();
             }
@@ -866,6 +869,7 @@ pub const Fetch = struct {
             var vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                log("onProgressUpdate: promise_value is null", .{});
                 ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
@@ -879,6 +883,7 @@ pub const Fetch = struct {
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
+                log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
@@ -909,6 +914,8 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            log("onReject", .{});
+
             if (this.signal) |signal| {
                 this.signal = null;
                 signal.detach(this);
@@ -1034,6 +1041,7 @@ pub const Fetch = struct {
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+            log("toResponse", .{});
             std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
             var metadata = this.metadata.?;
@@ -1055,6 +1063,7 @@ pub const Fetch = struct {
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
+            log("onResolve", .{});
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
@@ -1226,6 +1235,7 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             task.result = result;
+
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
                 std.debug.assert(task.metadata == null);
@@ -1238,7 +1248,6 @@ pub const Fetch = struct {
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }
-
             // reset for reuse
             task.response_buffer.reset();
 

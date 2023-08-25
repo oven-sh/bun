@@ -5299,7 +5299,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         error_instance = ZigString.init(
                             std.fmt.bufPrint(
                                 &output_buf,
-                                "Failed to start server. Does unix socket {} exist?",
+                                "Failed to listen on unix socket {}",
                                 .{
                                     strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
                                 },

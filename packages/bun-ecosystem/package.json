@@ -1,4 +1,5 @@
 {
+  "name": "bun-ecosystem-ci",
   "private": true,
   "dependencies": {
     "globby": "^13.1.3"

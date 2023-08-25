@@ -52,10 +52,10 @@ function previewLockfile(uri: vscode.Uri, token?: vscode.CancellationToken): Pro
     process.stderr.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
-    process.on("error", (error) => {
+    process.on("error", error => {
       reject(error);
     });
-    process.on("exit", (code) => {
+    process.on("exit", code => {
       if (code === 0) {
         resolve(stdout);
       } else {
@@ -65,19 +65,15 @@ function previewLockfile(uri: vscode.Uri, token?: vscode.CancellationToken): Pro
   });
 }
 
-export default function(context: vscode.ExtensionContext): void {
+export default function (context: vscode.ExtensionContext): void {
   const viewType = "bun.lockb";
   const provider = new BunLockfileEditorProvider(context);
-  
-  vscode.window.registerCustomEditorProvider(
-    viewType,
-    provider,
-    {
-      supportsMultipleEditorsPerDocument: true,
-      webviewOptions: {
-        enableFindWidget: true,
-        retainContextWhenHidden: true,
-      },
+
+  vscode.window.registerCustomEditorProvider(viewType, provider, {
+    supportsMultipleEditorsPerDocument: true,
+    webviewOptions: {
+      enableFindWidget: true,
+      retainContextWhenHidden: true,
     },
-  );
+  });
 }

@@ -4,16 +4,15 @@
     {
       "type": "bun",
       "request": "launch",
-      "name": "Debug",
-      "program": "${workspaceFolder}/example.js",
-      "stopOnEntry": true
+      "name": "Debug Bun",
+      "program": "${file}",
+      "watch": "hot"
     },
     {
       "type": "bun",
       "request": "attach",
-      "name": "Attach",
-      "program": "${workspaceFolder}/example.js",
-      "stopOnEntry": true
+      "name": "Attach to Bun",
+      "url": "ws://localhost:6499/",
     }
   ]
 }

@@ -2488,6 +2488,17 @@ pub const Package = extern struct {
 
             summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
 
+            inline for (Package.Scripts.Hooks) |hook| {
+                if (!@field(to.scripts, hook).eql(
+                    @field(from.scripts, hook),
+                    to_lockfile.buffers.string_bytes.items,
+                    from_lockfile.buffers.string_bytes.items,
+                )) {
+                    // We found a changed life-cycle script
+                    summary.update += 1;
+                }
+            }
+
             return summary;
         }
     };

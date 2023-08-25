@@ -7557,16 +7557,14 @@ pub const PackageManager = struct {
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
-                            var remaining = mapping;
-                            var dependency_i: PackageID = off;
                             const changes = @as(PackageID, @truncate(mapping.len));
+                            var counter_i: PackageID = 0;
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
-                            var counter_i: PackageID = 0;
                             while (counter_i < changes) : (counter_i += 1) {
-                                if (remaining[counter_i] == invalid_package_id) {
-                                    dependency_i = counter_i + off;
+                                if (mapping[counter_i] == invalid_package_id) {
+                                    const dependency_i = counter_i + off;
                                     const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                                     try manager.enqueueDependencyWithMain(
                                         dependency_i,

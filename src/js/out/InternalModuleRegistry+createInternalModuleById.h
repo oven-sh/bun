@@ -12,6 +12,12 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::InternalDebugger: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:debugger"_s, "internal/debugger.js"_s, InternalModuleRegistryConstants::InternalDebuggerCode, "builtin://internal/debugger"_s);
     }
+    case Field::InternalFSCpSync: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:fs/cp-sync"_s, "internal/fs/cp-sync.js"_s, InternalModuleRegistryConstants::InternalFSCpSyncCode, "builtin://internal/fs/cp/sync"_s);
+    }
+    case Field::InternalFSCp: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:fs/cp"_s, "internal/fs/cp.js"_s, InternalModuleRegistryConstants::InternalFSCpCode, "builtin://internal/fs/cp"_s);
+    }
     case Field::InternalShared: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:shared"_s, "internal/shared.js"_s, InternalModuleRegistryConstants::InternalSharedCode, "builtin://internal/shared"_s);
     }

@@ -27,7 +27,7 @@ interface BunFSWatcher {
    */
   unref(): void;
 }
-type BunFS = Omit<typeof import("node:fs"), "watch"> & {
+type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), "watch" | "cp" | "cpSync"> & {
   /**
    * Watch for changes on `filename`, where `filename` is either a file or a
    * directory.
@@ -87,6 +87,9 @@ type BunFS = Omit<typeof import("node:fs"), "watch"> & {
    * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
    */
   watch(filename: string, listener?: BunWatchListener<string>): BunFSWatcher;
+
+  cpSync(source: string, dest: string, errorOnExist?: boolean, force?: boolean): void;
+  cp(source: string, dest: string, errorOnExist?: boolean, force?: boolean): void;
 };
 
 declare module "bun" {

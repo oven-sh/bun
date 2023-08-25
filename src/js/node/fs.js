@@ -1065,10 +1065,59 @@ Object.defineProperties(fs, {
 });
 
 // lol
+// @ts-ignore
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
+let lazy_cpSync = null;
+function cpSync(src, dest, options) {
+  // attempt to use the native code version if possible
+  // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+  if (!options) return fs.copyFileSync(src, dest);
+  if (typeof options !== "object") {
+    throw new TypeError("options must be an object");
+  }
+  let mode = options.mode;
+  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+    if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
+    return lazy_cpSync(src, dest, options);
+  }
+  if (options.recursive) return fs.cpSync(src, dest, options.errorOnExist, options.force ?? true, options.mode);
+  return fs.copyFileSync(src, dest, mode);
+}
+
+function cp(src, dest, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  promises.cp(src, dest, options).then(() => callback(), callback);
+}
+
+function _toUnixTimestamp(time, name = "time") {
+  if (typeof time === "string" && +time == time) {
+    return +time;
+  }
+  if (NumberIsFinite(time)) {
+    if (time < 0) {
+      return DateNow() / 1000;
+    }
+    return time;
+  }
+  if (isDate(time)) {
+    // Convert to 123.456 UNIX timestamp
+    return DatePrototypeGetTime(time) / 1000;
+  }
+  throw new TypeError(`Expected ${name} to be a number or Date`);
+}
+
 export default {
+  Dirent,
+  FSWatcher,
+  ReadStream,
+  Stats,
+  WriteStream,
+  _toUnixTimestamp,
   access,
   accessSync,
   appendFile,
@@ -1082,9 +1131,10 @@ export default {
   constants: promises.constants,
   copyFile,
   copyFileSync,
+  cp,
+  cpSync,
   createReadStream,
   createWriteStream,
-  Dirent,
   exists,
   existsSync,
   fchmod,
@@ -1124,6 +1174,8 @@ export default {
   readdirSync,
   readlink,
   readlinkSync,
+  readv,
+  readvSync,
   realpath,
   realpathSync,
   rename,
@@ -1134,7 +1186,6 @@ export default {
   rmdirSync,
   stat,
   statSync,
-  Stats,
   symlink,
   symlinkSync,
   truncate,
@@ -1143,18 +1194,13 @@ export default {
   unlinkSync,
   utimes,
   utimesSync,
+  watch,
   write,
   writeFile,
   writeFileSync,
   writeSync,
-  WriteStream,
-  ReadStream,
-  watch,
-  FSWatcher,
   writev,
   writevSync,
-  readv,
-  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

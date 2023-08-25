@@ -1,0 +1,185 @@
+import fs from "fs";
+import { describe, test, expect, jest } from "bun:test";
+import { tempDirWithFiles } from "harness";
+
+const impls = [
+  ["cpSync", fs.cpSync],
+  // ["cp", fs.promises.cp],
+] as const;
+
+for (const [name, copy] of impls) {
+  async function copyShouldThrow(...args: Parameters<typeof copy>) {
+    try {
+      await (copy as any)(...args);
+    } catch (e: any) {
+      if (e?.code?.toUpperCase() === "TODO") {
+        throw new Error("Expected " + name + "() to throw non TODO error");
+      }
+      return e;
+    }
+    throw new Error("Expected " + name + "() to throw");
+  }
+
+  function assertContent(path: string, content: string) {
+    expect(fs.readFileSync(path, "utf8")).toBe(content);
+  }
+
+  describe("fs." + name, () => {
+    test("single file", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/to.txt");
+
+      expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
+    });
+
+    test("refuse to copy directory with 'recursive: false'", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+
+      await copyShouldThrow(basename + "/from", basename + "/result");
+    });
+
+    test("recursive directory structure - no destination", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b/e.txt": "e",
+        "from/c.txt": "c",
+        "from/w/y/x/z.txt": "z",
+      });
+
+      await copy(basename + "/from", basename + "/result", { recursive: true });
+
+      assertContent(basename + "/result/a.txt", "a");
+      assertContent(basename + "/result/b/e.txt", "e");
+      assertContent(basename + "/result/c.txt", "c");
+      assertContent(basename + "/result/w/y/x/z.txt", "z");
+    });
+
+    test("recursive directory structure - overwrite existing files by default", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b/e.txt": "e",
+        "from/c.txt": "c",
+        "from/w/y/x/z.txt": "z",
+
+        "result/a.txt": "fail",
+        "result/w/y/x/z.txt": "lose",
+        "result/w/y/v.txt": "keep this",
+      });
+
+      await copy(basename + "/from", basename + "/result", { recursive: true });
+
+      assertContent(basename + "/result/a.txt", "a");
+      assertContent(basename + "/result/b/e.txt", "e");
+      assertContent(basename + "/result/c.txt", "c");
+      assertContent(basename + "/result/w/y/x/z.txt", "z");
+      assertContent(basename + "/result/w/y/v.txt", "keep this");
+    });
+
+    test("recursive directory structure - 'force: false' does not overwrite existing files", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "lose",
+        "from/b/e.txt": "e",
+        "from/c.txt": "c",
+        "from/w/y/x/z.txt": "lose",
+
+        "result/a.txt": "win",
+        "result/w/y/x/z.txt": "win",
+        "result/w/y/v.txt": "keep this",
+      });
+
+      console.log(basename);
+      await copy(basename + "/from", basename + "/result", { recursive: true, force: false });
+
+      assertContent(basename + "/result/a.txt", "win");
+      assertContent(basename + "/result/b/e.txt", "e");
+      assertContent(basename + "/result/c.txt", "c");
+      assertContent(basename + "/result/w/y/x/z.txt", "win");
+      assertContent(basename + "/result/w/y/v.txt", "keep this");
+    });
+
+    test("'force: false' on a single file doesn't override", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "lose",
+        "result/a.txt": "win",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/result/a.txt", { force: false });
+
+      assertContent(basename + "/result/a.txt", "win");
+    });
+
+    test("'force: true' on a single file does override", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "win",
+        "result/a.txt": "lose",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/result/a.txt", { force: true });
+
+      assertContent(basename + "/result/a.txt", "win");
+    });
+
+    test("'force: false' + 'errorOnExist: true' can throw", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "lose",
+        "result/a.txt": "win",
+      });
+
+      await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", { force: false });
+
+      assertContent(basename + "/result/a.txt", "win");
+    });
+
+    // test("'mode = fs.constants.COPYFILE_EXCL' works on single file", async () => {
+    //   const basename = tempDirWithFiles("cp", {
+    //     "from/a.txt": "lose",
+    //     "result/a.txt": "win",
+    //   });
+
+    //   await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", { force: true });
+
+    //   assertContent(basename + "/result/a.txt", "win");
+    // });
+
+    test("filter - works", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      await copy(basename + "/from", basename + "/result", {
+        filter: (src: string) => src.includes("a.txt"),
+        recursive: true,
+      });
+
+      expect(fs.existsSync(basename + "/result/a.txt")).toBe(true);
+      expect(fs.existsSync(basename + "/result/b.txt")).toBe(false);
+    });
+
+    test("filter - paths given are correct and relative", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      const filter = jest.fn((src: string) => true);
+
+      let prev = process.cwd();
+      process.chdir(basename);
+
+      await copy(basename + "/from", basename + "/result", {
+        filter,
+        recursive: true,
+      });
+
+      process.chdir(prev);
+
+      // TODO: finish the test ll
+    });
+  });
+}

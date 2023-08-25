@@ -745,6 +745,8 @@ pub const VirtualMachine = struct {
         return debugger.next_debugger_id;
     }
 
+    pub var has_created_debugger: bool = false;
+
     pub const Debugger = struct {
         path_or_port: []const u8 = "",
         script_execution_context_id: u32 = 0,
@@ -764,6 +766,8 @@ pub const VirtualMachine = struct {
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
             debug("create", .{});
             JSC.markBinding(@src());
+            if (has_created_debugger) return;
+            has_created_debugger = true;
             var debugger = &this.debugger.?;
             debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
             if (!has_started_debugger_thread) {

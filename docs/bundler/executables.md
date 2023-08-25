@@ -31,3 +31,26 @@ All imported files and packages are bundled into the executable, along with a co
 - `--publicPath`
 
 {% /callout %}
+
+# Embedding files
+
+Standalone executables support embedding files.
+
+To embed files into an executable with `bun build --compile`, import the file in your code
+
+```js
+// this becomes an internal file path
+import icon from "./icon.png";
+
+import { file } from "bun";
+
+export default {
+  fetch(req) {
+    return new Response(file(icon));
+  },
+};
+```
+
+You may need to specify a `--loader` for it to be treated as a `"file"` loader (so you get back a file path).
+
+Embedded files can be read using `Bun.file`'s functions or the Node.js `fs.readFile` function (in `"node:fs"`).

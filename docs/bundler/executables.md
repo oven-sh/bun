@@ -32,7 +32,7 @@ All imported files and packages are bundled into the executable, along with a co
 
 {% /callout %}
 
-# Embedding files
+## Embedding files
 
 Standalone executables support embedding files.
 
@@ -55,6 +55,6 @@ You may need to specify a `--loader` for it to be treated as a `"file"` loader (
 
 Embedded files can be read using `Bun.file`'s functions or the Node.js `fs.readFile` function (in `"node:fs"`).
 
-# Minification
+## Minification
 
-To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, the binary is still way too big and we need to make it smaller.
+To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.

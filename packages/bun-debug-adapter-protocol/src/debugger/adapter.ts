@@ -965,8 +965,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       const variables = parameters.map((parameter, i) => {
         const variable = this.#addVariable(parameter, { name: `${i}` });
 
-        const { value } = variable;
-        output += value + " ";
+        output += remoteObjectToString(parameter, true) + " ";
 
         return variable;
       });
@@ -1704,8 +1703,6 @@ function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): st
       return "\u001b[33m";
     case "error":
       return "\u001b[31m";
-    case "debug":
-      return "\u001b[36m";
   }
   return undefined;
 }

@@ -89,10 +89,6 @@ const Socket = (function (InternalSocket) {
   class Socket extends Duplex {
     static #Handlers = {
       close: Socket.#Close,
-      // connectError(socket, error) {
-      //   const self = socket.data;
-      //   self.emit("error", error);
-      // },
       data({ data: self }, buffer) {
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;

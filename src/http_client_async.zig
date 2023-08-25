@@ -2347,14 +2347,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             };
 
-            if (this.state.content_encoding_i < response.headers.len) {
-                // if it compressed with this header, it is no longer
-                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
-                _ = mutable_headers.orderedRemove(this.state.content_encoding_i);
-                response.headers = mutable_headers.items;
-                this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
-            }
-
             // we save the successful parsed response
             this.state.pending_response = response;
 
@@ -2362,7 +2354,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
-                &this.state.pending_response.?,
+                &response,
                 // If there are multiple consecutive redirects
                 // and the redirect differs in hostname
                 // the new URL buffer may point to invalid memory after
@@ -2397,6 +2389,16 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
+
+            if (this.state.content_encoding_i < response.headers.len) {
+                // if it compressed with this header, it is no longer because we will decompress it
+                var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+                _ = mutable_headers.orderedRemove(this.state.content_encoding_i);
+                response.headers = mutable_headers.items;
+                this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
+                // we need to reset the pending response because we removed a header
+                this.state.pending_response = response;
+            }
 
             if (!can_continue) {
                 // this means that the request ended
@@ -3032,7 +3034,7 @@ pub fn handleResponseMetadata(
                     this.state.content_length = content_length;
                 } else {
                     // ignore body size for HEAD requests
-                    this.state.content_length = content_length;
+                    this.state.content_length = 0;
                 }
             },
             hashHeaderConst("Content-Encoding") => {

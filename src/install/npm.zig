@@ -846,8 +846,16 @@ pub const PackageManifest = struct {
                 const versions = versions_q.expr.data.e_object.properties.slice();
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
+                    const sliced_version = SlicedString.init(version_name, version_name);
+                    const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (strings.indexOfChar(version_name, '-') != null) {
+                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (!parsed_version.valid) {
+                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        continue;
+                    }
+
+                    if (parsed_version.version.tag.hasPre()) {
                         pre_versions_len += 1;
                         extern_string_count += 1;
                     } else {
@@ -1022,25 +1030,23 @@ pub const PackageManifest = struct {
                 var dependency_names = all_dependency_names_and_values;
                 var prev_extern_bin_group = extern_strings_bin_entries;
 
-                var version_string__: String = String{};
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
+                    var sliced_version = SlicedString.init(version_name, version_name);
+                    var parsed_version = Semver.Version.parse(sliced_version);
 
-                    var sliced_string = SlicedString.init(version_name, version_name);
-
-                    // We only need to copy the version tags if it's a pre/post
-                    if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
-                        version_string__ = string_builder.append(String, version_name);
-                        sliced_string = version_string__.sliced(string_buf);
-                    }
-
-                    const parsed_version = Semver.Version.parse(sliced_string, allocator);
                     if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
-
-                    if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
-                        continue;
+                    // We only need to copy the version tags if it contains pre and/or build
+                    if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
+                        const version_string = string_builder.append(String, version_name);
+                        sliced_version = version_string.sliced(string_buf);
+                        parsed_version = Semver.Version.parse(sliced_version);
+                        if (Environment.allow_assert) {
+                            std.debug.assert(parsed_version.valid);
+                            std.debug.assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                        }
                     }
+                    if (!parsed_version.valid) continue;
 
                     var package_version = PackageVersion{};
 
@@ -1451,7 +1457,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version.fill();
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.fill();
                         dist_tag_i += 1;
                     }
                 }

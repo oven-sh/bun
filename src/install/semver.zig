@@ -689,13 +689,13 @@ pub const Version = extern struct {
             const self = formatter.version;
             try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
 
-            if (!self.tag.pre.isEmpty()) {
+            if (self.tag.hasPre()) {
                 const pre = self.tag.pre.slice(formatter.input);
                 try writer.writeAll("-");
                 try writer.writeAll(pre);
             }
 
-            if (!self.tag.build.isEmpty()) {
+            if (self.tag.hasBuild()) {
                 const build = self.tag.build.slice(formatter.input);
                 try writer.writeAll("+");
                 try writer.writeAll(build);
@@ -814,11 +814,11 @@ pub const Version = extern struct {
         var multi_tag_warn = false;
         // TODO: support multiple tags
 
-        pub fn parse(allocator: Allocator, sliced_string: SlicedString) TagResult {
-            return parseWithPreCount(allocator, sliced_string, 0);
+        pub fn parse(sliced_string: SlicedString) TagResult {
+            return parseWithPreCount(sliced_string, 0);
         }
 
-        pub fn parseWithPreCount(_: Allocator, sliced_string: SlicedString, initial_pre_count: u32) TagResult {
+        pub fn parseWithPreCount(sliced_string: SlicedString, initial_pre_count: u32) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = initial_pre_count;
@@ -876,7 +876,7 @@ pub const Version = extern struct {
                     },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
-                        if (state == .pre) {
+                        if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
                             if (comptime Environment.isDebug) {
                                 std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
@@ -901,7 +901,6 @@ pub const Version = extern struct {
             if (state == .none and initial_pre_count > 0) {
                 state = .pre;
                 start = 0;
-                result.tag.pre = sliced_string.sub(input[start..i]).external();
             }
 
             switch (state) {
@@ -932,7 +931,7 @@ pub const Version = extern struct {
         stopped_at: u32 = 0,
     };
 
-    pub fn parse(sliced_string: SlicedString, allocator: Allocator) ParseResult {
+    pub fn parse(sliced_string: SlicedString) ParseResult {
         var input = sliced_string.slice;
         var result = ParseResult{};
 
@@ -1024,7 +1023,7 @@ pub const Version = extern struct {
                     }) {
                         i += 1;
                     }
-                    const tag_result = Tag.parse(allocator, sliced_string.sub(input[part_start_i..]));
+                    const tag_result = Tag.parse(sliced_string.sub(input[part_start_i..]));
                     result.version.tag = tag_result.tag;
                     i += tag_result.len;
                     break;
@@ -1071,9 +1070,12 @@ pub const Version = extern struct {
 
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
-                    if (result.wildcard == .none and part_i >= 2 and ((c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z'))) {
+                    if (result.wildcard == .none and part_i >= 2 and switch (c) {
+                        'a'...'z', 'A'...'Z', '_' => true,
+                        else => false,
+                    }) {
                         part_start_i = i;
-                        const tag_result = Tag.parseWithPreCount(allocator, sliced_string.sub(input[part_start_i..]), 1);
+                        const tag_result = Tag.parseWithPreCount(sliced_string.sub(input[part_start_i..]), 1);
                         result.version.tag = tag_result.tag;
                         i += tag_result.len;
                         is_done = true;
@@ -1781,7 +1783,7 @@ pub const Query = struct {
             }
 
             if (!skip_round) {
-                const parse_result = Version.parse(sliced.sub(input[i..]), allocator);
+                const parse_result = Version.parse(sliced.sub(input[i..]));
                 const version = parse_result.version.fill();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -1817,7 +1819,7 @@ pub const Query = struct {
                 i += @as(usize, @intFromBool(!hyphenate));
 
                 if (hyphenate) {
-                    const second_parsed = Version.parse(sliced.sub(input[i..]), allocator);
+                    const second_parsed = Version.parse(sliced.sub(input[i..]));
                     var second_version = second_parsed.version.fill();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -1905,7 +1907,7 @@ pub const Query = struct {
 const expect = if (Environment.isTest) struct {
     pub var counter: usize = 0;
     pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(SlicedString.init(version_str, version_str), default_allocator);
+        var parsed = Version.parse(SlicedString.init(version_str, version_str));
         std.debug.assert(parsed.valid);
         // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
@@ -1956,7 +1958,7 @@ const expect = if (Environment.isTest) struct {
     pub fn version(input: string, v: [3]?u32, src: std.builtin.SourceLocation) void {
         Output.initTest();
         defer counter += 1;
-        const result = Version.parse(SlicedString.init(input, input), default_allocator);
+        const result = Version.parse(SlicedString.init(input, input));
         std.debug.assert(result.valid);
 
         if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
@@ -1980,7 +1982,7 @@ const expect = if (Environment.isTest) struct {
         Output.initTest();
         defer counter += 1;
 
-        var result = Version.parse(SlicedString.init(input, input), default_allocator);
+        var result = Version.parse(SlicedString.init(input, input));
         if (!v.eql(result.version.fill())) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,

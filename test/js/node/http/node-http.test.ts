@@ -750,4 +750,20 @@ describe("node:http", () => {
       }
     });
   });
+
+  test("test server internal error, issue#4298", done => {
+    const server = createServer((req, res) => {
+      throw Error("throw an error here.");
+    });
+    server.listen({ port: 0 }, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(500);
+          done();
+        });
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
 });

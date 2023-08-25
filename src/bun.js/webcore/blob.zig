@@ -1233,6 +1233,34 @@ pub const Blob = struct {
         return blob_;
     }
 
+    fn estimatedByteSize(this: *Blob) usize {
+        // in-memory size. not the size on disk.
+        if (this.size != Blob.max_size) {
+            return this.size;
+        }
+
+        var store = this.store orelse return 0;
+        if (store.data == .bytes) {
+            return store.data.bytes.len;
+        }
+
+        return 0;
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        var size = this.estimatedByteSize() + @sizeOf(Blob);
+
+        if (this.store) |store| {
+            size += @sizeOf(Blob.Store);
+            size += switch (store.data) {
+                .bytes => store.data.bytes.stored_name.len,
+                .file => store.data.file.pathlike.path.slice().len,
+            };
+        }
+
+        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = JSDOMFile__hasInstance;

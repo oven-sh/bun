@@ -1728,6 +1728,8 @@ void JSBlobPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+extern "C" size_t Blob__estimatedSize(void* ptr);
+
 void JSBlobConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBlobPrototype* prototype)
 {
     Base::finishCreation(vm, 0, "Blob"_s, PropertyAdditionMode::WithoutStructureTransition);
@@ -1775,6 +1777,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBlobConstructor::construct(JSC::J
     }
 
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -1868,7 +1871,7 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSBlobStructure();
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-
+    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -1878,7 +1881,9 @@ void JSBlob::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBlob* thisObject = jsCast<JSBlob*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-
+    if (auto* ptr = thisObject->wrapped()) {
+        visitor.reportExtraMemoryVisited(Blob__estimatedSize(ptr));
+    }
     thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 

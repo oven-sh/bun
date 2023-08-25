@@ -449,11 +449,12 @@ describe("streaming", () => {
     const textToExpect = readFileSync(fixture, "utf-8");
     await runTest(
       {
-        fetch(req) {
+        async fetch(req) {
           return new Response(
             new ReadableStream({
-              start(controller) {
+              async start(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
+                await Bun.sleep(0);
                 queueMicrotask(() => {
                   controller.enqueue(textToExpect.substring(100));
                   controller.close();
@@ -502,8 +503,9 @@ describe("streaming", () => {
         fetch(req) {
           return new Response(
             new ReadableStream({
-              pull(controller) {
+              async pull(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
+                await Bun.sleep(0);
                 queueMicrotask(() => {
                   controller.enqueue(textToExpect.substring(100));
                   controller.close();
@@ -540,9 +542,9 @@ describe("streaming", () => {
                 async pull(controller) {
                   for (let chunk of chunks) {
                     controller.enqueue(Buffer.from(chunk));
-                    await 1;
+                    await Bun.sleep(0);
                   }
-                  await 1;
+                  await Bun.sleep(0);
                   controller.close();
                 },
               }),
@@ -569,9 +571,9 @@ describe("streaming", () => {
             new ReadableStream({
               async pull(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
-                await Promise.resolve();
+                await Bun.sleep(0);
                 controller.enqueue(textToExpect.substring(100));
-                await Promise.resolve();
+                await Bun.sleep(0);
                 controller.close();
               },
             }),
@@ -598,7 +600,7 @@ describe("streaming", () => {
                 for (let i = 0; i < 10 && remain.length > 0; i++) {
                   controller.enqueue(remain.substring(0, 100));
                   remain = remain.substring(100);
-                  await new Promise(resolve => queueMicrotask(resolve));
+                  await Bun.sleep(0);
                 }
 
                 controller.enqueue(remain);

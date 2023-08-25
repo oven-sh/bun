@@ -467,6 +467,10 @@ pub const JSBlob = struct {
     extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
 
     comptime {
+        if (@TypeOf(Blob.estimatedSize) != (fn (*Blob) callconv(.C) usize)) {
+            @compileLog("Blob.estimatedSize is not a size function");
+        }
+
         if (@TypeOf(Blob.onStructuredCloneSerialize) != (fn (*Blob, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
             @compileLog("Blob.onStructuredCloneSerialize is not a structured clone serialize function");
         }
@@ -513,6 +517,7 @@ pub const JSBlob = struct {
             @compileLog("Expected Blob.getWriter to be a callback but received " ++ @typeName(@TypeOf(Blob.getWriter)));
         if (!JSC.is_bindgen) {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
+            @export(Blob.estimatedSize, .{ .name = "Blob__estimatedSize" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
             @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });

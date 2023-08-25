@@ -289,7 +289,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 }
             }
         }
-
         JSC::Options::assertOptionsAreCoherent();
     }
 }

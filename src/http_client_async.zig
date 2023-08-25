@@ -2571,8 +2571,8 @@ fn cloneMetadata(this: *HTTPClient) void {
     var builder = &builder_;
     this.state.pending_response.count(builder);
     builder.count(this.url.href);
-    builder.allocate(bun.default_allocator) catch unreachable;
-    var headers_buf = bun.default_allocator.alloc(picohttp.Header, this.state.pending_response.headers.len) catch unreachable;
+    builder.allocate(this.allocator) catch unreachable;
+    var headers_buf = this.allocator.alloc(picohttp.Header, this.state.pending_response.headers.len) catch unreachable;
     const response = this.state.pending_response.clone(headers_buf, builder);
 
     this.state.pending_response = response;
@@ -2665,9 +2665,9 @@ pub const HTTPClientResult = struct {
         href: []const u8 = "",
         headers_buf: []picohttp.Header = &.{},
 
-        pub fn deinit(this: *ResultMetadata) void {
-            if (this.metadata_buf.len > 0) bun.default_allocator.free(this.metadata_buf);
-            if (this.headers_buf.len > 0) bun.default_allocator.free(this.headers_buf);
+        pub fn deinit(this: *ResultMetadata, allocator: std.mem.Allocator) void {
+            if (this.metadata_buf.len > 0) allocator.free(this.metadata_buf);
+            if (this.headers_buf.len > 0) allocator.free(this.headers_buf);
             this.headers_buf = &.{};
             this.metadata_buf = &.{};
             this.href = "";

@@ -387,6 +387,7 @@ pub const VirtualMachine = struct {
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
+    jsc: *JSC.VM = undefined,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -1020,6 +1021,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
+        vm.jsc = vm.global.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1122,6 +1124,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
+        vm.jsc = vm.global.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1237,6 +1240,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
+        vm.jsc = vm.global.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);

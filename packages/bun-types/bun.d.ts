@@ -74,9 +74,11 @@ declare module "bun" {
     | ServeOptions
     | TLSServeOptions
     | UnixServeOptions
+    | UnixTLSServeOptions
     | WebSocketServeOptions<WebSocketDataType>
     | TLSWebSocketServeOptions<WebSocketDataType>
-    | UnixWebSocketServeOptions<WebSocketDataType>;
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
 
   /**
    * Start a fast HTTP server.
@@ -1852,7 +1854,7 @@ declare module "bun" {
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
      */
-    unix?: undefined;
+    unix?: never;
 
     /**
      * Handle HTTP requests
@@ -2030,7 +2032,17 @@ declare module "bun" {
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
-    unix?: undefined;
+    unix?: never;
+    tls?: TLSOptions;
+  }
+  export interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
+    extends UnixWebSocketServeOptions<WebSocketDataType>,
+      TLSOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
     tls?: TLSOptions;
   }
   export interface Errorlike extends Error {
@@ -2138,6 +2150,16 @@ declare module "bun" {
   }
 
   export interface TLSServeOptions extends ServeOptions, TLSOptions {
+    /**
+     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+     *  The values are SSL options objects.
+     */
+    serverNames?: Record<string, TLSOptions>;
+
+    tls?: TLSOptions;
+  }
+
+  export interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
     /**
      *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
      *  The values are SSL options objects.

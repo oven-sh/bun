@@ -121,6 +121,25 @@ Bun.serve({
   websocket: { message() {} },
 });
 
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch() {
+    return new Response();
+  },
+  tls: {},
+});
+
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+  tls: {},
+});
+
 // Bun.serve({
 //   unix: "/tmp/bun.sock",
 //   // @ts-expect-error

@@ -223,3 +223,23 @@ test("dns.getServers", done => {
   }
   done();
 });
+
+test("dns.lookup (0.0.0.0)", done => {
+  dns.lookup("0.0.0.0", (err, address, family) => {
+    expect(err).toBeNull();
+    expect(address).toBe("0.0.0.0");
+    expect(family).toBe(4);
+
+    done(err);
+  });
+});
+
+test("dns.lookup (::0)", done => {
+  dns.lookup("::0", (err, address, family) => {
+    expect(err).toBeNull();
+    expect(address).toBe("::");
+    expect(family).toBe(6);
+
+    done(err);
+  });
+});

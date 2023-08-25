@@ -1,4 +1,4 @@
-import type { DAP } from "..";
+import type { DAP } from "../protocol";
 
 const capabilities: DAP.Capabilities = {
   /**

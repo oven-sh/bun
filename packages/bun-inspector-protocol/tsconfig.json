@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "moduleResolution": "nodenext",
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "NodeNext",
     "moduleDetection": "force",
     "strict": true,
     "downlevelIteration": true,
@@ -13,7 +13,6 @@
     "inlineSourceMap": true,
     "allowJs": true,
     "outDir": "dist",
-    "types": ["node"]
   },
   "include": [".", "../bun-types/index.d.ts"]
 }

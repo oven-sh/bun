@@ -1,12 +1,11 @@
-import type { DAP } from "..";
-// @ts-ignore: FIXME - there is something wrong with the types
-import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
-import { WebSocketInspector } from "../../bun-inspector-protocol";
+import type { DAP } from "../protocol";
+// @ts-ignore
+import type { JSC, InspectorListener, WebSocketInspectorOptions } from "../../../bun-inspector-protocol";
+import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { Location, SourceMap } from "./sourcemap";
-import { remoteObjectToString } from "./preview";
 import { compare, parse } from "semver";
 
 type InitializeRequest = DAP.InitializeRequest & {
@@ -71,23 +70,28 @@ type Variable = DAP.Variable & {
 };
 
 type IDebugAdapter = {
-  [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void;
+  [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void | Promise<void>;
 } & {
   [R in keyof DAP.RequestMap]?: (
     request: DAP.RequestMap[R],
-  ) => void | DAP.ResponseMap[R] | Promise<void | DAP.ResponseMap[R]>;
+  ) => void | DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]> | Promise<void>;
 };
 
-export type DebugAdapterOptions = {
-  sendToAdapter(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
+export type DebugAdapterOptions = WebSocketInspectorOptions & {
+  send(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
+  stdout?(message: string): void;
+  stderr?(message: string): void;
 };
 
 // This adapter only support single-threaded debugging,
 // which means that there is only one thread at a time.
 const threadId = 1;
 
+// @ts-ignore
 export class DebugAdapter implements IDebugAdapter, InspectorListener {
-  #sendToAdapter: DebugAdapterOptions["sendToAdapter"];
+  #sendToAdapter: DebugAdapterOptions["send"];
+  #stdout?: DebugAdapterOptions["stdout"];
+  #stderr?: DebugAdapterOptions["stderr"];
   #inspector: WebSocketInspector;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
@@ -105,9 +109,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #terminated?: boolean;
   #url?: URL;
 
-  constructor({ sendToAdapter }: DebugAdapterOptions) {
-    this.#inspector = new WebSocketInspector({ listener: this });
-    this.#sendToAdapter = sendToAdapter;
+  constructor({ send, stdout, stderr, ...options }: DebugAdapterOptions) {
+    // @ts-ignore
+    this.#inspector = new WebSocketInspector({ ...options, listener: this });
+    this.#stdout = stdout;
+    this.#stderr = stderr;
+    this.#sendToAdapter = send;
     this.#sourceId = 1;
     this.#pendingSources = new Map();
     this.#sources = new Map();
@@ -247,16 +254,27 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const argz = ["--inspect-wait=0", ...args];
+    const finalArgs = ["--inspect-wait=0", ...args];
     if (watch) {
-      argz.push(watch === "hot" ? "--hot" : "--watch");
+      finalArgs.push(watch === "hot" ? "--hot" : "--watch");
     }
-    console.log(argz);
 
-    const subprocess = spawn(runtime, [...argz, program], {
+    const finalEnv = inheritEnv
+      ? {
+          ...process.env,
+          ...env,
+        }
+      : {
+          ...env,
+        };
+
+    // https://github.com/microsoft/vscode/issues/571
+    finalEnv["NO_COLOR"] = "1";
+
+    const subprocess = spawn(runtime, [...finalArgs, program], {
       stdio: ["ignore", "pipe", "pipe", "pipe"],
       cwd,
-      env: inheritEnv ? { ...process.env, ...env } : env,
+      env: finalEnv,
     });
 
     subprocess.on("spawn", () => {
@@ -278,8 +296,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     const stdout: string[] = [];
     subprocess.stdout!.on("data", data => {
+      const text = data.toString();
+      this.#stdout?.(text);
+
       if (!this.#url) {
-        const text = data.toString();
         stdout.push(text);
         const url = (this.#url = parseUrlMaybe(text));
         this.#inspector.start(url);
@@ -290,8 +310,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     const stderr: string[] = [];
     subprocess.stderr!.on("data", data => {
+      const text = data.toString();
+      this.#stderr?.(text);
+
       if (!this.#url) {
-        stderr.push(data.toString());
+        stderr.push(text);
       } else if (stderr.length) {
         stderr.length = 0;
       }
@@ -468,20 +491,20 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (!numberIsValid(line)) {
       return 0;
     }
-    if (this.#initialized?.linesStartAt1) {
-      return line - 1;
+    if (!this.#initialized?.linesStartAt1) {
+      return line;
     }
-    return line;
+    return line - 1;
   }
 
   #columnTo0BasedColumn(column?: number): number {
     if (!numberIsValid(column)) {
       return 0;
     }
-    if (this.#initialized?.columnsStartAt1) {
-      return column - 1;
+    if (!this.#initialized?.columnsStartAt1) {
+      return column;
     }
-    return column;
+    return column - 1;
   }
 
   #originalLocation(
@@ -505,17 +528,17 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   #lineFrom0BasedLine(line?: number): number {
-    if (this.#initialized?.linesStartAt1) {
-      return numberIsValid(line) ? line + 1 : 1;
+    if (!this.#initialized?.linesStartAt1) {
+      return numberIsValid(line) ? line : 0;
     }
-    return numberIsValid(line) ? line : 0;
+    return numberIsValid(line) ? line + 1 : 1;
   }
 
   #columnFrom0BasedColumn(column?: number): number {
-    if (this.#initialized?.columnsStartAt1) {
-      return numberIsValid(column) ? column + 1 : 1;
+    if (!this.#initialized?.columnsStartAt1) {
+      return numberIsValid(column) ? column : 0;
     }
-    return numberIsValid(column) ? column : 0;
+    return numberIsValid(column) ? column + 1 : 1;
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {

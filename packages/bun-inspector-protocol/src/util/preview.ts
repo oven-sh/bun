@@ -1,4 +1,4 @@
-import type { JSC } from "../../bun-inspector-protocol";
+import type { JSC } from "../protocol";
 
 export function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject): string {
   const { type, subtype, value, description, className, preview } = remoteObject;

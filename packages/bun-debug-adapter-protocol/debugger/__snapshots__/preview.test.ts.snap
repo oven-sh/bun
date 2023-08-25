@@ -1,0 +1,143 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`remoteObjectToString 1`] = `"undefined"`;
+
+exports[`remoteObjectToString 2`] = `"null"`;
+
+exports[`remoteObjectToString 3`] = `"true"`;
+
+exports[`remoteObjectToString 4`] = `"false"`;
+
+exports[`remoteObjectToString 5`] = `"0"`;
+
+exports[`remoteObjectToString 6`] = `"1"`;
+
+exports[`remoteObjectToString 7`] = `"3.141592653589793"`;
+
+exports[`remoteObjectToString 8`] = `"-2.718281828459045"`;
+
+exports[`remoteObjectToString 9`] = `"NaN"`;
+
+exports[`remoteObjectToString 10`] = `"Infinity"`;
+
+exports[`remoteObjectToString 11`] = `"-Infinity"`;
+
+exports[`remoteObjectToString 12`] = `"0n"`;
+
+exports[`remoteObjectToString 13`] = `"1n"`;
+
+exports[`remoteObjectToString 14`] = `"10000000000000n"`;
+
+exports[`remoteObjectToString 15`] = `"-10000000000000n"`;
+
+exports[`remoteObjectToString 16`] = `""""`;
+
+exports[`remoteObjectToString 17`] = `"" ""`;
+
+exports[`remoteObjectToString 18`] = `""Hello""`;
+
+exports[`remoteObjectToString 19`] = `""Hello World""`;
+
+exports[`remoteObjectToString 20`] = `"Array(0)"`;
+
+exports[`remoteObjectToString 21`] = `"Array(3) [1, 2, 3]"`;
+
+exports[`remoteObjectToString 22`] = `"Array(4) ["a", 1, null, undefined]"`;
+
+exports[`remoteObjectToString 23`] = `"Array(2) [1, Array]"`;
+
+exports[`remoteObjectToString 24`] = `"Array(1) [Array]"`;
+
+exports[`remoteObjectToString 25`] = `"{}"`;
+
+exports[`remoteObjectToString 26`] = `"{a: 1}"`;
+
+exports[`remoteObjectToString 27`] = `"{a: 1, b: 2, c: 3}"`;
+
+exports[`remoteObjectToString 28`] = `"{a: Object}"`;
+
+exports[`remoteObjectToString 29`] = `
+"ƒ() {
+}"
+`;
+
+exports[`remoteObjectToString 30`] = `
+"ƒ namedFunction() {
+}"
+`;
+
+exports[`remoteObjectToString 31`] = `
+"class {
+}"
+`;
+
+exports[`remoteObjectToString 32`] = `
+"class namedClass {
+}"
+`;
+
+exports[`remoteObjectToString 33`] = `
+"class namedClass {
+  a() {
+  }
+  b = 1;
+  c = [
+    null,
+    undefined,
+    "a",
+    {
+      a: 1,
+      b: 2,
+      c: 3
+    }
+  ];
+}"
+`;
+
+exports[`remoteObjectToString 34`] = `"Wed Dec 31 1969 16:00:00 GMT-0800 (Pacific Standard Time)"`;
+
+exports[`remoteObjectToString 35`] = `"Invalid Date"`;
+
+exports[`remoteObjectToString 36`] = `"/(?:)/"`;
+
+exports[`remoteObjectToString 37`] = `"/abc/"`;
+
+exports[`remoteObjectToString 38`] = `"/abc/g"`;
+
+exports[`remoteObjectToString 39`] = `"/abc/"`;
+
+exports[`remoteObjectToString 40`] = `"Set(0)"`;
+
+exports[`remoteObjectToString 41`] = `"Set(3) [1, 2, 3]"`;
+
+exports[`remoteObjectToString 42`] = `"WeakSet(0)"`;
+
+exports[`remoteObjectToString 43`] = `"WeakSet(3) [{a: 1}, {b: 2}, {c: 3}]"`;
+
+exports[`remoteObjectToString 44`] = `"Map(0)"`;
+
+exports[`remoteObjectToString 45`] = `"Map(3) {"a" => 1, "b" => 2, "c" => 3}"`;
+
+exports[`remoteObjectToString 46`] = `"WeakMap(0)"`;
+
+exports[`remoteObjectToString 47`] = `"WeakMap(3) {{a: 1} => 1, {b: 2} => 2, {c: 3} => 3}"`;
+
+exports[`remoteObjectToString 48`] = `"Symbol()"`;
+
+exports[`remoteObjectToString 49`] = `"Symbol(namedSymbol)"`;
+
+exports[`remoteObjectToString 50`] = `"Error"`;
+
+exports[`remoteObjectToString 51`] = `"TypeError: This is a TypeError"`;
+
+exports[`remoteObjectToString 52`] = `"Headers {append: ƒ, delete: ƒ, get: ƒ, getAll: ƒ, has: ƒ, …}"`;
+
+exports[`remoteObjectToString 53`] = `"Headers {a: "1", append: ƒ, b: "2", delete: ƒ, get: ƒ, …}"`;
+
+exports[`remoteObjectToString 54`] = `"Request {arrayBuffer: ƒ, blob: ƒ, body: null, bodyUsed: false, cache: "default", …}"`;
+
+exports[`remoteObjectToString 55`] = `"Request {arrayBuffer: ƒ, blob: ƒ, body: ReadableStream, bodyUsed: false, cache: "default", …}"`;
+
+exports[`remoteObjectToString 56`] = `"Response {arrayBuffer: ƒ, blob: ƒ, body: null, bodyUsed: false, clone: ƒ, …}"`;
+
+exports[`remoteObjectToString 57`] = `"Response {arrayBuffer: ƒ, blob: ƒ, body: ReadableStream, bodyUsed: false, clone: ƒ, …}"`;

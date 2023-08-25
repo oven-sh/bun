@@ -1,0 +1,8 @@
+{
+  "name": "bun-debug-adapter-protocol",
+  "dependencies": {
+    "semver": "^7.5.4",
+    "ws": "^8.13.0",
+    "source-map-js": "^1.0.2"
+  }
+}

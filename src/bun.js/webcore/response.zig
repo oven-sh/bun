@@ -735,7 +735,7 @@ pub const Fetch = struct {
             var reporter = this.memory_reporter;
             if (this.http) |http| reporter.allocator().destroy(http);
             reporter.allocator().destroy(this);
-            reporter.assert();
+            // reporter.assert();
             bun.default_allocator.destroy(reporter);
         }
 

@@ -148,6 +148,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor:
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (argument0.value())
+        jsCast<JSFetchHeaders*>(jsValue)->computeMemoryCost();
+
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSFetchHeadersDOMConstructorConstruct, JSFetchHeadersDOMConstructor::construct);

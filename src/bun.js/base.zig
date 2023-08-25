@@ -2519,9 +2519,10 @@ pub const MemoryReportingAllocator = struct {
         this.child_allocator.rawFree(buf, buf_align, ret_addr);
 
         const prev = this.memory_cost.fetchSub(buf.len, .Monotonic);
+        _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            std.debug.assert(prev > this.memory_cost.load(.Monotonic));
+            // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
         }
     }

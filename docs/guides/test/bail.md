@@ -1,0 +1,23 @@
+---
+name: Bail early with the Bun test runner
+---
+
+Use the `--bail` flag to bail on a test run after a single failure. This is useful for aborting as soon as possible in a continuous integration environment.
+
+```sh
+# re-run each test 10 times
+$ bun test --bail
+```
+
+---
+
+To bail after a certain threshold of failures, optionally specify a number after the flag.
+
+```sh
+# bail after 10 failures
+$ bun test --bail 10
+```
+
+---
+
+See [Docs > Test runner](/docs/cli/test) for complete documentation of `bun test`.

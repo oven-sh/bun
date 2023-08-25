@@ -182,6 +182,27 @@ pub const SavedSourceMap = struct {
 
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
+    pub fn deinit(this: *SavedSourceMap) void {
+        {
+            this.mutex.lock();
+            var iter = this.map.valueIterator();
+            while (iter.next()) |val| {
+                var value = Value.from(val.*);
+                if (value.get(ParsedSourceMap)) |source_map_| {
+                    var source_map: *ParsedSourceMap = source_map_;
+                    source_map.deinit(default_allocator);
+                } else if (value.get(SavedMappings)) |saved_mappings| {
+                    var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+                    saved.deinit();
+                }
+            }
+
+            this.mutex.unlock();
+        }
+
+        this.map.deinit();
+    }
+
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -979,7 +1000,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1082,7 +1103,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1197,7 +1218,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1828,7 +1849,9 @@ pub const VirtualMachine = struct {
     }
 
     // TODO:
-    pub fn deinit(_: *VirtualMachine) void {}
+    pub fn deinit(this: *VirtualMachine) void {
+        this.source_mappings.deinit();
+    }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
 

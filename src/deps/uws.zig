@@ -1635,6 +1635,37 @@ pub fn NewApp(comptime ssl: bool) type {
             };
             return uws_app_listen_with_config(ssl_flag, @as(*uws_app_t, @ptrCast(app)), config.host, @as(u16, @intCast(config.port)), config.options, Wrapper.handle, user_data);
         }
+
+        pub fn listenOnUnixSocket(
+            app: *ThisApp,
+            comptime UserData: type,
+            user_data: UserData,
+            comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
+            domain: [*:0]const u8,
+            flags: i32,
+        ) void {
+            const Wrapper = struct {
+                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.C) void {
+                    if (comptime UserData == void) {
+                        @call(.always_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                    } else {
+                        @call(.always_inline, handler, .{
+                            @as(UserData, @ptrCast(@alignCast(data))),
+                            @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
+                        });
+                    }
+                }
+            };
+            return uws_app_listen_domain_with_options(
+                ssl_flag,
+                @as(*uws_app_t, @ptrCast(app)),
+                domain,
+                flags,
+                Wrapper.handle,
+                user_data,
+            );
+        }
+
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
         }
@@ -2206,3 +2237,12 @@ pub const State = enum(i32) {
 };
 
 extern fn us_socket_sendfile_needs_more(socket: *Socket) void;
+
+extern fn uws_app_listen_domain_with_options(
+    ssl_flag: c_int,
+    app: *uws_app_t,
+    domain: [*:0]const u8,
+    i32,
+    *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
+    ?*anyopaque,
+) void;

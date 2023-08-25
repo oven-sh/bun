@@ -120,8 +120,28 @@ const BlobFileContentResult = struct {
 };
 
 pub const ServerConfig = struct {
-    port: u16 = 0,
-    hostname: ?[*:0]const u8 = null,
+    address: union(enum) {
+        tcp: struct {
+            port: u16 = 0,
+            hostname: ?[*:0]const u8 = null,
+        },
+        unix: [*:0]const u8,
+
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+            switch (this.*) {
+                .tcp => |tcp| {
+                    if (tcp.hostname) |host| {
+                        allocator.free(bun.sliceTo(host, 0));
+                    }
+                },
+                .unix => |addr| {
+                    allocator.free(bun.sliceTo(addr, 0));
+                },
+            }
+        }
+    } = .{
+        .tcp = .{},
+    },
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -657,8 +677,12 @@ pub const ServerConfig = struct {
         var env = arguments.vm.bundler.env;
 
         var args = ServerConfig{
-            .port = 3000,
-            .hostname = null,
+            .address = .{
+                .tcp = .{
+                    .port = 3000,
+                    .hostname = null,
+                },
+            },
             .development = true,
         };
         var has_hostname = false;
@@ -670,19 +694,24 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
+        args.address.tcp.port = brk: {
+            const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
 
-        inline for (PORT_ENV) |PORT| {
-            if (env.get(PORT)) |port| {
-                if (std.fmt.parseInt(u16, port, 10)) |_port| {
-                    args.port = _port;
-                } else |_| {}
+            inline for (PORT_ENV) |PORT| {
+                if (env.get(PORT)) |port| {
+                    if (std.fmt.parseInt(u16, port, 10)) |_port| {
+                        break :brk _port;
+                    } else |_| {}
+                }
             }
-        }
 
-        if (arguments.vm.bundler.options.transform_options.port) |port| {
-            args.port = port;
-        }
+            if (arguments.vm.bundler.options.transform_options.port) |port| {
+                break :brk port;
+            }
+
+            break :brk args.address.tcp.port;
+        };
+        var port = args.address.tcp.port;
 
         if (arguments.vm.bundler.options.transform_options.origin) |origin| {
             args.base_uri = origin;
@@ -714,13 +743,14 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
-                args.port = @as(
+                args.address.tcp.port = @as(
                     u16,
                     @intCast(@min(
                         @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
                     )),
                 );
+                port = args.address.tcp.port;
             }
 
             if (arg.getTruthy(global, "baseURI")) |baseURI| {
@@ -737,9 +767,30 @@ pub const ServerConfig = struct {
                     global,
                     bun.default_allocator,
                 );
+                defer host_str.deinit();
+
                 if (host_str.len > 0) {
-                    args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                    args.address.tcp.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
                     has_hostname = true;
+                }
+            }
+
+            if (arg.getTruthy(global, "unix")) |unix| {
+                const unix_str = unix.toSlice(
+                    global,
+                    bun.default_allocator,
+                );
+                defer unix_str.deinit();
+                if (unix_str.len > 0) {
+                    if (has_hostname) {
+                        JSC.throwInvalidArguments("Cannot specify both hostname and unix", .{}, global, exception);
+                        if (args.ssl_config) |*conf| {
+                            conf.deinit();
+                        }
+                        return args;
+                    }
+
+                    args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
                 }
             }
 
@@ -846,7 +897,7 @@ pub const ServerConfig = struct {
                 const hostname = args.base_url.hostname;
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
                 if (needsBrackets) {
-                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
                             protocol,
                             hostname,
@@ -856,11 +907,11 @@ pub const ServerConfig = struct {
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
                             protocol,
                             hostname,
-                            args.port,
+                            port,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })) catch unreachable;
                 } else {
-                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
                             protocol,
                             hostname,
@@ -870,7 +921,7 @@ pub const ServerConfig = struct {
                         std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
                             protocol,
                             hostname,
-                            args.port,
+                            port,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })) catch unreachable;
                 }
@@ -879,27 +930,27 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname.?).len > 0) std.mem.span(args.hostname.?) else "0.0.0.0";
+                if (has_hostname) std.mem.span(args.address.tcp.hostname.?) else "0.0.0.0";
 
             const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
 
             const protocol: string = if (args.ssl_config != null) "https" else "http";
             if (needsBrackets) {
-                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                     std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
             } else {
-                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                     std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
             }
 
             if (!strings.isAllASCII(hostname)) {
@@ -5007,7 +5058,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.port);
+            if (this.config.address != .tcp) {
+                return JSValue.undefined;
+            }
+
+            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.address.tcp.port);
             return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
@@ -5036,8 +5091,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     }
                 }
 
-                if (this.cached_hostname.isEmpty())
-                    this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "localhost"));
+                if (this.cached_hostname.isEmpty()) {
+                    switch (this.config.address) {
+                        .tcp => |tcp| {
+                            if (tcp.hostname) |hostname| {
+                                this.cached_hostname = bun.String.create(bun.sliceTo(hostname, 0));
+                            } else {
+                                this.cached_hostname = bun.String.createAtom("localhost");
+                            }
+                        },
+                        else => {},
+                    }
+                }
             }
 
             return this.cached_hostname.toJS(globalThis);
@@ -5130,9 +5195,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_hostname.deref();
             this.cached_protocol.deref();
 
-            if (this.config.hostname) |host| {
-                bun.default_allocator.free(host[0 .. std.mem.len(host) + 1]);
-            }
+            this.config.address.deinit(bun.default_allocator);
 
             if (this.config.base_url.href.len > 0) {
                 bun.default_allocator.free(this.config.base_url.href);
@@ -5224,7 +5287,28 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (error_instance == .zero) {
-                error_instance = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server").toErrorInstance(this.globalThis);
+                switch (this.config.address) {
+                    .tcp => |tcp| {
+                        error_instance = ZigString.init(
+                            std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server",
+                        ).toErrorInstance(
+                            this.globalThis,
+                        );
+                    },
+                    .unix => |unix| {
+                        error_instance = ZigString.init(
+                            std.fmt.bufPrint(
+                                &output_buf,
+                                "Failed to start server. Does unix socket {} exist?",
+                                .{
+                                    strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
+                                },
+                            ) catch "Failed to start server",
+                        ).toErrorInstance(
+                            this.globalThis,
+                        );
+                    },
+                }
             }
 
             // store the exception in here
@@ -5545,19 +5629,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
-            var host: ?[*:0]const u8 = null;
-            var host_buff: [1024:0]u8 = undefined;
-
-            if (this.config.hostname) |existing| {
-                const hostname = bun.span(existing);
-
-                if (hostname.len > 2 and hostname[0] == '[') {
-                    // remove "[" and "]" from hostname
-                    host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
-                } else {
-                    host = this.config.hostname;
-                }
-            }
 
             this.ref();
 
@@ -5568,11 +5639,39 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.vm.eventLoop().performGC();
             }
 
-            this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                .port = this.config.port,
-                .host = host,
-                .options = if (this.config.reuse_port) 0 else 1,
-            });
+            switch (this.config.address) {
+                .tcp => |tcp| {
+                    var host: ?[*:0]const u8 = null;
+                    var host_buff: [1024:0]u8 = undefined;
+
+                    if (tcp.hostname) |existing| {
+                        const hostname = bun.span(existing);
+
+                        if (hostname.len > 2 and hostname[0] == '[') {
+                            // remove "[" and "]" from hostname
+                            host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
+                        } else {
+                            host = tcp.hostname;
+                        }
+                    }
+
+                    this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                        .port = tcp.port,
+                        .host = host,
+                        .options = if (this.config.reuse_port) 0 else 1,
+                    });
+                },
+
+                .unix => |unix| {
+                    this.app.listenOnUnixSocket(
+                        *ThisServer,
+                        this,
+                        onListen,
+                        unix,
+                        if (this.config.reuse_port) 0 else 1,
+                    );
+                },
+            }
         }
     };
 }

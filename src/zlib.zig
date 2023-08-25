@@ -429,7 +429,7 @@ pub const ZlibReaderArrayList = struct {
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
         var this = @as(*ZlibReader, @ptrCast(@alignCast(ctx)));
-        const buf = this.allocator.alloc(u8, items * len) catch unreachable;
+        const buf = this.arena.allocator().alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
 
@@ -840,7 +840,7 @@ pub const ZlibCompressorArrayList = struct {
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
         var this = @as(*ZlibCompressor, @ptrCast(@alignCast(ctx)));
-        const buf = this.allocator.alloc(u8, items * len) catch unreachable;
+        const buf = this.arena.allocator().alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
 
@@ -909,7 +909,7 @@ pub const ZlibCompressorArrayList = struct {
             @sizeOf(zStream_struct),
         )) {
             ReturnCode.Ok => {
-                try zlib_reader.list.ensureTotalCapacityPrecise(allocator, deflateBound(&zlib_reader.zlib, input.len));
+                try zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len));
                 zlib_reader.list_ptr.* = zlib_reader.list;
                 zlib_reader.zlib.avail_out = @as(uInt, @truncate(zlib_reader.list.capacity));
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;

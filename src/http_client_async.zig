@@ -1048,8 +1048,9 @@ pub const InternalState = struct {
     fail: anyerror = error.NoError,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
+    allocator: std.mem.Allocator,
 
-    pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
+    pub fn init(body: HTTPRequestBody, body_out_str: *MutableString, allocator: std.mem.Allocator) InternalState {
         return .{
             .original_request_body = body,
             .request_body = if (body == .bytes) body.bytes else "",
@@ -1058,6 +1059,7 @@ pub const InternalState = struct {
             .body_out_str = body_out_str,
             .stage = Stage.pending,
             .pending_response = null,
+            .allocator = allocator
         };
     }
 
@@ -1065,7 +1067,7 @@ pub const InternalState = struct {
         return this.transfer_encoding == Encoding.chunked;
     }
 
-    pub fn reset(this: *InternalState, allocator: std.mem.Allocator) void {
+    pub fn reset(this: *InternalState) void {
         this.compressed_body.deinit();
         this.response_message_buffer.deinit();
 
@@ -1081,14 +1083,15 @@ pub const InternalState = struct {
         std.debug.assert(this.cloned_metadata == null);
         // just in case we check and free to avoid leaks
         if (this.cloned_metadata != null) {
-            this.cloned_metadata.?.deinit(allocator);
+            this.cloned_metadata.?.deinit(this.allocator);
             this.cloned_metadata = null;
         }
 
         this.* = .{
+            .allocator = this.allocator,
             .body_out_str = body_msg,
-            .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
-            .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
+            .compressed_body = MutableString{ .allocator = this.allocator, .list = .{} },
+            .response_message_buffer = MutableString{ .allocator = this.allocator, .list = .{} },
             .original_request_body = .{ .bytes = "" },
             .request_body = "",
         };
@@ -1147,7 +1150,7 @@ pub const InternalState = struct {
                 buffer,
                 &body_out_str.list,
                 body_out_str.allocator,
-                default_allocator,
+                this.allocator,
                 .{
                     // TODO: add br support today we support gzip and deflate only
                     // zlib.MAX_WBITS = 15
@@ -1236,7 +1239,7 @@ received_keep_alive: bool = false,
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 
-state: InternalState = .{},
+state: InternalState,
 
 result_callback: HTTPClientResult.Callback = undefined,
 
@@ -1271,6 +1274,9 @@ pub fn init(
         .header_buf = header_buf,
         .hostname = hostname,
         .signals = signals,
+        .state = .{
+            .allocator = allocator,
+        },
     };
 }
 
@@ -1891,7 +1897,7 @@ pub fn doRedirect(this: *HTTPClient) void {
         this.fail(error.TooManyRedirects);
         return;
     }
-    this.state.reset(this.allocator);
+    this.state.reset();
     // also reset proxy to redirect
     this.proxy_tunneling = false;
     if (this.proxy_tunnel != null) {
@@ -1920,7 +1926,7 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
     body_out_str.reset();
 
     std.debug.assert(this.state.response_message_buffer.list.capacity == 0);
-    this.state = InternalState.init(body, body_out_str);
+    this.state = InternalState.init(body, body_out_str, this.allocator);
 
     if (this.isHTTPS()) {
         this.start_(true);
@@ -2297,7 +2303,7 @@ fn retryProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
     this.startProxySendHeaders(is_ssl, socket);
 }
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    this.state.reset(this.allocator);
+    this.state.reset();
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     const proxy = ProxyTunnel.init(is_ssl, this, socket);
@@ -2594,7 +2600,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 
     const callback = this.result_callback;
     const result = this.toResult();
-    this.state.reset(this.allocator);
+    this.state.reset();
     this.proxy_tunneling = false;
 
     callback.run(result);
@@ -2673,7 +2679,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 socket.close(0, null);
             }
 
-            this.state.reset(this.allocator);
+            this.state.reset();
             this.state.response_stage = .done;
             this.state.request_stage = .done;
             this.state.stage = .done;

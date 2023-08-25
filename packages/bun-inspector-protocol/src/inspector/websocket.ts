@@ -1,10 +1,11 @@
 import type { Inspector, InspectorListener } from ".";
-import { JSC } from "..";
+import type { JSC } from "../protocol";
 import { WebSocket } from "ws";
 
 export type WebSocketInspectorOptions = {
   url?: string | URL;
   listener?: InspectorListener;
+  logger?: (...messages: unknown[]) => void;
 };
 
 /**
@@ -17,13 +18,15 @@ export class WebSocketInspector implements Inspector {
   #pendingRequests: Map<number, (result: unknown) => void>;
   #pendingMessages: string[];
   #listener: InspectorListener;
+  #log: (...messages: unknown[]) => void;
 
-  constructor({ url, listener }: WebSocketInspectorOptions) {
+  constructor({ url, listener, logger }: WebSocketInspectorOptions) {
     this.#url = url ? new URL(url) : undefined;
-    this.#listener = listener ?? {};
     this.#requestId = 1;
     this.#pendingRequests = new Map();
     this.#pendingMessages = [];
+    this.#listener = listener ?? {};
+    this.#log = logger ?? (() => {});
   }
 
   start(url?: string | URL): void {
@@ -40,9 +43,10 @@ export class WebSocketInspector implements Inspector {
       return;
     }
     this.#webSocket?.close();
+
     let webSocket: WebSocket;
     try {
-      console.log("[jsc] connecting", this.#url.href);
+      this.#log("connecting:", this.#url.href);
       webSocket = new WebSocket(this.#url, {
         headers: {
           "Ref-Event-Loop": "0",
@@ -52,35 +56,44 @@ export class WebSocketInspector implements Inspector {
       this.#close(unknownToError(error));
       return;
     }
+
     webSocket.addEventListener("open", () => {
-      console.log("[jsc] connected");
+      this.#log("connected");
+
       for (const message of this.#pendingMessages) {
         this.#send(message);
       }
+
       this.#pendingMessages.length = 0;
       this.#listener["Inspector.connected"]?.();
     });
+
     webSocket.addEventListener("message", ({ data }) => {
       if (typeof data === "string") {
         this.accept(data);
       }
     });
+
     webSocket.addEventListener("error", event => {
-      console.log("[jsc] error", event);
+      this.#log("error:", event);
       this.#close(unknownToError(event));
     });
+
     webSocket.addEventListener("unexpected-response", () => {
-      console.log("[jsc] unexpected-response");
+      this.#log("unexpected-response");
       this.#close(new Error("WebSocket upgrade failed"));
     });
+
     webSocket.addEventListener("close", ({ code, reason }) => {
-      console.log("[jsc] closed", code, reason);
+      this.#log("closed:", code, reason);
+
       if (code === 1001) {
         this.#close();
       } else {
         this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
       }
     });
+
     this.#webSocket = webSocket;
   }
 
@@ -90,7 +103,9 @@ export class WebSocketInspector implements Inspector {
   ): Promise<JSC.ResponseMap[M]> {
     const id = this.#requestId++;
     const request = { id, method, params };
-    console.log("[jsc] -->", request);
+
+    this.#log("-->", request);
+
     return new Promise((resolve, reject) => {
       const done = (result: any) => {
         this.#pendingRequests.delete(id);
@@ -100,6 +115,7 @@ export class WebSocketInspector implements Inspector {
           resolve(result);
         }
       };
+
       this.#pendingRequests.set(id, done);
       this.#send(JSON.stringify(request));
     });
@@ -113,6 +129,7 @@ export class WebSocketInspector implements Inspector {
       }
       return;
     }
+
     if (!this.#pendingMessages.includes(message)) {
       this.#pendingMessages.push(message);
     }
@@ -123,35 +140,37 @@ export class WebSocketInspector implements Inspector {
     try {
       event = JSON.parse(message);
     } catch (error) {
-      console.error("Failed to parse message:", message);
+      this.#log("Failed to parse message:", message);
       return;
     }
-    console.log("[jsc] <--", event);
-    if ("id" in event) {
-      const { id } = event;
-      const resolve = this.#pendingRequests.get(id);
-      if (!resolve) {
-        console.error(`Failed to accept response for unknown ID ${id}:`, event);
-        return;
-      }
-      this.#pendingRequests.delete(id);
-      if ("error" in event) {
-        const { error } = event;
-        const { message } = error;
-        resolve(new Error(message));
-      } else {
-        const { result } = event;
-        resolve(result);
-      }
-    } else {
+
+    this.#log("<--", event);
+
+    if (!("id" in event)) {
       const { method, params } = event;
       try {
-        // @ts-ignore
-        this.#listener[method]?.(params);
+        this.#listener[method]?.(params as any);
       } catch (error) {
-        console.error(`Failed to accept ${method} event:`, error);
-        return;
+        this.#log(`Failed to accept ${method} event:`, error);
       }
+      return;
+    }
+
+    const { id } = event;
+    const resolve = this.#pendingRequests.get(id);
+    if (!resolve) {
+      this.#log("Failed to accept response with unknown ID:", id);
+      return;
+    }
+
+    this.#pendingRequests.delete(id);
+    if ("error" in event) {
+      const { error } = event;
+      const { message } = error;
+      resolve(new Error(message));
+    } else {
+      const { result } = event;
+      resolve(result);
     }
   }
 
@@ -159,12 +178,14 @@ export class WebSocketInspector implements Inspector {
     if (!this.#webSocket) {
       return true;
     }
+
     const { readyState } = this.#webSocket;
     switch (readyState) {
       case WebSocket.CLOSED:
       case WebSocket.CLOSING:
         return true;
     }
+
     return false;
   }
 

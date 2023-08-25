@@ -1,6 +1,6 @@
-import type { JSC } from "../../bun-inspector-protocol";
+import type { JSC } from "../protocol";
 
-export function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject): string {
+export function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject, topLevel?: boolean): string {
   const { type, subtype, value, description, className, preview } = remoteObject;
   switch (type) {
     case "undefined":
@@ -9,6 +9,9 @@ export function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject): st
     case "number":
       return description ?? JSON.stringify(value);
     case "string":
+      if (topLevel) {
+        return String(value ?? description);
+      }
       return JSON.stringify(value ?? description);
     case "symbol":
     case "bigint":

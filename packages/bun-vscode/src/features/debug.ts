@@ -115,13 +115,27 @@ function isJavaScript(languageId: string): boolean {
 
 export class VSCodeAdapter extends DebugSession {
   #adapter: DebugAdapter;
+  #console: vscode.OutputChannel;
   #dap: vscode.OutputChannel;
+  #jsc: vscode.OutputChannel;
 
   constructor(session: vscode.DebugSession) {
     super();
-    this.#dap = vscode.window.createOutputChannel("Debug Adapter Protocol");
+    const output = (this.#console = vscode.window.createOutputChannel("Console (Bun)"));
+    this.#dap = vscode.window.createOutputChannel("Debug Adapter Protocol (Bun)");
+    const jsc = (this.#jsc = vscode.window.createOutputChannel("JavaScript Inspector (Bun)"));
     this.#adapter = new DebugAdapter({
-      sendToAdapter: this.sendMessage.bind(this),
+      send: this.sendMessage.bind(this),
+      logger(...messages) {
+        console.log("[jsc]", ...messages);
+        jsc.appendLine(messages.map(v => (typeof v === "object" ? JSON.stringify(v) : v)).join(" "));
+      },
+      stdout(message) {
+        output.append(message);
+      },
+      stderr(message) {
+        output.append(message);
+      },
     });
   }
 
@@ -148,6 +162,8 @@ export class VSCodeAdapter extends DebugSession {
 
   dispose() {
     this.#adapter.close();
+    this.#console.dispose();
     this.#dap.dispose();
+    this.#jsc.dispose();
   }
 }

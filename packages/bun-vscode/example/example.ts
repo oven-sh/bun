@@ -4,7 +4,7 @@ export default {
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();
     debugger;
-    return new Response("HELLO WORLD");
+    return new Response("HELLO WHAT!");
   },
 };
 

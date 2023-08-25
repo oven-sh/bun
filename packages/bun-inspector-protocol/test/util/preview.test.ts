@@ -1,9 +1,8 @@
 import { beforeAll, afterAll, test, expect } from "bun:test";
-import type { JSC } from "../../bun-inspector-protocol";
-import { WebSocketInspector } from "../../bun-inspector-protocol";
 import type { PipedSubprocess } from "bun";
 import { spawn } from "bun";
-import { remoteObjectToString } from "./preview";
+import type { JSC } from "../..";
+import { WebSocketInspector, remoteObjectToString } from "../..";
 
 let subprocess: PipedSubprocess | undefined;
 let objects: JSC.Runtime.RemoteObject[] = [];
@@ -11,7 +10,7 @@ let objects: JSC.Runtime.RemoteObject[] = [];
 beforeAll(async () => {
   subprocess = spawn({
     cwd: import.meta.dir,
-    cmd: [process.argv0, "--inspect-wait=0", "fixtures/preview.js"],
+    cmd: [process.argv0, "--inspect-wait=0", "preview.js"],
     stdout: "pipe",
     stderr: "pipe",
     stdin: "pipe",

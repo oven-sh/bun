@@ -17050,10 +17050,13 @@ fn NewParser_(
                     }
                 },
                 .e_string => |str| {
-                    if (p.options.features.minify_syntax) {
-                        // minify "long-string".length to 11
-                        if (strings.eqlComptime(name, "length")) {
-                            return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
+                    // Disable until https://github.com/oven-sh/bun/issues/4217 is fixed
+                    if (comptime FeatureFlags.minify_javascript_string_length) {
+                        if (p.options.features.minify_syntax) {
+                            // minify "long-string".length to 11
+                            if (strings.eqlComptime(name, "length")) {
+                                return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
+                            }
                         }
                     }
                 },

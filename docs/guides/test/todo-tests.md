@@ -13,18 +13,6 @@ test.todo("unimplemented feature");
 
 ---
 
-Optionally, you can provide a test implementation.
-
-```ts
-import { test, expect } from "bun:test";
-
-test.todo("unimplemented feature", () => {
-  expect(Bun.isAwesome()).toBe(true);
-});
-```
-
----
-
 The output of `bun test` indicates how many `todo` tests were encountered.
 
 ```sh
@@ -44,7 +32,19 @@ Ran 3 tests across 1 files. [74.00ms]
 
 ---
 
-Note that `todo` tests _are executed_ by the test runner! They are _expected to fail_; if a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
+Optionally, you can provide a test implementation.
+
+```ts
+import { test, expect } from "bun:test";
+
+test.todo("unimplemented feature", () => {
+  expect(Bun.isAwesome()).toBe(true);
+});
+```
+
+---
+
+If an implementation is provides, it will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
 
 ```sh
 $ bun test

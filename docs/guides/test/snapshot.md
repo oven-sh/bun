@@ -18,7 +18,7 @@ test("snapshot", () => {
 
 ---
 
-The first time this test is executed, Bun will evaluate the value passed into `expect()` (`{ foo: "bar" }`) and write it to disk in a directory called `__snapshots__` that lives alongside the test file.
+The first time this test is executed, Bun will evaluate the value passed into `expect()` and write it to disk in a directory called `__snapshots__` that lives alongside the test file. (Note the `snapshots: +1 added` line in the output.)
 
 ```sh
 $ bun test test/snap
@@ -29,7 +29,7 @@ test/snap.test.ts:
 
  1 pass
  0 fail
- snapshots: +1 added   # note: the snapshot is created automatically the first run
+ snapshots: +1 added
  1 expect() calls
 Ran 1 tests across 1 files. [82.00ms]
 ```

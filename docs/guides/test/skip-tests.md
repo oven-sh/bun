@@ -4,8 +4,10 @@ name: Skip tests with the Bun test runner
 
 To skip a test with the Bun test runner, use the `test.skip` function.
 
-```ts-diff
-test.skip("unimplemented feature", ()=>{
+```ts
+import { test } from "bun:test";
+
+test.skip("unimplemented feature", () => {
   expect(Bun.isAwesome()).toBe(true);
 });
 ```

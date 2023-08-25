@@ -14,7 +14,7 @@ $ bun add -d @happy-dom/global-registrator
 
 ---
 
-This module exports a "registrator" that will adds the mocked browser APIs to the global scope.
+This module exports a "registrator" that injects the mocked browser APIs to the global scope.
 
 ```ts#happydom.ts
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -24,7 +24,7 @@ GlobalRegistrator.register();
 
 ---
 
-We need to make sure this file is executed before any of our test files. That's a job for Bun's built-in _preload_ functionality. Create a `bunfig.toml` file in the root of your project (if it doesn't already exist) and add the following lines.
+We need to make sure this file is executed before any of our test files. That's a job for Bun's built-in [_preload_]() functionality. Create a `bunfig.toml` file in the root of your project (if it doesn't already exist) and add the following lines.
 
 The `./happydom.ts` file should contain the registration code above.
 

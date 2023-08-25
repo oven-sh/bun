@@ -2614,16 +2614,16 @@ fn cloneMetadata(this: *HTTPClient) void {
         std.debug.assert(this.state.cloned_metadata == null);
         // just in case we check and free
         if (this.state.cloned_metadata != null) {
-            this.state.cloned_metadata.?.deinit(this.allocator);
+            this.state.cloned_metadata.?.deinit(this.state.allocator);
             this.state.cloned_metadata = null;
         }
         var builder_ = StringBuilder{};
         var builder = &builder_;
         response.count(builder);
         builder.count(this.url.href);
-        builder.allocate(this.allocator) catch unreachable;
+        builder.allocate(this.state.allocator) catch unreachable;
         // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        var headers_buf = this.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
+        var headers_buf = this.state.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
         const cloned_response = response.clone(headers_buf, builder);
 
         // we clean the temporary response since cloned_metadata is now the owner

@@ -2699,7 +2699,7 @@ pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
     fail: anyerror = error.NoError,
-    /// Owns the reponse metadata aka headers, url and status code
+    /// Owns the response metadata aka headers, url and status code
     metadata: ?HTTPResponseMetadata = null,
 
     /// For Http Client requests

@@ -88,8 +88,10 @@ type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), 
    */
   watch(filename: string, listener?: BunWatchListener<string>): BunFSWatcher;
 
-  cpSync(source: string, dest: string, errorOnExist?: boolean, force?: boolean): void;
-  cp(source: string, dest: string, errorOnExist?: boolean, force?: boolean): void;
+  // internal api is for fs.cp and fs.cpSync where { recursive: true } is set, and some other options are not passed
+  // there is a js implementation for options like `filter` in `src/js/internal/fs/cp*`
+  cpSync(source: string, dest: string, errorOnExist?: boolean, force?: boolean, mode?: number): void;
+  cp(source: string, dest: string, errorOnExist?: boolean, force?: boolean, mode?: number): void;
 };
 
 declare module "bun" {

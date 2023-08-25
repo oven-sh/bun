@@ -5159,6 +5159,8 @@ pub const NodeFS = struct {
                 },
                 .directory => {
                     if (Environment.isMac) {
+                        // Try to `clonefile()` directories on macOS as it is faster than the recursive option
+                        // This can fail in many cases, such as if the directory exists.
                         if (Maybe(Return.CopyRecursive).errnoSysP(
                             C.clonefile(src_buf[0 .. src_dir_len + 1 + current.name.len :0], dest_buf[0 .. dest_dir_len + 1 + current.name.len :0], 0),
                             .clonefile,

@@ -2517,9 +2517,13 @@ pub const MemoryReportingAllocator = struct {
 
     fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
         this.child_allocator.rawFree(buf, buf_align, ret_addr);
-        _ = this.memory_cost.fetchSub(buf.len, .Monotonic);
-        if (comptime Environment.allow_assert)
+
+        const prev = this.memory_cost.fetchSub(buf.len, .Monotonic);
+        if (comptime Environment.allow_assert) {
+            // check for overflow, racily
+            std.debug.assert(prev > this.memory_cost.load(.Monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.loadUnchecked() });
+        }
     }
 
     pub fn wrap(this: *MemoryReportingAllocator, allocator_: std.mem.Allocator) std.mem.Allocator {

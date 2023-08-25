@@ -821,7 +821,7 @@ pub const Fetch = struct {
                         // we will reach here when not streaming
                         if (!this.result.has_more) {
                             var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                            this.memory_reporter.discard(scheduled_response_buffer.items);
+                            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
 
                             // done resolve body
                             var old = body.value;
@@ -1012,6 +1012,7 @@ pub const Fetch = struct {
             }
 
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
+            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
             const response = Body.Value{
                 .InternalBlob = .{
                     .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
@@ -1030,26 +1031,22 @@ pub const Fetch = struct {
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
             // at this point we always should have metadata
-            std.debug.assert(this.metadata != null);
-            if (this.metadata) |metadata| {
-                const http_response = metadata.response;
-                this.is_waiting_body = this.result.has_more;
-                return Response{
-                    .allocator = allocator,
-                    .url = bun.String.createAtomIfPossible(metadata.href),
-                    .status_text = bun.String.createAtomIfPossible(http_response.status),
-                    .redirected = this.result.redirected,
-                    .body = .{
-                        .init = .{
-                            .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                            .status_code = @as(u16, @truncate(http_response.status_code)),
-                        },
-                        .value = this.toBodyValue(),
+            var metadata = this.metadata.?;
+            const http_response = metadata.response;
+            this.is_waiting_body = this.result.has_more;
+            return Response{
+                .allocator = allocator,
+                .url = bun.String.createAtomIfPossible(metadata.href),
+                .status_text = bun.String.createAtomIfPossible(http_response.status),
+                .redirected = this.result.redirected,
+                .body = .{
+                    .init = .{
+                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
+                        .status_code = @as(u16, @truncate(http_response.status_code)),
                     },
-                };
-            }
-
-            @panic("fetch metadata should be provided");
+                    .value = this.toBodyValue(),
+                },
+            };
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {

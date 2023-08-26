@@ -1820,6 +1820,21 @@ declare module "bun" {
       this: Server,
       request: Errorlike,
     ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
+
+    /**
+     * Uniquely identify a server instance with an ID
+     *
+     * ### When bun is started with the `--hot` flag
+     *
+     * This string will be used to hot reload the server without interrupting
+     * pending requests or websockets. If not provided, a value will be
+     * generated. To disable hot reloading, set this value to `null`.
+     *
+     * ### When bun is not started with the `--hot` flag
+     *
+     * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+     */
+    id?: string | null;
   }
 
   export type AnyFunction = (..._: any[]) => any;
@@ -2345,6 +2360,15 @@ declare module "bun" {
      *
      */
     readonly development: boolean;
+
+    /**
+     * An identifier of the server instance
+     *
+     * When bun is started with the `--hot` flag, this ID is used to hot reload the server without interrupting pending requests or websockets.
+     *
+     * When bun is not started with the `--hot` flag, this ID is currently unused.
+     */
+    readonly id: string;
   }
 
   /**

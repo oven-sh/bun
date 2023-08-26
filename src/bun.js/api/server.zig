@@ -158,6 +158,36 @@ pub const ServerConfig = struct {
 
     inspector: bool = false,
     reuse_port: bool = false,
+    id: []const u8 = "",
+    allow_hot: bool = true,
+
+    pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
+        var arraylist = std.ArrayList(u8).init(allocator);
+        var writer = arraylist.writer();
+
+        writer.writeAll("[http]-") catch {};
+        switch (this.address) {
+            .tcp => {
+                if (this.address.tcp.hostname) |host| {
+                    writer.print("tcp:{s}:{d}", .{
+                        bun.sliceTo(host, 0),
+                        this.address.tcp.port,
+                    }) catch {};
+                } else {
+                    writer.print("tcp:localhost:{d}", .{
+                        this.address.tcp.port,
+                    }) catch {};
+                }
+            },
+            .unix => {
+                writer.print("unix:{s}", .{
+                    bun.sliceTo(this.address.unix, 0),
+                }) catch {};
+            },
+        }
+
+        return arraylist.items;
+    }
 
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,
@@ -791,6 +821,23 @@ pub const ServerConfig = struct {
                     }
 
                     args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
+                }
+            }
+
+            if (arg.get(global, "id")) |id| {
+                if (id.isUndefinedOrNull()) {
+                    args.allow_hot = false;
+                } else {
+                    const id_str = id.toSlice(
+                        global,
+                        bun.default_allocator,
+                    );
+
+                    if (id_str.len > 0) {
+                        args.id = (id_str.cloneIfNeeded(bun.default_allocator) catch unreachable).slice();
+                    } else {
+                        args.allow_hot = false;
+                    }
                 }
             }
 
@@ -4867,26 +4914,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.jsBoolean(true);
         }
 
-        pub fn onReload(
-            this: *ThisServer,
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
-            const arguments = callframe.arguments(1).slice();
-            if (arguments.len < 1) {
-                globalThis.throwNotEnoughArguments("reload", 1, 0);
-                return .zero;
-            }
-
-            var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-            defer args_slice.deinit();
-            var exception_ref = [_]JSC.C.JSValueRef{null};
-            var exception: JSC.C.ExceptionRef = &exception_ref;
-            var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
-            if (exception.* != null) {
-                globalThis.throwValue(exception_ref[0].?.value());
-                return .zero;
-            }
+        pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *JSC.JSGlobalObject) void {
+            httplog("onReload", .{});
 
             // only reload those two
             if (this.config.onRequest != new_config.onRequest) {
@@ -4915,6 +4944,30 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.config.websocket = ws.*;
                 } // we don't remove it
             }
+        }
+
+        pub fn onReload(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(1).slice();
+            if (arguments.len < 1) {
+                globalThis.throwNotEnoughArguments("reload", 1, 0);
+                return .zero;
+            }
+
+            var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+            defer args_slice.deinit();
+            var exception_ref = [_]JSC.C.JSValueRef{null};
+            var exception: JSC.C.ExceptionRef = &exception_ref;
+            var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
+            if (exception.* != null) {
+                globalThis.throwValue(exception_ref[0].?.value());
+                return .zero;
+            }
+
+            this.onReloadFromZig(&new_config, globalThis);
 
             return this.thisObject;
         }
@@ -5066,6 +5119,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
+        pub fn getId(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue {
+            var str = bun.String.create(this.config.id);
+            defer str.deref();
+            return str.toJS(globalThis);
+        }
+
         pub fn getPendingRequests(
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
@@ -5170,6 +5232,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
+            if (this.config.allow_hot and this.config.id.len > 0) {
+                if (this.globalThis.bunVM().hotMap()) |hot| {
+                    hot.remove(this.config.id);
+                }
+            }
+
             this.stopListening(abrupt);
             this.deinitIfWeCan();
         }

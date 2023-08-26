@@ -19,6 +19,8 @@ stdout_store: ?*Blob.Store = null,
 
 entropy_cache: ?*EntropyCache = null,
 
+hot_map: ?HotMap = null,
+
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
 tail_cleanup_hook: ?*CleanupHook = null,
@@ -30,6 +32,14 @@ global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 mime_types: ?bun.HTTP.MimeType.Map = null,
 
+pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
+    if (this.hot_map == null) {
+        this.hot_map = HotMap.init(allocator);
+    }
+
+    return &this.hot_map.?;
+}
+
 pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
     if (this.mime_types == null) {
         this.mime_types = bun.HTTP.MimeType.createHashTable(
@@ -39,6 +49,58 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
 
     return this.mime_types.?.get(str);
 }
+
+pub const HotMap = struct {
+    _map: bun.StringArrayHashMap(Entry),
+
+    const HTTPServer = JSC.API.HTTPServer;
+    const HTTPSServer = JSC.API.HTTPSServer;
+    const DebugHTTPServer = JSC.API.DebugHTTPServer;
+    const DebugHTTPSServer = JSC.API.DebugHTTPSServer;
+    const TCPSocket = JSC.API.TCPSocket;
+    const TLSSocket = JSC.API.TLSSocket;
+    const Listener = JSC.API.Listener;
+    const Entry = bun.TaggedPointerUnion(.{
+        HTTPServer,
+        HTTPSServer,
+        DebugHTTPServer,
+        DebugHTTPSServer,
+        TCPSocket,
+        TLSSocket,
+        Listener,
+    });
+
+    pub fn init(allocator: std.mem.Allocator) HotMap {
+        return .{
+            ._map = bun.StringArrayHashMap(Entry).init(allocator),
+        };
+    }
+
+    pub fn get(this: *HotMap, key: []const u8, comptime Type: type) ?*Type {
+        var entry = this._map.get(key) orelse return null;
+        return entry.get(Type);
+    }
+
+    pub fn getEntry(this: *HotMap, key: []const u8) ?Entry {
+        return this._map.get(key) orelse return null;
+    }
+
+    pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
+        var entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        if (entry.found_existing) {
+            @panic("HotMap already contains key");
+        }
+
+        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch @panic("Out of memory");
+        entry.value_ptr.* = Entry.init(ptr);
+    }
+
+    pub fn remove(this: *HotMap, key: []const u8) void {
+        var entry = this._map.getEntry(key) orelse return;
+        bun.default_allocator.free(entry.key_ptr.*);
+        _ = this._map.orderedRemove(key);
+    }
+};
 
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
     return this.file_polls_ orelse {

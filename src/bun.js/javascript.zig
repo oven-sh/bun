@@ -766,6 +766,14 @@ pub const VirtualMachine = struct {
         return debugger.next_debugger_id;
     }
 
+    pub fn hotMap(this: *VirtualMachine) ?*JSC.RareData.HotMap {
+        if (this.hot_reload != .hot) {
+            return null;
+        }
+
+        return this.rareData().hotMap(this.allocator);
+    }
+
     pub var has_created_debugger: bool = false;
 
     pub const Debugger = struct {

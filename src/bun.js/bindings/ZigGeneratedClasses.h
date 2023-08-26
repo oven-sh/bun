@@ -511,6 +511,7 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
 
 class JSDebugHTTPServer final : public JSC::JSDestructibleObject {
@@ -567,6 +568,7 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
 
 class JSDirent final : public JSC::JSDestructibleObject {
@@ -1415,6 +1417,7 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
 
 class JSHTTPServer final : public JSC::JSDestructibleObject {
@@ -1471,6 +1474,7 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_id;
 };
 
 class JSListener final : public JSC::JSDestructibleObject {

@@ -359,7 +359,7 @@ pub const Os = struct {
     pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
         return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
     }
@@ -562,7 +562,7 @@ pub const Os = struct {
 
     pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
         return JSC.ZigString.init(C.getRelease(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 
@@ -684,7 +684,7 @@ pub const Os = struct {
 
     pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 

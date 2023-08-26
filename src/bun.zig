@@ -1605,7 +1605,7 @@ pub inline fn assertComptime() void {
 }
 
 const TODO_LOG = Output.scoped(.TODO, false);
-pub inline fn todo(src: @import("builtin").SourceLocation, value: anytype) @TypeOf(value) {
+pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
         TODO_LOG("{}", .{src});
     }
@@ -1627,3 +1627,9 @@ pub inline fn toFD(fd: std.os.fd_t) FileDescriptor {
 
     return @intFromPtr(fd);
 }
+
+pub const HOST_NAME_MAX = if (Environment.isWindows)
+    // TODO: i have no idea what this value should be
+    256
+else
+    std.os.HOST_NAME_MAX;

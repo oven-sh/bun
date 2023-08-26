@@ -446,7 +446,7 @@ pub fn getSystemLoadavg() [3]f64 {
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
@@ -454,7 +454,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     return name_buffer[0..result.len];
 }
 
-pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);

@@ -338,7 +338,7 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
 
 pub fn getVersion(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_version(buf.ptr[0..std.os.HOST_NAME_MAX]);
+        return linux.get_version(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
@@ -348,7 +348,7 @@ pub fn getVersion(buf: []u8) []const u8 {
 
 pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_release(buf.ptr[0..std.os.HOST_NAME_MAX]);
+        return linux.get_release(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {

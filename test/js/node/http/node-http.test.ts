@@ -11,7 +11,10 @@ import {
 } from "node:http";
 import { createTest } from "node-harness";
 import url from "node:url";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import dns from "node:dns";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, createCallCheckCtx } = createTest(
+  import.meta.path,
+);
 
 function listen(server: Server): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -821,6 +824,43 @@ describe("node:http", () => {
       } catch (err) {
         done(err);
       }
+    });
+  });
+
+  test("dns lookup localhost, issue#4358", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const host = "localhost";
+
+    const server = createServer();
+
+    let timeout: Timer;
+    const closeAndFail = (message?: string) => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall(message)();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+
+    dns.lookup(host, (err, ip, family) => {
+      if (err) {
+        return closeAndFail("dns lookup failed");
+      }
+
+      server.listen(
+        0,
+        host,
+        mustCall(() => {
+          const address = server.address() as AddressInfo;
+          expect(address.address).toStrictEqual(ip);
+          //system should provide an port when 0 or no port is passed
+          expect(address.port).toBeGreaterThan(100);
+          expect(address.family).toStrictEqual(family === 4 ? "IPv4" : "IPv6");
+          server.close();
+          done();
+        }),
+      );
     });
   });
 });

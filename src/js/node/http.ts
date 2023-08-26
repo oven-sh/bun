@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const dns: typeof import("dns") = require("node:dns");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -472,78 +473,89 @@ class Server extends EventEmitter {
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
 
-    try {
-      const tls = this.#tls;
-      if (tls) {
-        this.serverName = tls.serverName || host || "localhost";
+    const onAddress = (err?: ErrnoException | null, ip?: string, family?: number) => {
+      if (err) {
+        setTimeout(emitListeningNextTick, 1, this, onListen, err);
+        return;
       }
-      this.#server = Bun.serve<any>({
-        tls,
-        port,
-        hostname: host,
-        // Bindings to be used for WS Server
-        websocket: {
-          open(ws) {
-            ws.data.open(ws);
+      try {
+        const tls = this.#tls;
+        if (tls) {
+          this.serverName = tls.serverName || ip || "localhost";
+        }
+        this.#server = Bun.serve<any>({
+          tls,
+          port,
+          hostname: ip,
+          // Bindings to be used for WS Server
+          websocket: {
+            open(ws) {
+              ws.data.open(ws);
+            },
+            message(ws, message) {
+              ws.data.message(ws, message);
+            },
+            close(ws, code, reason) {
+              ws.data.close(ws, code, reason);
+            },
+            drain(ws) {
+              ws.data.drain(ws);
+            },
           },
-          message(ws, message) {
-            ws.data.message(ws, message);
+          fetch(req, _server) {
+            var pendingResponse;
+            var pendingError;
+            var rejectFunction, resolveFunction;
+            var reject = err => {
+              if (pendingError) return;
+              pendingError = err;
+              if (rejectFunction) rejectFunction(err);
+            };
+
+            var reply = function (resp) {
+              if (pendingResponse) return;
+              pendingResponse = resp;
+              if (resolveFunction) resolveFunction(resp);
+            };
+
+            const http_req = new RequestClass(req);
+            const http_res = new ResponseClass({ reply, req: http_req });
+
+            http_req.once("error", err => reject(err));
+            http_res.once("error", err => reject(err));
+
+            const upgrade = req.headers.get("upgrade");
+            if (upgrade) {
+              const socket = new FakeSocket();
+              socket[kInternalSocketData] = [_server, http_res, req];
+              server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            } else {
+              server.emit("request", http_req, http_res);
+            }
+
+            if (pendingError) {
+              throw pendingError;
+            }
+
+            if (pendingResponse) {
+              return pendingResponse;
+            }
+
+            return new Promise((resolve, reject) => {
+              resolveFunction = resolve;
+              rejectFunction = reject;
+            });
           },
-          close(ws, code, reason) {
-            ws.data.close(ws, code, reason);
-          },
-          drain(ws) {
-            ws.data.drain(ws);
-          },
-        },
-        fetch(req, _server) {
-          var pendingResponse;
-          var pendingError;
-          var rejectFunction, resolveFunction;
-          var reject = err => {
-            if (pendingError) return;
-            pendingError = err;
-            if (rejectFunction) rejectFunction(err);
-          };
-
-          var reply = function (resp) {
-            if (pendingResponse) return;
-            pendingResponse = resp;
-            if (resolveFunction) resolveFunction(resp);
-          };
-
-          const http_req = new RequestClass(req);
-          const http_res = new ResponseClass({ reply, req: http_req });
-
-          http_req.once("error", err => reject(err));
-          http_res.once("error", err => reject(err));
-
-          const upgrade = req.headers.get("upgrade");
-          if (upgrade) {
-            const socket = new FakeSocket();
-            socket[kInternalSocketData] = [_server, http_res, req];
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          } else {
-            server.emit("request", http_req, http_res);
-          }
-
-          if (pendingError) {
-            throw pendingError;
-          }
-
-          if (pendingResponse) {
-            return pendingResponse;
-          }
-
-          return new Promise((resolve, reject) => {
-            resolveFunction = resolve;
-            rejectFunction = reject;
-          });
-        },
-      });
-      setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
-    } catch (err) {
-      setTimeout(emitListeningNextTick, 1, this, onListen, err);
+        });
+        setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
+      } catch (err) {
+        setTimeout(emitListeningNextTick, 1, this, onListen, err);
+      }
+    };
+    if (host) {
+      dns.lookup(host, onAddress);
+    } else {
+      onAddress();
     }
 
     return this;

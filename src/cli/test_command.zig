@@ -861,6 +861,12 @@ pub const TestCommand = struct {
             files: []const PathString,
             allocator: std.mem.Allocator,
             pub fn begin(this: *@This()) void {
+                if (this.vm.hot_reload == .watch) {
+                    Output.flush();
+                    Output.disableBuffering();
+                    Output.resetTerminalAll();
+                    Output.enableBuffering();
+                }
                 var reporter = this.reporter;
                 var vm = this.vm;
                 var files = this.files;

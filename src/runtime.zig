@@ -328,6 +328,8 @@ pub const Runtime = struct {
 
         commonjs_at_runtime: bool = false,
 
+        emit_decorator_metadata: bool = false,
+
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
             return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;
         }
@@ -372,8 +374,9 @@ pub const Runtime = struct {
         __exportDefault: ?GeneratedSymbol = null,
         __FastRefreshRuntime: ?GeneratedSymbol = null,
         __merge: ?GeneratedSymbol = null,
-        __decorateClass: ?GeneratedSymbol = null,
-        __decorateParam: ?GeneratedSymbol = null,
+        __legacyDecorateClassTS: ?GeneratedSymbol = null,
+        __legacyDecorateParamTS: ?GeneratedSymbol = null,
+        __legacyMetadataTS: ?GeneratedSymbol = null,
         @"$$typeof": ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
@@ -395,8 +398,9 @@ pub const Runtime = struct {
             "__exportDefault",
             "__FastRefreshRuntime",
             "__merge",
-            "__decorateClass",
-            "__decorateParam",
+            "__legacyDecorateClassTS",
+            "__legacyDecorateParamTS",
+            "__legacyMetadataTS",
             "$$typeof",
         };
         const all_sorted: [all.len]string = brk: {
@@ -540,6 +544,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 18, .value = val.ref };
                             }
                         },
+                        19 => {
+                            if (@field(this.runtime_imports, all[19])) |val| {
+                                return Entry{ .key = 19, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -603,6 +612,7 @@ pub const Runtime = struct {
                 16 => (@field(imports, all[16]) orelse return null).ref,
                 17 => (@field(imports, all[17]) orelse return null).ref,
                 18 => (@field(imports, all[18]) orelse return null).ref,
+                19 => (@field(imports, all[19]) orelse return null).ref,
                 else => null,
             };
         }

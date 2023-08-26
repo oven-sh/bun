@@ -2601,6 +2601,14 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
 
+        if (loader.isTypeScript()) {
+            if (bundler.resolver.readDirInfo(file_path.name.dir) catch null) |dir_info| {
+                if (dir_info.tsconfig_json) |tsconfig| {
+                    opts.features.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                }
+            }
+        }
+
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;

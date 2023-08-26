@@ -1300,6 +1300,15 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
+
+                if (loader.isTypeScript()) {
+                    if (bundler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| {
+                        if (dir_info.tsconfig_json) |tsconfig| {
+                            opts.features.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                        }
+                    }
+                }
+
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;

@@ -26,6 +26,7 @@ const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
+const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This is the index to the automatically-generated part containing code that
@@ -834,6 +835,8 @@ pub const G = struct {
         // This is omitted for class fields
         value: ?ExprNodeIndex = null,
 
+        ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
+
         pub const List = BabyList(Property);
 
         pub const Kind = enum(u3) {
@@ -865,6 +868,8 @@ pub const G = struct {
         arguments_ref: ?Ref = null,
 
         flags: Flags.Function.Set = Flags.Function.None,
+
+        return_ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
     };
     pub const Arg = struct {
         ts_decorators: ExprNodeList = ExprNodeList{},
@@ -873,6 +878,8 @@ pub const G = struct {
 
         // "constructor(public x: boolean) {}"
         is_typescript_ctor_field: bool = false,
+
+        ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
     };
 };
 

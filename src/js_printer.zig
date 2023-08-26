@@ -4220,6 +4220,7 @@ fn NewPrinter(
                     }
 
                     p.print(";");
+                    p.printSpace();
 
                     if (s.test_) |test_| {
                         p.printExpr(test_, .lowest, ExprFlag.None());
@@ -4550,6 +4551,7 @@ fn NewPrinter(
                         p.printWhitespacer(ws("from "));
                     }
 
+                    p.printSpace();
                     p.printImportRecordPath(record);
                     p.printSemicolonAfterStatement();
                 },

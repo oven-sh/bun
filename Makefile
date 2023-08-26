@@ -900,6 +900,8 @@ check-glibc-version-dependency:
 
 ifeq ($(OS_NAME),darwin)
 
+zig-win32:
+	$(ZIG) build -Dtarget=x86_64-windows
 
 
 # Hardened runtime will not work with debugging

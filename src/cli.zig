@@ -543,6 +543,15 @@ pub const Arguments = struct {
                         .wait_for_connection = true,
                         .set_breakpoint_on_first_line = true,
                     } };
+            } else if (bun.getenvZ("BUN_INSPECT")) |inspect_value| {
+                ctx.runtime_options.debugger = if (inspect_value.len == 0 or inspect_value[0] == '0')
+                    Command.Debugger{ .unspecified = {} }
+                else
+                    Command.Debugger{ .enable = .{
+                        .path_or_port = inspect_value[1..],
+                        .wait_for_connection = inspect_value[0] == '1' or inspect_value[0] == '2',
+                        .set_breakpoint_on_first_line = inspect_value[0] == '2',
+                    } };
             }
         }
 

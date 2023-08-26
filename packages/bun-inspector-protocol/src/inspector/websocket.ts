@@ -1,10 +1,13 @@
 import type { Inspector, InspectorListener } from ".";
-import { JSC } from "..";
+import type { JSC } from "../protocol";
 import { WebSocket } from "ws";
+import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
 
 export type WebSocketInspectorOptions = {
   url?: string | URL;
   listener?: InspectorListener;
+  logger?: (...messages: unknown[]) => void;
 };
 
 /**
@@ -13,84 +16,115 @@ export type WebSocketInspectorOptions = {
 export class WebSocketInspector implements Inspector {
   #url?: URL;
   #webSocket?: WebSocket;
+  #ready: Promise<boolean> | undefined;
   #requestId: number;
   #pendingRequests: Map<number, (result: unknown) => void>;
   #pendingMessages: string[];
   #listener: InspectorListener;
+  #log: (...messages: unknown[]) => void;
 
-  constructor({ url, listener }: WebSocketInspectorOptions) {
+  constructor({ url, listener, logger }: WebSocketInspectorOptions) {
     this.#url = url ? new URL(url) : undefined;
-    this.#listener = listener ?? {};
     this.#requestId = 1;
     this.#pendingRequests = new Map();
     this.#pendingMessages = [];
+    this.#listener = listener ?? {};
+    this.#log = logger ?? (() => {});
   }
 
-  start(url?: string | URL): void {
+  async start(url?: string | URL): Promise<boolean> {
     if (url) {
       this.#url = new URL(url);
     }
     if (this.#url) {
-      this.#connect();
+      const { href } = this.#url;
+      return this.#connect(href);
     }
+    return false;
   }
 
-  #connect(): void {
-    if (!this.#url) {
-      return;
+  async #connect(url: string): Promise<boolean> {
+    if (this.#ready) {
+      return this.#ready;
     }
-    this.#webSocket?.close();
+
     let webSocket: WebSocket;
     try {
-      console.log("[jsc] connecting", this.#url.href);
-      webSocket = new WebSocket(this.#url, {
+      this.#log("connecting:", url);
+      // @ts-expect-error: Node.js
+      webSocket = new WebSocket(url, {
         headers: {
-          "Ref-Event-Loop": "0",
+          "Ref-Event-Loop": "1",
+        },
+        finishRequest: (request: import("http").ClientRequest) => {
+          request.setHeader("Ref-Event-Loop", "1");
+          request.end();
         },
       });
     } catch (error) {
       this.#close(unknownToError(error));
-      return;
+      return false;
     }
+
     webSocket.addEventListener("open", () => {
-      console.log("[jsc] connected");
+      this.#log("connected");
       for (const message of this.#pendingMessages) {
         this.#send(message);
       }
       this.#pendingMessages.length = 0;
       this.#listener["Inspector.connected"]?.();
     });
+
     webSocket.addEventListener("message", ({ data }) => {
       if (typeof data === "string") {
         this.accept(data);
       }
     });
+
     webSocket.addEventListener("error", event => {
-      console.log("[jsc] error", event);
+      this.#log("error:", event);
       this.#close(unknownToError(event));
     });
+
     webSocket.addEventListener("unexpected-response", () => {
-      console.log("[jsc] unexpected-response");
+      this.#log("unexpected-response");
       this.#close(new Error("WebSocket upgrade failed"));
     });
+
     webSocket.addEventListener("close", ({ code, reason }) => {
-      console.log("[jsc] closed", code, reason);
+      this.#log("closed:", code, reason);
       if (code === 1001) {
         this.#close();
       } else {
         this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
       }
     });
+
     this.#webSocket = webSocket;
+
+    const ready = new Promise<boolean>(resolve => {
+      webSocket.addEventListener("open", () => resolve(true));
+      webSocket.addEventListener("close", () => resolve(false));
+      webSocket.addEventListener("error", () => resolve(false));
+    }).finally(() => {
+      this.#ready = undefined;
+    });
+
+    this.#ready = ready;
+
+    return ready;
   }
 
+  // @ts-ignore
   send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
     params?: JSC.RequestMap[M] | undefined,
   ): Promise<JSC.ResponseMap[M]> {
     const id = this.#requestId++;
     const request = { id, method, params };
-    console.log("[jsc] -->", request);
+
+    this.#log("-->", request);
+
     return new Promise((resolve, reject) => {
       const done = (result: any) => {
         this.#pendingRequests.delete(id);
@@ -100,6 +134,7 @@ export class WebSocketInspector implements Inspector {
           resolve(result);
         }
       };
+
       this.#pendingRequests.set(id, done);
       this.#send(JSON.stringify(request));
     });
@@ -113,6 +148,7 @@ export class WebSocketInspector implements Inspector {
       }
       return;
     }
+
     if (!this.#pendingMessages.includes(message)) {
       this.#pendingMessages.push(message);
     }
@@ -123,35 +159,37 @@ export class WebSocketInspector implements Inspector {
     try {
       event = JSON.parse(message);
     } catch (error) {
-      console.error("Failed to parse message:", message);
+      this.#log("Failed to parse message:", message);
       return;
     }
-    console.log("[jsc] <--", event);
-    if ("id" in event) {
-      const { id } = event;
-      const resolve = this.#pendingRequests.get(id);
-      if (!resolve) {
-        console.error(`Failed to accept response for unknown ID ${id}:`, event);
-        return;
-      }
-      this.#pendingRequests.delete(id);
-      if ("error" in event) {
-        const { error } = event;
-        const { message } = error;
-        resolve(new Error(message));
-      } else {
-        const { result } = event;
-        resolve(result);
-      }
-    } else {
+
+    this.#log("<--", event);
+
+    if (!("id" in event)) {
       const { method, params } = event;
       try {
-        // @ts-ignore
-        this.#listener[method]?.(params);
+        this.#listener[method]?.(params as any);
       } catch (error) {
-        console.error(`Failed to accept ${method} event:`, error);
-        return;
+        this.#log(`Failed to accept ${method} event:`, error);
       }
+      return;
+    }
+
+    const { id } = event;
+    const resolve = this.#pendingRequests.get(id);
+    if (!resolve) {
+      this.#log("Failed to accept response with unknown ID:", id);
+      return;
+    }
+
+    this.#pendingRequests.delete(id);
+    if ("error" in event) {
+      const { error } = event;
+      const { message } = error;
+      resolve(new Error(message));
+    } else {
+      const { result } = event;
+      resolve(result);
     }
   }
 
@@ -159,12 +197,14 @@ export class WebSocketInspector implements Inspector {
     if (!this.#webSocket) {
       return true;
     }
+
     const { readyState } = this.#webSocket;
     switch (readyState) {
       case WebSocket.CLOSED:
       case WebSocket.CLOSING:
         return true;
     }
+
     return false;
   }
 
@@ -173,13 +213,53 @@ export class WebSocketInspector implements Inspector {
   }
 
   #close(error?: Error): void {
+    for (const resolve of this.#pendingRequests.values()) {
+      resolve(error ?? new Error("WebSocket closed"));
+    }
+    this.#pendingRequests.clear();
+    this.#listener["Inspector.disconnected"]?.(error);
+  }
+}
+
+export class UnixWebSocketInspector extends WebSocketInspector {
+  #unix: string;
+  #server: Server;
+  #ready: Promise<unknown>;
+  startDebugging?: () => void;
+
+  constructor(options: WebSocketInspectorOptions) {
+    super(options);
+    this.#unix = unixSocket();
+    this.#server = createServer();
+    this.#server.listen(this.#unix);
+    this.#ready = this.#wait().then(() => {
+      setTimeout(() => {
+        this.start().then(() => this.startDebugging?.());
+      }, 1);
+    });
+  }
+
+  get unix(): string {
+    return this.#unix;
+  }
+
+  #wait(): Promise<void> {
+    return new Promise(resolve => {
+      console.log("waiting");
+      this.#server.once("connection", socket => {
+        console.log("received");
+        socket.once("data", resolve);
+      });
+    });
+  }
+
+  async start(url?: string | URL): Promise<boolean> {
+    await this.#ready;
     try {
-      this.#listener["Inspector.disconnected"]?.(error);
+      console.log("starting");
+      return await super.start(url);
     } finally {
-      for (const resolve of this.#pendingRequests.values()) {
-        resolve(error ?? new Error("WebSocket closed"));
-      }
-      this.#pendingRequests.clear();
+      this.#ready = this.#wait();
     }
   }
 }
@@ -188,9 +268,15 @@ function unknownToError(input: unknown): Error {
   if (input instanceof Error) {
     return input;
   }
+
   if (typeof input === "object" && input !== null && "message" in input) {
     const { message } = input;
     return new Error(`${message}`);
   }
+
   return new Error(`${input}`);
+}
+
+function unixSocket(): string {
+  return `${tmpdir()}/bun-inspect-${Math.random().toString(36).slice(2)}.sock`;
 }

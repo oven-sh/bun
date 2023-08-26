@@ -3,7 +3,7 @@
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
+    "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -11,11 +11,12 @@
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
+    "jsx": "preserve",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "inlineSourceMap": true,
     "allowJs": true,
-    "outDir": "dist",
-  },
-  "include": ["src", "scripts", "../bun-types/index.d.ts", "../bun-inspector-protocol/src"]
+    "types": [
+      "bun-types" // add Bun global
+    ]
+  }
 }

@@ -1,12 +1,11 @@
-import type { DAP } from "..";
-// @ts-ignore: FIXME - there is something wrong with the types
-import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
-import { WebSocketInspector } from "../../bun-inspector-protocol";
+import type { DAP } from "../protocol";
+// @ts-ignore
+import type { JSC, InspectorListener, WebSocketInspectorOptions } from "../../../bun-inspector-protocol";
+import { UnixWebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { Location, SourceMap } from "./sourcemap";
-import { remoteObjectToString } from "./preview";
 import { compare, parse } from "semver";
 
 type InitializeRequest = DAP.InitializeRequest & {
@@ -21,6 +20,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   env?: Record<string, string>;
   inheritEnv?: boolean;
   watch?: boolean | "hot";
+  debug?: boolean;
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -71,24 +71,31 @@ type Variable = DAP.Variable & {
 };
 
 type IDebugAdapter = {
-  [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void;
+  [E in keyof DAP.EventMap]?: (event: DAP.EventMap[E]) => void | Promise<void>;
 } & {
   [R in keyof DAP.RequestMap]?: (
     request: DAP.RequestMap[R],
-  ) => void | DAP.ResponseMap[R] | Promise<void | DAP.ResponseMap[R]>;
+  ) => void | DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]> | Promise<void>;
 };
 
-export type DebugAdapterOptions = {
-  sendToAdapter(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
+export type DebugAdapterOptions = WebSocketInspectorOptions & {
+  url: string | URL;
+  send(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
+  stdout?(message: string): void;
+  stderr?(message: string): void;
 };
 
 // This adapter only support single-threaded debugging,
 // which means that there is only one thread at a time.
 const threadId = 1;
 
+// @ts-ignore
 export class DebugAdapter implements IDebugAdapter, InspectorListener {
-  #sendToAdapter: DebugAdapterOptions["sendToAdapter"];
-  #inspector: WebSocketInspector;
+  #url: URL;
+  #sendToAdapter: DebugAdapterOptions["send"];
+  #stdout?: DebugAdapterOptions["stdout"];
+  #stderr?: DebugAdapterOptions["stderr"];
+  #inspector: UnixWebSocketInspector;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -102,12 +109,14 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #initialized?: InitializeRequest;
   #launched?: LaunchRequest;
   #connected?: boolean;
-  #terminated?: boolean;
-  #url?: URL;
 
-  constructor({ sendToAdapter }: DebugAdapterOptions) {
-    this.#inspector = new WebSocketInspector({ listener: this });
-    this.#sendToAdapter = sendToAdapter;
+  constructor({ url, send, stdout, stderr, ...options }: DebugAdapterOptions) {
+    this.#url = new URL(url);
+    // @ts-ignore
+    this.#inspector = new UnixWebSocketInspector({ ...options, url, listener: this });
+    this.#stdout = stdout;
+    this.#stderr = stderr;
+    this.#sendToAdapter = send;
     this.#sourceId = 1;
     this.#pendingSources = new Map();
     this.#sources = new Map();
@@ -117,6 +126,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpoints = [];
     this.#functionBreakpoints = new Map();
     this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
+  }
+
+  get inspector(): UnixWebSocketInspector {
+    return this.#inspector;
   }
 
   async accept(message: DAP.Request | DAP.Response | DAP.Event): Promise<void> {
@@ -140,7 +153,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }
       response = await this[command as keyof this](args);
     } catch (error) {
-      console.error(error);
       const { message } = unknownToError(error);
       return this.#sendToAdapter({
         type: "response",
@@ -238,7 +250,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Another program is already running. Did you terminate the last session?");
     }
 
-    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = true } = request;
+    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = false } = request;
     if (!program) {
       throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
@@ -247,16 +259,39 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const argz = ["--inspect-wait=0", ...args];
-    if (watch) {
-      argz.push(watch === "hot" ? "--hot" : "--watch");
+    const finalArgs = [...args];
+    const isTest = isTestJavaScript(program);
+    if (isTest) {
+      finalArgs.unshift("test");
     }
-    console.log(argz);
 
-    const subprocess = spawn(runtime, [...argz, program], {
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    if (watch) {
+      finalArgs.push(watch === "hot" ? "--hot" : "--watch");
+    }
+
+    const finalEnv = inheritEnv
+      ? {
+          ...process.env,
+          ...env,
+        }
+      : {
+          ...env,
+        };
+
+    finalEnv["BUN_INSPECT"] = `1${this.#url}`;
+    finalEnv["BUN_INSPECT_NOTIFY"] = `unix://${this.#inspector.unix}`;
+
+    if (isTest) {
+      finalEnv["FORCE_COLOR"] = "1";
+    } else {
+      // https://github.com/microsoft/vscode/issues/571
+      finalEnv["NO_COLOR"] = "1";
+    }
+
+    const subprocess = spawn(runtime, [...finalArgs, program], {
+      stdio: ["ignore", "pipe", "pipe"],
       cwd,
-      env: inheritEnv ? { ...process.env, ...env } : env,
+      env: finalEnv,
     });
 
     subprocess.on("spawn", () => {
@@ -269,31 +304,40 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
     });
 
-    subprocess.on("exit", code => {
+    subprocess.on("exit", (code, signal) => {
       this.#emit("exited", {
         exitCode: code ?? -1,
       });
       this.#process = undefined;
     });
 
-    const stdout: string[] = [];
     subprocess.stdout!.on("data", data => {
-      if (!this.#url) {
-        const text = data.toString();
-        stdout.push(text);
-        const url = (this.#url = parseUrlMaybe(text));
-        this.#inspector.start(url);
-      } else if (stdout.length) {
-        stdout.length = 0;
+      const text = data.toString();
+      this.#stdout?.(text);
+
+      if (isTest) {
+        this.#emit("output", {
+          category: "stdout",
+          output: text,
+          source: {
+            path: program,
+          },
+        });
       }
     });
 
-    const stderr: string[] = [];
     subprocess.stderr!.on("data", data => {
-      if (!this.#url) {
-        stderr.push(data.toString());
-      } else if (stderr.length) {
-        stderr.length = 0;
+      const text = data.toString();
+      this.#stderr?.(text);
+
+      if (isTest) {
+        this.#emit("output", {
+          category: "stdout", // Not stderr, since VSCode will highlight it as red.
+          output: text,
+          source: {
+            path: program,
+          },
+        });
       }
     });
 
@@ -317,11 +361,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
     }
 
-    for (let retries = 0; !this.#url && retries < 10; retries++) {
-      await new Promise(resolve => setTimeout(resolve, 100 * retries));
-    }
-
-    if (this.#url) {
+    if (await this.#start()) {
       return;
     }
 
@@ -334,42 +374,68 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
 
-    if (parse(version, true) && compare("0.8.0", version, true)) {
-      throw new Error(
-        `Bun v${version.trim()} does not have debugger support. Please upgrade to v0.8 or later by running: \`bun upgrade\``,
-      );
-    }
-
-    for (const message of stderr) {
-      this.#emit("output", {
-        category: "stderr",
-        output: message,
-        source: {
-          path: program,
-        },
-      });
-    }
-
-    for (const message of stdout) {
-      this.#emit("output", {
-        category: "stdout",
-        output: message,
-        source: {
-          path: program,
-        },
-      });
+    const minVersion = "0.8.2";
+    if (parse(version, true) && compare(minVersion, version, true)) {
+      throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
     }
 
     throw new Error("Program started, but the debugger could not be attached.");
   }
 
-  attach(request: AttachRequest): void {
+  async #start(url?: string | URL): Promise<boolean> {
+    if (url) {
+      this.#url = new URL(url);
+    }
+
+    for (let i = 0; i < 5; i++) {
+      const ok = await this.#inspector.start(url);
+      if (ok) {
+        return true;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100 * i));
+    }
+
+    return false;
+  }
+
+  async attach(request: DAP.AttachRequest): Promise<void> {
+    try {
+      await this.#attach(request);
+    } catch (error) {
+      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
+      // Instead, we want to show the error as a sidebar notification.
+      const { message } = unknownToError(error);
+      this.#emit("output", {
+        category: "stderr",
+        output: `Failed to start debugger.\n${message}`,
+      });
+      this.#emit("terminated");
+    }
+  }
+
+  async #attach(request: AttachRequest): Promise<void> {
     const { url } = request;
-    this.#inspector.start(parseUrl(url));
+
+    if (this.#url.href === url) {
+      this.#emit("output", {
+        category: "debug console",
+        output: "Debugger attached.\n",
+      });
+
+      this.configurationDone();
+      return;
+    }
+
+    if (await this.#start(url)) {
+      this.configurationDone();
+      return;
+    }
+
+    throw new Error("Failed to attach to program.");
   }
 
   terminate(): void {
-    this.#terminated = true;
     this.#process?.kill();
   }
 
@@ -468,20 +534,20 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (!numberIsValid(line)) {
       return 0;
     }
-    if (this.#initialized?.linesStartAt1) {
-      return line - 1;
+    if (!this.#initialized?.linesStartAt1) {
+      return line;
     }
-    return line;
+    return line - 1;
   }
 
   #columnTo0BasedColumn(column?: number): number {
     if (!numberIsValid(column)) {
       return 0;
     }
-    if (this.#initialized?.columnsStartAt1) {
-      return column - 1;
+    if (!this.#initialized?.columnsStartAt1) {
+      return column;
     }
-    return column;
+    return column - 1;
   }
 
   #originalLocation(
@@ -505,17 +571,17 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   #lineFrom0BasedLine(line?: number): number {
-    if (this.#initialized?.linesStartAt1) {
-      return numberIsValid(line) ? line + 1 : 1;
+    if (!this.#initialized?.linesStartAt1) {
+      return numberIsValid(line) ? line : 0;
     }
-    return numberIsValid(line) ? line : 0;
+    return numberIsValid(line) ? line + 1 : 1;
   }
 
   #columnFrom0BasedColumn(column?: number): number {
-    if (this.#initialized?.columnsStartAt1) {
-      return numberIsValid(column) ? column + 1 : 1;
+    if (!this.#initialized?.columnsStartAt1) {
+      return numberIsValid(column) ? column : 0;
     }
-    return numberIsValid(column) ? column : 0;
+    return numberIsValid(column) ? column + 1 : 1;
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
@@ -788,9 +854,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#emit("initialized");
   }
 
-  ["Inspector.disconnected"](error?: Error): void {
-    if (this.#connected && this.#process?.exitCode === null) {
-      this.#url = undefined;
+  async ["Inspector.disconnected"](error?: Error): Promise<void> {
+    if (this.#connected && this.#process?.exitCode === null && (await this.#start())) {
+      return;
+    }
+
+    if (!this.#connected) {
       return;
     }
 
@@ -798,14 +867,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       category: "debug console",
       output: "Debugger detached.\n",
     });
-
-    if (error && !this.#terminated) {
-      const { message } = error;
-      this.#emit("output", {
-        category: "stderr",
-        output: `${message}\n`,
-      });
-    }
 
     this.#emit("terminated");
     this.#reset();
@@ -942,8 +1003,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       const variables = parameters.map((parameter, i) => {
         const variable = this.#addVariable(parameter, { name: `${i}` });
 
-        const { value } = variable;
-        output += value + " ";
+        output += remoteObjectToString(parameter, true) + " ";
 
         return variable;
       });
@@ -1371,7 +1431,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   close(): void {
-    this.#terminated = true;
     this.#process?.kill();
     this.#inspector.close();
     this.#reset();
@@ -1389,8 +1448,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#launched = undefined;
     this.#initialized = undefined;
     this.#connected = undefined;
-    this.#terminated = undefined;
-    this.#url = undefined;
   }
 }
 
@@ -1598,6 +1655,10 @@ function isJavaScript(path: string): boolean {
   return /\.(c|m)?(j|t)sx?$/.test(path);
 }
 
+function isTestJavaScript(path: string): boolean {
+  return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
+}
+
 function parseUrl(hostname?: string, port?: number): URL {
   hostname ||= "localhost";
   port ||= 6499;
@@ -1681,8 +1742,6 @@ function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): st
       return "\u001b[33m";
     case "error":
       return "\u001b[31m";
-    case "debug":
-      return "\u001b[36m";
   }
   return undefined;
 }

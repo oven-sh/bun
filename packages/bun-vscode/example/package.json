@@ -1,4 +1,6 @@
 {
+  "private": true,
+  "name": "example",
   "dependencies": {
     "elysia": "^0.6.3",
     "express": "^4.18.2",
@@ -7,5 +9,11 @@
   },
   "trustedDependencies": [
     "mime"
-  ]
+  ],
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
 }

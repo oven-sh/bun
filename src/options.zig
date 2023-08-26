@@ -1950,8 +1950,8 @@ pub const OutputFile = struct {
     // We may use a different system call
     pub const FileOperation = struct {
         pathname: string,
-        fd: FileDescriptorType = 0,
-        dir: FileDescriptorType = 0,
+        fd: FileDescriptorType = bun.invalid_fd,
+        dir: FileDescriptorType = bun.invalid_fd,
         is_tmpdir: bool = false,
         is_outdir: bool = false,
         close_handle_on_complete: bool = false,

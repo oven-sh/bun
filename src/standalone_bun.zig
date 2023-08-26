@@ -459,7 +459,7 @@ pub const StandaloneModuleGraph = struct {
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
-        std.os.lseek_END(self_exe, -4096) catch return null;
+        std.os.lseek_END(bun.fdcast(self_exe), -4096) catch return null;
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
             switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
@@ -511,7 +511,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(self_exe, -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
+            std.os.lseek_END(bun.fdcast(self_exe), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
@@ -590,7 +590,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         if (comptime Environment.isWindows) {
-            return (try std.fs.openSelfExe(flags)).handle;
+            return bun.toFD((try std.fs.openSelfExe(flags)).handle);
         }
         // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
         // opened with no modification.

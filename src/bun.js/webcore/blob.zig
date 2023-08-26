@@ -331,7 +331,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @as(i32, @intCast(try reader.readIntNative(u32)));
+                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readIntNative(bun.FileDescriptor)));
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(

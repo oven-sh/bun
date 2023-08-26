@@ -2461,7 +2461,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), write_offset: c_ulong, _: *UWSResponse) callconv(.C) bool {
+        pub fn onWritable(this: *@This(), write_offset_: c_ulong, _: *UWSResponse) callconv(.C) bool {
+            const write_offset: u64 = @as(u64, write_offset_);
             log("onWritable ({d})", .{write_offset});
 
             if (this.done) {
@@ -3681,7 +3682,7 @@ pub const FIFO = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
     poll_ref: ?*JSC.FilePoll = null,
-    fd: bun.FileDescriptor = 0,
+    fd: bun.FileDescriptor = bun.invalid_fd,
     to_read: ?u32 = null,
     close_on_empty_read: bool = false,
     auto_sizer: ?*AutoSizer = null,

@@ -263,7 +263,12 @@ pub const fmt = struct {
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 
-pub const FileDescriptor = if (Environment.isBrowser) u0 else std.os.fd_t;
+pub const FileDescriptor = if (Environment.isBrowser)
+    u0
+else if (Environment.isWindows)
+    u64
+else
+    std.os.fd_t;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
@@ -700,7 +705,12 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     return r;
 }
 
-pub const invalid_fd = std.math.maxInt(FileDescriptor);
+pub const invalid_fd = if (Environment.isWindows)
+    std.math.maxInt(usize)
+else
+    std.math.maxInt(FileDescriptor);
+
+pub const UFileDescriptor = if (Environment.isWindows) usize else u32;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
@@ -1592,4 +1602,28 @@ pub inline fn assertComptime() void {
     if (comptime !@inComptime()) {
         @compileError("This function can only be called in comptime.");
     }
+}
+
+const TODO_LOG = Output.scoped(.TODO, false);
+pub inline fn todo(src: @import("builtin").SourceLocation, value: anytype) @TypeOf(value) {
+    if (comptime Environment.allow_assert) {
+        TODO_LOG("{}", .{src});
+    }
+
+    return value;
+}
+
+pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return fd;
+    }
+
+    return @ptrFromInt(fd);
+}
+pub inline fn toFD(fd: std.os.fd_t) FileDescriptor {
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return fd;
+    }
+
+    return @intFromPtr(fd);
 }

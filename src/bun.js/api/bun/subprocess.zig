@@ -23,7 +23,7 @@ pub const Subprocess = struct {
     pid: std.os.pid_t,
     // on macOS, this is nothing
     // on linux, it's a pidfd
-    pidfd: std.os.fd_t = std.math.maxInt(std.os.fd_t),
+    pidfd: if (Environment.isLinux) bun.FileDescriptor else u0 = std.math.maxInt(if (Environment.isLinux) bun.FileDescriptor else u0),
 
     stdin: Writable,
     stdout: Readable,
@@ -1332,8 +1332,8 @@ pub const Subprocess = struct {
         };
 
         const pidfd: std.os.fd_t = brk: {
-            if (Environment.isMac) {
-                break :brk @as(std.os.fd_t, @intCast(pid));
+            if (!Environment.isLinux) {
+                break :brk 0;
             }
 
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();

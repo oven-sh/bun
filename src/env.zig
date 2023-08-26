@@ -45,3 +45,21 @@ pub inline fn onlyMac() void {
         unreachable;
     }
 }
+pub const OperatingSystem = enum {
+    mac,
+    linux,
+    windows,
+    // wAsM is nOt aN oPeRaTiNg SyStEm
+    wasm,
+};
+
+pub const os: OperatingSystem = if (isMac)
+    OperatingSystem.mac
+else if (isLinux)
+    OperatingSystem.linux
+else if (isWindows)
+    OperatingSystem.windows
+else if (isWasm)
+    OperatingSystem.wasm
+else
+    @compileError("Please add your OS to the OperatingSystem enum");

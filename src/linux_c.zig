@@ -416,7 +416,7 @@ pub const struct_sysinfo = extern struct {
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
@@ -428,13 +428,13 @@ pub fn get_total_memory() u64 {
     return 0;
 }
 
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.uptime));
     return 0;
 }
 
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
@@ -571,3 +571,5 @@ pub const freeifaddrs = net_c.freeifaddrs;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+
+pub const Mode = u32;

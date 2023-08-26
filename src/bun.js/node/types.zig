@@ -20,7 +20,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = bun.meta;
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
-pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
+pub const Mode = bun.C.Mode;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
@@ -171,7 +171,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
                         .syscall = syscall,
-                        .fd = @as(i32, @intCast(fd)),
+                        .fd = @intCast(bun.toFD(fd)),
                     },
                 },
             };

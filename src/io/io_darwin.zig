@@ -241,7 +241,7 @@ pub const errno_map: [108]Errno = brk: {
 const socket_t = os.socket_t;
 const sockaddr = darwin.sockaddr;
 const socklen_t = darwin.socklen_t;
-const system = darwin;
+pub const system = darwin;
 
 pub fn asError(err: anytype) Errno {
     const int = if (@typeInfo(@TypeOf(err)) == .Enum)

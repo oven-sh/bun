@@ -369,14 +369,18 @@ pub const Os = struct {
 
         const result = C.getSystemLoadavg();
         return JSC.JSArray.from(globalThis, &.{
-            JSC.JSValue.jsDoubleNumber(result[0]),
-            JSC.JSValue.jsDoubleNumber(result[1]),
-            JSC.JSValue.jsDoubleNumber(result[2]),
+            JSC.JSValue.jsNumber(result[0]),
+            JSC.JSValue.jsNumber(result[1]),
+            JSC.JSValue.jsNumber(result[2]),
         });
     }
 
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
+        if (comptime Environment.isWindows) {
+            globalThis.throwTODO("networkInterfaces() is not implemented on Windows");
+            return .zero;
+        }
 
         // getifaddrs sets a pointer to a linked list
         var interface_start: ?*C.ifaddrs = null;

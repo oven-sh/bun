@@ -2,9 +2,10 @@ const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");
 
-const PlatformSpecific = switch (@import("builtin").target.os.tag) {
-    .macos => @import("./darwin_c.zig"),
+const PlatformSpecific = switch (Environment.os) {
+    .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
+    .windows => @import("./windows_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -315,43 +316,6 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///     with POSIX_ prefix for the advice system call argument.
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
 
-// System related
-pub fn getFreeMemory() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_free_memory();
-    } else if (comptime Environment.isMac) {
-        return darwin.get_free_memory();
-    } else {
-        return -1;
-    }
-}
-
-pub fn getTotalMemory() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_total_memory();
-    } else if (comptime Environment.isMac) {
-        return darwin.get_total_memory();
-    } else {
-        return -1;
-    }
-}
-
-pub fn getSystemUptime() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_system_uptime();
-    } else {
-        return darwin.get_system_uptime();
-    }
-}
-
-pub fn getSystemLoadavg() [3]f64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_system_loadavg();
-    } else {
-        return darwin.get_system_loadavg();
-    }
-}
-
 pub fn getProcessPriority(pid_: i32) i32 {
     const pid = @as(c_uint, @intCast(pid_));
     return get_process_priority(pid);
@@ -378,7 +342,7 @@ pub fn getVersion(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return "unknown";
+        return bun.todo(@src(), "unknown");
     }
 }
 
@@ -388,7 +352,7 @@ pub fn getRelease(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return "unknown";
+        return bun.todo(@src(), "unknown");
     }
 }
 

@@ -823,23 +823,6 @@ pub const Resolver = struct {
             };
         }
 
-        if (r.standalone_module_graph) |graph| {
-            if (strings.hasPrefixComptime(import_path, "compiled://")) {
-                if (graph.files.contains(import_path)) {
-                    return .{
-                        .success = Result{
-                            .import_kind = kind,
-                            .path_pair = PathPair{
-                                .primary = Path.init(import_path),
-                            },
-                            .is_standalone_module = true,
-                            .module_type = .esm,
-                        },
-                    };
-                }
-            }
-        }
-
         if (DataURL.parse(import_path) catch {
             return .{ .failure = error.InvalidDataURL };
         }) |_data_url| {

@@ -109,7 +109,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #initialized?: InitializeRequest;
   #launched?: LaunchRequest;
   #connected?: boolean;
-  #terminated?: boolean;
 
   constructor({ url, send, stdout, stderr, ...options }: DebugAdapterOptions) {
     this.#url = new URL(url);
@@ -127,6 +126,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#breakpoints = [];
     this.#functionBreakpoints = new Map();
     this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
+  }
+
+  get inspector(): UnixWebSocketInspector {
+    return this.#inspector;
   }
 
   async accept(message: DAP.Request | DAP.Response | DAP.Event): Promise<void> {
@@ -414,7 +417,18 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async #attach(request: AttachRequest): Promise<void> {
     const { url } = request;
 
+    if (this.#url.href === url) {
+      this.#emit("output", {
+        category: "debug console",
+        output: "Debugger attached.\n",
+      });
+
+      this.configurationDone();
+      return;
+    }
+
     if (await this.#start(url)) {
+      this.configurationDone();
       return;
     }
 
@@ -422,7 +436,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   terminate(): void {
-    this.#terminated = true;
     this.#process?.kill();
   }
 
@@ -854,14 +867,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       category: "debug console",
       output: "Debugger detached.\n",
     });
-
-    if (error && !this.#terminated) {
-      const { message } = error;
-      this.#emit("output", {
-        category: "stderr",
-        output: `${message}\n`,
-      });
-    }
 
     this.#emit("terminated");
     this.#reset();
@@ -1426,7 +1431,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   close(): void {
-    this.#terminated = true;
     this.#process?.kill();
     this.#inspector.close();
     this.#reset();
@@ -1444,7 +1448,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#launched = undefined;
     this.#initialized = undefined;
     this.#connected = undefined;
-    this.#terminated = undefined;
   }
 }
 

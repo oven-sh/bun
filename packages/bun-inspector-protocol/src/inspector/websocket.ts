@@ -224,14 +224,19 @@ export class WebSocketInspector implements Inspector {
 export class UnixWebSocketInspector extends WebSocketInspector {
   #unix: string;
   #server: Server;
-  #ready: Promise<void>;
+  #ready: Promise<unknown>;
+  startDebugging?: () => void;
 
   constructor(options: WebSocketInspectorOptions) {
     super(options);
     this.#unix = unixSocket();
     this.#server = createServer();
     this.#server.listen(this.#unix);
-    this.#ready = this.#wait();
+    this.#ready = this.#wait().then(() => {
+      setTimeout(() => {
+        this.start().then(() => this.startDebugging?.());
+      }, 1);
+    });
   }
 
   get unix(): string {
@@ -240,16 +245,18 @@ export class UnixWebSocketInspector extends WebSocketInspector {
 
   #wait(): Promise<void> {
     return new Promise(resolve => {
+      console.log("waiting");
       this.#server.once("connection", socket => {
+        console.log("received");
         socket.once("data", resolve);
       });
-      setTimeout(resolve, 1000);
     });
   }
 
   async start(url?: string | URL): Promise<boolean> {
     await this.#ready;
     try {
+      console.log("starting");
       return await super.start(url);
     } finally {
       this.#ready = this.#wait();

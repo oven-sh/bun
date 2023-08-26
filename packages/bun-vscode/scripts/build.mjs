@@ -1,5 +1,5 @@
 import { buildSync } from "esbuild";
-import { rmSync, mkdirSync, cpSync, renameSync } from "node:fs";
+import { rmSync, mkdirSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const { pathname } = new URL("..", import.meta.url);
@@ -16,7 +16,7 @@ buildSync({
 
 rmSync("extension", { recursive: true, force: true });
 mkdirSync("extension", { recursive: true });
-renameSync("dist", "extension/dist", { recursive: true });
+cpSync("dist", "extension/dist", { recursive: true });
 cpSync("assets", "extension/assets", { recursive: true });
 cpSync("README.md", "extension/README.md");
 cpSync("LICENSE", "extension/LICENSE");

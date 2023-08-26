@@ -16,7 +16,6 @@ if (!path) {
   throw new Error("No .vsix file found");
 }
 
-spawn("code", [`--install-extension=${path}`, "--new-window"], {
-  detached: true,
-  stdio: "ignore",
+spawn("code", ["--new-window", `--install-extension=${path}`, `--extensionDevelopmentPath=${pathname}`, "example"], {
+  stdio: "inherit",
 });

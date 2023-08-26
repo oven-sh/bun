@@ -10,7 +10,7 @@
       },
       "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/example"],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "preLaunchTask": "Build (watch)"
+      "preLaunchTask": "Build"
     },
     {
       "name": "Extension (web)",
@@ -26,7 +26,7 @@
         "${workspaceFolder}/example"
       ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "preLaunchTask": "Build (watch)"
+      "preLaunchTask": "Build"
     }
   ]
 }

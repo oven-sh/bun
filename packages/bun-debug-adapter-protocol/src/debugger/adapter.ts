@@ -256,6 +256,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     }
 
     const finalArgs = [...args];
+    if (isTestJavaScript(program)) {
+      finalArgs.unshift("test");
+    }
+
     if (watch) {
       finalArgs.push(watch === "hot" ? "--hot" : "--watch");
     }
@@ -276,7 +280,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     finalEnv["NO_COLOR"] = "1";
 
     const subprocess = spawn(runtime, [...finalArgs, program], {
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       cwd,
       env: finalEnv,
     });
@@ -328,15 +332,15 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
     }
 
+    if (await this.#start()) {
+      return;
+    }
+
     if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
       this.#emit("output", {
         category: "debug console",
         output: `Failed to kill process ${subprocess.pid}\n`,
       });
-    }
-
-    if (await this.#start()) {
-      return;
     }
 
     const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
@@ -1620,6 +1624,10 @@ function unknownToError(input: unknown): Error {
 
 function isJavaScript(path: string): boolean {
   return /\.(c|m)?(j|t)sx?$/.test(path);
+}
+
+function isTestJavaScript(path: string): boolean {
+  return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
 }
 
 function parseUrl(hostname?: string, port?: number): URL {

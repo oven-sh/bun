@@ -166,6 +166,11 @@
                   "hot"
                 ],
                 "default": false
+              },
+              "debug": {
+                "type": "boolean",
+                "description": "If the process should be started in debug mode.",
+                "default": true
               }
             }
           },
@@ -238,8 +243,8 @@
   "license": "MIT",
   "publisher": "oven",
   "scripts": {
-    "build": "node build.mjs",
-    "test": "node test.mjs"
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs"
   },
   "workspaceTrust": {
     "request": "never"

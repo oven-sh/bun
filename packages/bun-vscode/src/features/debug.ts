@@ -19,7 +19,7 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
-  noDebug: true,
+  debug: false,
   watch: true,
 };
 
@@ -58,6 +58,7 @@ function RunFileCommand(resource: vscode.Uri): void {
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...runConfiguration,
+      noDebug: true,
       program: resource,
     });
   }

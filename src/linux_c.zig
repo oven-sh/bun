@@ -422,7 +422,7 @@ pub fn getFreeMemory() u64 {
     return 0;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;

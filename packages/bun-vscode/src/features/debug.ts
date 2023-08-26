@@ -3,6 +3,8 @@ import type { CancellationToken, DebugConfiguration, ProviderResult, WorkspaceFo
 import type { DAP } from "../../../bun-debug-adapter-protocol";
 import { DebugAdapter } from "../../../bun-debug-adapter-protocol";
 import { DebugSession } from "@vscode/debugadapter";
+import { inspect } from "node:util";
+import { tmpdir } from "node:os";
 
 const debugConfiguration: vscode.DebugConfiguration = {
   type: "bun",
@@ -17,131 +19,119 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
+  noDebug: true,
   watch: true,
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "attach",
-  name: "Attach to Bun",
+  name: "Attach Bun",
   url: "ws://localhost:6499/",
 };
 
-const debugConfigurations: vscode.DebugConfiguration[] = [debugConfiguration, attachConfiguration];
+const channels: Record<string, vscode.OutputChannel> = {};
 
 export default function (context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   context.subscriptions.push(
-    vscode.commands.registerCommand("extension.bun.runFile", (resource: vscode.Uri) => {
-      let targetResource = resource;
-      if (!targetResource && vscode.window.activeTextEditor) {
-        targetResource = vscode.window.activeTextEditor.document.uri;
-      }
-      if (targetResource) {
-        vscode.debug.startDebugging(undefined, runConfiguration, {
-          noDebug: true,
-        });
-      }
-    }),
-    vscode.commands.registerCommand("extension.bun.debugFile", (resource: vscode.Uri) => {
-      let targetResource = resource;
-      if (!targetResource && vscode.window.activeTextEditor) {
-        targetResource = vscode.window.activeTextEditor.document.uri;
-      }
-      if (targetResource) {
-        vscode.debug.startDebugging(undefined, {
-          ...debugConfiguration,
-          program: targetResource.fsPath,
-        });
-      }
-    }),
-  );
-
-  const provider = new BunConfigurationProvider();
-  context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("bun", provider));
-
-  context.subscriptions.push(
+    vscode.commands.registerCommand("extension.bun.runFile", RunFileCommand),
+    vscode.commands.registerCommand("extension.bun.debugFile", DebugFileCommand),
     vscode.debug.registerDebugConfigurationProvider(
       "bun",
-      {
-        provideDebugConfigurations(folder: WorkspaceFolder | undefined): ProviderResult<DebugConfiguration[]> {
-          return debugConfigurations;
-        },
-      },
+      new DebugConfigurationProvider(),
+      vscode.DebugConfigurationProviderTriggerKind.Initial,
+    ),
+    vscode.debug.registerDebugConfigurationProvider(
+      "bun",
+      new DebugConfigurationProvider(),
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
+    vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
+    (channels["dap"] = vscode.window.createOutputChannel("Debug Adapter Protocol (Bun)")),
+    (channels["jsc"] = vscode.window.createOutputChannel("JavaScript Inspector (Bun)")),
+    (channels["console"] = vscode.window.createOutputChannel("Console (Bun)")),
   );
+}
 
-  if (!factory) {
-    factory = new InlineDebugAdapterFactory();
-  }
-  context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory));
-  if ("dispose" in factory && typeof factory.dispose === "function") {
-    // @ts-ignore
-    context.subscriptions.push(factory);
+function RunFileCommand(resource: vscode.Uri): void {
+  const path = getCurrentPath(resource);
+  if (path) {
+    vscode.debug.startDebugging(undefined, {
+      ...runConfiguration,
+      program: resource,
+    });
   }
 }
 
-class BunConfigurationProvider implements vscode.DebugConfigurationProvider {
+function DebugFileCommand(resource: vscode.Uri): void {
+  const path = getCurrentPath(resource);
+  if (path) {
+    vscode.debug.startDebugging(undefined, {
+      ...debugConfiguration,
+      program: resource,
+    });
+  }
+}
+
+class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
+  provideDebugConfigurations(folder: WorkspaceFolder | undefined): ProviderResult<DebugConfiguration[]> {
+    return [debugConfiguration, runConfiguration, attachConfiguration];
+  }
+
   resolveDebugConfiguration(
     folder: WorkspaceFolder | undefined,
     config: DebugConfiguration,
     token?: CancellationToken,
   ): ProviderResult<DebugConfiguration> {
-    if (!config.type && !config.request && !config.name) {
-      const editor = vscode.window.activeTextEditor;
-      if (editor && isJavaScript(editor.document.languageId)) {
-        Object.assign(config, debugConfiguration);
+    let target: DebugConfiguration;
+
+    const { request } = config;
+    if (request === "attach") {
+      target = attachConfiguration;
+    } else {
+      target = debugConfiguration;
+    }
+
+    for (const [key, value] of Object.entries(target)) {
+      if (config[key] === undefined) {
+        config[key] = value;
       }
     }
+
     return config;
   }
 }
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
-  createDebugAdapterDescriptor(_session: vscode.DebugSession): ProviderResult<vscode.DebugAdapterDescriptor> {
-    const adapter = new VSCodeAdapter(_session);
+  createDebugAdapterDescriptor(session: vscode.DebugSession): ProviderResult<vscode.DebugAdapterDescriptor> {
+    const adapter = new VSCodeAdapter(session);
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
 }
 
-function isJavaScript(languageId: string): boolean {
-  return (
-    languageId === "javascript" ||
-    languageId === "javascriptreact" ||
-    languageId === "typescript" ||
-    languageId === "typescriptreact"
-  );
-}
-
 export class VSCodeAdapter extends DebugSession {
   #adapter: DebugAdapter;
-  #console: vscode.OutputChannel;
-  #dap: vscode.OutputChannel;
-  #jsc: vscode.OutputChannel;
 
   constructor(session: vscode.DebugSession) {
     super();
-    const output = (this.#console = vscode.window.createOutputChannel("Console (Bun)"));
-    this.#dap = vscode.window.createOutputChannel("Debug Adapter Protocol (Bun)");
-    const jsc = (this.#jsc = vscode.window.createOutputChannel("JavaScript Inspector (Bun)"));
+    const { id } = session;
     this.#adapter = new DebugAdapter({
+      url: `ws+unix://${tmpdir()}/bun-vscode-${id}.sock`,
       send: this.sendMessage.bind(this),
       logger(...messages) {
-        console.log("[jsc]", ...messages);
-        jsc.appendLine(messages.map(v => (typeof v === "object" ? JSON.stringify(v) : v)).join(" "));
+        log("jsc", ...messages);
       },
       stdout(message) {
-        output.append(message);
+        log("console", message);
       },
       stderr(message) {
-        output.append(message);
+        log("console", message);
       },
     });
   }
 
   sendMessage(message: DAP.Request | DAP.Response | DAP.Event): void {
-    console.log("[dap] -->", message);
-    this.#dap.appendLine("--> " + JSON.stringify(message));
+    log("dap", "-->", message);
 
     const { type } = message;
     if (type === "response") {
@@ -154,16 +144,35 @@ export class VSCodeAdapter extends DebugSession {
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
-    console.log("[dap] <--", message);
-    this.#dap.appendLine("<-- " + JSON.stringify(message));
+    log("dap", "<--", message);
 
     this.#adapter.accept(message);
   }
 
   dispose() {
     this.#adapter.close();
-    this.#console.dispose();
-    this.#dap.dispose();
-    this.#jsc.dispose();
   }
+}
+
+function log(channel: string, ...message: unknown[]): void {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[${channel}]`, ...message);
+    channels[channel]?.appendLine(message.map(v => inspect(v)).join(" "));
+  }
+}
+
+function isJavaScript(languageId: string): boolean {
+  return (
+    languageId === "javascript" ||
+    languageId === "javascriptreact" ||
+    languageId === "typescript" ||
+    languageId === "typescriptreact"
+  );
+}
+
+function getCurrentPath(target?: vscode.Uri): string | undefined {
+  if (!target && vscode.window.activeTextEditor) {
+    target = vscode.window.activeTextEditor.document.uri;
+  }
+  return target?.fsPath;
 }

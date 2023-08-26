@@ -1,6 +1,8 @@
 import type { Inspector, InspectorListener } from ".";
 import type { JSC } from "../protocol";
 import { WebSocket } from "ws";
+import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
 
 export type WebSocketInspectorOptions = {
   url?: string | URL;
@@ -14,6 +16,7 @@ export type WebSocketInspectorOptions = {
 export class WebSocketInspector implements Inspector {
   #url?: URL;
   #webSocket?: WebSocket;
+  #ready: Promise<boolean> | undefined;
   #requestId: number;
   #pendingRequests: Map<number, (result: unknown) => void>;
   #pendingMessages: string[];
@@ -29,41 +32,40 @@ export class WebSocketInspector implements Inspector {
     this.#log = logger ?? (() => {});
   }
 
-  start(url?: string | URL): void {
+  async start(url?: string | URL): Promise<boolean> {
     if (url) {
       this.#url = new URL(url);
     }
     if (this.#url) {
-      this.#connect();
+      const { href } = this.#url;
+      return this.#connect(href);
     }
+    return false;
   }
 
-  #connect(): void {
-    if (!this.#url) {
-      return;
+  async #connect(url: string): Promise<boolean> {
+    if (this.#ready) {
+      return this.#ready;
     }
-    this.#webSocket?.close();
 
     let webSocket: WebSocket;
     try {
-      this.#log("connecting:", this.#url.href);
-      webSocket = new WebSocket(this.#url, {
+      this.#log("connecting:", url);
+      webSocket = new WebSocket(url, {
         headers: {
           "Ref-Event-Loop": "0",
         },
       });
     } catch (error) {
       this.#close(unknownToError(error));
-      return;
+      return false;
     }
 
     webSocket.addEventListener("open", () => {
       this.#log("connected");
-
       for (const message of this.#pendingMessages) {
         this.#send(message);
       }
-
       this.#pendingMessages.length = 0;
       this.#listener["Inspector.connected"]?.();
     });
@@ -86,7 +88,6 @@ export class WebSocketInspector implements Inspector {
 
     webSocket.addEventListener("close", ({ code, reason }) => {
       this.#log("closed:", code, reason);
-
       if (code === 1001) {
         this.#close();
       } else {
@@ -95,8 +96,21 @@ export class WebSocketInspector implements Inspector {
     });
 
     this.#webSocket = webSocket;
+
+    const ready = new Promise<boolean>(resolve => {
+      webSocket.addEventListener("open", () => resolve(true));
+      webSocket.addEventListener("close", () => resolve(false));
+      webSocket.addEventListener("error", () => resolve(false));
+    }).finally(() => {
+      this.#ready = undefined;
+    });
+
+    this.#ready = ready;
+
+    return ready;
   }
 
+  // @ts-ignore
   send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
     params?: JSC.RequestMap[M] | undefined,
@@ -194,13 +208,46 @@ export class WebSocketInspector implements Inspector {
   }
 
   #close(error?: Error): void {
+    for (const resolve of this.#pendingRequests.values()) {
+      resolve(error ?? new Error("WebSocket closed"));
+    }
+    this.#pendingRequests.clear();
+    this.#listener["Inspector.disconnected"]?.(error);
+  }
+}
+
+export class UnixWebSocketInspector extends WebSocketInspector {
+  #unix: string;
+  #server: Server;
+  #ready: Promise<void>;
+
+  constructor(options: WebSocketInspectorOptions) {
+    super(options);
+    this.#unix = unixSocket();
+    this.#server = createServer();
+    this.#server.listen(this.#unix);
+    this.#ready = this.#wait();
+  }
+
+  get unix(): string {
+    return this.#unix;
+  }
+
+  #wait(): Promise<void> {
+    return new Promise(resolve => {
+      this.#server.once("connection", socket => {
+        socket.once("data", resolve);
+      });
+      setTimeout(resolve, 1000);
+    });
+  }
+
+  async start(url?: string | URL): Promise<boolean> {
+    await this.#ready;
     try {
-      this.#listener["Inspector.disconnected"]?.(error);
+      return await super.start(url);
     } finally {
-      for (const resolve of this.#pendingRequests.values()) {
-        resolve(error ?? new Error("WebSocket closed"));
-      }
-      this.#pendingRequests.clear();
+      this.#ready = this.#wait();
     }
   }
 }
@@ -209,9 +256,15 @@ function unknownToError(input: unknown): Error {
   if (input instanceof Error) {
     return input;
   }
+
   if (typeof input === "object" && input !== null && "message" in input) {
     const { message } = input;
     return new Error(`${message}`);
   }
+
   return new Error(`${input}`);
+}
+
+function unixSocket(): string {
+  return `${tmpdir()}/bun-inspect-${Math.random().toString(36).slice(2)}.sock`;
 }

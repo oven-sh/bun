@@ -8,7 +8,7 @@ export abstract class Inspector {
   /**
    * Starts the inspector.
    */
-  start(...args: unknown[]): void;
+  start(...args: unknown[]): Promise<boolean>;
   /**
    * Sends a request to the debugger.
    */

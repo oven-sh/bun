@@ -1,7 +1,7 @@
 import type { DAP } from "../protocol";
 // @ts-ignore
 import type { JSC, InspectorListener, WebSocketInspectorOptions } from "../../../bun-inspector-protocol";
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
+import { UnixWebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
@@ -78,6 +78,7 @@ type IDebugAdapter = {
 };
 
 export type DebugAdapterOptions = WebSocketInspectorOptions & {
+  url: string | URL;
   send(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
   stdout?(message: string): void;
   stderr?(message: string): void;
@@ -89,10 +90,11 @@ const threadId = 1;
 
 // @ts-ignore
 export class DebugAdapter implements IDebugAdapter, InspectorListener {
+  #url: URL;
   #sendToAdapter: DebugAdapterOptions["send"];
   #stdout?: DebugAdapterOptions["stdout"];
   #stderr?: DebugAdapterOptions["stderr"];
-  #inspector: WebSocketInspector;
+  #inspector: UnixWebSocketInspector;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -107,11 +109,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #launched?: LaunchRequest;
   #connected?: boolean;
   #terminated?: boolean;
-  #url?: URL;
 
-  constructor({ send, stdout, stderr, ...options }: DebugAdapterOptions) {
+  constructor({ url, send, stdout, stderr, ...options }: DebugAdapterOptions) {
+    this.#url = new URL(url);
     // @ts-ignore
-    this.#inspector = new WebSocketInspector({ ...options, listener: this });
+    this.#inspector = new UnixWebSocketInspector({ ...options, url, listener: this });
     this.#stdout = stdout;
     this.#stderr = stderr;
     this.#sendToAdapter = send;
@@ -147,7 +149,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }
       response = await this[command as keyof this](args);
     } catch (error) {
-      console.error(error);
       const { message } = unknownToError(error);
       return this.#sendToAdapter({
         type: "response",
@@ -245,7 +246,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Another program is already running. Did you terminate the last session?");
     }
 
-    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = true } = request;
+    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = false } = request;
     if (!program) {
       throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
@@ -254,7 +255,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const finalArgs = ["--inspect-wait=0", ...args];
+    const finalArgs = [...args];
     if (watch) {
       finalArgs.push(watch === "hot" ? "--hot" : "--watch");
     }
@@ -267,6 +268,9 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       : {
           ...env,
         };
+
+    finalEnv["BUN_INSPECT"] = `1${this.#url}`;
+    finalEnv["BUN_INSPECT_NOTIFY"] = `unix://${this.#inspector.unix}`;
 
     // https://github.com/microsoft/vscode/issues/571
     finalEnv["NO_COLOR"] = "1";
@@ -287,37 +291,21 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
     });
 
-    subprocess.on("exit", code => {
+    subprocess.on("exit", (code, signal) => {
       this.#emit("exited", {
         exitCode: code ?? -1,
       });
       this.#process = undefined;
     });
 
-    const stdout: string[] = [];
     subprocess.stdout!.on("data", data => {
       const text = data.toString();
       this.#stdout?.(text);
-
-      if (!this.#url) {
-        stdout.push(text);
-        const url = (this.#url = parseUrlMaybe(text));
-        this.#inspector.start(url);
-      } else if (stdout.length) {
-        stdout.length = 0;
-      }
     });
 
-    const stderr: string[] = [];
     subprocess.stderr!.on("data", data => {
       const text = data.toString();
       this.#stderr?.(text);
-
-      if (!this.#url) {
-        stderr.push(text);
-      } else if (stderr.length) {
-        stderr.length = 0;
-      }
     });
 
     const start = new Promise<undefined>(resolve => {
@@ -340,14 +328,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
     }
 
-    for (let retries = 0; !this.#url && retries < 10; retries++) {
-      await new Promise(resolve => setTimeout(resolve, 100 * retries));
-    }
-
-    if (this.#url) {
-      return;
-    }
-
     if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
       this.#emit("output", {
         category: "debug console",
@@ -355,40 +335,60 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       });
     }
 
+    if (await this.#start()) {
+      return;
+    }
+
     const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
 
-    if (parse(version, true) && compare("0.8.0", version, true)) {
-      throw new Error(
-        `Bun v${version.trim()} does not have debugger support. Please upgrade to v0.8 or later by running: \`bun upgrade\``,
-      );
-    }
-
-    for (const message of stderr) {
-      this.#emit("output", {
-        category: "stderr",
-        output: message,
-        source: {
-          path: program,
-        },
-      });
-    }
-
-    for (const message of stdout) {
-      this.#emit("output", {
-        category: "stdout",
-        output: message,
-        source: {
-          path: program,
-        },
-      });
+    const minVersion = "0.8.2";
+    if (parse(version, true) && compare(minVersion, version, true)) {
+      throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
     }
 
     throw new Error("Program started, but the debugger could not be attached.");
   }
 
-  attach(request: AttachRequest): void {
+  async #start(url?: string | URL): Promise<boolean> {
+    if (url) {
+      this.#url = new URL(url);
+    }
+
+    for (let i = 0; i < 5; i++) {
+      const ok = await this.#inspector.start(url);
+      if (ok) {
+        return true;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100 * i));
+    }
+
+    return false;
+  }
+
+  async attach(request: DAP.AttachRequest): Promise<void> {
+    try {
+      await this.#attach(request);
+    } catch (error) {
+      // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
+      // Instead, we want to show the error as a sidebar notification.
+      const { message } = unknownToError(error);
+      this.#emit("output", {
+        category: "stderr",
+        output: `Failed to start debugger.\n${message}`,
+      });
+      this.#emit("terminated");
+    }
+  }
+
+  async #attach(request: AttachRequest): Promise<void> {
     const { url } = request;
-    this.#inspector.start(parseUrl(url));
+
+    if (await this.#start(url)) {
+      return;
+    }
+
+    throw new Error("Failed to attach to program.");
   }
 
   terminate(): void {
@@ -811,9 +811,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#emit("initialized");
   }
 
-  ["Inspector.disconnected"](error?: Error): void {
-    if (this.#connected && this.#process?.exitCode === null) {
-      this.#url = undefined;
+  async ["Inspector.disconnected"](error?: Error): Promise<void> {
+    if (this.#connected && this.#process?.exitCode === null && (await this.#start())) {
+      return;
+    }
+
+    if (!this.#connected) {
       return;
     }
 
@@ -1412,7 +1415,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#initialized = undefined;
     this.#connected = undefined;
     this.#terminated = undefined;
-    this.#url = undefined;
   }
 }
 

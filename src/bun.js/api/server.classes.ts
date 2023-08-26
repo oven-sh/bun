@@ -27,6 +27,10 @@ function generate(name) {
       port: {
         getter: "getPort",
       },
+      id: {
+        getter: "getId",
+        cache: true,
+      },
       pendingRequests: {
         getter: "getPendingRequests",
       },

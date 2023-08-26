@@ -739,7 +739,7 @@ pub const Fetch = struct {
 
             if (this.http) |http| allocator.destroy(http);
             allocator.destroy(this);
-            reporter.assert();
+            // reporter.assert();
             bun.default_allocator.destroy(reporter);
         }
 

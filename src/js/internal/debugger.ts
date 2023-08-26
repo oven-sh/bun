@@ -308,6 +308,7 @@ function notify(): void {
       open: socket => {
         socket.end("1");
       },
+      data: () => {}, // required or it errors
     },
   }).finally(() => {
     // Do nothing

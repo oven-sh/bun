@@ -234,3 +234,25 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   ]);
   expect(await exited2).toBe(0);
 });
+
+it("should not crash when downloading a non-existent module, issue#4240", async () => {
+  await writeFile(
+    join(run_dir, "test.js"),
+    `
+import { prueba } from "pruebadfasdfasdkafasdyuif.js";
+  `,
+  );
+  const { exited: exited } = spawn({
+    cmd: [bunExe(), "test.js"],
+    cwd: run_dir,
+    stdin: null,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+  // The exit code will not be 1 if it panics.
+  expect(await exited).toBe(1);
+});

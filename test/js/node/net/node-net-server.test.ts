@@ -3,6 +3,7 @@ import { realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createTest } from "node-harness";
+import dns from "dns";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -482,4 +483,41 @@ describe("net.createServer events", () => {
       }).catch(closeAndFail);
     });
   });
+
+  it("correct dns lookup", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const host = "localhost";
+
+    dns.lookup(host, (err, ip, family) => {
+      if (err) {
+        return mustNotCall("dns lookup failed")();
+      }
+
+      const server: Server = createServer();
+
+      let timeout: Timer;
+      const closeAndFail = () => {
+        clearTimeout(timeout);
+        server.close();
+        mustNotCall()();
+      };
+      server.on("error", closeAndFail);
+      timeout = setTimeout(closeAndFail, 100);
+
+      server.listen(
+        0,
+        host,
+        mustCall(() => {
+          const address = server.address() as AddressInfo;
+          expect(address.address).toStrictEqual(ip);
+          //system should provide an port when 0 or no port is passed
+          expect(address.port).toBeGreaterThan(100);
+          expect(address.family).toStrictEqual(family === 4 ? "IPv4" : "IPv6");
+          server.close();
+          done();
+        }),
+      );
+    });
+  })
 });

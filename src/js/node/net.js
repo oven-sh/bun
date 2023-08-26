@@ -21,6 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
+const dns = require("node:dns");
 
 // IPv4 Segment
 const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -807,56 +808,69 @@ class Server extends EventEmitter {
       } else if (!Number.isSafeInteger(port) || port < 0) {
         port = 0;
       }
-      hostname = hostname || "::";
     }
 
-    try {
-      var tls = undefined;
-      var TLSSocketClass = undefined;
-      const bunTLS = this[bunTlsSymbol];
-      const options = this[bunSocketServerOptions];
+    const onHostname = (hostname, addressType) => {
+      try {
+        var tls = undefined;
+        var TLSSocketClass = undefined;
+        const bunTLS = this[bunTlsSymbol];
+        const options = this[bunSocketServerOptions];
 
-      if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
-        options.servername = tls.serverName;
-        options.InternalSocketClass = TLSSocketClass;
-      } else {
-        options.InternalSocketClass = SocketClass;
+        if (typeof bunTLS === "function") {
+          [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+          options.servername = tls.serverName;
+          options.InternalSocketClass = TLSSocketClass;
+        } else {
+          options.InternalSocketClass = SocketClass;
+        }
+
+        this.#server = Bun.listen(
+          path
+            ? {
+                exclusive,
+                unix: path,
+                tls,
+                socket: SocketClass[bunSocketServerHandlers],
+              }
+            : {
+                exclusive,
+                port,
+                hostname,
+                tls,
+                socket: SocketClass[bunSocketServerHandlers],
+              },
+        );
+
+        //make this instance available on handlers
+        this.#server.data = this;
+
+        this.#listening = true;
+
+        // We must schedule the emitListeningNextTick() only after the next run of
+        // the event loop's IO queue. Otherwise, the server may not actually be listening
+        // when the 'listening' event is emitted.
+        //
+        // That leads to all sorts of confusion.
+        //
+        // process.nextTick() is not sufficient because it will run before the IO queue.
+        setTimeout(emitListeningNextTick, 1, this, onListen);
+      } catch (err) {
+        this.#listening = false;
+        setTimeout(emitErrorNextTick, 1, this, err);
       }
+    };
 
-      this.#server = Bun.listen(
-        path
-          ? {
-              exclusive,
-              unix: path,
-              tls,
-              socket: SocketClass[bunSocketServerHandlers],
-            }
-          : {
-              exclusive,
-              port,
-              hostname,
-              tls,
-              socket: SocketClass[bunSocketServerHandlers],
-            },
-      );
-
-      //make this instance available on handlers
-      this.#server.data = this;
-
-      this.#listening = true;
-
-      // We must schedule the emitListeningNextTick() only after the next run of
-      // the event loop's IO queue. Otherwise, the server may not actually be listening
-      // when the 'listening' event is emitted.
-      //
-      // That leads to all sorts of confusion.
-      //
-      // process.nextTick() is not sufficient because it will run before the IO queue.
-      setTimeout(emitListeningNextTick, 1, this, onListen);
-    } catch (err) {
-      this.#listening = false;
-      setTimeout(emitErrorNextTick, 1, this, err);
+    if (hostname) {
+      dns.lookup(hostname, (err, ip, addressType) => {
+        if (err) {
+          setTimeout(emitErrorNextTick, 1, this, err);
+        } else {
+          onHostname(ip, ip ? addressType : 4);
+        }
+      });
+    } else {
+      onHostname("::", 6);
     }
     return this;
   }

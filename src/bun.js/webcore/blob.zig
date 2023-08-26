@@ -1253,8 +1253,8 @@ pub const Blob = struct {
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
             size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.len,
-                .file => store.data.file.pathlike.path.slice().len,
+                .bytes => store.data.bytes.stored_name.estimatedSize(),
+                .file => store.data.file.pathlike.estimatedSize(),
             };
         }
 

@@ -20,6 +20,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   env?: Record<string, string>;
   inheritEnv?: boolean;
   watch?: boolean | "hot";
+  debug?: boolean;
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -256,7 +257,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     }
 
     const finalArgs = [...args];
-    if (isTestJavaScript(program)) {
+    const isTest = isTestJavaScript(program);
+    if (isTest) {
       finalArgs.unshift("test");
     }
 
@@ -276,8 +278,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     finalEnv["BUN_INSPECT"] = `1${this.#url}`;
     finalEnv["BUN_INSPECT_NOTIFY"] = `unix://${this.#inspector.unix}`;
 
-    // https://github.com/microsoft/vscode/issues/571
-    finalEnv["NO_COLOR"] = "1";
+    if (isTest) {
+      finalEnv["FORCE_COLOR"] = "1";
+    } else {
+      // https://github.com/microsoft/vscode/issues/571
+      finalEnv["NO_COLOR"] = "1";
+    }
 
     const subprocess = spawn(runtime, [...finalArgs, program], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -305,11 +311,31 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     subprocess.stdout!.on("data", data => {
       const text = data.toString();
       this.#stdout?.(text);
+
+      if (isTest) {
+        this.#emit("output", {
+          category: "stdout",
+          output: text,
+          source: {
+            path: program,
+          },
+        });
+      }
     });
 
     subprocess.stderr!.on("data", data => {
       const text = data.toString();
       this.#stderr?.(text);
+
+      if (isTest) {
+        this.#emit("output", {
+          category: "stdout", // Not stderr, since VSCode will highlight it as red.
+          output: text,
+          source: {
+            path: program,
+          },
+        });
+      }
     });
 
     const start = new Promise<undefined>(resolve => {

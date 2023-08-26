@@ -51,9 +51,14 @@ export class WebSocketInspector implements Inspector {
     let webSocket: WebSocket;
     try {
       this.#log("connecting:", url);
+      // @ts-expect-error: Node.js
       webSocket = new WebSocket(url, {
         headers: {
-          "Ref-Event-Loop": "0",
+          "Ref-Event-Loop": "1",
+        },
+        finishRequest: (request: import("http").ClientRequest) => {
+          request.setHeader("Ref-Event-Loop", "1");
+          request.end();
         },
       });
     } catch (error) {

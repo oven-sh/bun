@@ -626,6 +626,14 @@ pub const PathLike = union(Tag) {
 
     pub const Tag = enum { string, buffer, slice_with_underlying_string };
 
+    pub fn estimatedSize(this: *const PathLike) usize {
+        return switch (this.*) {
+            .string => this.string.estimatedSize(),
+            .buffer => this.buffer.slice().len,
+            .slice_with_underlying_string => 0,
+        };
+    }
+
     pub fn deinit(this: *const PathLike) void {
         if (this.* == .slice_with_underlying_string) {
             this.slice_with_underlying_string.deinit();
@@ -1057,6 +1065,13 @@ pub const PathOrFileDescriptor = union(Tag) {
         if (this == .path) {
             this.path.deinit();
         }
+    }
+
+    pub fn estimatedSize(this: *const PathOrFileDescriptor) usize {
+        return switch (this.*) {
+            .path => this.path.estimatedSize(),
+            .fd => 0,
+        };
     }
 
     pub fn toThreadSafe(this: *PathOrFileDescriptor) void {

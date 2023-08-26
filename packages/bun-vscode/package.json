@@ -55,14 +55,16 @@
     "commands": [
       {
         "command": "extension.bun.runFile",
-        "title": "Run File",
+        "title": "Run Bun",
+        "shortTitle": "Run",
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(play)"
       },
       {
         "command": "extension.bun.debugFile",
-        "title": "Debug File",
+        "title": "Debug Bun",
+        "shortTitle": "Debug",
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"

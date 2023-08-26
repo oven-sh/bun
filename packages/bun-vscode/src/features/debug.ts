@@ -59,7 +59,7 @@ function RunFileCommand(resource: vscode.Uri): void {
     vscode.debug.startDebugging(undefined, {
       ...runConfiguration,
       noDebug: true,
-      program: resource,
+      program: path,
     });
   }
 }
@@ -69,7 +69,7 @@ function DebugFileCommand(resource: vscode.Uri): void {
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...debugConfiguration,
-      program: resource,
+      program: path,
     });
   }
 }

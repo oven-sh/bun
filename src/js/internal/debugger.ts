@@ -2,6 +2,7 @@ import type * as BunType from "bun";
 
 // We want to avoid dealing with creating a prototype for the inspector class
 let sendFn_, disconnectFn_;
+const colors = Bun.enableANSIColors && process.env.NO_COLOR !== "1";
 
 var debuggerCounter = 1;
 class DebuggerWithMessageQueue {
@@ -31,7 +32,7 @@ function generatePath() {
 }
 
 function terminalLink(url) {
-  if (Bun.enableANSIColors) {
+  if (colors) {
     // bold + hyperlink + reset
     return "\x1b[1m\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\" + "\x1b[22m";
   }
@@ -40,7 +41,7 @@ function terminalLink(url) {
 }
 
 function dim(text) {
-  if (Bun.enableANSIColors) {
+  if (colors) {
     return "\x1b[2m" + text + "\x1b[22m";
   }
 
@@ -276,7 +277,7 @@ class WebSocketListener {
 
     // yellow foreground
     writeToConsole(dim(`------------------ Bun Inspector ------------------` + "\n"));
-    if (Bun.enableANSIColors) {
+    if (colors) {
       // reset background
       writeToConsole("\x1b[49m");
     }

@@ -70,7 +70,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
   }
 }
 
-function randomUnixPath(): string {
+export function randomUnixPath(): string {
   return join(tmpdir(), `${Math.random().toString(36).slice(2)}.sock`);
 }
 

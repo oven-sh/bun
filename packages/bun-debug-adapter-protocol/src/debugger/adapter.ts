@@ -9,6 +9,7 @@ import capabilities from "./capabilities";
 import { Location, SourceMap } from "./sourcemap";
 import { compare, parse } from "semver";
 import { EventEmitter } from "node:events";
+import { UnixSignal, randomUnixPath } from "./signal";
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
@@ -16,17 +17,22 @@ type InitializeRequest = DAP.InitializeRequest & {
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
+  runtimeArgs?: string[];
   program?: string;
-  cwd?: string;
   args?: string[];
+  cwd?: string;
   env?: Record<string, string>;
-  inheritEnv?: boolean;
+  strictEnv?: boolean;
+  stopOnEntry?: boolean;
+  noDebug?: boolean;
   watch?: boolean | "hot";
-  debug?: boolean;
 };
 
 type AttachRequest = DAP.AttachRequest & {
   url?: string;
+  hostname?: string;
+  port?: number;
+  restart?: boolean;
 };
 
 type Source = DAP.Source & {
@@ -70,6 +76,7 @@ type Scope = DAP.Scope & {
 
 type Variable = DAP.Variable & {
   objectId?: string;
+  objectGroup?: string;
   type: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
 };
 
@@ -96,13 +103,13 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Process.stderr": [string];
 };
 
-// This adapter only support single-threaded debugging,
-// which means that there is only one thread at a time.
-const threadId = 1;
-const isDebug = process.env.NODE_ENV === "development";
+let threadId = 1;
+let isDebug = process.env.NODE_ENV === "development";
 
 export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
+  #threadId: number;
   #inspector: WebSocketInspector;
+  #process?: ChildProcess;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -111,13 +118,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #breakpointId: number;
   #breakpoints: Breakpoint[];
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
-  #variables: (Variable | Variable[])[];
-  #process?: ChildProcess;
+  #variableId: number;
+  #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
   #launched?: LaunchRequest;
 
   constructor(url?: string | URL) {
     super();
+    this.#threadId = threadId++;
     this.#inspector = new WebSocketInspector(url);
     const emit = this.#inspector.emit.bind(this.#inspector);
     this.#inspector.emit = (event, ...args) => {
@@ -134,7 +142,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#breakpointId = 1;
     this.#breakpoints = [];
     this.#functionBreakpoints = new Map();
-    this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
+    this.#variableId = 1;
+    this.#variables = new Map();
   }
 
   /**
@@ -179,7 +188,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    */
   emit<E extends keyof DebugAdapterEventMap>(event: E, ...args: DebugAdapterEventMap[E] | []): boolean {
     if (isDebug && event !== "Adapter.event" && event !== "Inspector.event") {
-      console.log(event, ...args);
+      console.log(this.#threadId, event, ...args);
     }
 
     let sent = super.emit(event, ...(args as any));
@@ -212,6 +221,15 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       seq: 0,
       event,
       body,
+    });
+  }
+
+  #reverseSend<R extends keyof DAP.RequestMap>(name: R, request: DAP.RequestMap[R]): void {
+    this.emit("Adapter.request", {
+      type: "request",
+      seq: 0,
+      command: name,
+      arguments: request,
     });
   }
 
@@ -257,78 +275,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.emit(`Adapter.${name}` as keyof DebugAdapterEventMap, body);
   }
 
-  async #spawn(options: {
-    command: string;
-    args?: string[];
-    cwd?: string;
-    env?: Record<string, string>;
-    strictEnv?: boolean;
-    isDebugee?: boolean;
-  }): Promise<boolean> {
-    const { command, args = [], cwd, env = {}, strictEnv, isDebugee } = options;
-    const request = {
-      command,
-      args,
-      cwd,
-      env: strictEnv ? env : { ...process.env, ...env },
-    };
-    this.emit("Process.requested", request);
-
-    let subprocess: ChildProcess;
-    try {
-      subprocess = spawn(command, args, {
-        ...request,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (cause) {
-      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
-      return false;
-    }
-
-    subprocess.on("spawn", () => {
-      this.emit("Process.spawned", subprocess);
-
-      if (isDebugee) {
-        this.#emit("process", {
-          name: `${command} ${args.join(" ")}`,
-          systemProcessId: subprocess.pid,
-          isLocalProcess: true,
-          startMethod: "launch",
-        });
-      }
-    });
-
-    subprocess.on("exit", (code, signal) => {
-      this.emit("Process.exited", code, signal);
-
-      if (isDebugee) {
-        this.#emit("exited", {
-          exitCode: code ?? -1,
-        });
-      }
-    });
-
-    subprocess.stdout?.on("data", data => {
-      this.emit("Process.stdout", data.toString());
-    });
-
-    subprocess.stderr?.on("data", data => {
-      this.emit("Process.stderr", data.toString());
-    });
-
-    return new Promise(resolve => {
-      subprocess.on("spawn", () => resolve(true));
-      subprocess.on("exit", () => resolve(false));
-      subprocess.on("error", () => resolve(false));
-    });
-  }
-
   initialize(request: InitializeRequest): DAP.InitializeResponse {
     const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
-    this.send("Runtime.enableControlFlowProfiler");
     this.send("Console.enable");
     this.send("Debugger.enable");
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
@@ -380,12 +331,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #launch(request: LaunchRequest): Promise<void> {
-    /*
-    if (this.#process?.exitCode === null) {
-      throw new Error("Another program is already running. Did you terminate the last session?");
-    }
+    const {
+      runtime = "bun",
+      runtimeArgs = [],
+      program,
+      args = [],
+      cwd,
+      env = {},
+      strictEnv = false,
+      stopOnEntry = false,
+      noDebug = false,
+      watch = false,
+    } = request;
 
-    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true, watch = false } = request;
     if (!program) {
       throw new Error("No program specified. Did you set the 'program' property in your launch.json?");
     }
@@ -394,55 +352,56 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       throw new Error("Program must be a JavaScript or TypeScript file.");
     }
 
-    const finalArgs = [...args];
-    const isTest = isTestJavaScript(program);
-    if (isTest) {
-      finalArgs.unshift("test");
+    const processArgs = [...runtimeArgs, program, ...args];
+
+    if (isTestJavaScript(program) && !runtimeArgs.includes("test")) {
+      processArgs.unshift("test");
     }
 
-    if (watch) {
-      finalArgs.push(watch === "hot" ? "--hot" : "--watch");
+    if (watch && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
+      processArgs.unshift(watch === "hot" ? "--hot" : "--watch");
     }
 
-    const finalEnv = inheritEnv
+    const processEnv = strictEnv
       ? {
-          ...process.env,
           ...env,
         }
       : {
+          ...process.env,
           ...env,
         };
 
-    finalEnv["BUN_INSPECT"] = `1${this.#url}`;
-    finalEnv["BUN_INSPECT_NOTIFY"] = `unix://${this.#inspector.unix}`;
+    const url = `ws+unix://${randomUnixPath()}`;
+    const signal = new UnixSignal();
 
-    if (true) {
-      finalEnv["FORCE_COLOR"] = "1";
-    } else {
-      // https://github.com/microsoft/vscode/issues/571
-      finalEnv["NO_COLOR"] = "1";
+    const i = stopOnEntry ? "2" : "1";
+    processEnv["BUN_INSPECT"] = `${i}${url}`;
+    processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
+    processEnv["FORCE_COLOR"] = "1";
+
+    const started = await this.#spawn({
+      command: runtime,
+      args: processArgs,
+      env: processEnv,
+      cwd,
+      isDebugee: true,
+    });
+
+    if (!started) {
+      throw new Error("Program could not be started.");
     }
 
-    let reason = undefined;
-
-    if (reason instanceof Error) {
-      const { message } = reason;
-      throw new Error(`Program could not be started.\n${message}`);
-    }
-
-    if (reason !== undefined) {
-      throw new Error(`Program exited with code ${reason} before the debugger could attached.`);
-    }
-
-    if (await this.#start()) {
-      return;
-    }
-
-    if (subprocess.exitCode === null && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
-      this.#emit("output", {
-        category: "debug console",
-        output: `Failed to kill process ${subprocess.pid}\n`,
+    await new Promise<void>(resolve => {
+      signal.on("Signal.received", () => {
+        resolve();
       });
+      setTimeout(resolve, 5000);
+    });
+
+    const attached = await this.#attach(url);
+
+    if (attached) {
+      return;
     }
 
     const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
@@ -452,25 +411,76 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
     }
 
-    throw new Error("Program started, but the debugger could not be attached.");*/
+    throw new Error("Program started, but the debugger could not be attached.");
   }
 
-  async #start(url?: string | URL): Promise<boolean> {
-    for (let i = 0; i < 5; i++) {
-      const ok = await this.#inspector.start(url);
-      if (ok) {
-        return true;
-      }
+  async #spawn(options: {
+    command: string;
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+    isDebugee?: boolean;
+  }): Promise<boolean> {
+    const { command, args = [], cwd, env, isDebugee } = options;
+    const request = { command, args, cwd, env };
+    this.emit("Process.requested", request);
 
-      await new Promise(resolve => setTimeout(resolve, 100 * i));
+    let subprocess: ChildProcess;
+    try {
+      subprocess = spawn(command, args, {
+        ...request,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause) {
+      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
+      return false;
     }
 
-    return false;
+    subprocess.on("spawn", () => {
+      this.emit("Process.spawned", subprocess);
+
+      if (isDebugee) {
+        this.#process = subprocess;
+        this.#emit("process", {
+          name: `${command} ${args.join(" ")}`,
+          systemProcessId: subprocess.pid,
+          isLocalProcess: true,
+          startMethod: "launch",
+        });
+      }
+    });
+
+    subprocess.on("exit", (code, signal) => {
+      this.emit("Process.exited", code, signal);
+
+      if (isDebugee) {
+        this.#process = undefined;
+        this.#emit("exited", {
+          exitCode: code ?? -1,
+        });
+      }
+    });
+
+    subprocess.stdout?.on("data", data => {
+      this.emit("Process.stdout", data.toString());
+    });
+
+    subprocess.stderr?.on("data", data => {
+      this.emit("Process.stderr", data.toString());
+    });
+
+    return new Promise(resolve => {
+      subprocess.on("spawn", () => resolve(true));
+      subprocess.on("exit", () => resolve(false));
+      subprocess.on("error", () => resolve(false));
+    });
   }
 
-  async attach(request: DAP.AttachRequest): Promise<void> {
+  async attach(request: AttachRequest): Promise<void> {
+    const { url } = request;
+
     try {
-      await this.#attach(request);
+      await this.#attach(url);
     } catch (error) {
       // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
       // Instead, we want to show the error as a sidebar notification.
@@ -483,15 +493,15 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
   }
 
-  async #attach(request: AttachRequest): Promise<void> {
-    const { url } = request;
-
-    if (await this.#start(url)) {
-      this.configurationDone();
-      return;
+  async #attach(url?: string | URL): Promise<boolean> {
+    for (let i = 0; i < 5; i++) {
+      const ok = await this.#inspector.start(url);
+      if (ok) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100 * i));
     }
-
-    throw new Error("Failed to attach to program.");
+    return false;
   }
 
   terminate(): void {
@@ -520,11 +530,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  async threads(request: DAP.ThreadsRequest): Promise<DAP.ThreadsResponse> {
+  async threads(): Promise<DAP.ThreadsResponse> {
     return {
       threads: [
         {
-          id: threadId,
+          id: this.#threadId,
           name: "Main Thread",
         },
       ],
@@ -759,7 +769,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const { breakpoints: requests } = request;
 
     const oldBreakpoints = this.#getFunctionBreakpoints();
-
     const breakpoints = await Promise.all(
       requests.map(async ({ name, ...options }) => {
         const breakpoint = this.#getFunctionBreakpoint(name);
@@ -822,18 +831,22 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #addFunctionBreakpoint(breakpoint: FunctionBreakpoint): FunctionBreakpoint {
     const { name } = breakpoint;
     this.#functionBreakpoints.set(name, breakpoint);
+
     this.#emit("breakpoint", {
       reason: "changed",
       breakpoint,
     });
+
     return breakpoint;
   }
 
   #removeFunctionBreakpoint(name: string): void {
     const breakpoint = this.#functionBreakpoints.get(name);
+
     if (!breakpoint || !this.#functionBreakpoints.delete(name)) {
       return;
     }
+
     this.#emit("breakpoint", {
       reason: "removed",
       breakpoint,
@@ -856,8 +869,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   async evaluate(request: DAP.EvaluateRequest): Promise<DAP.EvaluateResponse> {
     const { expression, frameId, context } = request;
     const callFrameId = this.#getCallFrameId(frameId);
+    const objectGroup = callFrameId ? "debugger" : context;
 
-    const { result, wasThrown } = await this.#evaluate(expression, callFrameId);
+    const { result, wasThrown } = await this.#evaluate(expression, objectGroup, callFrameId);
     const { className } = result;
 
     if (context === "hover" && wasThrown && (className === "SyntaxError" || className === "ReferenceError")) {
@@ -867,18 +881,23 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       };
     }
 
-    const { name, value, ...variable } = this.#addVariable(result);
+    const { name, value, ...variable } = this.#addObject(result, { objectGroup });
     return {
       ...variable,
       result: value,
     };
   }
 
-  async #evaluate(expression: string, callFrameId?: string): Promise<JSC.Runtime.EvaluateResponse> {
+  async #evaluate(
+    expression: string,
+    objectGroup?: string,
+    callFrameId?: string,
+  ): Promise<JSC.Runtime.EvaluateResponse> {
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
 
     return this.send(method, {
       callFrameId,
+      objectGroup,
       expression: sanitizeExpression(expression),
       generatePreview: true,
       emulateUserGesture: true,
@@ -1034,7 +1053,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
 
     this.#emit("stopped", {
-      threadId,
+      threadId: this.#threadId,
       reason: this.#stopped,
       hitBreakpointIds,
     });
@@ -1043,79 +1062,91 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
+    console.log("VARIABLES BEFORE", this.#variables.size);
+    for (const { variablesReference, objectGroup } of this.#variables.values()) {
+      if (objectGroup === "debugger") {
+        this.#variables.delete(variablesReference);
+      }
+    }
+    console.log("VARIABLES AFTER", this.#variables.size);
     this.#emit("continued", {
-      threadId,
+      threadId: this.#threadId,
+    });
+  }
+
+  ["Process.stdout"](output: string): void {
+    this.#emit("output", {
+      category: "debug console",
+      output,
+    });
+  }
+
+  ["Process.stderr"](output: string): void {
+    this.#emit("output", {
+      category: "debug console",
+      output,
     });
   }
 
   ["Console.messageAdded"](event: JSC.Console.MessageAddedEvent): void {
-    const { message } = event;
-    const { type, level, text, parameters, line, column, stackTrace } = message;
-
-    let output: string;
-    let variablesReference: number | undefined;
-
-    if (parameters?.length) {
-      output = "";
-
-      const variables = parameters.map((parameter, i) => {
-        const variable = this.#addVariable(parameter, { name: `${i}` });
-        output += remoteObjectToString(parameter, true) + " ";
-        return variable;
-      });
-
-      if (variables.length === 1) {
-        const [{ variablesReference: reference }] = variables;
-        variablesReference = reference;
-      } else {
-        variablesReference = this.#setVariable(variables);
-      }
-    } else {
-      output = text;
-    }
-
-    if (!output.endsWith("\n")) {
-      output += "\n";
-    }
-
-    const color = consoleLevelToAnsiColor(level);
-    if (color) {
-      output = `${color}${output}`;
-    }
-
-    if (variablesReference) {
-      variablesReference = this.#setVariable([
-        {
-          name: "",
-          value: "",
-          type: undefined,
-          variablesReference,
-        },
-      ]);
-    }
-
-    let source: Source | undefined;
-    if (stackTrace) {
-      const { callFrames } = stackTrace;
-      if (callFrames.length) {
-        const { scriptId } = callFrames.at(-1)!;
-        source = this.#getSourceIfPresent(scriptId);
-      }
-    }
-
-    let location: Location | {} = {};
-    if (source) {
-      location = this.#originalLocation(source, line, column);
-    }
-
-    this.#emit("output", {
-      category: "debug console",
-      group: consoleMessageGroup(type),
-      output,
-      variablesReference,
-      source,
-      ...location,
-    });
+    // const { message } = event;
+    // const { type, level, text, parameters, line, column, stackTrace } = message;
+    // let output: string;
+    // let variablesReference: number | undefined;
+    // if (parameters?.length) {
+    //   output = "";
+    //   const variables = parameters.map((parameter, i) => {
+    //     const variable = this.#addObject(parameter, { name: `${i}`, objectGroup: "console" });
+    //     output += remoteObjectToString(parameter, true) + " ";
+    //     return variable;
+    //   });
+    //   if (variables.length === 1) {
+    //     const [{ variablesReference: reference }] = variables;
+    //     variablesReference = reference;
+    //   } else {
+    //     variablesReference = this.#variableId++;
+    //     //this.#variables.set(variablesReference, variables);
+    //   }
+    // } else {
+    //   output = text;
+    // }
+    // if (!output.endsWith("\n")) {
+    //   output += "\n";
+    // }
+    // const color = consoleLevelToAnsiColor(level);
+    // if (color) {
+    //   output = `${color}${output}`;
+    // }
+    // if (variablesReference) {
+    //   const containerReference = this.#variableId++;
+    //   this.#variables.set(containerReference, {
+    //     name: "",
+    //     value: "",
+    //     type: undefined,
+    //     variablesReference,
+    //   });
+    //   variablesReference = containerReference;
+    // }
+    // let source: Source | undefined;
+    // if (stackTrace) {
+    //   const { callFrames } = stackTrace;
+    //   if (callFrames.length) {
+    //     const { scriptId } = callFrames.at(-1)!;
+    //     source = this.#getSourceIfPresent(scriptId);
+    //   }
+    // }
+    // let location: Location | {} = {};
+    // if (source) {
+    //   location = this.#originalLocation(source, line, column);
+    // }
+    // this.#emit("output", {
+    //   category: "debug console",
+    //   group: consoleMessageGroup(type),
+    //   output,
+    //   variablesReference,
+    //   source,
+    //   ...location,
+    // });
   }
 
   #addSource(source: Source): Source {
@@ -1284,7 +1315,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         continue;
       }
 
-      const { variablesReference } = this.#addVariable(object);
+      const { variablesReference } = this.#addObject(object, { objectGroup: "debugger" });
       const presentationHint = scopePresentationHint(type);
       const title = presentationHint ? titleize(presentationHint) : "Unknown";
       const displayName = name ? `${title}: ${name}` : title;
@@ -1367,7 +1398,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
     const { variablesReference, start, count } = request;
-    const variable = this.#variables[variablesReference];
+    const variable = this.#variables.get(variablesReference);
 
     let variables: Variable[];
     if (!variable) {
@@ -1375,7 +1406,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     } else if (Array.isArray(variable)) {
       variables = variable;
     } else {
-      variables = await this.#getVariables(variable, start, count);
+      variables = await this.#getProperties(variable, start, count);
     }
 
     return {
@@ -1383,20 +1414,16 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  #setVariable(variable: Variable | Variable[]): number {
-    const variablesReference = this.#variables.length;
-
-    this.#variables.push(variable);
-
-    return variablesReference;
-  }
-
-  #addVariable(remoteObject: JSC.Runtime.RemoteObject, propertyDescriptor?: JSC.Runtime.PropertyDescriptor): Variable {
+  #addObject(
+    remoteObject: JSC.Runtime.RemoteObject,
+    propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string },
+  ): Variable {
     const { objectId, type, subtype, size } = remoteObject;
-    const variablesReference = objectId ? this.#variables.length : 0;
+    const variablesReference = objectId ? this.#variableId++ : 0;
 
     const variable: Variable = {
       objectId,
+      objectGroup: propertyDescriptor?.objectGroup,
       name: propertyDescriptorToName(propertyDescriptor),
       type: subtype || type,
       value: remoteObjectToString(remoteObject),
@@ -1405,16 +1432,54 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       namedVariables: isNamedIndexed(subtype) ? size : undefined,
       presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
-    this.#setVariable(variable);
+
+    if (variablesReference) {
+      this.#variables.set(variablesReference, variable);
+      console.log("addObject", variablesReference, variable);
+    }
 
     return variable;
   }
 
-  async #getVariables(variable: Variable, offset?: number, count?: number): Promise<Variable[]> {
-    const { objectId, type, indexedVariables, namedVariables } = variable;
+  #addProperty(
+    propertyDescriptor:
+      | JSC.Runtime.PropertyDescriptor
+      | (JSC.Runtime.InternalPropertyDescriptor & { objectGroup?: string }),
+  ): Variable[] {
+    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
+    const variables: Variable[] = [];
+
+    if (value) {
+      variables.push(this.#addObject(value, propertyDescriptor));
+    }
+
+    if (get) {
+      const { type } = get;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(get, propertyDescriptor));
+      }
+    }
+
+    if (set) {
+      const { type } = set;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(set, propertyDescriptor));
+      }
+    }
+
+    if (symbol) {
+      variables.push(this.#addObject(symbol, propertyDescriptor));
+    }
+
+    return variables;
+  }
+
+  async #getProperties(variable: Variable, offset?: number, count?: number): Promise<Variable[]> {
+    const { objectId, objectGroup, type, indexedVariables, namedVariables } = variable;
+    const variables: Variable[] = [];
 
     if (!objectId || type === "symbol") {
-      return [];
+      return variables;
     }
 
     const { properties, internalProperties } = await this.send("Runtime.getDisplayableProperties", {
@@ -1422,14 +1487,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       generatePreview: true,
     });
 
-    const variables: Variable[] = [];
     for (const property of properties) {
-      variables.push(...this.#getVariable(property));
+      variables.push(...this.#addProperty({ ...property, objectGroup }));
     }
 
     if (internalProperties) {
       for (const property of internalProperties) {
-        variables.push(...this.#getVariable({ ...property, configurable: false }));
+        variables.push(...this.#addProperty({ ...property, objectGroup, configurable: false }));
       }
     }
 
@@ -1448,39 +1512,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           const { value, description } = key;
           name = String(value ?? description);
         }
-        variables.push(this.#addVariable(value, { name }));
+        variables.push(this.#addObject(value, { name, objectGroup }));
       }
-    }
-
-    return variables;
-  }
-
-  #getVariable(
-    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
-  ): Variable[] {
-    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
-    const variables: Variable[] = [];
-
-    if (value) {
-      variables.push(this.#addVariable(value, propertyDescriptor));
-    }
-
-    if (get) {
-      const { type } = get;
-      if (type !== "undefined") {
-        variables.push(this.#addVariable(get, propertyDescriptor));
-      }
-    }
-
-    if (set) {
-      const { type } = set;
-      if (type !== "undefined") {
-        variables.push(this.#addVariable(set, propertyDescriptor));
-      }
-    }
-
-    if (symbol) {
-      variables.push(this.#addVariable(symbol, propertyDescriptor));
     }
 
     return variables;
@@ -1489,7 +1522,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   close(): void {
     this.#process?.kill();
     this.#inspector.close();
-    this.#reset();
   }
 
   #reset(): void {
@@ -1500,7 +1532,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#breakpointId = 1;
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
-    this.#variables.length = 1;
+    this.#variables.clear();
     this.#launched = undefined;
     this.#initialized = undefined;
   }
@@ -1642,17 +1674,19 @@ function sanitizeExpression(expression: string): string {
 
 function remoteObjectToVariablePresentationHint(
   remoteObject: JSC.Runtime.RemoteObject,
-  propertyDescriptor?: JSC.Runtime.PropertyDescriptor,
+  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor>,
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
   const { name, configurable, writable, isPrivate, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
   const hasSymbol = symbol?.type === "symbol";
+
   let kind: string | undefined;
   let visibility: string | undefined;
   let lazy: boolean | undefined;
   let attributes: string[] = [];
+
   if (type === "function") {
     kind = "method";
   }
@@ -1672,6 +1706,7 @@ function remoteObjectToVariablePresentationHint(
     lazy = true;
     attributes.push("hasSideEffects");
   }
+
   return {
     kind,
     visibility,
@@ -1680,7 +1715,7 @@ function remoteObjectToVariablePresentationHint(
   };
 }
 
-function propertyDescriptorToName(propertyDescriptor?: JSC.Runtime.PropertyDescriptor): string {
+function propertyDescriptorToName(propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor>): string {
   if (!propertyDescriptor) {
     return "";
   }
@@ -1688,7 +1723,7 @@ function propertyDescriptorToName(propertyDescriptor?: JSC.Runtime.PropertyDescr
   if (name === "__proto__") {
     return "[[Prototype]]";
   }
-  return name;
+  return name ?? "";
 }
 
 function unknownToError(input: unknown): Error {

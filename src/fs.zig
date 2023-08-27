@@ -607,18 +607,18 @@ pub const FileSystem = struct {
 
             pub inline fn dir(this: *Tmpfile) std.fs.Dir {
                 return std.fs.Dir{
-                    .fd = this.dir_fd,
+                    .fd = bun.fdcast(this.dir_fd),
                 };
             }
 
             pub inline fn file(this: *Tmpfile) std.fs.File {
                 return std.fs.File{
-                    .handle = this.fd,
+                    .handle = bun.fdcast(this.fd),
                 };
             }
 
             pub fn close(this: *Tmpfile) void {
-                if (this.fd != bun.invalid_fd) std.os.close(this.fd);
+                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             }
 
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
@@ -626,14 +626,15 @@ pub const FileSystem = struct {
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = bun.toFD(tmpdir_.fd);
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, if (comptime Environment.isPosix) std.os.S.IRWXU else 0);
+
+                this.fd = bun.toFD(try std.os.openatZ(tmpdir_.fd, name, flags, if (comptime Environment.isPosix) std.os.S.IRWXU else 0));
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
                 std.debug.assert(this.fd != bun.invalid_fd);
                 std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, from_name, destination_fd, name);
+                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, destination_fd, name);
                 this.close();
             }
 

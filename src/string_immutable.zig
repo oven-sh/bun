@@ -23,6 +23,20 @@ pub inline fn contains(self: string, str: string) bool {
     return indexOf(self, str) != null;
 }
 
+pub fn w(comptime str: []const u8) [:0]const u16 {
+    comptime var output: [str.len + 1]u16 = undefined;
+
+    for (str, 0..) |c, i| {
+        output[i] = c;
+    }
+    output[str.len] = 0;
+
+    const Static = struct {
+        pub const literal: [:0]const u16 = output[0 .. output.len - 1 :0];
+    };
+    return Static.literal;
+}
+
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
     return comptime brk: {
         comptime var output: [str.len]u16 = undefined;

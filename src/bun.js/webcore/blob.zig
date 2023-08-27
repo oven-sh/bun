@@ -2429,6 +2429,15 @@ pub const Blob = struct {
                     this.source_fd = this.source_file_store.pathlike.fd;
                 }
 
+                if (comptime Environment.isWindows) {
+                    this.system_error = SystemError{
+                        .code = bun.String.static("TODO"),
+                        .syscall = bun.String.static("CopyFileEx"),
+                        .message = bun.String.static("Not implemented on Windows yet"),
+                    };
+                    return;
+                }
+
                 // Do we need to open both files?
                 if (this.destination_fd == null_fd and this.source_fd == null_fd) {
 

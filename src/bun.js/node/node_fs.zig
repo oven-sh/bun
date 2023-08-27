@@ -4717,13 +4717,15 @@ pub const NodeFS = struct {
 
                 {
                     var dest = args.path.sliceZ(&this.sync_error_buf);
-                    std.os.unlinkZ(dest) catch |er| {
+                    const unlinkFn = if (comptime Environment.isWindows) std.os.unlink else std.os.unlinkZ;
+                    const rmdirFn = if (comptime Environment.isWindows) std.os.rmdir else std.os.rmdirZ;
+                    unlinkFn(dest) catch |er| {
                         // empircally, it seems to return AccessDenied when the
                         // file is actually a directory on macOS.
                         if (args.recursive and
                             (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
                         {
-                            std.os.rmdirZ(dest) catch |err| {
+                            rmdirFn(dest) catch |err| {
                                 if (args.force) {
                                     return Maybe(Return.Rm).success;
                                 }

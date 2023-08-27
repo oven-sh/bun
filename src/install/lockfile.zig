@@ -1473,11 +1473,16 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    _ = C.fchmod(
-        tmpfile.fd,
-        // chmod 777
-        0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-    );
+    if (comptime Environment.isWindows) {
+        // TODO: make this executable
+        bun.todo(@src(), {});
+    } else {
+        _ = C.fchmod(
+            tmpfile.fd,
+            // chmod 777
+            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+        );
+    }
 
     tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};

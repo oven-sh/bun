@@ -6785,9 +6785,14 @@ pub const PackageManager = struct {
                         if (bin.tag != .none) {
                             if (!this.has_created_bin) {
                                 if (!this.options.global) {
-                                    this.root_node_modules_folder.dir.makeDirZ(".bin") catch {};
+                                    if (comptime Environment.isWindows) {
+                                        std.os.mkdiratW(this.root_node_modules_folder.dir.fd, strings.w(".bin"), 0) catch {};
+                                    } else {
+                                        this.root_node_modules_folder.dir.makeDirZ(".bin") catch {};
+                                    }
                                 }
-                                Bin.Linker.umask = C.umask(0);
+                                if (comptime Environment.isPosix)
+                                    Bin.Linker.umask = C.umask(0);
                                 this.has_created_bin = true;
                             }
 
@@ -7181,13 +7186,14 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
-        var node_modules_folder = std.fs.cwd().openIterableDir("node_modules", .{}) catch brk: {
+        const cwd = std.fs.cwd();
+        var node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
-            std.fs.cwd().makeDirZ("node_modules") catch |err| {
+            (if (comptime Environment.isWindows) std.os.mkdiratW(cwd.fd, bun.strings.w("node_modules"), 0) else cwd.makeDirZ("node_modules")) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
-            break :brk std.fs.cwd().openIterableDir("node_modules", .{}) catch |err| {
+            break :brk cwd.openIterableDir("node_modules", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -7235,8 +7241,6 @@ pub const PackageManager = struct {
                     lockfile.packages.len,
                 ),
             };
-
-            const cwd = std.fs.cwd();
 
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 // We deliberately do not close this folder.
@@ -7337,7 +7341,11 @@ pub const PackageManager = struct {
 
                     if (!installer.has_created_bin) {
                         if (!this.options.global) {
-                            node_modules_folder.dir.makeDirZ(".bin") catch {};
+                            if (comptime Environment.isWindows) {
+                                node_modules_folder.dir.makeDirW(bun.strings.w(".bin")) catch {};
+                            } else {
+                                node_modules_folder.dir.makeDirZ(".bin") catch {};
+                            }
                         }
                         Bin.Linker.umask = C.umask(0);
                         installer.has_created_bin = true;

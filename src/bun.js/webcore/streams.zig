@@ -4172,39 +4172,51 @@ pub const File = struct {
                 }
             }
         }
+        var size: Blob.SizeType = 0;
+        if (comptime Environment.isPosix) {
+            const stat: bun.Stat = switch (Syscall.fstat(fd)) {
+                .result => |result| result,
+                .err => |err| {
+                    if (auto_close) {
+                        _ = Syscall.close(fd);
+                    }
+                    return .{ .err = err };
+                },
+            };
 
-        const stat: bun.Stat = switch (Syscall.fstat(fd)) {
-            .result => |result| result,
-            .err => |err| {
+            if (std.os.S.ISDIR(stat.mode)) {
                 if (auto_close) {
                     _ = Syscall.close(fd);
                 }
-                return .{ .err = err };
-            },
-        };
-
-        if (std.os.S.ISDIR(stat.mode)) {
-            if (auto_close) {
-                _ = Syscall.close(fd);
+                return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
             }
-            return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
-        }
 
-        if (std.os.S.ISSOCK(stat.mode)) {
-            if (auto_close) {
-                _ = Syscall.close(fd);
+            if (std.os.S.ISSOCK(stat.mode)) {
+                if (auto_close) {
+                    _ = Syscall.close(fd);
+                }
+                return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
-            return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
+
+            file.mode = @as(JSC.Node.Mode, @intCast(stat.mode));
+            this.mode = file.mode;
+
+            this.seekable = bun.isRegularFile(stat.mode);
+            file.seekable = this.seekable;
+            size = @intCast(stat.size);
+        } else if (comptime Environment.isWindows) outer: {
+            const std_file = std.fs.File{
+                .handle = bun.fdcast(fd),
+            };
+            size = @intCast(std_file.getEndPos() catch {
+                this.seekable = false;
+                break :outer;
+            });
+            this.seekable = true;
         }
-
-        file.mode = @as(JSC.Node.Mode, @intCast(stat.mode));
-        this.mode = file.mode;
-
-        this.seekable = bun.isRegularFile(stat.mode);
-        file.seekable = this.seekable;
 
         if (this.seekable) {
-            this.remaining_bytes = @as(Blob.SizeType, @intCast(stat.size));
+            this.remaining_bytes = size;
             file.max_size = this.remaining_bytes;
 
             if (this.remaining_bytes == 0) {

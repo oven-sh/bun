@@ -540,11 +540,19 @@ pub const Archive = struct {
                             if ((mode & 0o4) != 0)
                                 mode |= 0o1;
 
-                            std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
-                                if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                try std.os.mkdiratZ(dir_fd, pathname, 0o777);
-                            };
+                            if (comptime Environment.isWindows) {
+                                std.os.mkdirat(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    try std.os.mkdirat(dir_fd, pathname, 0o777);
+                                };
+                            } else {
+                                std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    try std.os.mkdiratZ(dir_fd, pathname, 0o777);
+                                };
+                            }
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;

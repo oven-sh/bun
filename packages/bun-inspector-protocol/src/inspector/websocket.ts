@@ -1,46 +1,42 @@
-import type { Inspector, InspectorListener } from ".";
+import type { Inspector, InspectorEventMap } from ".";
 import type { JSC } from "../protocol";
+import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
-import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
-
-export type WebSocketInspectorOptions = {
-  url?: string | URL;
-  listener?: InspectorListener;
-  logger?: (...messages: unknown[]) => void;
-};
 
 /**
  * An inspector that communicates with a debugger over a WebSocket.
  */
-export class WebSocketInspector implements Inspector {
-  #url?: URL;
+export class WebSocketInspector extends EventEmitter<InspectorEventMap> implements Inspector {
+  #url?: string;
   #webSocket?: WebSocket;
   #ready: Promise<boolean> | undefined;
   #requestId: number;
-  #pendingRequests: Map<number, (result: unknown) => void>;
-  #pendingMessages: string[];
-  #listener: InspectorListener;
-  #log: (...messages: unknown[]) => void;
+  #pendingRequests: JSC.Request[];
+  #pendingResponses: Map<number, (result: unknown) => void>;
 
-  constructor({ url, listener, logger }: WebSocketInspectorOptions) {
-    this.#url = url ? new URL(url) : undefined;
+  constructor(url?: string | URL) {
+    super();
+    this.#url = url ? String(url) : undefined;
     this.#requestId = 1;
-    this.#pendingRequests = new Map();
-    this.#pendingMessages = [];
-    this.#listener = listener ?? {};
-    this.#log = logger ?? (() => {});
+    this.#pendingRequests = [];
+    this.#pendingResponses = new Map();
+  }
+
+  get url(): string {
+    return this.#url!;
   }
 
   async start(url?: string | URL): Promise<boolean> {
     if (url) {
-      this.#url = new URL(url);
+      this.#url = String(url);
     }
-    if (this.#url) {
-      const { href } = this.#url;
-      return this.#connect(href);
+
+    if (!this.#url) {
+      this.emit("Inspector.error", new Error("Inspector needs a URL, but none was provided"));
+      return false;
     }
-    return false;
+
+    return this.#connect(this.#url);
   }
 
   async #connect(url: string): Promise<boolean> {
@@ -48,10 +44,12 @@ export class WebSocketInspector implements Inspector {
       return this.#ready;
     }
 
+    this.close(1001, "Restarting...");
+    this.emit("Inspector.connecting", url);
+
     let webSocket: WebSocket;
     try {
-      this.#log("connecting:", url);
-      // @ts-expect-error: Node.js
+      // @ts-expect-error: Support both Bun and Node.js version of `headers`.
       webSocket = new WebSocket(url, {
         headers: {
           "Ref-Event-Loop": "1",
@@ -61,43 +59,43 @@ export class WebSocketInspector implements Inspector {
           request.end();
         },
       });
-    } catch (error) {
-      this.#close(unknownToError(error));
+    } catch (cause) {
+      this.#close(unknownToError(cause));
       return false;
     }
 
     webSocket.addEventListener("open", () => {
-      this.#log("connected");
-      for (const message of this.#pendingMessages) {
-        this.#send(message);
+      this.emit("Inspector.connected");
+
+      for (const request of this.#pendingRequests) {
+        if (this.#send(request)) {
+          this.emit("Inspector.request", request);
+        }
       }
-      this.#pendingMessages.length = 0;
-      this.#listener["Inspector.connected"]?.();
+
+      this.#pendingRequests.length = 0;
     });
 
     webSocket.addEventListener("message", ({ data }) => {
       if (typeof data === "string") {
-        this.accept(data);
+        this.#accept(data);
       }
     });
 
     webSocket.addEventListener("error", event => {
-      this.#log("error:", event);
       this.#close(unknownToError(event));
     });
 
     webSocket.addEventListener("unexpected-response", () => {
-      this.#log("unexpected-response");
       this.#close(new Error("WebSocket upgrade failed"));
     });
 
     webSocket.addEventListener("close", ({ code, reason }) => {
-      this.#log("closed:", code, reason);
-      if (code === 1001) {
+      if (code === 1001 || code === 1006) {
         this.#close();
-      } else {
-        this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
+        return;
       }
+      this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
     });
 
     this.#webSocket = webSocket;
@@ -115,19 +113,20 @@ export class WebSocketInspector implements Inspector {
     return ready;
   }
 
-  // @ts-ignore
   send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
     params?: JSC.RequestMap[M] | undefined,
   ): Promise<JSC.ResponseMap[M]> {
     const id = this.#requestId++;
-    const request = { id, method, params };
-
-    this.#log("-->", request);
+    const request = {
+      id,
+      method,
+      params: params ?? {},
+    };
 
     return new Promise((resolve, reject) => {
       const done = (result: any) => {
-        this.#pendingRequests.delete(id);
+        this.#pendingResponses.delete(id);
         if (result instanceof Error) {
           reject(result);
         } else {
@@ -135,60 +134,62 @@ export class WebSocketInspector implements Inspector {
         }
       };
 
-      this.#pendingRequests.set(id, done);
-      this.#send(JSON.stringify(request));
+      this.#pendingResponses.set(id, done);
+      if (this.#send(request)) {
+        this.emit("Inspector.request", request);
+      } else {
+        this.emit("Inspector.pendingRequest", request);
+      }
     });
   }
 
-  #send(message: string): void {
+  #send(request: JSC.Request): boolean {
     if (this.#webSocket) {
       const { readyState } = this.#webSocket!;
       if (readyState === WebSocket.OPEN) {
-        this.#webSocket.send(message);
+        this.#webSocket.send(JSON.stringify(request));
+        return true;
       }
-      return;
     }
 
-    if (!this.#pendingMessages.includes(message)) {
-      this.#pendingMessages.push(message);
+    if (!this.#pendingRequests.includes(request)) {
+      this.#pendingRequests.push(request);
     }
+    return false;
   }
 
-  accept(message: string): void {
-    let event: JSC.Event | JSC.Response;
+  #accept(message: string): void {
+    let data: JSC.Event | JSC.Response;
     try {
-      event = JSON.parse(message);
-    } catch (error) {
-      this.#log("Failed to parse message:", message);
+      data = JSON.parse(message);
+    } catch (cause) {
+      this.emit("Inspector.error", new Error(`Failed to parse message: ${message}`, { cause }));
       return;
     }
 
-    this.#log("<--", event);
-
-    if (!("id" in event)) {
-      const { method, params } = event;
-      try {
-        this.#listener[method]?.(params as any);
-      } catch (error) {
-        this.#log(`Failed to accept ${method} event:`, error);
-      }
+    if (!("id" in data)) {
+      this.emit("Inspector.event", data);
+      const { method, params } = data;
+      this.emit(method, params);
       return;
     }
 
-    const { id } = event;
-    const resolve = this.#pendingRequests.get(id);
+    this.emit("Inspector.response", data);
+
+    const { id } = data;
+    const resolve = this.#pendingResponses.get(id);
     if (!resolve) {
-      this.#log("Failed to accept response with unknown ID:", id);
+      this.emit("Inspector.error", new Error(`Failed to find matching request for ID: ${id}`));
       return;
     }
 
-    this.#pendingRequests.delete(id);
-    if ("error" in event) {
-      const { error } = event;
+    this.#pendingResponses.delete(id);
+    if ("error" in data) {
+      const { error } = data;
       const { message } = error;
       resolve(new Error(message));
     } else {
-      const { result } = event;
+      const { result } = data;
       resolve(result);
     }
   }
@@ -213,54 +214,14 @@ export class WebSocketInspector implements Inspector {
   }
 
   #close(error?: Error): void {
-    for (const resolve of this.#pendingRequests.values()) {
+    for (const resolve of this.#pendingResponses.values()) {
       resolve(error ?? new Error("WebSocket closed"));
     }
-    this.#pendingRequests.clear();
-    this.#listener["Inspector.disconnected"]?.(error);
-  }
-}
-
-export class UnixWebSocketInspector extends WebSocketInspector {
-  #unix: string;
-  #server: Server;
-  #ready: Promise<unknown>;
-  startDebugging?: () => void;
-
-  constructor(options: WebSocketInspectorOptions) {
-    super(options);
-    this.#unix = unixSocket();
-    this.#server = createServer();
-    this.#server.listen(this.#unix);
-    this.#ready = this.#wait().then(() => {
-      setTimeout(() => {
-        this.start().then(() => this.startDebugging?.());
-      }, 1);
-    });
-  }
-
-  get unix(): string {
-    return this.#unix;
-  }
-
-  #wait(): Promise<void> {
-    return new Promise(resolve => {
-      console.log("waiting");
-      this.#server.once("connection", socket => {
-        console.log("received");
-        socket.once("data", resolve);
-      });
-    });
-  }
-
-  async start(url?: string | URL): Promise<boolean> {
-    await this.#ready;
-    try {
-      console.log("starting");
-      return await super.start(url);
-    } finally {
-      this.#ready = this.#wait();
+    this.#pendingResponses.clear();
+    if (error) {
+      this.emit("Inspector.error", error);
     }
+    this.emit("Inspector.disconnected", error);
   }
 }
 
@@ -275,8 +236,4 @@ function unknownToError(input: unknown): Error {
   }
 
   return new Error(`${input}`);
-}
-
-function unixSocket(): string {
-  return `${tmpdir()}/bun-inspect-${Math.random().toString(36).slice(2)}.sock`;
 }

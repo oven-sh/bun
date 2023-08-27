@@ -601,7 +601,7 @@ pub const Archive = struct {
                                             var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
-                                            plucker_.fd = file.handle;
+                                            plucker_.fd = bun.toFD(file.handle);
                                             continue :loop;
                                         }
                                     }

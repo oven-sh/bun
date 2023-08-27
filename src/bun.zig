@@ -1704,3 +1704,33 @@ pub fn isRegularFile(mode: JSC.Node.Mode) bool {
 }
 
 pub const sys = @import("./bun.js/node/syscall.zig");
+
+pub const kernel32 = @import("./kernel32.zig");
+
+pub const FDTag = enum {
+    none,
+    stderr,
+    stdin,
+    stdout,
+    pub fn get(fd_: anytype) FDTag {
+        const fd = toFD(fd_);
+        if (comptime Environment.isWindows) {
+            if (fd == win32.STDOUT_FD) {
+                return .stdout;
+            } else if (fd == win32.STDERR_FD) {
+                return .stderr;
+            } else if (fd == win32.STDIN_FD) {
+                return .stdin;
+            }
+
+            return .none;
+        } else {
+            return switch (fd) {
+                posix.STDIN_FD => FDTag.stdin,
+                posix.STDOUT_FD => FDTag.stdout,
+                posix.STDERR_FD => FDTag.stderr,
+                else => .none,
+            };
+        }
+    }
+};

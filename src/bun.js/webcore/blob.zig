@@ -1045,7 +1045,7 @@ pub const Blob = struct {
             // we only truncate if it's a path
             // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
-                _ = bun.sys.system.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {
@@ -1320,16 +1320,16 @@ pub const Blob = struct {
                     };
                 },
                 .fd => {
-                    switch (path_.fd) {
-                        bun.STDIN_FD => return Blob.initWithStore(
+                    switch (bun.FDTag.get(path_.fd)) {
+                        .stdin => return Blob.initWithStore(
                             vm.rareData().stdin(),
                             globalThis,
                         ),
-                        bun.STDERR_FD => return Blob.initWithStore(
+                        .stderr => return Blob.initWithStore(
                             vm.rareData().stderr(),
                             globalThis,
                         ),
-                        bun.STDOUT_FD => return Blob.initWithStore(
+                        .stdout => return Blob.initWithStore(
                             vm.rareData().stdout(),
                             globalThis,
                         ),

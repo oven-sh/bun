@@ -15,7 +15,7 @@ const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
-const kernel32 = windows.kernel32;
+const kernel32 = bun.kernel32;
 
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
@@ -24,7 +24,7 @@ pub const syslog = log;
 const use_libc = !(Environment.isLinux and Environment.isX64);
 pub const system = if (Environment.isLinux) linux else @import("root").bun.AsyncIO.system;
 pub const S = struct {
-    pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
+    pub usingnamespace if (Environment.isLinux) linux.S else if (Environment.isPosix) std.os.S else struct {};
 };
 const sys = std.os.system;
 
@@ -619,6 +619,9 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 }
 
 pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        _ = kernel32.SetFileValidData(bun.fdcast(fd), size);
+    }
     while (true) {
         if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {
             if (err.getErrno() == .INTR) continue;

@@ -181,6 +181,9 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
 }
 
 pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), std.fs.File.Kind.unknown);
+    }
     return switch (mode & os.S.IFMT) {
         os.S.IFBLK => std.fs.File.Kind.block_device,
         os.S.IFCHR => std.fs.File.Kind.character_device,

@@ -2174,7 +2174,7 @@ pub const Arguments = struct {
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
-        dirfd: FileDescriptor = @as(FileDescriptor, @intCast(std.fs.cwd().fd)),
+        dirfd: FileDescriptor,
 
         pub fn deinit(self: WriteFile) void {
             self.file.deinit();
@@ -2290,6 +2290,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
+                .dirfd = @as(FileDescriptor, @intCast(std.fs.cwd().fd)),
             };
         }
     };

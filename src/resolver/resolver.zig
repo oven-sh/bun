@@ -2572,7 +2572,7 @@ pub const Resolver = struct {
                 // }
             }
 
-            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = queue_top.fd } } else (_open_dir catch |err| {
+            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(queue_top.fd) } } else (_open_dir catch |err| {
                 switch (err) {
                     error.EACCESS => {},
 
@@ -2683,7 +2683,7 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) open_dir.dir.fd else 0;
+                new_entry.fd = if (r.store_fd) bun.toFD(open_dir.dir.fd) else 0;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{

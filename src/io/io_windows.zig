@@ -280,7 +280,7 @@ pub const Waker = struct {
 
     pub fn wake(this: Waker) !void {
         var overlapped: os.windows.OVERLAPPED = std.mem.zeroes(os.windows.OVERLAPPED);
-        _ = try kernel32.PostQueuedCompletionStatus(this.iocp, 1, completion_key, &overlapped);
+        _ = kernel32.PostQueuedCompletionStatus(this.iocp, 1, completion_key, &overlapped);
     }
 };
 

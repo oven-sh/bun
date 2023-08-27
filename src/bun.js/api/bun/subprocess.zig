@@ -1711,16 +1711,16 @@ pub const Subprocess = struct {
                     if (store.data.file.pathlike.fd == @as(bun.FileDescriptor, @intCast(i))) {
                         stdio_array[i] = Stdio{ .inherit = {} };
                     } else {
-                        switch (@as(std.os.fd_t, @intCast(i))) {
-                            bun.STDIN_FD => {
-                                if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
+                        switch (bun.FDTag.get(bun.fdcast(i))) {
+                            .stdin => {
+                                if (i == 1 or i == 2) {
                                     globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                                     return false;
                                 }
                             },
 
-                            bun.STDOUT_FD, bun.STDERR_FD => {
-                                if (i == bun.STDIN_FD) {
+                            .stdout, .stderr => {
+                                if (i == 0) {
                                     globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                                     return false;
                                 }
@@ -1776,15 +1776,15 @@ pub const Subprocess = struct {
 
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
 
-            switch (@as(std.os.fd_t, @intCast(i))) {
-                bun.STDIN_FD => {
+            switch (bun.FDTag.get(fd)) {
+                .stdin => {
                     if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
                         globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                         return false;
                     }
                 },
 
-                bun.STDOUT_FD, bun.STDERR_FD => {
+                .stdout, .stderr => {
                     if (i == bun.STDIN_FD) {
                         globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                         return false;

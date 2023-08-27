@@ -857,7 +857,7 @@ pub const FileSystem = struct {
 
             if (store_fd) {
                 FileSystem.setMaxFd(handle.fd);
-                dir.fd = handle.fd;
+                dir.fd = bun.toFD(handle.fd);
             }
 
             while (try iter.next()) |_entry| {

@@ -2903,22 +2903,24 @@ pub const Arguments = struct {
 
     /// This function is used for `fs.cp` in the specific case where you are given the options { recursive: true } and nothing else,
     /// Otherwise this is implemented in JS or calling copyFile
-    pub const CopyRecursive = struct {
+    pub const Cp = struct {
         src: PathLike,
         dest: PathLike,
+        flags: Flags,
 
-        mode: Constants.Copyfile,
+        const Flags = struct {
+            mode: Constants.Copyfile,
+            recursive: bool,
+            errorOnExist: bool,
+            force: bool,
+        };
 
-        // TODO: not use two separate fields
-        errorOnExist: bool,
-        force: bool,
-
-        fn deinit(this: CopyRecursive) void {
+        fn deinit(this: Cp) void {
             this.src.deinit();
             this.dest.deinit();
         }
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyRecursive {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Cp {
             const src = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
@@ -2947,9 +2949,15 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
+            var recursive: bool = false;
             var errorOnExist: bool = false;
             var force: bool = true;
             var mode: i32 = 0;
+
+            if (arguments.next()) |arg| {
+                arguments.eat();
+                recursive = arg.asBoolean();
+            }
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2968,12 +2976,15 @@ pub const Arguments = struct {
                 }
             }
 
-            return CopyRecursive{
+            return Cp{
                 .src = src,
                 .dest = dest,
-                .errorOnExist = errorOnExist,
-                .force = force,
-                .mode = @enumFromInt(mode),
+                .flags = .{
+                    .mode = @enumFromInt(mode),
+                    .recursive = recursive,
+                    .errorOnExist = errorOnExist,
+                    .force = force,
+                },
             };
         }
     };
@@ -3045,7 +3056,7 @@ const Return = struct {
     pub const AppendFile = void;
     pub const Close = void;
     pub const CopyFile = void;
-    pub const CopyRecursive = void;
+    pub const Cp = void;
     pub const Exists = bool;
     pub const Fchmod = void;
     pub const Chmod = void;
@@ -3351,8 +3362,9 @@ pub const NodeFS = struct {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
+    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
         _ = flavor;
+
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var src = args.src.sliceZ(&src_buf);
@@ -3360,10 +3372,12 @@ pub const NodeFS = struct {
 
         // TODO: do we need to fchown?
 
-        return _copySingleFile(src, dest, args.mode);
+        return this._copySingleFileSync(src, dest, args.mode, null);
     }
 
-    fn _copySingleFile(src: [:0]const u8, dest: [:0]const u8, mode: Constants.Copyfile) Maybe(void) {
+    /// Shared logic by copyFile and _copyRecursive
+    /// The latter uses `reuse_stat` to avoid doing a stat twice
+    fn _copySingleFileSync(this: *NodeFS, src: [:0]const u8, dest: [:0]const u8, mode: Constants.Copyfile, reuse_stat: ?os.Stat) Maybe(void) {
         const ret = Maybe(Return.CopyFile);
 
         if (comptime Environment.isMac) {
@@ -3371,17 +3385,30 @@ pub const NodeFS = struct {
                 // https://www.manpagez.com/man/2/clonefile/
                 return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
             } else {
-                const stat_ = switch (Syscall.stat(src)) {
+                const stat_ = reuse_stat orelse switch (Syscall.stat(src)) {
                     .result => |result| result,
-                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                    .err => |err| {
+                        @memcpy(this.sync_error_buf[0..src.len], src);
+                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                    },
                 };
 
                 if (os.S.ISDIR(stat_.mode)) {
-                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.EISDIR) } };
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.EISDIR),
+                        .path = this.sync_error_buf[0..src.len],
+                        .syscall = .stat,
+                    } };
                 }
 
                 if (!os.S.ISREG(stat_.mode)) {
-                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
+                        .syscall = .stat,
+                        .path = this.sync_error_buf[0..src.len],
+                    } };
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -3442,7 +3469,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo;
             }
 
-            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+            const src_fd = reuse_stat orelse switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                 .result => |result| result,
                 .err => |err| return .{ .err = err },
             };
@@ -3521,6 +3548,8 @@ pub const NodeFS = struct {
 
             return ret.success;
         }
+
+        return ret.todo;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -5159,12 +5188,12 @@ pub const NodeFS = struct {
     pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
         return Maybe(Return.CreateWriteStream).todo;
     }
-    /// This function is only used in the case where you are given the options { recursive: true } and nothing else,
-    /// Otherwise this is implemented in JS or calling copyFile
-    pub fn copyRecursive(this: *NodeFS, args: Arguments.CopyRecursive, comptime flavor: Flavor) Maybe(Return.CopyRecursive) {
-        _ = this;
-        const ret = Maybe(Return.CopyFile);
 
+    /// This function is `fs.cp/cpSync`, but only if you pass `{ recursive: true, force: ..., errorOnExist: ... }`
+    /// - Passing `{ recursive: false }` will call `fs.copyFile` instead,
+    /// - The other options `{ filter }` use a JS fallback.
+    /// Otherwise this is implemented in JS or calling copyFile
+    pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         switch (comptime flavor) {
             .sync => {
                 // TODO: check if these are proper absolute paths
@@ -5173,36 +5202,69 @@ pub const NodeFS = struct {
                 var src = args.src.sliceZ(&src_buf);
                 var dest = args.dest.sliceZ(&dest_buf);
 
-                if (comptime Environment.isMac) {
-                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src)) |err| {
-                        switch (err.getErrno()) {
-                            .ACCES, .NAMETOOLONG, .ROFS, .NOENT, .PERM, .INVAL => return err,
-                            // Other errors may be due to clonefile() not being supported
-                            // We'll fall back to other implementations
-                            else => {},
-                        }
-                    } else {
-                        return ret.success;
-                    }
-                }
-
-                return _copyRecursive(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
+                return this._copyRecursiveSync(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len), args.flags);
             },
             else => {},
         }
-        return Maybe(Return.CopyRecursive).todo;
+
+        return Maybe(Return.Cp).todo;
     }
 
-    fn _copyRecursive(
+    fn _copyRecursiveSync(
+        this: *NodeFS,
         src_buf: *[bun.MAX_PATH_BYTES]u8,
         src_dir_len: PathString.PathInt,
         dest_buf: *[bun.MAX_PATH_BYTES]u8,
         dest_dir_len: PathString.PathInt,
-    ) Maybe(Return.CopyRecursive) {
+        args: Arguments.Cp.Flags,
+    ) Maybe(Return.Cp) {
+        const src = src_buf[0..src_dir_len :0];
+        const dest = dest_buf[0..dest_dir_len :0];
+
+        const stat_ = switch (Syscall.stat(src)) {
+            .result => |result| result,
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+            },
+        };
+
+        if (!os.S.ISDIR(stat_.mode)) {
+            return this._copySingleFileSync(
+                src,
+                dest,
+                @enumFromInt((if (args.errorOnExist) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                stat_,
+            );
+        }
+
+        if (comptime Environment.isMac) {
+            if (Maybe(Return.Cp).errnoSysP(C.clonefile(src, dest, 0), .clonefile, src)) |err| {
+                switch (err.getErrno()) {
+                    .ACCES,
+                    .NAMETOOLONG,
+                    .ROFS,
+                    .NOENT,
+                    .PERM,
+                    .INVAL,
+                    => {
+                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        return .{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) };
+                    },
+                    // Other errors may be due to clonefile() not being supported
+                    // We'll fall back to other implementations
+                    else => {},
+                }
+            } else {
+                return Maybe(Return.Cp).success;
+            }
+        }
+
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.open(src_buf[0..src_dir_len :0], flags, 0)) {
-            .err => |err| return .{
-                .err = err.withPath(src_buf[0..src_dir_len :0]),
+        const fd = switch (Syscall.open(src, flags, 0)) {
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
             },
             .result => |fd_| fd_,
         };
@@ -5213,65 +5275,46 @@ pub const NodeFS = struct {
         var entry = iterator.next();
         while (switch (entry) {
             .err => |err| {
-                return .{ .err = err.withPath(src_buf[0..src_dir_len :0]) };
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
             @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], current.name.slice());
-            src_buf[src_dir_len] = '/'; // TODO: windows
+            src_buf[src_dir_len] = std.fs.path.sep;
             src_buf[src_dir_len + 1 + current.name.len] = 0;
 
             @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + current.name.len], current.name.slice());
-            dest_buf[dest_dir_len] = '/'; // TODO: windows
+            dest_buf[dest_dir_len] = std.fs.path.sep;
             dest_buf[dest_dir_len + 1 + current.name.len] = 0;
 
-            switch (current.kind) {
-                else => {
-                    var result = _copySingleFile(
-                        src_buf[0 .. src_dir_len + 1 + current.name.len :0],
-                        dest_buf[0 .. dest_dir_len + 1 + current.name.len :0],
-                        @enumFromInt(Constants.Copyfile.force),
-                    );
-                    switch (result) {
-                        .err => return result,
-                        .result => {},
-                    }
-                },
-                .directory => {
-                    if (Environment.isMac) {
-                        // Try to `clonefile()` directories on macOS as it is faster than the recursive option
-                        // This can fail in many cases, such as if the directory exists.
-                        if (Maybe(Return.CopyRecursive).errnoSysP(
-                            C.clonefile(src_buf[0 .. src_dir_len + 1 + current.name.len :0], dest_buf[0 .. dest_dir_len + 1 + current.name.len :0], 0),
-                            .clonefile,
-                            src_buf[0 .. src_dir_len + 1 + current.name.len],
-                        )) |err| {
-                            switch (err.getErrno()) {
-                                .ACCES, .NAMETOOLONG, .ROFS, .NOENT, .PERM, .INVAL => return err,
-                                // Other errors may be due to clonefile() not being supported
-                                // We'll fall back to other implementations
-                                else => {},
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-
-                    var result = _copyRecursive(
-                        src_buf,
-                        src_dir_len + 1 + current.name.len,
-                        dest_buf,
-                        dest_dir_len + 1 + current.name.len,
-                    );
-                    switch (result) {
-                        .err => return result,
-                        .result => {},
-                    }
-                },
+            var result = switch (current.kind) {
+                .directory => this._copyRecursiveSync(
+                    src_buf,
+                    src_dir_len + 1 + current.name.len,
+                    dest_buf,
+                    dest_dir_len + 1 + current.name.len,
+                    args,
+                ),
+                else => this._copySingleFileSync(
+                    src_buf[0 .. src_dir_len + 1 + current.name.len :0],
+                    dest_buf[0 .. dest_dir_len + 1 + current.name.len :0],
+                    @enumFromInt((if (args.errorOnExist) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                    null,
+                ),
+            };
+            switch (result) {
+                .err => return result,
+                .result => {},
             }
         }
-        return Maybe(Return.CopyRecursive).success;
+        return Maybe(Return.Cp).success;
     }
+
+    // fn _copyRecursiveAsync(
+    //     promise: *JSC.JSPromise,
+    // ) Maybe(Return.CopyRecursive) {
+    // }
 };
 
 pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) bool {

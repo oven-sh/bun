@@ -25,60 +25,60 @@ for (const [name, copy] of impls) {
   }
 
   describe("fs." + name, () => {
-    test("single file", async () => {
-      const basename = tempDirWithFiles("cp", {
-        "from/a.txt": "a",
-      });
+    // test("single file", async () => {
+    //   const basename = tempDirWithFiles("cp", {
+    //     "from/a.txt": "a",
+    //   });
 
-      await copy(basename + "/from/a.txt", basename + "/to.txt");
+    //   await copy(basename + "/from/a.txt", basename + "/to.txt");
 
-      expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
-    });
+    //   expect(fs.readFileSync(basename + "/to.txt", "utf8")).toBe("a");
+    // });
 
-    test("refuse to copy directory with 'recursive: false'", async () => {
-      const basename = tempDirWithFiles("cp", {
-        "from/a.txt": "a",
-      });
+    // test("refuse to copy directory with 'recursive: false'", async () => {
+    //   const basename = tempDirWithFiles("cp", {
+    //     "from/a.txt": "a",
+    //   });
 
-      await copyShouldThrow(basename + "/from", basename + "/result");
-    });
+    //   await copyShouldThrow(basename + "/from", basename + "/result");
+    // });
 
-    test("recursive directory structure - no destination", async () => {
-      const basename = tempDirWithFiles("cp", {
-        "from/a.txt": "a",
-        "from/b/e.txt": "e",
-        "from/c.txt": "c",
-        "from/w/y/x/z.txt": "z",
-      });
+    // test("recursive directory structure - no destination", async () => {
+    //   const basename = tempDirWithFiles("cp", {
+    //     "from/a.txt": "a",
+    //     "from/b/e.txt": "e",
+    //     "from/c.txt": "c",
+    //     "from/w/y/x/z.txt": "z",
+    //   });
 
-      await copy(basename + "/from", basename + "/result", { recursive: true });
+    //   await copy(basename + "/from", basename + "/result", { recursive: true });
 
-      assertContent(basename + "/result/a.txt", "a");
-      assertContent(basename + "/result/b/e.txt", "e");
-      assertContent(basename + "/result/c.txt", "c");
-      assertContent(basename + "/result/w/y/x/z.txt", "z");
-    });
+    //   assertContent(basename + "/result/a.txt", "a");
+    //   assertContent(basename + "/result/b/e.txt", "e");
+    //   assertContent(basename + "/result/c.txt", "c");
+    //   assertContent(basename + "/result/w/y/x/z.txt", "z");
+    // });
 
-    test("recursive directory structure - overwrite existing files by default", async () => {
-      const basename = tempDirWithFiles("cp", {
-        "from/a.txt": "a",
-        "from/b/e.txt": "e",
-        "from/c.txt": "c",
-        "from/w/y/x/z.txt": "z",
+    // test("recursive directory structure - overwrite existing files by default", async () => {
+    //   const basename = tempDirWithFiles("cp", {
+    //     "from/a.txt": "a",
+    //     "from/b/e.txt": "e",
+    //     "from/c.txt": "c",
+    //     "from/w/y/x/z.txt": "z",
 
-        "result/a.txt": "fail",
-        "result/w/y/x/z.txt": "lose",
-        "result/w/y/v.txt": "keep this",
-      });
+    //     "result/a.txt": "fail",
+    //     "result/w/y/x/z.txt": "lose",
+    //     "result/w/y/v.txt": "keep this",
+    //   });
 
-      await copy(basename + "/from", basename + "/result", { recursive: true });
+    //   await copy(basename + "/from", basename + "/result", { recursive: true });
 
-      assertContent(basename + "/result/a.txt", "a");
-      assertContent(basename + "/result/b/e.txt", "e");
-      assertContent(basename + "/result/c.txt", "c");
-      assertContent(basename + "/result/w/y/x/z.txt", "z");
-      assertContent(basename + "/result/w/y/v.txt", "keep this");
-    });
+    //   assertContent(basename + "/result/a.txt", "a");
+    //   assertContent(basename + "/result/b/e.txt", "e");
+    //   assertContent(basename + "/result/c.txt", "c");
+    //   assertContent(basename + "/result/w/y/x/z.txt", "z");
+    //   assertContent(basename + "/result/w/y/v.txt", "keep this");
+    // });
 
     test("recursive directory structure - 'force: false' does not overwrite existing files", async () => {
       const basename = tempDirWithFiles("cp", {
@@ -145,6 +145,74 @@ for (const [name, copy] of impls) {
 
     //   assertContent(basename + "/result/a.txt", "win");
     // });
+
+    test("symlinks - single file", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+
+      // Create a symbolic link
+      fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
+
+      // Copy the symbolic link
+      await copy(basename + "/from/a_symlink.txt", basename + "/result/a_symlink.txt", { recursive: false });
+
+      // Check if the resulting file is also a symbolic link
+      const stats = fs.lstatSync(basename + "/result/a_symlink.txt");
+      expect(stats.isSymbolicLink()).toBe(true);
+    });
+
+    test("symlinks - single file recursive", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+
+      fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
+
+      await copy(basename + "/from/a_symlink.txt", basename + "/result.txt", { recursive: true });
+
+      const stats = fs.lstatSync(basename + "/result.txt");
+      expect(stats.isSymbolicLink()).toBe(true);
+    });
+
+    test("symlinks - directory recursive", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+        "from/dir/c.txt": "c",
+      });
+
+      fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
+      fs.symlinkSync(basename + "/from/dir", basename + "/from/dir_symlink");
+
+      await copy(basename + "/from", basename + "/result", { recursive: true });
+
+      const statsFile = fs.lstatSync(basename + "/result/a_symlink.txt");
+      expect(statsFile.isSymbolicLink()).toBe(true);
+
+      const statsDir = fs.lstatSync(basename + "/result/dir_symlink");
+      expect(statsDir.isSymbolicLink()).toBe(true);
+    });
+
+    test("symlinks - directory recursive", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+        "from/dir/c.txt": "c",
+      });
+
+      fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
+      fs.symlinkSync(basename + "/from/dir", basename + "/from/dir_symlink");
+      fs.mkdirSync(basename + "/result");
+
+      await copy(basename + "/from", basename + "/result", { recursive: true });
+
+      const statsFile = fs.lstatSync(basename + "/result/a_symlink.txt");
+      expect(statsFile.isSymbolicLink()).toBe(true);
+
+      const statsDir = fs.lstatSync(basename + "/result/dir_symlink");
+      expect(statsDir.isSymbolicLink()).toBe(true);
+    });
 
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {

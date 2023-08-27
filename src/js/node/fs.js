@@ -6,6 +6,9 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const { isArrayBufferView } = require("node:util/types");
 
+const constants = $processBindingConstants.fs;
+const { COPYFILE_EXCL } = constants;
+
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
   #watcher;
@@ -439,6 +442,7 @@ ReadStream = (function (InternalReadStream) {
         tempThis.path = tempThis.file = tempThis[readStreamPathOrFdSymbol] = pathOrFd;
       } else if (typeof pathOrFd === "number") {
         pathOrFd |= 0;
+        console.log("pathOrFd", pathOrFd);
         if (pathOrFd < 0) {
           throw new TypeError("Expected fd to be a positive integer");
         }
@@ -1076,20 +1080,19 @@ realpath.native = realpath;
 realpathSync.native = realpathSync;
 
 let lazy_cpSync = null;
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  // attempt to use the native code version if possible
-  // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
   if (!options) return fs.copyFileSync(src, dest);
   if (typeof options !== "object") {
     throw new TypeError("options must be an object");
   }
-  let mode = options.mode;
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
     if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
     return lazy_cpSync(src, dest, options);
   }
-  if (options.recursive) return fs.cpSync(src, dest, options.errorOnExist, options.force ?? true, options.mode);
-  return fs.copyFileSync(src, dest, mode);
+  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
 function cp(src, dest, options, callback) {
@@ -1134,7 +1137,7 @@ export default {
   chownSync,
   close,
   closeSync,
-  constants: promises.constants,
+  constants,
   copyFile,
   copyFileSync,
   cp,

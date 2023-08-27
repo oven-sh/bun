@@ -642,25 +642,17 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const source = await this.#getSource(sourceId);
 
     const oldBreakpoints = this.#getBreakpoints(sourceId);
-    console.log("OLD BREAKPOINTS", oldBreakpoints);
-
     const breakpoints = await Promise.all(
       requests!.map(async ({ line, column, ...options }) => {
         const location = this.#generatedLocation(source, line, column);
-        console.log("NEW BREAKPOINT", location);
 
         for (const breakpoint of oldBreakpoints) {
           const { generatedLocation } = breakpoint;
-          if (
-            location.lineNumber === generatedLocation.lineNumber &&
-            location.columnNumber === generatedLocation.columnNumber
-          ) {
-            console.log("SAME BREAKPOINT");
+          if (locationIsSame(generatedLocation, location)) {
             return breakpoint;
           }
         }
 
-        console.log("CREATE BREAKPOINT");
         try {
           const { breakpointId, actualLocation } = await this.send("Debugger.setBreakpoint", {
             location,
@@ -985,14 +977,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    if (reason === "PauseOnNextStatement") {
-      for (const { functionName } of callFrames) {
-        if (functionName === "module code") {
-          this.send("Debugger.resume");
-          return;
-        }
-      }
-    }
+    // if (reason === "PauseOnNextStatement") {
+    //   for (const { functionName } of callFrames) {
+    //     if (functionName === "module code") {
+    //       this.send("Debugger.resume");
+    //       return;
+    //     }
+    //   }
+    // }
 
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
@@ -1761,4 +1753,8 @@ function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): st
 
 function numberIsValid(number?: number): number is number {
   return typeof number === "number" && isFinite(number) && number >= 0;
+}
+
+function locationIsSame(a: JSC.Debugger.Location, b: JSC.Debugger.Location): boolean {
+  return a.scriptId === b.scriptId && a.lineNumber === b.lineNumber && a.columnNumber === b.columnNumber;
 }

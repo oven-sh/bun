@@ -219,7 +219,15 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "title": "Bun Terminal",
+          "id": "bun"
+        }
+      ]
+    }
   },
   "description": "The Visual Studio Code extension for Bun.",
   "displayName": "Bun",

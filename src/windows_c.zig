@@ -112,4 +112,46 @@ pub const SystemErrno = enum(u8) {
     EWOULDBLOCK = 140,
 
     pub const max = @intFromEnum(SystemErrno.EWOULDBLOCK);
+
+    labels_.set(.EADDRINUSE, "Address in use");
+    labels_.set(.EADDRNOTAVAIL, "Address not available");
+    labels_.set(.EAFNOSUPPORT, "Address family not supported");
+    labels_.set(.EALREADY, "Connection already in progress");
+    labels_.set(.EBADMSG, "Bad message");
+    labels_.set(.ECANCELED, "Operation canceled");
+    labels_.set(.ECONNABORTED, "Connection aborted");
+    labels_.set(.ECONNREFUSED, "Connection refused");
+    labels_.set(.ECONNRESET, "Connection reset");
+    labels_.set(.EDESTADDRREQ, "Destination address required");
+    labels_.set(.EHOSTUNREACH, "Host unreachable");
+    labels_.set(.EIDRM, "Identifier removed");
+    labels_.set(.EINPROGRESS, "Operation in progress");
+    labels_.set(.EISCONN, "Already connected");
+    labels_.set(.ELOOP, "Too many symbolic link levels");
+    labels_.set(.EMSGSIZE, "Message size");
+    labels_.set(.ENETDOWN, "Network down");
+    labels_.set(.ENETRESET, "Network reset");
+    labels_.set(.ENETUNREACH, "Network unreachable");
+    labels_.set(.ENOBUFS, "No buffer space");
+    labels_.set(.ENODATA, "No message available");
+    labels_.set(.ENOLINK, "No link");
+    labels_.set(.ENOMSG, "No message");
+    labels_.set(.ENOPROTOOPT, "No protocol option");
+    labels_.set(.ENOSR, "No stream resources");
+    labels_.set(.ENOSTR, "Not a stream");
+    labels_.set(.ENOTCONN, "Not connected");
+    labels_.set(.ENOTRECOVERABLE, "State not recoverable");
+    labels_.set(.ENOTSOCK, "Not a socket");
+    labels_.set(.ENOTSUP, "Not supported");
+    labels_.set(.EOPNOTSUPP, "Operation not supported");
+    labels_.set(.EOTHER, "Other");
+    labels_.set(.EOVERFLOW, "Value too large");
+    labels_.set(.EOWNERDEAD, "Owner dead");
+    labels_.set(.EPROTO, "Protocol error");
+    labels_.set(.EPROTONOSUPPORT, "Protocol not supported");
+    labels_.set(.EPROTOTYPE, "Wrong protocol type");
+    labels_.set(.ETIME, "Stream timeout");
+    labels_.set(.ETIMEDOUT, "Timed out");
+    labels_.set(.ETXTBSY, "Text file busy");
+    labels_.set(.EWOULDBLOCK, "Operation would block");
 };

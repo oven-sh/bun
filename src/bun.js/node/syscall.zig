@@ -1013,11 +1013,19 @@ pub fn getMaxPipeSizeOnLinux() usize {
 }
 
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
-    if (comptime Environment.isPosix) {
+    if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            system.llseek(fd, offset, null, os.SEEK.SET),
+            linux.llseek(fd, offset, null, os.SEEK.SET),
             .lseek,
-            @intCast(fd),
+            @as(bun.FileDescriptor, @intCast(fd)),
+        ) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isMac) {
+        return Maybe(void).errnoSysFd(
+            std.c.lseek(fd, @as(std.c.off_t, @intCast(offset)), os.SEEK.SET),
+            .lseek,
+            @as(bun.FileDescriptor, @intCast(fd)),
         ) orelse Maybe(void).success;
     }
 

@@ -3112,7 +3112,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        .{ .fd = bun.toFD(repo_fd) },
+                        .{ .fd = bun.fdcast(repo_fd) },
                         alias,
                         this.lockfile.str(&dep.committish),
                     );

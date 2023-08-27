@@ -437,6 +437,11 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
+        if (comptime Environment.isWindows) {
+            Output.prettyError("TODO: windows support. sorry!!\n", .{});
+            Global.exit(1);
+        }
+
         bun.C.moveFileZWithHandle(
             fd,
             std.fs.cwd().fd,

@@ -937,7 +937,7 @@ pub const FFI = struct {
             var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.allow_assert and Environment.isPosix) {
                 debug_write: {
                     const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
                     _ = std.os.write(fd, source_code.items) catch break :debug_write;

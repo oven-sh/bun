@@ -2527,7 +2527,7 @@ pub const Resolver = struct {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 var open_dirs: []std.fs.IterableDir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    _ = bun.sys.close(open_dir.dir.fd);
+                    _ = bun.sys.close(bun.toFD(open_dir.dir.fd));
                 }
             }
         }

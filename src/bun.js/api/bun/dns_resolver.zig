@@ -225,6 +225,11 @@ pub fn addressToJS(
     address: std.net.Address,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
+    if (comptime Environment.isWindows) {
+        globalThis.throwTODO("TODO: windows");
+        return .zero;
+    }
+
     return addressToString(allocator, address).toValueGC(globalThis);
 }
 

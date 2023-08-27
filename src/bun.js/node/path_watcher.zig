@@ -656,7 +656,7 @@ pub const PathWatcherManager = struct {
         var it = this.file_paths.iterator();
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
-            std.os.close(path.fd);
+            _ = bun.sys.close(path.fd);
             bun.default_allocator.free(path.path);
         }
 

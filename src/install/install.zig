@@ -4304,7 +4304,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = .default,
         global: bool = false,
 
-        global_bin_dir: std.fs.IterableDir = .{ .dir = .{ .fd = std.math.maxInt(std.os.fd_t) } },
+        global_bin_dir: std.fs.IterableDir = .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx

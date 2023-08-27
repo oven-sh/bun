@@ -1111,7 +1111,7 @@ pub const Blob = struct {
         var written: usize = 0;
         defer {
             if (truncate) {
-                _ = bun.sys.system.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {

@@ -112,6 +112,16 @@ pub const SystemErrno = enum(u8) {
 
     pub const max = @intFromEnum(SystemErrno.EWOULDBLOCK);
 
+    pub fn init(code: anytype) ?SystemErrno {
+        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
+            if (code < 0)
+                return init(-code);
+        }
+
+        if (code >= max) return null;
+        return @as(SystemErrno, @enumFromInt(code));
+    }
+
     pub const labels: bun.enums.EnumMap(SystemErrno, []const u8) = brk: {
         var labels_ = bun.enums.EnumMap(SystemErrno, []const u8).init(.{
             .E2BIG = "Argument list too long",

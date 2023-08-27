@@ -772,7 +772,7 @@ pub const PathLike = union(Tag) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: bun.FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
             JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
             return false;
@@ -985,12 +985,12 @@ pub const ArgumentsSlice = struct {
 
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
     if (!value.isNumber() or value.isBigInt()) return null;
-    const fd = value.toInt32();
+    const fd = value.toInt64();
     if (!Valid.fileDescriptor(fd, ctx, exception)) {
         return null;
     }
 
-    return @as(bun.FileDescriptor, @truncate(fd));
+    return @as(bun.FileDescriptor, @intCast(fd));
 }
 
 // Node.js docs:

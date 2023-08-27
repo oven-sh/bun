@@ -1775,7 +1775,7 @@ pub const Fetch = struct {
 
                 if (proxy == null and bun.HTTP.Sendfile.isEligible(url)) {
                     use_sendfile: {
-                        const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(opened_fd)) {
+                        const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(opened_fd)) {
                             .result => |result| result,
                             // bail out for any reason
                             .err => break :use_sendfile,
@@ -1783,7 +1783,7 @@ pub const Fetch = struct {
 
                         if (Environment.isMac) {
                             // macOS only supports regular files for sendfile()
-                            if (!std.os.S.ISREG(stat.mode)) {
+                            if (!bun.isRegularFile(stat.mode)) {
                                 break :use_sendfile;
                             }
                         }
@@ -1795,7 +1795,7 @@ pub const Fetch = struct {
 
                         const original_size = body.Blob.size;
                         const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-                        const blob_size = if (std.os.S.ISREG(stat.mode))
+                        const blob_size = if (bun.isRegularFile(stat.mode))
                             stat_size
                         else
                             @min(original_size, stat_size);
@@ -1809,7 +1809,7 @@ pub const Fetch = struct {
                             },
                         };
 
-                        if (std.os.S.ISREG(stat.mode)) {
+                        if (bun.isRegularFile(stat.mode)) {
                             http_body.Sendfile.offset = @min(http_body.Sendfile.offset, stat_size);
                             http_body.Sendfile.remain = @min(@max(http_body.Sendfile.remain, http_body.Sendfile.offset), stat_size) -| http_body.Sendfile.offset;
                         }

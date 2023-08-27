@@ -1214,17 +1214,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
+                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio))
                             return .zero;
                     }
                 }
@@ -1280,19 +1280,19 @@ pub const Subprocess = struct {
         stdio[0].setUpChildIoPosixSpawn(
             &actions,
             stdin_pipe,
-            std.os.STDIN_FILENO,
+            bun.STDIN_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdin");
 
         stdio[1].setUpChildIoPosixSpawn(
             &actions,
             stdout_pipe,
-            std.os.STDOUT_FILENO,
+            bun.STDOUT_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdout");
 
         stdio[2].setUpChildIoPosixSpawn(
             &actions,
             stderr_pipe,
-            std.os.STDERR_FILENO,
+            bun.STDERR_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
@@ -1371,13 +1371,13 @@ pub const Subprocess = struct {
             .globalThis = globalThis,
             .pid = pid,
             .pidfd = pidfd,
-            .stdin = Writable.init(stdio[std.os.STDIN_FILENO], stdin_pipe[1], globalThis) catch {
+            .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return .zero;
             },
             // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-            .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-            .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stdout = Readable.init(stdio[bun.STDOUT_FD], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
         };
@@ -1680,7 +1680,7 @@ pub const Subprocess = struct {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
-                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
                 },
                 .inherit => {
@@ -1692,7 +1692,7 @@ pub const Subprocess = struct {
                 },
 
                 .ignore => {
-                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
                 },
             }
@@ -1712,15 +1712,15 @@ pub const Subprocess = struct {
                         stdio_array[i] = Stdio{ .inherit = {} };
                     } else {
                         switch (@as(std.os.fd_t, @intCast(i))) {
-                            std.os.STDIN_FILENO => {
-                                if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
+                            bun.STDIN_FD => {
+                                if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
                                     globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                                     return false;
                                 }
                             },
 
-                            std.os.STDOUT_FILENO, std.os.STDERR_FILENO => {
-                                if (i == std.os.STDIN_FILENO) {
+                            bun.STDOUT_FD, bun.STDERR_FD => {
+                                if (i == bun.STDIN_FD) {
                                     globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                                     return false;
                                 }
@@ -1777,15 +1777,15 @@ pub const Subprocess = struct {
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
 
             switch (@as(std.os.fd_t, @intCast(i))) {
-                std.os.STDIN_FILENO => {
-                    if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
+                bun.STDIN_FD => {
+                    if (i == bun.STDERR_FD or i == bun.STDOUT_FD) {
                         globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
                         return false;
                     }
                 },
 
-                std.os.STDOUT_FILENO, std.os.STDERR_FILENO => {
-                    if (i == std.os.STDIN_FILENO) {
+                bun.STDOUT_FD, bun.STDERR_FD => {
+                    if (i == bun.STDIN_FD) {
                         globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
                         return false;
                     }
@@ -1806,7 +1806,7 @@ pub const Subprocess = struct {
             return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, stdio_array);
         } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
             var req = req_const;
-            if (i == std.os.STDIN_FILENO) {
+            if (i == bun.STDIN_FD) {
                 if (req.toAnyBlob(globalThis)) |blob| {
                     return extractStdioBlob(globalThis, blob, i, stdio_array);
                 }

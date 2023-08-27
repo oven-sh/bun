@@ -144,33 +144,33 @@ pub fn chdir(destination: [:0]const u8) Maybe(void) {
     return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
 }
 
-pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
+pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
+    var stat_ = mem.zeroes(bun.Stat);
     const rc = statSym(path, &stat_);
 
     if (comptime Environment.allow_assert)
         log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-    if (Maybe(os.Stat).errnoSys(rc, .stat)) |err| return err;
-    return Maybe(os.Stat){ .result = stat_ };
+    if (Maybe(bun.Stat).errnoSys(rc, .stat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
 }
 
-pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
-    return Maybe(os.Stat){ .result = stat_ };
+pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
+    var stat_ = mem.zeroes(bun.Stat);
+    if (Maybe(bun.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
 }
 
-pub fn fstat(fd: bun.FileDescriptor) Maybe(os.Stat) {
-    var stat_ = mem.zeroes(os.Stat);
+pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
+    var stat_ = mem.zeroes(bun.Stat);
 
     const rc = fstatSym(fd, &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({d}) = {d}", .{ fd, rc });
 
-    if (Maybe(os.Stat).errnoSys(rc, .fstat)) |err| return err;
-    return Maybe(os.Stat){ .result = stat_ };
+    if (Maybe(bun.Stat).errnoSys(rc, .fstat)) |err| return err;
+    return Maybe(bun.Stat){ .result = stat_ };
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
@@ -252,7 +252,7 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
 
 /// This function will prevent stdout and stderr from being closed.
 pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
-    if (fd == std.os.STDOUT_FILENO or fd == std.os.STDERR_FILENO) {
+    if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
         log("close({d}) SKIPPED", .{fd});
         return null;
     }
@@ -279,6 +279,14 @@ pub fn closeAllowingStdoutAndStderr(fd: bun.FileDescriptor) ?Syscall.Error {
             .BADF => Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close },
             else => null,
         };
+    }
+
+    if (comptime Environment.isWindows) {
+        if (kernel32.CloseHandle(bun.fdcast(fd)) == 0) {
+            return Syscall.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close };
+        }
+
+        return null;
     }
 
     @compileError("Not implemented yet");

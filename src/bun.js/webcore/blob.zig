@@ -1321,15 +1321,15 @@ pub const Blob = struct {
                 },
                 .fd => {
                     switch (path_.fd) {
-                        std.os.STDIN_FILENO => return Blob.initWithStore(
+                        bun.STDIN_FD => return Blob.initWithStore(
                             vm.rareData().stdin(),
                             globalThis,
                         ),
-                        std.os.STDERR_FILENO => return Blob.initWithStore(
+                        bun.STDERR_FD => return Blob.initWithStore(
                             vm.rareData().stderr(),
                             globalThis,
                         ),
-                        std.os.STDOUT_FILENO => return Blob.initWithStore(
+                        bun.STDOUT_FD => return Blob.initWithStore(
                             vm.rareData().stdout(),
                             globalThis,
                         ),
@@ -1820,7 +1820,7 @@ pub const Blob = struct {
             }
 
             fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
-                const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+                const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
                         this.errno = AsyncIO.asError(err.errno);
@@ -1849,14 +1849,14 @@ pub const Blob = struct {
                     return;
                 }
 
-                if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
+                if (stat.size > 0 and bun.isRegularFile(stat.mode)) {
                     this.size = @min(
                         @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
                     // they didn't explicitly set a size and we're reading from something that's not a regular file
-                } else if (stat.size == 0 and !std.os.S.ISREG(stat.mode)) {
+                } else if (stat.size == 0 and !bun.isRegularFile(stat.mode)) {
                     this.size = if (this.max_length == Blob.max_size)
                         4096
                     else
@@ -2419,7 +2419,7 @@ pub const Blob = struct {
             pub fn runAsync(this: *CopyFile) void {
                 // defer task.onFinish();
 
-                var stat_: ?std.os.Stat = null;
+                var stat_: ?bun.Stat = null;
 
                 if (this.destination_file_store.pathlike == .fd) {
                     this.destination_fd = this.destination_file_store.pathlike.fd;
@@ -2505,7 +2505,7 @@ pub const Blob = struct {
 
                 if (this.destination_file_store.pathlike == .fd) {}
 
-                const stat: std.os.Stat = stat_ orelse switch (JSC.Node.Syscall.fstat(this.source_fd)) {
+                const stat: bun.Stat = stat_ orelse switch (JSC.Node.Syscall.fstat(this.source_fd)) {
                     .result => |result| result,
                     .err => |err| {
                         this.doClose();
@@ -2611,7 +2611,7 @@ pub const Blob = struct {
             }
 
             if (this.mode != 0) {
-                return std.os.S.ISREG(this.mode);
+                return bun.isRegularFile(this.mode);
             }
 
             return null;
@@ -2786,9 +2786,14 @@ pub const Blob = struct {
             return JSValue.jsBoolean(true);
         }
 
+        if (comptime Environment.isWindows) {
+            this.globalThis.throwTODO("exists is not implemented on Windows");
+            return JSValue.jsUndefined();
+        }
+
         // We say regular files and pipes exist.
         // This is mostly meant for "Can we use this in new Response(file)?"
-        return JSValue.jsBoolean(std.os.S.ISREG(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
     }
 
     // This mostly means 'can it be read?'
@@ -3149,16 +3154,21 @@ pub const Blob = struct {
 
     /// resolve file stat like size, last_modified
     fn resolveFileStat(store: *Store) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         if (store.data.file.pathlike == .path) {
             var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                 .result => |stat| {
-                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                    store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)
                         @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
-                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.
@@ -3167,12 +3177,12 @@ pub const Blob = struct {
         } else if (store.data.file.pathlike == .fd) {
             switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
                 .result => |stat| {
-                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                    store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)
                         @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
-                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.

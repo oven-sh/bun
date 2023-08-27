@@ -1427,26 +1427,46 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isCharacterDevice(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isDirectory(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isFIFO(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(bun.isRegularFile(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isSocket(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
@@ -1456,6 +1476,10 @@ pub fn StatType(comptime Big: bool) type {
         ///
         /// See https://nodejs.org/api/fs.html#statsissymboliclink
         pub fn isSymbolicLink(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
@@ -1465,7 +1489,7 @@ pub fn StatType(comptime Big: bool) type {
             bun.default_allocator.destroy(this);
         }
 
-        pub fn init(stat_: os.Stat) This {
+        pub fn init(stat_: bun.Stat) This {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
@@ -1495,7 +1519,7 @@ pub fn StatType(comptime Big: bool) type {
             };
         }
 
-        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat) *This {
+        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: bun.Stat) *This {
             var this = allocator.create(This) catch unreachable;
             this.* = init(stat);
             return this;
@@ -1558,7 +1582,7 @@ pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,
 
-    pub inline fn init(stat_: os.Stat, big: bool) Stats {
+    pub inline fn init(stat_: bun.Stat, big: bool) Stats {
         if (big) {
             return .{ .big = StatsBig.init(stat_) };
         } else {

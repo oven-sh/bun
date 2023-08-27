@@ -1890,7 +1890,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // stat only blocks if the target is a file descriptor
-            const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
@@ -1904,7 +1904,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             if (Environment.isMac) {
-                if (!std.os.S.ISREG(stat.mode)) {
+                if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
                         _ = JSC.Node.Syscall.close(fd);
                     }
@@ -1923,7 +1923,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (Environment.isLinux) {
-                if (!(std.os.S.ISREG(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
+                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
                     if (auto_close) {
                         _ = JSC.Node.Syscall.close(fd);
                     }
@@ -1943,7 +1943,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const original_size = this.blob.Blob.size;
             const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
+            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
                 stat_size
             else
                 @min(original_size, stat_size);
@@ -1961,12 +1961,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if we are sending only part of a file, include the content-range header
             // only include content-range automatically when using a file path instead of an fd
             // this is to better support manually controlling the behavior
-            if (std.os.S.ISREG(stat.mode) and auto_close) {
+            if (bun.isRegularFile(stat.mode) and auto_close) {
                 this.flags.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
             }
 
             // we know the bounds when we are sending a regular file
-            if (std.os.S.ISREG(stat.mode)) {
+            if (bun.isRegularFile(stat.mode)) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }

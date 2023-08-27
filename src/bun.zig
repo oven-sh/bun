@@ -604,7 +604,11 @@ pub fn ensureNonBlocking(fd: anytype) void {
 }
 
 const global_scope_log = Output.scoped(.bun, false);
-pub fn isReadable(fd: std.os.fd_t) PollFlag {
+pub fn isReadable(fd: FileDescriptor) PollFlag {
+    if (comptime Environment.isWindows) {
+        return todo(@src(), PollFlag.not_ready);
+    }
+
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
@@ -624,7 +628,11 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
-pub fn isWritable(fd: std.os.fd_t) PollFlag {
+pub fn isWritable(fd: FileDescriptor) PollFlag {
+    if (comptime Environment.isWindows) {
+        return todo(@src(), PollFlag.not_ready);
+    }
+
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
@@ -1607,7 +1615,7 @@ pub inline fn assertComptime() void {
 const TODO_LOG = Output.scoped(.TODO, false);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
-        TODO_LOG("{}", .{src});
+        TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
     }
 
     return value;
@@ -1620,6 +1628,15 @@ pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
 
     return @ptrFromInt(fd);
 }
+
+pub inline fn socketcast(fd: FileDescriptor) std.os.fd_t {
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return fd;
+    }
+
+    return @ptrFromInt(fd);
+}
+
 pub inline fn toFD(fd: std.os.fd_t) FileDescriptor {
     if (comptime FileDescriptor == std.os.fd_t) {
         return fd;
@@ -1635,3 +1652,48 @@ else
     std.os.HOST_NAME_MAX;
 
 pub const enums = @import("./enums.zig");
+const WindowsStat = extern struct {
+    dev: u32,
+    ino: u32,
+    nlink: usize,
+
+    mode: JSC.Node.Mode,
+    uid: u32,
+    gid: u32,
+    rdev: u32,
+    size: u32,
+    blksize: isize,
+    blocks: i64,
+
+    atim: std.c.timespec,
+    mtim: std.c.timespec,
+    ctim: std.c.timespec,
+};
+
+pub const Stat = if (Environment.isPosix) std.os.Stat else WindowsStat;
+
+pub const posix = struct {
+    pub const STDOUT_FD = std.os.STDOUT_FILENO;
+    pub const STDERR_FD = std.os.STDERR_FILENO;
+    pub const STDIN_FD = std.os.STDIN_FILENO;
+};
+
+pub const win32 = struct {
+    pub var STDOUT_FD: FileDescriptor = undefined;
+    pub var STDERR_FD: FileDescriptor = undefined;
+    pub var STDIN_FD: FileDescriptor = undefined;
+};
+
+pub usingnamespace if (Environment.isPosix) posix else win32;
+
+pub fn isRegularFile(mode: JSC.Node.Mode) bool {
+    if (comptime Environment.isPosix) {
+        return std.os.S.ISREG(mode);
+    }
+
+    if (comptime Environment.isWindows) {
+        return todo(@src(), true);
+    }
+
+    @compileError("Unsupported platform");
+}

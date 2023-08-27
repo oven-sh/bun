@@ -1194,7 +1194,7 @@ pub const FileSink = struct {
         };
 
         if (this.poll_ref == null) {
-            const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     if (auto_close) {
@@ -1205,7 +1205,7 @@ pub const FileSink = struct {
             };
 
             this.mode = stat.mode;
-            this.auto_truncate = this.auto_truncate and (std.os.S.ISREG(this.mode));
+            this.auto_truncate = this.auto_truncate and (bun.isRegularFile(this.mode));
         } else {
             this.auto_truncate = false;
             this.max_write_size = max_fifo_size;
@@ -1460,7 +1460,7 @@ pub const FileSink = struct {
             }
 
             if (this.auto_truncate)
-                std.os.ftruncate(fd, total) catch {};
+                std.os.ftruncate(bun.fdcast(fd), total) catch {};
 
             if (this.auto_close) {
                 _ = JSC.Node.Syscall.close(fd);
@@ -4144,7 +4144,7 @@ pub const File = struct {
             }
         }
 
-        const stat: std.os.Stat = switch (Syscall.fstat(fd)) {
+        const stat: bun.Stat = switch (Syscall.fstat(fd)) {
             .result => |result| result,
             .err => |err| {
                 if (auto_close) {
@@ -4171,7 +4171,7 @@ pub const File = struct {
         file.mode = @as(JSC.Node.Mode, @intCast(stat.mode));
         this.mode = file.mode;
 
-        this.seekable = std.os.S.ISREG(stat.mode);
+        this.seekable = bun.isRegularFile(stat.mode);
         file.seekable = this.seekable;
 
         if (this.seekable) {
@@ -4743,6 +4743,10 @@ pub fn NewReadyWatcher(
             }
 
             if (comptime @hasField(Context, "mode")) {
+                if (comptime Environment.isWindows) {
+                    return bun.todo(@src(), false);
+                }
+
                 return std.os.S.ISFIFO(this.mode);
             }
 

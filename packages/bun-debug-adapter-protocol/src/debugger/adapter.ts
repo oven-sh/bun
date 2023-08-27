@@ -873,6 +873,42 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
+  async dataBreakpointInfo(request: DAP.DataBreakpointInfoRequest): Promise<DAP.DataBreakpointInfoResponse> {
+    const { variablesReference, name, frameId } = request;
+    const variable = this.#getVariable(variablesReference);
+
+    if (!variable) {
+      return {
+        dataId: null,
+        description: "Variable not found.",
+      };
+    }
+
+    const { objectId } = variable;
+    if (!objectId) {
+      return {
+        dataId: null,
+        description: "Variable cannot be watched.",
+      };
+    }
+
+    console.log("dataBreakpointInfo", { variablesReference, name, frameId });
+    return {
+      dataId: variablesReference,
+      description: "",
+      accessTypes: ["read", "write", "readWrite"],
+      canPersist: false,
+    };
+  }
+
+  async setDataBreakpoints(request: DAP.SetDataBreakpointsRequest): Promise<DAP.SetDataBreakpointsResponse> {
+    console.log("setDataBreakpoints", request);
+
+    return {
+      breakpoints: [],
+    };
+  }
+
   async evaluate(request: DAP.EvaluateRequest): Promise<DAP.EvaluateResponse> {
     const { expression, frameId, context } = request;
     const callFrameId = this.#getCallFrameId(frameId);
@@ -1420,7 +1456,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
     const { variablesReference, start, count } = request;
-    const variable = this.#variables.get(variablesReference);
+    const variable = this.#getVariable(variablesReference);
 
     let variables: Variable[];
     if (!variable) {
@@ -1439,7 +1475,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   async setVariable(request: DAP.SetVariableRequest): Promise<DAP.SetVariableResponse> {
     const { variablesReference, name, value } = request;
 
-    const variable = this.#variables.get(variablesReference);
+    const variable = this.#getVariable(variablesReference);
     if (!variable) {
       throw new Error("Variable not found.");
     }
@@ -1481,25 +1517,35 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     return this.#addObject(result, { objectGroup });
   }
 
+  #getVariable(variablesReference?: number): Variable | undefined {
+    if (!variablesReference) {
+      return undefined;
+    }
+    return this.#variables.get(variablesReference);
+  }
+
   #addObject(
     remoteObject: JSC.Runtime.RemoteObject,
-    propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string },
+    propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string; evaluateName?: string },
   ): Variable {
     const { objectId, type, subtype, size } = remoteObject;
+    const { objectGroup, evaluateName } = propertyDescriptor ?? {};
     const variablesReference = objectId ? this.#variableId++ : 0;
 
     const variable: Variable = {
       objectId,
-      objectGroup: propertyDescriptor?.objectGroup,
-      evaluateName: propertyDescriptorToName(propertyDescriptor),
-      name: propertyDescriptorToName(propertyDescriptor),
+      objectGroup,
+      variablesReference,
       type: subtype || type,
       value: remoteObjectToString(remoteObject),
-      variablesReference,
-      indexedVariables: isIndexed(subtype) ? size : undefined,
-      namedVariables: isNamedIndexed(subtype) ? size : undefined,
+      name: propertyDescriptorToName(propertyDescriptor),
+      evaluateName: propertyDescriptorToEvaluateName(propertyDescriptor, evaluateName),
+      indexedVariables: isArrayLike(subtype) ? size : undefined,
+      namedVariables: isMap(subtype) ? size : undefined,
       presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
+
+    console.log("VARIABLE", variable);
 
     if (variablesReference) {
       this.#variables.set(variablesReference, variable);
@@ -1508,41 +1554,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     return variable;
   }
 
-  #addProperty(
-    propertyDescriptor:
-      | JSC.Runtime.PropertyDescriptor
-      | (JSC.Runtime.InternalPropertyDescriptor & { objectGroup?: string }),
-  ): Variable[] {
-    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
-    const variables: Variable[] = [];
-
-    if (value) {
-      variables.push(this.#addObject(value, propertyDescriptor));
-    }
-
-    if (get) {
-      const { type } = get;
-      if (type !== "undefined") {
-        variables.push(this.#addObject(get, propertyDescriptor));
-      }
-    }
-
-    if (set) {
-      const { type } = set;
-      if (type !== "undefined") {
-        variables.push(this.#addObject(set, propertyDescriptor));
-      }
-    }
-
-    if (symbol) {
-      variables.push(this.#addObject(symbol, propertyDescriptor));
-    }
-
-    return variables;
-  }
-
   async #getProperties(variable: Variable, offset?: number, count?: number): Promise<Variable[]> {
-    const { objectId, objectGroup, type, indexedVariables, namedVariables } = variable;
+    const { objectId, objectGroup, type, evaluateName, indexedVariables, namedVariables } = variable;
     const variables: Variable[] = [];
 
     if (!objectId || type === "symbol") {
@@ -1555,12 +1568,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
 
     for (const property of properties) {
-      variables.push(...this.#addProperty({ ...property, objectGroup }));
+      variables.push(...this.#addProperty(property, { objectGroup, evaluateName, parentType: type }));
     }
 
     if (internalProperties) {
       for (const property of internalProperties) {
-        variables.push(...this.#addProperty({ ...property, objectGroup, configurable: false }));
+        variables.push(
+          ...this.#addProperty(property, { objectGroup, evaluateName, parentType: type, isSynthetic: true }),
+        );
       }
     }
 
@@ -1579,8 +1594,56 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           const { value, description } = key;
           name = String(value ?? description);
         }
-        variables.push(this.#addObject(value, { name, objectGroup }));
+        variables.push(
+          ...this.#addProperty(
+            { name, value },
+            {
+              objectGroup,
+              evaluateName,
+              parentType: type,
+              isSynthetic: true,
+            },
+          ),
+        );
       }
+    }
+
+    return variables;
+  }
+
+  #addProperty(
+    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
+    options?: {
+      objectGroup?: string;
+      evaluateName?: string;
+      isSynthetic?: boolean;
+      parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+    },
+  ): Variable[] {
+    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
+    const descriptor = { ...propertyDescriptor, ...options };
+    const variables: Variable[] = [];
+
+    if (value) {
+      variables.push(this.#addObject(value, descriptor));
+    }
+
+    if (get) {
+      const { type } = get;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(get, descriptor));
+      }
+    }
+
+    if (set) {
+      const { type } = set;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(set, descriptor));
+      }
+    }
+
+    if (symbol) {
+      variables.push(this.#addObject(symbol, descriptor));
     }
 
     return variables;
@@ -1672,11 +1735,15 @@ function scopePresentationHint(type: JSC.Debugger.Scope["type"]): DAP.Scope["pre
   }
 }
 
-function isIndexed(subtype: JSC.Runtime.RemoteObject["subtype"]): boolean {
-  return subtype === "array" || subtype === "set" || subtype === "weakset";
+function isSet(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
+  return subtype === "set" || subtype === "weakset";
 }
 
-function isNamedIndexed(subtype: JSC.Runtime.RemoteObject["subtype"]): boolean {
+function isArrayLike(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
+  return subtype === "array" || isSet(subtype);
+}
+
+function isMap(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
   return subtype === "map" || subtype === "weakmap";
 }
 
@@ -1744,10 +1811,14 @@ function sanitizeExpression(expression: string): string {
 
 function remoteObjectToVariablePresentationHint(
   remoteObject: JSC.Runtime.RemoteObject,
-  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor>,
+  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & {
+    isSynthetic?: boolean;
+    parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+  },
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
-  const { name, configurable, writable, isPrivate, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
+  const { name, configurable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } =
+    propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
   const hasSymbol = symbol?.type === "symbol";
@@ -1763,13 +1834,13 @@ function remoteObjectToVariablePresentationHint(
   if (subtype === "class") {
     kind = "class";
   }
-  if (isPrivate || configurable === false || hasSymbol || name === "__proto__") {
+  if (isPrivate || isSynthetic || configurable === false || hasSymbol || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {
     attributes.push("rawString");
   }
-  if (writable === false || (hasGetter && !hasSetter)) {
+  if (isSynthetic || writable === false || (hasGetter && !hasSetter)) {
     attributes.push("readOnly");
   }
   if (wasThrown || hasGetter) {
@@ -1794,6 +1865,48 @@ function propertyDescriptorToName(propertyDescriptor?: Partial<JSC.Runtime.Prope
     return "[[Prototype]]";
   }
   return name ?? "";
+}
+
+function propertyDescriptorToEvaluateName(
+  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & {
+    parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+  },
+  evaluateName?: string,
+): string | undefined {
+  if (!propertyDescriptor) {
+    return evaluateName;
+  }
+  const { name: property, parentType: type } = propertyDescriptor;
+  if (!property) {
+    return evaluateName;
+  }
+  if (!evaluateName) {
+    return property;
+  }
+  if (isMap(type)) {
+    if (isNumeric(property)) {
+      return `${evaluateName}.get(${property})`;
+    }
+    return `${evaluateName}.get(${JSON.stringify(property)})`;
+  }
+  if (isSet(type)) {
+    return `[...${evaluateName}.values()][${property}]`;
+  }
+  if (isNumeric(property)) {
+    return `${evaluateName}[${property}]`;
+  }
+  if (isIdentifier(property)) {
+    return `${evaluateName}.${property}`;
+  }
+  return `${evaluateName}[${JSON.stringify(property)}]`;
+}
+
+function isNumeric(string: string): boolean {
+  return /^\d+$/.test(string);
+}
+
+function isIdentifier(string: string): boolean {
+  return /^[#$a-z_][0-9a-z_$]*$/i.test(string);
 }
 
 function unknownToError(input: unknown): Error {

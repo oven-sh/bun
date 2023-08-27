@@ -205,7 +205,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports data breakpoints.
    * @see setDataBreakpoints
    */
-  supportsDataBreakpoints: false,
+  supportsDataBreakpoints: true,
 
   /**
    * The debug adapter supports the `readMemory` request.

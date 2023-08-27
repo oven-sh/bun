@@ -261,6 +261,7 @@
   },
   "workspaces": [
     "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol"
+    "../bun-inspector-protocol",
+    "../bun-wasm"
   ]
 }

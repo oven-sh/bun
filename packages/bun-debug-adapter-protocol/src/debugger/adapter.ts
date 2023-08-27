@@ -115,7 +115,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #process?: ChildProcess;
   #initialized?: InitializeRequest;
   #launched?: LaunchRequest;
-  #connected?: boolean;
 
   constructor(url?: string | URL) {
     super();
@@ -138,10 +137,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
   }
 
+  /**
+   * Gets the inspector url.
+   */
   get url(): string {
     return this.#inspector.url;
   }
 
+  /**
+   * Starts the inspector.
+   * @param url the inspector url
+   * @returns if the inspector was able to connect
+   */
   start(url?: string): Promise<boolean> {
     return this.#inspector.start(url);
   }
@@ -184,7 +191,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     let result: unknown;
     try {
       // @ts-ignore
-      result = this[event as keyof this](...(args as any));
+      result = this[event](...args);
     } catch (cause) {
       sent ||= this.emit("Adapter.error", unknownToError(cause));
       return sent;
@@ -218,7 +225,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     let result: unknown;
     try {
       // @ts-ignore
-      result = await this[command as keyof this](args);
+      result = await this[command](args);
     } catch (cause) {
       const error = unknownToError(cause);
       this.emit("Adapter.error", error);
@@ -321,6 +328,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
+    this.send("Runtime.enableControlFlowProfiler");
     this.send("Console.enable");
     this.send("Debugger.enable");
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
@@ -1495,7 +1503,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#variables.length = 1;
     this.#launched = undefined;
     this.#initialized = undefined;
-    this.#connected = undefined;
   }
 }
 

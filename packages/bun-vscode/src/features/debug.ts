@@ -137,14 +137,17 @@ class FileDebugSession extends DebugSession {
     super();
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
     const url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+
     this.adapter = new DebugAdapter(url);
     this.adapter.on("Adapter.response", response => this.sendResponse(response));
     this.adapter.on("Adapter.event", event => this.sendEvent(event));
+
     adapters.set(url, this);
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
     const { type } = message;
+
     if (type === "request") {
       this.adapter.emit("Adapter.request", message);
     } else {
@@ -182,15 +185,6 @@ class TerminalDebugSession extends FileDebugSession {
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
   }
-}
-
-function isJavaScript(languageId: string): boolean {
-  return (
-    languageId === "javascript" ||
-    languageId === "javascriptreact" ||
-    languageId === "typescript" ||
-    languageId === "typescriptreact"
-  );
 }
 
 function getCurrentPath(target?: vscode.Uri): string | undefined {

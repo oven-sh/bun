@@ -1898,8 +1898,8 @@ pub const Package = extern struct {
             defer pkg_dir.close();
             const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
             defer json_file.close();
-            const json_stat = try json_file.stat();
-            const json_buf = try lockfile.allocator.alloc(u8, json_stat.size + 64);
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
             const json_len = try json_file.preadAll(json_buf, 0);
             const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
             initializeStore();
@@ -3065,12 +3065,12 @@ pub const Package = extern struct {
                     );
 
                     if (entry.cache.fd == 0) {
-                        entry.cache.fd = std.os.openatZ(
-                            std.os.AT.FDCWD,
+                        entry.cache.fd = bun.toFD(std.os.openatZ(
+                            std.fs.cwd().fd,
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
                             0,
-                        ) catch continue;
+                        ) catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
@@ -3081,7 +3081,7 @@ pub const Package = extern struct {
                         allocator,
                         workspace_allocator,
                         std.fs.Dir{
-                            .fd = dir_fd,
+                            .fd = bun.fdcast(dir_fd),
                         },
                         "",
                         filepath_buf,

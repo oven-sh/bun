@@ -53,7 +53,7 @@ const windows = std.os.windows;
 
 pub const Tag = enum(u8) {
     TODO,
-
+    dup,
     access,
     chmod,
     chown,
@@ -208,6 +208,40 @@ pub fn getErrno(rc: anytype) std.os.E {
     };
 }
 
+// pub fn openOptionsFromFlagsWindows(flags: u32) windows.OpenFileOptions {
+//     const w = windows;
+//     const O = std.os.O;
+
+//     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
+//     if (flags & O.RDWR != 0) {
+//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
+//     } else if (flags & O.WRONLY != 0) {
+//         access_mask |= w.GENERIC_WRITE;
+//     } else {
+//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
+//     }
+
+//     const filter: windows.OpenFileOptions.Filter = if (flags & O.DIRECTORY != 0) .dir_only else .file_only;
+//     const follow_symlinks: bool = flags & O.NOFOLLOW == 0;
+
+//     const creation: w.ULONG = blk: {
+//         if (flags & O.CREAT != 0) {
+//             if (flags & O.EXCL != 0) {
+//                 break :blk w.FILE_CREATE;
+//             }
+//         }
+//         break :blk w.FILE_OPEN;
+//     };
+
+//     return .{
+//         .access_mask = access_mask,
+//         .io_mode = .blocking,
+//         .creation = creation,
+//         .filter = filter,
+//         .follow_symlinks = follow_symlinks,
+//     };
+// }
+
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
@@ -226,7 +260,17 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
     }
 
     if (comptime Environment.isWindows) {
-        @panic("TODO: implement openat on Windows()");
+        // TODO: this is not right, but we will fix it after we ship this.
+        const handle = std.os.openatZ(bun.fdcast(dirfd), file_path, @intCast(flags), 0) catch {
+            return Maybe(bun.FileDescriptor){
+                .err = .{
+                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .syscall = .open,
+                },
+            };
+        };
+
+        return Maybe(bun.FileDescriptor){ .result = bun.toFD(handle) };
     }
 
     while (true) {
@@ -495,6 +539,7 @@ const fcntl_symbol = system.fcntl;
 pub fn pread(fd_: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     const fd = bun.fdcast(fd_);
     const adjusted_len = @min(buf.len, max_count);
+
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -729,7 +774,7 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
             const wide_slice = windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
-                return Maybe([]u8){ .err = .{ .errno = .EBADF } };
+                return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF) } };
             };
 
             // Trust that Windows gives us valid UTF-16LE.
@@ -1044,4 +1089,28 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         }
         return Maybe(void).success;
     }
+}
+
+pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        var target: *windows.HANDLE = undefined;
+        const out = kernel32.DuplicateHandle(
+            kernel32.GetCurrentProcess(),
+            bun.fdcast(fd),
+            kernel32.GetCurrentProcess(),
+            target,
+            0,
+            windows.TRUE,
+            windows.DUPLICATE_SAME_ACCESS,
+        );
+        if (out == 0) {
+            if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
+                return err;
+            }
+        }
+        return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+    }
+
+    const out = std.c.dup(fd);
+    return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }

@@ -50,6 +50,10 @@ pub const RunCommand = struct {
     };
 
     pub fn findShell(PATH: string, cwd: string) ?string {
+        if (comptime Environment.isWindows) {
+            return "C:\\Windows\\System32\\cmd.exe";
+        }
+
         inline for (shells_to_search) |shell| {
             if (which(&path_buf, PATH, cwd, shell)) |shell_| {
                 return shell_;
@@ -341,7 +345,7 @@ pub const RunCommand = struct {
 
         const result = child_process.spawnAndWait() catch |err| {
             if (err == error.AccessDenied) {
-                {
+                if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);
                     const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
@@ -408,6 +412,11 @@ pub const RunCommand = struct {
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var retried = false;
 
         if (!strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
@@ -445,7 +454,8 @@ pub const RunCommand = struct {
                         continue;
                     };
                 }
-                _ = bun.C.chmod(bun_node_dir ++ "/node", 0o777);
+                if (comptime Environment.isPosix)
+                    _ = bun.C.chmod(bun_node_dir ++ "/node", 0o777);
                 break;
             }
         }

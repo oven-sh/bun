@@ -615,9 +615,13 @@ pub const CreateCommand = struct {
                             var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
-                            // Assumption: you only really care about making sure something that was executable is still executable
-                            const stat = infile.stat() catch continue;
-                            _ = C.fchmod(outfile.handle, stat.mode);
+                            if (comptime Environment.isPosix) {
+                                // Assumption: you only really care about making sure something that was executable is still executable
+                                const stat = infile.stat() catch continue;
+                                _ = C.fchmod(outfile.handle, stat.mode);
+                            } else {
+                                bun.todo(@src(), void{});
+                            }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
                                 Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
@@ -633,24 +637,33 @@ pub const CreateCommand = struct {
 
                 read_package_json: {
                     if (package_json_file) |pkg| {
-                        const stat = pkg.stat() catch |err| {
-                            node.end();
+                        const size = brk: {
+                            if (comptime Environment.isWindows) {
+                                break :brk try pkg.getEndPos();
+                            }
 
-                            progress.refresh();
+                            const stat = pkg.stat() catch |err| {
+                                node.end();
 
-                            package_json_file = null;
-                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
-                            break :read_package_json;
+                                progress.refresh();
+
+                                package_json_file = null;
+                                Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                                break :read_package_json;
+                            };
+
+                            if (stat.kind != .file or stat.size == 0) {
+                                package_json_file = null;
+                                node.end();
+
+                                progress.refresh();
+                                break :read_package_json;
+                            }
+
+                            break :brk stat.size;
                         };
 
-                        if (stat.kind != .file or stat.size == 0) {
-                            package_json_file = null;
-                            node.end();
-
-                            progress.refresh();
-                            break :read_package_json;
-                        }
-                        package_json_contents = try MutableString.init(ctx.allocator, stat.size);
+                        package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {

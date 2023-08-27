@@ -4147,26 +4147,29 @@ pub const File = struct {
         }
 
         if (!auto_close and !(file.is_atty orelse false)) {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+            } else {
+                // ensure we have non-blocking IO set
+                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                    .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
+                    .result => |flags| {
+                        // if we do not, clone the descriptor and set non-blocking
+                        // it is important for us to clone it so we don't cause Weird Things to happen
+                        if ((flags & std.os.O.NONBLOCK) == 0) {
+                            auto_close = true;
+                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                                .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
+                                .err => |err| return .{ .err = err },
+                            };
 
-            // ensure we have non-blocking IO set
-            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
-                .result => |flags| {
-                    // if we do not, clone the descriptor and set non-blocking
-                    // it is important for us to clone it so we don't cause Weird Things to happen
-                    if ((flags & std.os.O.NONBLOCK) == 0) {
-                        auto_close = true;
-                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                            .result => |_fd| @as(@TypeOf(fd), @intCast(_fd)),
-                            .err => |err| return .{ .err = err },
-                        };
-
-                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                            .err => |err| return .{ .err = err },
-                            .result => |_| {},
+                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                                .err => |err| return .{ .err = err },
+                                .result => |_| {},
+                            }
                         }
-                    }
-                },
+                    },
+                }
             }
         }
 
@@ -4622,8 +4625,14 @@ pub const FileReader = struct {
                         return result;
                     }
 
+                    const is_fifo = if (comptime Environment.isPosix)
+                        std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)
+                    else
+                        // TODO: windows
+                        bun.todo(@src(), false);
+
                     // for our purposes, ISCHR and ISFIFO are the same
-                    if (std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)) {
+                    if (is_fifo) {
                         this.lazy_readable = .{
                             .readable = .{
                                 .FIFO = .{

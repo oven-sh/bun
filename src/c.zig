@@ -135,24 +135,37 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
+    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o600);
     defer std.os.close(in_handle);
     try copyFileZSlowWithHandle(in_handle, to_dir, destination);
     std.os.unlinkatZ(from_dir, filename, 0) catch {};
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const stat_ = try std.os.fstat(in_handle);
+    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
+    const size = brk: {
+        if (comptime Environment.isPosix) {
+            break :brk stat_.size;
+        }
+
+        break :brk try std.os.windows.GetFileSizeEx(in_handle);
+    };
+
     // delete if exists, don't care if it fails. it may fail due to the file not existing
     // delete here because we run into weird truncation issues if we do not
     // ftruncate() instead didn't work.
     // this is technically racy because it could end up deleting the file without saving
     std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 0o022);
+    const out_handle = try std.os.openatZ(
+        to_dir,
+        destination,
+        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC,
+        if (comptime Environment.isPosix) 0o022 else 0,
+    );
     defer std.os.close(out_handle);
     if (comptime Environment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(stat_.size)));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(stat_.size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
+        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(size)));
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
     } else {
         if (comptime Environment.isMac) {
             // if this fails, it doesn't matter
@@ -160,7 +173,7 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
             PlatformSpecific.preallocate_file(
                 out_handle,
                 @as(std.os.off_t, @intCast(0)),
-                @as(std.os.off_t, @intCast(stat_.size)),
+                @as(std.os.off_t, @intCast(size)),
             ) catch {};
         }
 
@@ -176,8 +189,10 @@ pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
         }
     }
 
-    _ = fchmod(out_handle, stat_.mode);
-    _ = fchown(out_handle, stat_.uid, stat_.gid);
+    if (comptime Environment.isPosix) {
+        _ = fchmod(out_handle, stat_.mode);
+        _ = fchown(out_handle, stat_.uid, stat_.gid);
+    }
 }
 
 pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {

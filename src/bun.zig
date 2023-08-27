@@ -1041,7 +1041,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.os.AT.FDCWD, ".", 0, 0);
+    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", 0, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;

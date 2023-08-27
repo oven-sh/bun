@@ -437,9 +437,10 @@ pub const Archive = struct {
                     const size = @as(usize, @intCast(@max(lib.archive_entry_size(entry), 0)));
                     if (size > 0) {
                         var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
-                        var stat = try opened.stat();
+                        defer opened.close();
+                        const stat_size = try opened.getEndPos();
 
-                        if (stat.size > 0) {
+                        if (stat_size > 0) {
                             const is_already_top_level = dirname.len == 0;
                             const path_to_use_: string = brk: {
                                 const __pathname: string = bun.asByteSlice(pathname);
@@ -547,18 +548,21 @@ pub const Archive = struct {
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
-
-                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                    },
-                                    else => {
-                                        return err;
-                                    },
-                                }
-                            };
+                            if (comptime Environment.isWindows) {
+                                bun.todo(@src(), {});
+                            } else {
+                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                    switch (err) {
+                                        error.AccessDenied, error.FileNotFound => {
+                                            dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                        },
+                                        else => {
+                                            return err;
+                                        },
+                                    }
+                                };
+                            }
                         },
                         Kind.file => {
                             const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));

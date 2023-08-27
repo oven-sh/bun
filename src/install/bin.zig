@@ -257,8 +257,8 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
-        package_installed_node_modules: std.os.fd_t = bun.invalid_fd,
-        root_node_modules_folder: std.os.fd_t = bun.invalid_fd,
+        package_installed_node_modules: bun.FileDescriptor = bun.invalid_fd,
+        root_node_modules_folder: bun.FileDescriptor = bun.invalid_fd,
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -290,6 +290,10 @@ pub const Bin = extern struct {
         }
 
         fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+                return;
+            }
             std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
@@ -320,7 +324,7 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = std.fs.Dir{ .fd = this.root_node_modules_folder };
+                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.root_node_modules_folder) };
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |err| {
                     this.err = err;
                     return;
@@ -337,7 +341,7 @@ pub const Bin = extern struct {
                 from_remain[0..dot_bin.len].* = dot_bin.*;
                 from_remain = from_remain[dot_bin.len..];
             } else {
-                if (this.global_bin_dir.fd >= bun.invalid_fd) {
+                if (bun.toFD(this.global_bin_dir.fd) == bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -354,7 +358,7 @@ pub const Bin = extern struct {
                 remain[0] = std.fs.path.sep;
                 remain = remain[1..];
 
-                this.root_node_modules_folder = this.global_bin_dir.fd;
+                this.root_node_modules_folder = bun.toFD(this.global_bin_dir.fd);
             }
 
             const name = this.package_name.slice();
@@ -364,7 +368,9 @@ pub const Bin = extern struct {
             remain = remain[1..];
 
             if (comptime Environment.isWindows) {
-                @compileError("Bin.Linker.link() needs to be updated to generate .cmd files on Windows");
+                // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
+                bun.todo(@src(), {});
+                return;
             }
 
             switch (this.bin.tag) {
@@ -458,7 +464,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+                    var dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
@@ -610,7 +616,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+                    var dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;

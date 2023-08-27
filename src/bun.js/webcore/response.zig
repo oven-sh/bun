@@ -1753,7 +1753,7 @@ pub const Fetch = struct {
         if (body.needsToReadFile()) {
             prepare_body: {
                 const opened_fd_res: JSC.Node.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
-                    .fd => |fd| JSC.Node.Maybe(bun.FileDescriptor).errnoSysFd(bun.sys.system.dup(fd), .open, fd) orelse .{ .result = fd },
+                    .fd => |fd| bun.sys.dup(fd),
                     .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
                 };
 

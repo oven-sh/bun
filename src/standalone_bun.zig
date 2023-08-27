@@ -228,7 +228,7 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8) i32 {
+    pub fn inject(bytes: []const u8) bun.FileDescriptor {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -330,7 +330,7 @@ pub const StandaloneModuleGraph = struct {
             };
 
             defer _ = Syscall.close(self_fd);
-            bun.copyFile(self_fd, fd) catch |err| {
+            bun.copyFile(bun.fdcast(self_fd), bun.fdcast(fd)) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);
@@ -391,8 +391,9 @@ pub const StandaloneModuleGraph = struct {
 
         // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
         _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
-
-        _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+        if (comptime !Environment.isWindows) {
+            _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+        }
 
         return cloned_executable_fd;
     }

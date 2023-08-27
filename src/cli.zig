@@ -114,8 +114,8 @@ pub const Arguments = struct {
         defer allocator.free(outpath);
         var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
-        const stats = try file.stat();
-        return try file.readToEndAlloc(allocator, stats.size);
+        const size = try file.getEndPos();
+        return try file.readToEndAlloc(allocator, size);
     }
 
     pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {

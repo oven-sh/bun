@@ -602,8 +602,8 @@ pub const FileSystem = struct {
         }
 
         pub const Tmpfile = struct {
-            fd: std.os.fd_t = 0,
-            dir_fd: std.os.fd_t = 0,
+            fd: bun.FileDescriptor = bun.invalid_fd,
+            dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *Tmpfile) std.fs.Dir {
                 return std.fs.Dir{
@@ -618,20 +618,20 @@ pub const FileSystem = struct {
             }
 
             pub fn close(this: *Tmpfile) void {
-                if (this.fd != 0) std.os.close(this.fd);
+                if (this.fd != bun.invalid_fd) std.os.close(this.fd);
             }
 
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
                 var tmpdir_ = try rfs.openTmpDir();
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
-                this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXU);
+                this.dir_fd = bun.toFD(tmpdir_.fd);
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, if (comptime Environment.isPosix) std.os.S.IRWXU else 0);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
-                std.debug.assert(this.fd != 0);
-                std.debug.assert(this.dir_fd != 0);
+                std.debug.assert(this.fd != bun.invalid_fd);
+                std.debug.assert(this.dir_fd != bun.invalid_fd);
 
                 try C.moveFileZWithHandle(this.fd, this.dir_fd, from_name, destination_fd, name);
                 this.close();
@@ -641,7 +641,7 @@ pub const FileSystem = struct {
                 this.close();
 
                 if (comptime !Environment.isLinux) {
-                    if (this.dir_fd == 0) return;
+                    if (this.dir_fd == bun.invalid_fd) return;
 
                     this.dir().deleteFileZ(name) catch {};
                 }
@@ -1173,6 +1173,11 @@ pub const FileSystem = struct {
             existing_fd: StoredFileDescriptorType,
             store_fd: bool,
         ) !Entry.Cache {
+            var cache = Entry.Cache{
+                .kind = Entry.Kind.file,
+                .symlink = PathString.empty,
+            };
+
             var dir = _dir;
             var combo = [2]string{ dir, base };
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1183,13 +1188,22 @@ pub const FileSystem = struct {
 
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
+            if (comptime bun.Environment.isWindows) {
+                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
+                defer file.close();
+                const metadata = try file.metadata();
+                cache.kind = switch (metadata.kind()) {
+                    .directory => .dir,
+                    .sym_link => .file,
+                    else => .file,
+                };
+                return cache;
+            }
+
             var stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
             var _kind = stat.kind;
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
+
             var symlink: []const u8 = "";
 
             if (is_symlink) {

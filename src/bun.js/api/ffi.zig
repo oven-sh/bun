@@ -722,7 +722,7 @@ pub const FFI = struct {
                 var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
                 const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
                 defer file.close();
-                return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+                return file.readToEndAlloc(default_allocator, file.getEndPos() catch unreachable) catch unreachable;
             } else {
                 return FFI_HEADER;
             }

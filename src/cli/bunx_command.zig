@@ -97,7 +97,7 @@ pub const BunxCommand = struct {
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.os.AT.FDCWD, subpath_z);
+        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"

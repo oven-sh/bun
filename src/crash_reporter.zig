@@ -33,6 +33,9 @@ noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyop
 }
 
 pub fn reloadHandlers() !void {
+    if (comptime @import("root").bun.Environment.isWindows) {
+        return @import("root").bun.todo(@src(), {});
+    }
     try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
 

@@ -1006,7 +1006,7 @@ pub const Resolver = struct {
                                 file.close();
                                 query.entry.cache.fd = 0;
                             } else {
-                                query.entry.cache.fd = file.handle;
+                                query.entry.cache.fd = bun.toFD(file.handle);
                                 Fs.FileSystem.setMaxFd(file.handle);
                             }
                         }
@@ -1014,7 +1014,7 @@ pub const Resolver = struct {
                         defer {
                             if (r.fs.fs.needToCloseFiles()) {
                                 if (query.entry.cache.fd != 0) {
-                                    var file = std.fs.File{ .handle = query.entry.cache.fd };
+                                    var file = std.fs.File{ .handle = bun.fdcast(query.entry.cache.fd) };
                                     file.close();
                                     query.entry.cache.fd = 0;
                                 }
@@ -3738,7 +3738,7 @@ pub const Resolver = struct {
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
                             }
 
-                            const this_dir = std.fs.Dir{ .fd = fd };
+                            const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
                             var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
                             defer file.close();
                             var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;

@@ -1563,9 +1563,9 @@ pub const Bundler = struct {
             else => {
                 var abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-                var stat = try file.stat();
+                const size = try file.getEndPos();
                 return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .file = options.OutputFile.initFile(file, abs_path, size),
                     .mime_type = MimeType.byLoader(
                         loader,
                         mime_type_ext[1..],

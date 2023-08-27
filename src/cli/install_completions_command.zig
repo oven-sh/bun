@@ -45,6 +45,11 @@ pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
 
     fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 

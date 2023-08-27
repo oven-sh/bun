@@ -703,7 +703,7 @@ const Task = struct {
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory().dir,
-                    .{ .fd = bun.toFD(this.request.git_checkout.repo_dir) },
+                    .{ .fd = bun.fdcast(this.request.git_checkout.repo_dir) },
                     this.request.git_checkout.name.slice(),
                     this.request.git_checkout.url.slice(),
                     this.request.git_checkout.resolved.slice(),
@@ -1211,8 +1211,12 @@ const PackageInstall = struct {
                     var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                     defer infile.close();
 
-                    const stat = infile.stat() catch continue;
-                    _ = C.fchmod(outfile.handle, stat.mode);
+                    if (comptime Environment.isPosix) {
+                        const stat = infile.stat() catch continue;
+                        _ = C.fchmod(outfile.handle, stat.mode);
+                    } else {
+                        bun.todo(@src(), {});
+                    }
 
                     bun.copyFile(infile.handle, outfile.handle) catch |err| {
                         progress_.root.end();
@@ -1352,7 +1356,7 @@ const PackageInstall = struct {
                     switch (entry.kind) {
                         // directories are created
                         .directory => {
-                            std.os.mkdirat(dest_dir_fd, entry.path, 0o755) catch {};
+                            std.os.mkdirat(bun.fdcast(dest_dir_fd), entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
                         .file => {
@@ -1383,8 +1387,8 @@ const PackageInstall = struct {
         defer subdir.close();
 
         this.file_count = FileCopier.copy(
-            subdir.dir.fd,
-            cached_package_dir.dir.fd,
+            bun.toFD(subdir.dir.fd),
+            bun.toFD(cached_package_dir.dir.fd),
             &walker_,
         ) catch |err|
             return Result{
@@ -1566,16 +1570,20 @@ const PackageInstall = struct {
                 }
             },
             .symlink => {
-                if (this.installWithSymlink()) |result| {
-                    return result;
-                } else |err| {
-                    switch (err) {
-                        error.FileNotFound => return Result{
-                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                        },
-                        else => return Result{
-                            .fail = .{ .err = err, .step = .copying_files },
-                        },
+                if (comptime Environment.isWindows) {
+                    supported_method_to_use = .copyfile;
+                } else {
+                    if (this.installWithSymlink()) |result| {
+                        return result;
+                    } else |err| {
+                        switch (err) {
+                            error.FileNotFound => return Result{
+                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                            },
+                            else => return Result{
+                                .fail = .{ .err = err, .step = .copying_files },
+                            },
+                        }
                     }
                 }
             },
@@ -5175,8 +5183,8 @@ pub const PackageManager = struct {
                     continue;
                 };
                 defer if (!found) json_file.close();
-                const json_stat = try json_file.stat();
-                const json_buf = try ctx.allocator.alloc(u8, json_stat.size + 64);
+                const json_stat_size = try json_file.getEndPos();
+                const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                 defer ctx.allocator.free(json_buf);
                 const json_len = try json_file.preadAll(json_buf, 0);
                 const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
@@ -5492,8 +5500,8 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                var current_package_json_stat = try manager.root_package_json_file.stat();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+                var current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
+                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
                 const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
                     current_package_json_buf,
                     0,
@@ -5647,8 +5655,8 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                var current_package_json_stat = try manager.root_package_json_file.stat();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+                var current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
+                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
                 const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
                     current_package_json_buf,
                     0,
@@ -5963,7 +5971,11 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                try std.os.chdirZ(final_path);
+                if (comptime Environment.isWindows) {
+                    try std.os.chdir(final_path);
+                } else {
+                    try std.os.chdirZ(final_path);
+                }
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {
@@ -6264,8 +6276,8 @@ pub const PackageManager = struct {
             Global.crash();
         }
 
-        var current_package_json_stat = try manager.root_package_json_file.stat();
-        var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+        var current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
+        var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
         const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
             current_package_json_buf,
             0,
@@ -6613,7 +6625,7 @@ pub const PackageManager = struct {
                 const prev_node_modules_folder = this.node_modules_folder;
                 defer this.node_modules_folder = prev_node_modules_folder;
                 for (callbacks.items) |cb| {
-                    this.node_modules_folder = .{ .dir = .{ .fd = cb.node_modules_folder } };
+                    this.node_modules_folder = .{ .dir = .{ .fd = bun.fdcast(cb.node_modules_folder) } };
                     this.installPackageWithNameAndResolution(dependency_id, package_id, log_level, name, resolution);
                 }
             }
@@ -6793,12 +6805,12 @@ pub const PackageManager = struct {
 
                                     var bin_linker = Bin.Linker{
                                         .bin = bin,
-                                        .package_installed_node_modules = this.node_modules_folder.dir.fd,
+                                        .package_installed_node_modules = bun.toFD(this.node_modules_folder.dir.fd),
                                         .global_bin_path = this.options.bin_path,
                                         .global_bin_dir = this.options.global_bin_dir.dir,
 
                                         // .destination_dir_subpath = destination_dir_subpath,
-                                        .root_node_modules_folder = this.root_node_modules_folder.dir.fd,
+                                        .root_node_modules_folder = bun.toFD(this.root_node_modules_folder.dir.fd),
                                         .package_name = strings.StringOrTinyString.init(alias),
                                         .string_buf = buf,
                                         .extern_string_buf = extern_string_buf,
@@ -6835,7 +6847,7 @@ pub const PackageManager = struct {
                             if (scripts.hasAny()) {
                                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                                 const path_str = Path.joinAbsString(
-                                    bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
                                     &[_]string{destination_dir_subpath},
                                     .posix,
                                 );
@@ -6844,7 +6856,7 @@ pub const PackageManager = struct {
                             } else if (!scripts.filled) {
                                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                                 const path_str = Path.joinAbsString(
-                                    bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                    bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
                                     &[_]string{destination_dir_subpath},
                                     .posix,
                                 );
@@ -6890,7 +6902,7 @@ pub const PackageManager = struct {
                                         dependency_id,
                                         alias,
                                         resolution,
-                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                        .{ .node_modules_folder = bun.toFD(this.node_modules_folder.dir.fd) },
                                     );
                                 },
                                 .github => {
@@ -6900,7 +6912,7 @@ pub const PackageManager = struct {
                                         dependency_id,
                                         package_id,
                                         url,
-                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                        .{ .node_modules_folder = bun.toFD(this.node_modules_folder.dir.fd) },
                                     );
                                 },
                                 .local_tarball => {
@@ -6908,7 +6920,7 @@ pub const PackageManager = struct {
                                         dependency_id,
                                         alias,
                                         resolution,
-                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                        .{ .node_modules_folder = bun.toFD(this.node_modules_folder.dir.fd) },
                                     );
                                 },
                                 .remote_tarball => {
@@ -6916,7 +6928,7 @@ pub const PackageManager = struct {
                                         dependency_id,
                                         package_id,
                                         resolution.value.remote_tarball.slice(buf),
-                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                        .{ .node_modules_folder = bun.toFD(this.node_modules_folder.dir.fd) },
                                     );
                                 },
                                 .npm => {
@@ -6927,7 +6939,7 @@ pub const PackageManager = struct {
                                         package_id,
                                         resolution.value.npm.version,
                                         resolution.value.npm.url.slice(buf),
-                                        .{ .node_modules_folder = this.node_modules_folder.dir.fd },
+                                        .{ .node_modules_folder = bun.toFD(this.node_modules_folder.dir.fd) },
                                     );
                                 },
                                 else => {
@@ -7333,8 +7345,8 @@ pub const PackageManager = struct {
 
                     var bin_linker = Bin.Linker{
                         .bin = original_bin,
-                        .package_installed_node_modules = folder.dir.fd,
-                        .root_node_modules_folder = node_modules_folder.dir.fd,
+                        .package_installed_node_modules = bun.toFD(folder.dir.fd),
+                        .root_node_modules_folder = bun.toFD(node_modules_folder.dir.fd),
                         .global_bin_path = this.options.bin_path,
                         .global_bin_dir = this.options.global_bin_dir.dir,
 

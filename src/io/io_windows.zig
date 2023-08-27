@@ -447,18 +447,12 @@ fn flush(self: *IO, comptime mode: FlushMode) anyerror!void {
             };
 
             var events: [64]os.windows.OVERLAPPED_ENTRY = undefined;
-            const num_events = os.windows.GetQueuedCompletionStatusEx(
+            const num_events = try os.windows.GetQueuedCompletionStatusEx(
                 self.iocp,
                 &events,
                 io_timeout,
                 false, // non-alertable wait
-            ) catch |err| {
-                switch (err) {
-                    error.Timeout => 0,
-                    error.Aborted => unreachable,
-                    else => |e| return e,
-                }
-            };
+            );
 
             assert(self.io_pending >= num_events);
             self.io_pending -= num_events;

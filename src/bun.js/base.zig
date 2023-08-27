@@ -2198,7 +2198,7 @@ pub const FilePoll = struct {
                 };
             }
         } else {
-            @compileError("TODO: Pollable");
+            bun.todo(@src(), {});
         }
         if (this.canActivate())
             this.activate(loop);
@@ -2338,7 +2338,7 @@ pub const FilePoll = struct {
                 else => {},
             }
         } else {
-            @compileError("TODO: Pollable");
+            bun.todo(@src(), {});
         }
 
         this.flags.remove(.needs_rearm);

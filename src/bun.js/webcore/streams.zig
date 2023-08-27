@@ -450,12 +450,20 @@ pub const StreamStart = union(Tag) {
             .FileSink => {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
 
-                if (value.get(globalThis, "highWaterMark")) |chunkSize| {
+                if (value.getTruthy(globalThis, "highWaterMark")) |chunkSize| {
                     if (chunkSize.isNumber())
                         chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
-                if (value.get(globalThis, "path")) |path| {
+                if (value.getTruthy(globalThis, "path")) |path| {
+                    if (!path.isString()) {
+                        return .{
+                            .err = Syscall.Error{
+                                .errno = bun.C.SystemErrno.EINVAL,
+                            },
+                        };
+                    }
+
                     return .{
                         .FileSink = .{
                             .chunk_size = chunk_size,
@@ -464,12 +472,28 @@ pub const StreamStart = union(Tag) {
                             },
                         },
                     };
-                } else if (value.get(globalThis, "fd")) |fd| {
+                } else if (value.getTruthy(globalThis, "fd")) |fd_value| {
+                    if (!fd_value.isAnyInt()) {
+                        return .{
+                            .err = Syscall.Error{
+                                .errno = bun.C.SystemErrno.EBADF,
+                            },
+                        };
+                    }
+                    const fd = fd_value.toInt64();
+                    if (fd < 0) {
+                        return .{
+                            .err = Syscall.Error{
+                                .errno = bun.C.SystemErrno.EBADF,
+                            },
+                        };
+                    }
+
                     return .{
                         .FileSink = .{
                             .chunk_size = chunk_size,
                             .input_path = .{
-                                .fd = fd.toInt32(),
+                                .fd = @as(bun.FileDescriptor, @intCast(fd)),
                             },
                         },
                     };
@@ -486,7 +510,7 @@ pub const StreamStart = union(Tag) {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
-                if (value.get(globalThis, "highWaterMark")) |chunkSize| {
+                if (value.getTruthy(globalThis, "highWaterMark")) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));

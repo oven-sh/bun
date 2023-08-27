@@ -828,6 +828,10 @@ pub const GetAddrInfoRequest = struct {
             query: GetAddrInfo,
 
             pub fn run(this: *@This()) void {
+                if (comptime Environment.isWindows) {
+                    bun.todo(@src(), {});
+                    return;
+                }
                 const query = this.query;
                 defer bun.default_allocator.free(bun.constStrToU8(query.name));
                 var hints = query.options.toLibC();
@@ -1440,7 +1444,7 @@ pub const DNSResolver = struct {
         var poll_entry = this.polls.getOrPut(fd) catch unreachable;
 
         if (!poll_entry.found_existing) {
-            poll_entry.value_ptr.* = JSC.FilePoll.init(vm, fd, .{}, DNSResolver, this);
+            poll_entry.value_ptr.* = JSC.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
         }
 
         var poll = poll_entry.value_ptr.*.?;

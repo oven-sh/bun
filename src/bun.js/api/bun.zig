@@ -2738,6 +2738,11 @@ pub fn mmapFile(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
+    if (comptime Environment.isWindows) {
+        globalThis.throwTODO("mmapFile is not supported on Windows");
+        return JSC.JSValue.zero;
+    }
+
     const arguments_ = callframe.arguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();

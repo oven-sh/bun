@@ -273,7 +273,7 @@ else
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
-pub const StoredFileDescriptorType = if (Environment.isWindows or Environment.isBrowser) u0 else std.os.fd_t;
+pub const StoredFileDescriptorType = if (Environment.isBrowser) u0 else FileDescriptor;
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
@@ -1637,12 +1637,17 @@ pub inline fn socketcast(fd: FileDescriptor) std.os.fd_t {
     return @ptrFromInt(fd);
 }
 
-pub inline fn toFD(fd: std.os.fd_t) FileDescriptor {
+pub inline fn toFD(fd: anytype) FileDescriptor {
+    const FD = @TypeOf(fd);
     if (comptime FileDescriptor == std.os.fd_t) {
         return fd;
     }
 
-    return @intFromPtr(fd);
+    if (FD == std.os.fd_t) {
+        return @intFromPtr(fd);
+    }
+
+    return @intCast(fd);
 }
 
 pub const HOST_NAME_MAX = if (Environment.isWindows)

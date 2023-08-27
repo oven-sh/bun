@@ -22,7 +22,7 @@ pub fn getSystemUptime() usize {
     return 0;
 }
 
-pub fn getSystemLoadavg() [3]i32 {
+pub fn getSystemLoadavg() [3]f32 {
     return .{ 0, 0, 0 };
 }
 

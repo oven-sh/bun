@@ -45,7 +45,7 @@ const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
-const Syscall = JSC.Node.Syscall;
+const Syscall = bun.sys;
 
 const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
@@ -1188,17 +1188,17 @@ pub const FileSink = struct {
         const auto_close = this.auto_close;
         const fd = if (!auto_close)
             input_path.fd
-        else switch (JSC.Node.Syscall.open(input_path.path.toSliceZ(&file_buf), std.os.O.WRONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT, mode)) {
+        else switch (bun.sys.open(input_path.path.toSliceZ(&file_buf), std.os.O.WRONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT, mode)) {
             .result => |_fd| _fd,
             .err => |err| return .{ .err = err.withPath(input_path.path.slice()) },
         };
 
         if (this.poll_ref == null) {
-            const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
                     return .{ .err = err.withPathLike(input_path) };
                 },
@@ -1258,7 +1258,7 @@ pub const FileSink = struct {
         // On Linux, we can adjust the pipe size to avoid blocking.
         this.has_adjusted_pipe_size_on_linux = true;
 
-        switch (JSC.Node.Syscall.setPipeCapacityOnLinux(fd, @min(Syscall.getMaxPipeSizeOnLinux(), remain_len))) {
+        switch (bun.sys.setPipeCapacityOnLinux(fd, @min(Syscall.getMaxPipeSizeOnLinux(), remain_len))) {
             .result => |len| {
                 if (len > 0) {
                     this.max_write_size = len;
@@ -1357,7 +1357,7 @@ pub const FileSink = struct {
         if (max_to_write > 0) {
             while (remain.len > 0) {
                 const write_buf = remain[0..@min(remain.len, max_to_write)];
-                const res = JSC.Node.Syscall.write(fd, write_buf);
+                const res = bun.sys.write(fd, write_buf);
 
                 if (res == .err) {
                     const retry =
@@ -1463,7 +1463,7 @@ pub const FileSink = struct {
                 std.os.ftruncate(bun.fdcast(fd), total) catch {};
 
             if (this.auto_close) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = bun.sys.close(fd);
                 this.fd = bun.invalid_fd;
             }
         }
@@ -1500,7 +1500,7 @@ pub const FileSink = struct {
                     this.scheduled_count = 0;
                 }
 
-                _ = JSC.Node.Syscall.close(this.fd);
+                _ = bun.sys.close(this.fd);
                 this.fd = bun.invalid_fd;
             }
         }
@@ -1667,7 +1667,7 @@ pub const FileSink = struct {
 
             this.fd = bun.invalid_fd;
             if (this.auto_close)
-                _ = JSC.Node.Syscall.close(fd);
+                _ = bun.sys.close(fd);
         }
 
         this.pending.result = .done;
@@ -3720,7 +3720,7 @@ pub const FIFO = struct {
         if (signal_close) {
             this.fd = bun.invalid_fd;
             if (this.auto_close)
-                _ = JSC.Node.Syscall.close(fd);
+                _ = bun.sys.close(fd);
         }
 
         this.to_read = null;

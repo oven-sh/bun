@@ -4318,13 +4318,13 @@ pub const NodeFS = struct {
                         0
                     else brk: {
                         // on linux, it's absolutely positioned
-                        const pos = JSC.Node.Syscall.system.lseek(
+                        const pos = bun.sys.system.lseek(
                             fd,
                             @as(std.os.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
 
-                        switch (JSC.Node.Syscall.getErrno(pos)) {
+                        switch (bun.sys.getErrno(pos)) {
                             .SUCCESS => break :brk @as(usize, @intCast(pos)),
                             else => break :preallocate,
                         }
@@ -4551,7 +4551,7 @@ pub const NodeFS = struct {
                                 else => .FAULT,
                             };
                             return Maybe(Return.Rm){
-                                .err = JSC.Node.Syscall.Error.fromCode(errno, .rmdir),
+                                .err = bun.sys.Error.fromCode(errno, .rmdir),
                             };
                         };
 
@@ -4650,7 +4650,7 @@ pub const NodeFS = struct {
                                 return Maybe(Return.Rm).success;
                             }
                             return Maybe(Return.Rm){
-                                .err = JSC.Node.Syscall.Error.fromCode(errno, .unlink),
+                                .err = bun.sys.Error.fromCode(errno, .unlink),
                             };
                         };
                         return Maybe(Return.Rm).success;
@@ -4684,7 +4684,7 @@ pub const NodeFS = struct {
                                 };
 
                                 return .{
-                                    .err = JSC.Node.Syscall.Error.fromCode(
+                                    .err = bun.sys.Error.fromCode(
                                         code,
                                         .rmdir,
                                     ),
@@ -4713,7 +4713,7 @@ pub const NodeFS = struct {
                             };
 
                             return .{
-                                .err = JSC.Node.Syscall.Error.fromCode(
+                                .err = bun.sys.Error.fromCode(
                                     code,
                                     .unlink,
                                 ),

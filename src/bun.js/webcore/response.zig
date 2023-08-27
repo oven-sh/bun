@@ -682,7 +682,7 @@ pub const Fetch = struct {
                     .AnyBlob => this.AnyBlob.detach(),
                     .Sendfile => {
                         if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
-                            _ = JSC.Node.Syscall.close(this.Sendfile.fd);
+                            _ = bun.sys.close(this.Sendfile.fd);
                         this.Sendfile.offset = 0;
                         this.Sendfile.remain = 0;
                     },
@@ -1753,8 +1753,8 @@ pub const Fetch = struct {
         if (body.needsToReadFile()) {
             prepare_body: {
                 const opened_fd_res: JSC.Node.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
-                    .fd => |fd| JSC.Node.Maybe(bun.FileDescriptor).errnoSysFd(JSC.Node.Syscall.system.dup(fd), .open, fd) orelse .{ .result = fd },
-                    .path => |path| JSC.Node.Syscall.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .fd => |fd| JSC.Node.Maybe(bun.FileDescriptor).errnoSysFd(bun.sys.system.dup(fd), .open, fd) orelse .{ .result = fd },
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {
@@ -1775,7 +1775,7 @@ pub const Fetch = struct {
 
                 if (proxy == null and bun.HTTP.Sendfile.isEligible(url)) {
                     use_sendfile: {
-                        const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(opened_fd)) {
+                        const stat: bun.Stat = switch (bun.sys.fstat(opened_fd)) {
                             .result => |result| result,
                             // bail out for any reason
                             .err => break :use_sendfile,
@@ -1832,7 +1832,7 @@ pub const Fetch = struct {
                 );
 
                 if (body.Blob.store.?.data.file.pathlike == .path) {
-                    _ = JSC.Node.Syscall.close(opened_fd);
+                    _ = bun.sys.close(opened_fd);
                 }
 
                 switch (res) {

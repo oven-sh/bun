@@ -206,7 +206,7 @@ pub const PosixSpawn = struct {
             envp,
         );
         if (comptime bun.Environment.allow_assert)
-            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
+            bun.sys.syslog("posix_spawn({s}) = {d} ({d})", .{
                 path,
                 rc,
                 pid,

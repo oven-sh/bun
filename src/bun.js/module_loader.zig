@@ -408,7 +408,7 @@ pub const RuntimeTranspilerStore = struct {
 
             defer {
                 if (should_close_input_file_fd and input_file_fd != 0) {
-                    _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                    _ = bun.sys.close(input_file_fd);
                     input_file_fd = 0;
                 }
             }
@@ -1444,7 +1444,7 @@ pub const ModuleLoader = struct {
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != 0) {
-                        _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                        _ = bun.sys.close(input_file_fd);
                         input_file_fd = 0;
                     }
                 }

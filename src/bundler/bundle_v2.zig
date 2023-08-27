@@ -2555,7 +2555,7 @@ pub const ParseTask = struct {
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd > 2 and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
-            _ = JSC.Node.Syscall.close(entry.fd);
+            _ = bun.sys.close(entry.fd);
         }
 
         if (!will_close_file_descriptor and entry.fd > 2) task.contents_or_fd = .{

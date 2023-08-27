@@ -2194,7 +2194,7 @@ pub const FilePoll = struct {
 
             if (errno != .SUCCESS) {
                 return JSC.Maybe(void){
-                    .err = JSC.Node.Syscall.Error.fromCode(errno, .kqueue),
+                    .err = bun.sys.Error.fromCode(errno, .kqueue),
                 };
             }
         } else {

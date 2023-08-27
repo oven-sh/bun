@@ -2337,7 +2337,7 @@ pub const Resolver = struct {
             false,
             null,
         );
-        _ = bun.JSC.Node.Syscall.close(entry.fd);
+        _ = bun.sys.close(entry.fd);
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -2527,7 +2527,7 @@ pub const Resolver = struct {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 var open_dirs: []std.fs.IterableDir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    _ = bun.JSC.Node.Syscall.close(open_dir.dir.fd);
+                    _ = bun.sys.close(open_dir.dir.fd);
                 }
             }
         }

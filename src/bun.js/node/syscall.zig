@@ -973,16 +973,16 @@ pub fn getMaxPipeSizeOnLinux() usize {
             fn once() c_int {
                 const strings = bun.strings;
                 const default_out_size = 512 * 1024;
-                const pipe_max_size_fd = switch (JSC.Node.Syscall.open("/proc/sys/fs/pipe-max-size", std.os.O.RDONLY, 0)) {
+                const pipe_max_size_fd = switch (bun.sys.open("/proc/sys/fs/pipe-max-size", std.os.O.RDONLY, 0)) {
                     .result => |fd2| fd2,
                     .err => |err| {
                         log("Failed to open /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});
                         return default_out_size;
                     },
                 };
-                defer _ = JSC.Node.Syscall.close(pipe_max_size_fd);
+                defer _ = bun.sys.close(pipe_max_size_fd);
                 var max_pipe_size_buf: [128]u8 = undefined;
-                const max_pipe_size = switch (JSC.Node.Syscall.read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
+                const max_pipe_size = switch (bun.sys.read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
                     .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
                         log("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
                         return default_out_size;

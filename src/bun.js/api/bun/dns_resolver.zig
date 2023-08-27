@@ -842,7 +842,7 @@ pub const GetAddrInfoRequest = struct {
                     if (hints) |*hint| hint else null,
                     &addrinfo,
                 );
-                JSC.Node.Syscall.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
                     query.name,
                     port,
                     err,
@@ -1043,7 +1043,7 @@ pub const DNSLookup = struct {
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
-                    break :brk JSC.Node.Syscall.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                    break :brk bun.sys.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
                 }
                 const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
                 error_value.put(

@@ -1697,3 +1697,5 @@ pub fn isRegularFile(mode: JSC.Node.Mode) bool {
 
     @compileError("Unsupported platform");
 }
+
+pub const sys = @import("./bun.js/node/syscall.zig");

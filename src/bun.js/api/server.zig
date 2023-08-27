@@ -1744,7 +1744,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
-                _ = JSC.Node.Syscall.close(this.sendfile.fd);
+                _ = bun.sys.close(this.sendfile.fd);
             this.sendfile = undefined;
             this.finalize();
         }
@@ -1882,7 +1882,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
                 file.pathlike.fd
-            else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
                     this.server.globalThis,
@@ -1890,14 +1890,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // stat only blocks if the target is a file descriptor
-            const stat: bun.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
                     return;
                 },
@@ -1906,11 +1906,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isMac) {
                 if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1925,11 +1925,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (Environment.isLinux) {
                 if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();

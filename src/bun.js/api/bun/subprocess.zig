@@ -36,7 +36,7 @@ pub const Subprocess = struct {
 
     exit_code: ?u8 = null,
     signal_code: ?SignalCode = null,
-    waitpid_err: ?JSC.Node.Syscall.Error = null,
+    waitpid_err: ?bun.sys.Error = null,
 
     has_waitpid_task: bool = false,
     notification_task: JSC.AnyTask = undefined,
@@ -210,7 +210,7 @@ pub const Subprocess = struct {
             };
         }
 
-        pub fn onClose(this: *Readable, _: ?JSC.Node.Syscall.Error) void {
+        pub fn onClose(this: *Readable, _: ?bun.sys.Error) void {
             this.* = .closed;
         }
 
@@ -221,7 +221,7 @@ pub const Subprocess = struct {
         pub fn close(this: *Readable) void {
             switch (this.*) {
                 .fd => |fd| {
-                    _ = JSC.Node.Syscall.close(fd);
+                    _ = bun.sys.close(fd);
                 },
                 .pipe => {
                     this.pipe.done();
@@ -233,7 +233,7 @@ pub const Subprocess = struct {
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
                 .fd => |fd| {
-                    _ = JSC.Node.Syscall.close(fd);
+                    _ = bun.sys.close(fd);
                 },
                 .pipe => {
                     if (this.pipe == .stream and this.pipe.stream.ptr == .File) {
@@ -366,7 +366,7 @@ pub const Subprocess = struct {
                 const errno = std.os.linux.getErrno(rc);
                 // if the process was already killed don't throw
                 if (errno != .SRCH)
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
+                    return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
             }
         } else {
             const err = std.c.kill(this.pid, sig);
@@ -375,7 +375,7 @@ pub const Subprocess = struct {
 
                 // if the process was already killed don't throw
                 if (errno != .SRCH)
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
+                    return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
             }
         }
 
@@ -492,7 +492,7 @@ pub const Subprocess = struct {
             }
 
             while (to_write.len > 0) {
-                switch (JSC.Node.Syscall.write(this.fd, to_write)) {
+                switch (bun.sys.write(this.fd, to_write)) {
                     .err => |e| {
                         if (e.isRetry()) {
                             log("write({d}) retry", .{
@@ -546,7 +546,7 @@ pub const Subprocess = struct {
             }
 
             if (this.fd != bun.invalid_fd) {
-                _ = JSC.Node.Syscall.close(this.fd);
+                _ = bun.sys.close(this.fd);
                 this.fd = bun.invalid_fd;
             }
         }
@@ -576,7 +576,7 @@ pub const Subprocess = struct {
         pub const Status = union(enum) {
             pending: void,
             done: void,
-            err: JSC.Node.Syscall.Error,
+            err: bun.sys.Error,
         };
 
         pub fn init(fd: bun.FileDescriptor) BufferedOutput {
@@ -619,7 +619,7 @@ pub const Subprocess = struct {
                     if (err == .Error) {
                         this.status = .{ .err = err.Error };
                     } else {
-                        this.status = .{ .err = JSC.Node.Syscall.Error.fromCode(.CANCELED, .read) };
+                        this.status = .{ .err = bun.sys.Error.fromCode(.CANCELED, .read) };
                     }
                     this.fifo.close();
 
@@ -838,7 +838,7 @@ pub const Subprocess = struct {
 
         // When the stream has closed we need to be notified to prevent a use-after-free
         // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-        pub fn onClose(this: *Writable, _: ?JSC.Node.Syscall.Error) void {
+        pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
             this.* = .{
                 .ignore = {},
             };
@@ -916,7 +916,7 @@ pub const Subprocess = struct {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
                 .fd => |fd| {
-                    _ = JSC.Node.Syscall.close(fd);
+                    _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
                 .buffered_input => {
@@ -934,7 +934,7 @@ pub const Subprocess = struct {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
                 .fd => |fd| {
-                    _ = JSC.Node.Syscall.close(fd);
+                    _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
                 .buffered_input => {
@@ -1313,15 +1313,15 @@ pub const Subprocess = struct {
         const pid = brk: {
             defer {
                 if (stdio[0].isPiped()) {
-                    _ = JSC.Node.Syscall.close(stdin_pipe[0]);
+                    _ = bun.sys.close(stdin_pipe[0]);
                 }
 
                 if (stdio[1].isPiped()) {
-                    _ = JSC.Node.Syscall.close(stdout_pipe[1]);
+                    _ = bun.sys.close(stdout_pipe[1]);
                 }
 
                 if (stdio[2].isPiped()) {
-                    _ = JSC.Node.Syscall.close(stderr_pipe[1]);
+                    _ = bun.sys.close(stderr_pipe[1]);
                 }
             }
 
@@ -1352,7 +1352,7 @@ pub const Subprocess = struct {
             switch (std.os.linux.getErrno(fd)) {
                 .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
                 else => |err| {
-                    globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(err, .open).toJSC(globalThis));
+                    globalThis.throwValue(bun.sys.Error.fromCode(err, .open).toJSC(globalThis));
                     var status: u32 = 0;
                     // ensure we don't leak the child process on error
                     _ = std.os.linux.waitpid(pid, &status, 0);

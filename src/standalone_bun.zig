@@ -7,7 +7,7 @@ const Schema = bun.Schema.Api;
 
 const Environment = bun.Environment;
 
-const Syscall = bun.JSC.Node.Syscall;
+const Syscall = bun.sys;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",

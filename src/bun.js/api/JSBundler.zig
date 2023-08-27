@@ -287,7 +287,7 @@ pub const JSBundler = struct {
                 defer dir.close();
 
                 var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                this.rootdir.appendSliceExact(try bun.getFdPath(dir.fd, &rootdir_buf)) catch unreachable;
+                this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
             }
 
             if (try config.getArray(globalThis, "external")) |externals| {

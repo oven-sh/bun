@@ -15,7 +15,7 @@ pub const MutableString = struct {
     list: std.ArrayListUnmanaged(u8),
 
     pub fn init2048(allocator: std.mem.Allocator) !MutableString {
-        return MutableString.init(allocator, 2048);
+        return try MutableString.init(allocator, 2048);
     }
 
     pub const Writer = std.io.Writer(*@This(), anyerror, MutableString.writeAll);

@@ -970,7 +970,7 @@ pub const FileSystem = struct {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
                 if (store_fd and entries.fd == 0)
-                    entries.fd = handle.fd;
+                    entries.fd = bun.toFD(handle.fd);
 
                 entries_ptr.* = entries;
                 const result = EntriesOption{

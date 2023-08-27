@@ -410,14 +410,14 @@ pub const RunCommand = struct {
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
         var retried = false;
 
-        if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
+        if (!strings.endsWithComptime(std.mem.span(bun.argv[0]), "node")) {
             var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (std.os.argv[0][0] == '/') {
-                optional_bun_path.* = bun.span(std.os.argv[0]);
-                argv0 = std.os.argv[0];
+            if (bun.argv[0][0] == '/') {
+                optional_bun_path.* = bun.span(bun.argv[0]);
+                argv0 = bun.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
@@ -429,7 +429,7 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = std.os.argv[0];
+                argv0 = bun.argv[0];
             }
 
             while (true) {
@@ -953,7 +953,7 @@ pub const RunCommand = struct {
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
+                            const first_arg: string = if (bun.argv.len > 0) bun.span(bun.argv[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {

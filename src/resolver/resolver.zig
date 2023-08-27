@@ -1001,7 +1001,7 @@ pub const Resolver = struct {
                                 bun.openFileForPath(span);
 
                             if (!store_fd) {
-                                std.debug.assert(file.handle > 2);
+                                std.debug.assert(bun.FDTag.get(file.handle) == .none);
                                 out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
                                 query.entry.cache.fd = 0;
@@ -2040,7 +2040,7 @@ pub const Resolver = struct {
 
             if (r.store_fd) {
                 Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                dir_entries_ptr.fd = open_dir.dir.fd;
+                dir_entries_ptr.fd = bun.toFD(open_dir.dir.fd);
             }
 
             bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
@@ -2704,7 +2704,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                open_dir.dir.fd,
+                bun.toFD(open_dir.dir.fd),
                 null,
             );
 

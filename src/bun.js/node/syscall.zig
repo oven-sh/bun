@@ -225,6 +225,10 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
         };
     }
 
+    if (comptime Environment.isWindows) {
+        @panic("TODO: implement openat on Windows()");
+    }
+
     while (true) {
         const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
         log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
@@ -620,7 +624,11 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 
 pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
-        _ = kernel32.SetFileValidData(bun.fdcast(fd), size);
+        if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
+            return Maybe(void).errnoSys(0, .ftruncate);
+        }
+
+        return Maybe(void).success;
     }
     while (true) {
         if (Maybe(void).errnoSys(sys.ftruncate(fd, size), .ftruncate)) |err| {

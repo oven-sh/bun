@@ -355,7 +355,7 @@ pub const Subprocess = struct {
         if (comptime Environment.isLinux) {
             // should this be handled differently?
             // this effectively shouldn't happen
-            if (this.pidfd == std.math.maxInt(std.os.fd_t)) {
+            if (this.pidfd == bun.invalid_fd) {
                 return .{ .result = {} };
             }
 
@@ -394,9 +394,9 @@ pub const Subprocess = struct {
 
         const pidfd = this.pidfd;
 
-        this.pidfd = std.math.maxInt(std.os.fd_t);
+        this.pidfd = bun.invalid_fd;
 
-        if (pidfd != std.math.maxInt(std.os.fd_t)) {
+        if (pidfd != bun.invalid_fd) {
             _ = std.os.close(pidfd);
         }
     }
@@ -1035,6 +1035,11 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
+        if (comptime Environment.isWindows) {
+            globalThis.throwTODO("spawn() is not yet implemented on Windows");
+            return .zero;
+        }
+
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();

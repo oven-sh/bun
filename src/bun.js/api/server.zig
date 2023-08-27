@@ -80,7 +80,7 @@ const Blob = JSC.WebCore.Blob;
 const BoringSSL = @import("root").bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
-    fd: i32,
+    fd: bun.FileDescriptor,
     socket_fd: i32 = 0,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
@@ -1837,8 +1837,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
+            const write_offset: usize = write_offset_;
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
@@ -1851,7 +1852,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+            const write_offset: usize = write_offset_;
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
@@ -2035,7 +2037,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 // this is used by content-range
                 this.sendfile = .{
-                    .fd = @as(i32, @truncate(bun.invalid_fd)),
+                    .fd = bun.invalid_fd,
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
                     .offset = this.blob.Blob.offset,
                     .auto_close = false,

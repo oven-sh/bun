@@ -172,7 +172,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.IterableDir.Iterator = null,
         package_name: String,
-        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
+        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = bun.invalid_fd },
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -257,8 +257,8 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
-        package_installed_node_modules: std.os.fd_t = std.math.maxInt(std.os.fd_t),
-        root_node_modules_folder: std.os.fd_t = std.math.maxInt(std.os.fd_t),
+        package_installed_node_modules: std.os.fd_t = bun.invalid_fd,
+        root_node_modules_folder: std.os.fd_t = bun.invalid_fd,
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -337,7 +337,7 @@ pub const Bin = extern struct {
                 from_remain[0..dot_bin.len].* = dot_bin.*;
                 from_remain = from_remain[dot_bin.len..];
             } else {
-                if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
+                if (this.global_bin_dir.fd >= bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -514,7 +514,7 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
+                if (this.global_bin_dir.fd >= bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }

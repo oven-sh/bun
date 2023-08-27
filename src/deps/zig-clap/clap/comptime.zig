@@ -1,4 +1,5 @@
 const clap = @import("../clap.zig");
+const bun = @import("root").bun;
 const std = @import("std");
 
 const debug = std.debug;
@@ -76,12 +77,7 @@ pub fn ComptimeClap(
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
-                        const bun = @import("root").bun;
-                        if (comptime bun.Environment.isWindows) @compileError(
-                            "TODO: implement stop_after_positional_at on windows",
-                        );
-
-                        var remaining_ = std.os.argv[@min(std.os.argv.len, stream.iter.args.inner.index)..];
+                        var remaining_ = bun.argv[@min(bun.argv.len, stream.iter.args.inner.index)..];
                         const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
                         if (first.len > 0 and std.mem.eql(u8, first, "--")) {
                             remaining_ = remaining_[1..];

@@ -684,7 +684,7 @@ const Task = struct {
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
-                    this.data = .{ .git_clone = std.math.maxInt(std.os.fd_t) };
+                    this.data = .{ .git_clone = bun.invalid_fd };
                     manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
@@ -771,7 +771,7 @@ const Task = struct {
     pub const Data = union {
         package_manifest: Npm.PackageManifest,
         extract: ExtractData,
-        git_clone: std.os.fd_t,
+        git_clone: bun.FileDescriptor,
         git_checkout: ExtractData,
     };
 
@@ -791,7 +791,7 @@ const Task = struct {
             url: strings.StringOrTinyString,
         },
         git_checkout: struct {
-            repo_dir: std.os.fd_t,
+            repo_dir: bun.FileDescriptor,
             dependency_id: DependencyID,
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
@@ -1323,8 +1323,8 @@ const PackageInstall = struct {
 
         const FileCopier = struct {
             pub fn copy(
-                dest_dir_fd: std.os.fd_t,
-                cache_dir_fd: std.os.fd_t,
+                dest_dir_fd: bun.FileDescriptor,
+                cache_dir_fd: bun.FileDescriptor,
                 walker: *Walker,
             ) !u32 {
                 var real_file_count: u32 = 0;
@@ -1408,7 +1408,7 @@ const PackageInstall = struct {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    const fd = @as(std.os.fd_t, @intCast(rc));
+                    const fd = @as(bun.FileDescriptor, @intCast(rc));
                     _ = Syscall.system.close(fd);
                     return false;
                 },
@@ -1586,7 +1586,7 @@ const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
     dependency: DependencyID,
-    node_modules_folder: std.os.fd_t,
+    node_modules_folder: bun.FileDescriptor,
     root_dependency: DependencyID,
     root_request_id: PackageID,
     pub const Tag = enum {
@@ -1603,7 +1603,7 @@ const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
 const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
 const ThreadPool = bun.ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
-const RepositoryMap = std.HashMapUnmanaged(u64, std.os.fd_t, IdentityContext(u64), 80);
+const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
 
 pub const CacheLevel = struct {
     use_cache_control_headers: bool,
@@ -2726,7 +2726,7 @@ pub const PackageManager = struct {
     fn enqueueGitCheckout(
         this: *PackageManager,
         task_id: u64,
-        dir: std.os.fd_t,
+        dir: bun.FileDescriptor,
         dependency_id: DependencyID,
         name: string,
         resolution: Resolution,

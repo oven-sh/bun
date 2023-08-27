@@ -208,3 +208,5 @@ pub const SystemErrno = enum(u8) {
         break :brk labels_;
     };
 };
+pub const off_t = i64;
+pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {}

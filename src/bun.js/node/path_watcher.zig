@@ -437,6 +437,10 @@ pub const PathWatcherManager = struct {
             watcher: *PathWatcher,
             buf: *[bun.MAX_PATH_BYTES + 1]u8,
         ) !void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), "implement directory watching on windows");
+                return;
+            }
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
@@ -480,6 +484,10 @@ pub const PathWatcherManager = struct {
         }
 
         fn run(this: *DirectoryRegisterTask) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
+
             var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
             while (this.getNext()) |watcher| {

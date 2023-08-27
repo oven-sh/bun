@@ -553,16 +553,16 @@ pub const StandaloneModuleGraph = struct {
         // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
         // this is a cheap way to avoid the extra overhead of opening the executable
         // and also just makes sense.
-        if (std.os.argv.len > 0) {
-            const argv0_len = bun.len(std.os.argv[0]);
+        if (bun.argv.len > 0) {
+            const argv0_len = bun.len(bun.argv[0]);
             if (argv0_len == 3) {
-                if (bun.strings.eqlComptimeIgnoreLen(std.os.argv[0][0..argv0_len], "bun")) {
+                if (bun.strings.eqlComptimeIgnoreLen(bun.argv[0][0..argv0_len], "bun")) {
                     return null;
                 }
             }
 
             if (argv0_len == 4) {
-                if (bun.strings.eqlComptimeIgnoreLen(std.os.argv[0][0..argv0_len], "bunx")) {
+                if (bun.strings.eqlComptimeIgnoreLen(bun.argv[0][0..argv0_len], "bunx")) {
                     return null;
                 }
             }
@@ -572,14 +572,14 @@ pub const StandaloneModuleGraph = struct {
             if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
                 return easymode.handle;
             } else |_| {
-                if (std.os.argv.len > 0) {
+                if (bun.argv.len > 0) {
                     // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
                     var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     if (bun.which(
                         &whichbuf,
                         bun.getenvZ("PATH") orelse return error.FileNotFound,
                         "",
-                        bun.span(std.os.argv[0]),
+                        bun.span(bun.argv[0]),
                     )) |path| {
                         return (try std.fs.cwd().openFileZ(path, flags)).handle;
                     }

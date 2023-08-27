@@ -44,12 +44,16 @@ pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
 
-pub const default_permission = Syscall.S.IRUSR |
-    Syscall.S.IWUSR |
-    Syscall.S.IRGRP |
-    Syscall.S.IWGRP |
-    Syscall.S.IROTH |
-    Syscall.S.IWOTH;
+pub const default_permission = if (Environment.isPosix)
+    Syscall.S.IRUSR |
+        Syscall.S.IWUSR |
+        Syscall.S.IRGRP |
+        Syscall.S.IWGRP |
+        Syscall.S.IROTH |
+        Syscall.S.IWOTH
+else
+    // TODO:
+    0;
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
@@ -4162,7 +4166,6 @@ pub const NodeFS = struct {
         if (args.offset > 0) {
             std.os.lseek_SET(fd, args.offset) catch {};
         }
-
         // For certain files, the size might be 0 but the file might still have contents.
         const size = @as(
             u64,
@@ -4857,6 +4860,11 @@ pub const NodeFS = struct {
         return Maybe(Return.Lutimes).todo;
     }
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+        if (comptime Environment.isWindows) {
+            args.global_this.throwTODO("watch is not supported on Windows yet");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        }
+
         const watcher = args.createFSWatcher() catch |err| {
             var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);

@@ -714,7 +714,8 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 }
 
 pub const invalid_fd = if (Environment.isWindows)
-    std.math.maxInt(usize)
+    // on windows, max usize is the process handle, a very valid fd
+    std.math.maxInt(usize) - 1
 else
     std.math.maxInt(FileDescriptor);
 
@@ -1053,7 +1054,8 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    const fd = fdcast(toFD(fd_));
     if (comptime !Environment.isLinux) {
         return std.os.getFdPath(fd, buf);
     }
@@ -1313,8 +1315,8 @@ pub fn reloadProcess(
 ) void {
     const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, std.os.argv.len, null) catch unreachable;
-    for (std.os.argv, dupe_argv) |src, *dest| {
+    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, argv.len, null) catch unreachable;
+    for (argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
@@ -1643,7 +1645,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         return fd;
     }
 
-    if (FD == std.os.fd_t) {
+    if (comptime FD == std.os.fd_t) {
         return @intFromPtr(fd);
     }
 
@@ -1673,6 +1675,18 @@ const WindowsStat = extern struct {
     atim: std.c.timespec,
     mtim: std.c.timespec,
     ctim: std.c.timespec,
+
+    pub fn mtime(this: *const WindowsStat) std.c.timespec {
+        return this.mtim;
+    }
+
+    pub fn ctime(this: *const WindowsStat) std.c.timespec {
+        return this.ctim;
+    }
+
+    pub fn atime(this: *const WindowsStat) std.c.timespec {
+        return this.atim;
+    }
 };
 
 pub const Stat = if (Environment.isPosix) std.os.Stat else WindowsStat;
@@ -1681,15 +1695,17 @@ pub const posix = struct {
     pub const STDOUT_FD = std.os.STDOUT_FILENO;
     pub const STDERR_FD = std.os.STDERR_FILENO;
     pub const STDIN_FD = std.os.STDIN_FILENO;
+    pub const argv = std.os.argv;
 };
 
 pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
+    pub var argv: [][*:0]u8 = undefined;
 };
 
-pub usingnamespace if (Environment.isPosix) posix else win32;
+pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
 
 pub fn isRegularFile(mode: JSC.Node.Mode) bool {
     if (comptime Environment.isPosix) {
@@ -1734,3 +1750,15 @@ pub const FDTag = enum {
         }
     }
 };
+
+pub fn fdi32(fd_: anytype) i32 {
+    if (comptime Environment.isPosix) {
+        return @intCast(toFD(fd_));
+    }
+
+    if (comptime @TypeOf(fd_) == *anyopaque) {
+        return @intCast(@intFromPtr(fd_));
+    }
+
+    return @intCast(fd_);
+}

@@ -3807,7 +3807,7 @@ pub const FIFO = struct {
             if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
                 // it might be readable actually
                 this.close_on_empty_read = true;
-                switch (bun.isReadable(@as(std.os.fd_t, @intCast(poll.fd)))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         this.close_on_empty_read = false;
                         return null;
@@ -3830,7 +3830,7 @@ pub const FIFO = struct {
 
                 // this happens if we've registered a watcher but we haven't
                 // ticked the event loop since registering it
-                switch (bun.isReadable(@as(std.os.fd_t, @intCast(poll.fd)))) {
+                switch (bun.isReadable(poll.fd)) {
                     .ready => {
                         poll.flags.insert(.readable);
                         return null;
@@ -4137,11 +4137,13 @@ pub const File = struct {
             },
         };
 
-        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
-            var termios = std.mem.zeroes(std.os.termios);
-            _ = std.c.tcgetattr(fd, &termios);
-            bun.C.cfmakeraw(&termios);
-            file.is_atty = true;
+        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(bun.fdcast(fd)))) {
+            if (comptime Environment.isPosix) {
+                var termios = std.mem.zeroes(std.os.termios);
+                _ = std.c.tcgetattr(fd, &termios);
+                bun.C.cfmakeraw(&termios);
+                file.is_atty = true;
+            }
         }
 
         if (!auto_close and !(file.is_atty orelse false)) {

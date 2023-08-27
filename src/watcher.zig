@@ -384,6 +384,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
             var watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
+            if (comptime bun.Environment.isWindows) {
+                bun.todo(@src(), {});
+                return error.NotImplemented;
+            }
+
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }

@@ -103,13 +103,16 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Process.stderr": [string];
 };
 
+const isDebug = process.env.NODE_ENV === "development";
+const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
+
 let threadId = 1;
-let isDebug = process.env.NODE_ENV === "development";
 
 export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
   #threadId: number;
   #inspector: WebSocketInspector;
   #process?: ChildProcess;
+  #signal?: UnixSignal;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -187,7 +190,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * @returns if the event was sent to a listener
    */
   emit<E extends keyof DebugAdapterEventMap>(event: E, ...args: DebugAdapterEventMap[E] | []): boolean {
-    if (isDebug && event !== "Adapter.event" && event !== "Inspector.event") {
+    if (isDebug && !debugSilentEvents.has(event)) {
       console.log(this.#threadId, event, ...args);
     }
 
@@ -391,13 +394,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       throw new Error("Program could not be started.");
     }
 
-    await new Promise<void>(resolve => {
-      signal.on("Signal.received", () => {
-        resolve();
-      });
-      setTimeout(resolve, 5000);
-    });
-
+    this.#signal = signal;
     const attached = await this.#attach(url);
 
     if (attached) {
@@ -455,6 +452,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       if (isDebugee) {
         this.#process = undefined;
+        this.#signal = undefined;
         this.#emit("exited", {
           exitCode: code ?? -1,
         });
@@ -494,13 +492,23 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #attach(url?: string | URL): Promise<boolean> {
+    if (this.#signal) {
+      await new Promise<void>(resolve => {
+        this.#signal?.once("Signal.received", () => {
+          resolve();
+        });
+        setTimeout(resolve, 3000);
+      });
+    }
+
     for (let i = 0; i < 5; i++) {
-      const ok = await this.#inspector.start(url);
-      if (ok) {
+      const connected = await this.#inspector.start(url);
+      if (connected) {
         return true;
       }
       await new Promise(resolve => setTimeout(resolve, 100 * i));
     }
+
     return false;
   }
 
@@ -926,6 +934,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
+    if (this.#process?.exitCode === null) {
+      const connected = await this.#attach();
+      if (connected) {
+        return;
+      }
+    }
+
     this.#emit("output", {
       category: "debug console",
       output: "Debugger detached.\n",
@@ -1062,13 +1077,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
-    console.log("VARIABLES BEFORE", this.#variables.size);
     for (const { variablesReference, objectGroup } of this.#variables.values()) {
       if (objectGroup === "debugger") {
         this.#variables.delete(variablesReference);
       }
     }
-    console.log("VARIABLES AFTER", this.#variables.size);
+
     this.#emit("continued", {
       threadId: this.#threadId,
     });
@@ -1435,7 +1449,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     if (variablesReference) {
       this.#variables.set(variablesReference, variable);
-      console.log("addObject", variablesReference, variable);
     }
 
     return variable;
@@ -1521,10 +1534,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   close(): void {
     this.#process?.kill();
+    this.#signal?.close();
     this.#inspector.close();
   }
 
   #reset(): void {
+    this.#process = undefined;
+    this.#signal = undefined;
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;

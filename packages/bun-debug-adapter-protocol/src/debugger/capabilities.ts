@@ -73,7 +73,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports setting a variable to a value.
    * @see setVariable
    */
-  supportsSetVariable: false,
+  supportsSetVariable: true,
 
   /**
    * The debug adapter supports restarting a frame.

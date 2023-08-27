@@ -529,7 +529,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async source(request: DAP.SourceRequest): Promise<DAP.SourceResponse> {
     const { source } = request;
-
     const { scriptId } = await this.#getSource(sourceToId(source));
     const { scriptSource } = await this.send("Debugger.getScriptSource", { scriptId });
 
@@ -1428,6 +1427,33 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
+  async setVariable(request: DAP.SetVariableRequest): Promise<DAP.SetVariableResponse> {
+    const { variablesReference, name, value } = request;
+
+    const variable = this.#variables.get(variablesReference);
+    if (!variable) {
+      throw new Error("Variable not found.");
+    }
+
+    const { objectId, objectGroup } = variable;
+    if (!objectId) {
+      throw new Error("Variable cannot be modified.");
+    }
+
+    const { result, wasThrown } = await this.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function (name) { this[name] = ${value}; return this[name]; }`,
+      arguments: [{ value: name }],
+      doNotPauseOnExceptionsAndMuteConsole: true,
+    });
+
+    if (wasThrown) {
+      throw new Error(remoteObjectToString(result));
+    }
+
+    return this.#addObject(result, { name, objectGroup });
+  }
+
   #addObject(
     remoteObject: JSC.Runtime.RemoteObject,
     propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string },
@@ -1438,6 +1464,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const variable: Variable = {
       objectId,
       objectGroup: propertyDescriptor?.objectGroup,
+      evaluateName: propertyDescriptorToName(propertyDescriptor),
       name: propertyDescriptorToName(propertyDescriptor),
       type: subtype || type,
       value: remoteObjectToString(remoteObject),

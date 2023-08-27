@@ -459,7 +459,7 @@ pub const StreamStart = union(Tag) {
                     if (!path.isString()) {
                         return .{
                             .err = Syscall.Error{
-                                .errno = bun.C.SystemErrno.EINVAL,
+                                .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
                             },
                         };
                     }
@@ -476,7 +476,7 @@ pub const StreamStart = union(Tag) {
                     if (!fd_value.isAnyInt()) {
                         return .{
                             .err = Syscall.Error{
-                                .errno = bun.C.SystemErrno.EBADF,
+                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
                             },
                         };
                     }
@@ -484,7 +484,7 @@ pub const StreamStart = union(Tag) {
                     if (fd < 0) {
                         return .{
                             .err = Syscall.Error{
-                                .errno = bun.C.SystemErrno.EBADF,
+                                .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
                             },
                         };
                     }
@@ -3807,7 +3807,7 @@ pub const FIFO = struct {
             if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
                 // it might be readable actually
                 this.close_on_empty_read = true;
-                switch (bun.isReadable(poll.fd)) {
+                switch (bun.isReadable(@intCast(poll.fd))) {
                     .ready => {
                         this.close_on_empty_read = false;
                         return null;
@@ -3830,7 +3830,7 @@ pub const FIFO = struct {
 
                 // this happens if we've registered a watcher but we haven't
                 // ticked the event loop since registering it
-                switch (bun.isReadable(poll.fd)) {
+                switch (bun.isReadable(@intCast(poll.fd))) {
                     .ready => {
                         poll.flags.insert(.readable);
                         return null;

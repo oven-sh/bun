@@ -990,7 +990,7 @@ pub const Bundler = struct {
                     null,
                 ) catch return null;
 
-                const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
 
@@ -1266,7 +1266,7 @@ pub const Bundler = struct {
             if (this_parse.file_fd_ptr) |file_fd_ptr| {
                 file_fd_ptr.* = entry.fd;
             }
-            break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
         if (comptime return_file_only) {

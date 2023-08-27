@@ -133,10 +133,10 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.IterableDir = found: {
-            for (bun.argv, 0..) |arg, i| {
+            for (bun.argv(), 0..) |arg, i| {
                 if (strings.eqlComptime(std.mem.span(arg), "completions")) {
-                    if (bun.argv.len > i + 1) {
-                        const input = std.mem.span(bun.argv[i + 1]);
+                    if (bun.argv().len > i + 1) {
+                        const input = std.mem.span(bun.argv()[i + 1]);
 
                         if (!std.fs.path.isAbsolute(input)) {
                             completions_dir = resolve_path.joinAbs(

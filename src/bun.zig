@@ -611,7 +611,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = @intCast(fd),
             .events = std.os.POLL.IN | std.os.POLL.ERR,
             .revents = 0,
         },
@@ -635,7 +635,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
 
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = @intCast(fd),
             .events = std.os.POLL.OUT,
             .revents = 0,
         },
@@ -1315,8 +1315,8 @@ pub fn reloadProcess(
 ) void {
     const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
     const bun = @This();
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
-    for (bun.argv, dupe_argv) |src, *dest| {
+    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
+    for (bun.argv(), dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
@@ -1642,7 +1642,7 @@ pub inline fn socketcast(fd: FileDescriptor) std.os.fd_t {
 pub inline fn toFD(fd: anytype) FileDescriptor {
     const FD = @TypeOf(fd);
     if (comptime FileDescriptor == std.os.fd_t) {
-        return fd;
+        return @intCast(fd);
     }
 
     if (comptime FD == std.os.fd_t) {
@@ -1695,15 +1695,39 @@ pub const posix = struct {
     pub const STDOUT_FD = std.os.STDOUT_FILENO;
     pub const STDERR_FD = std.os.STDERR_FILENO;
     pub const STDIN_FD = std.os.STDIN_FILENO;
-    pub const argv = std.os.argv;
+    pub inline fn argv() [][*:0]u8 {
+        return std.os.argv;
+    }
+
+    pub fn stdio(i: anytype) FileDescriptor {
+        return switch (i) {
+            STDOUT_FD => STDOUT_FD,
+            STDERR_FD => STDERR_FD,
+            STDIN_FD => STDIN_FD,
+            else => @panic("Invalid stdio fd"),
+        };
+    }
 };
 
 pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
-    pub var argv: [][*:0]u8 = undefined;
+    var argv_: [][*:0]u8 = undefined;
     var args_buf: [255][*:0]u8 = undefined;
+
+    pub inline fn argv() [][*:0]u8 {
+        return argv_;
+    }
+
+    pub fn stdio(i: anytype) FileDescriptor {
+        return switch (i) {
+            0 => STDIN_FD,
+            1 => STDOUT_FD,
+            2 => STDERR_FD,
+            else => @panic("Invalid stdio fd"),
+        };
+    }
 
     pub fn populateArgv() void {
         var wargv_all = kernel32.GetCommandLineW();

@@ -1076,7 +1076,7 @@ pub const Command = struct {
     };
 
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = bun.argv };
+        var args_iter = ArgsIterator{ .buf = bun.argv() };
         // first one is the executable name
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
@@ -1213,9 +1213,9 @@ pub const Command = struct {
             };
 
             ctx.args.target = Api.Target.bun;
-            var argv = try bun.default_allocator.alloc(string, bun.argv.len -| 1);
-            if (bun.argv.len > 1) {
-                for (argv, bun.argv[1..]) |*dest, src| {
+            var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+            if (bun.argv().len > 1) {
+                for (argv, bun.argv()[1..]) |*dest, src| {
                     dest.* = bun.span(src);
                 }
             }
@@ -1234,7 +1234,7 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             else => {},
         }
 
@@ -1469,7 +1469,7 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (bun.argv) |arg| {
+                        for (bun.argv()) |arg| {
                             if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;

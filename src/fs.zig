@@ -997,7 +997,7 @@ pub const FileSystem = struct {
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
-        ) !File {
+        ) !PathContentsPair {
             return readFileWithHandleAndAllocator(
                 fs,
                 bun.fs_allocator,
@@ -1019,7 +1019,7 @@ pub const FileSystem = struct {
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
-        ) !File {
+        ) !PathContentsPair {
             FileSystem.setMaxFd(file.handle);
 
             // Skip the extra file.stat() call when possible
@@ -1035,9 +1035,9 @@ pub const FileSystem = struct {
             if (size == 0) {
                 if (comptime use_shared_buffer) {
                     shared_buffer.reset();
-                    return File{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                    return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
                 } else {
-                    return File{ .path = Path.init(path), .contents = "" };
+                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
                 }
             }
 
@@ -1109,7 +1109,7 @@ pub const FileSystem = struct {
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
             }
 
-            return File{ .path = Path.init(path), .contents = file_contents };
+            return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
         }
 
         pub fn kindFromAbsolute(
@@ -1244,8 +1244,7 @@ pub const FileSystem = struct {
     // };
 };
 
-pub const Directory = struct { path: Path, contents: []string };
-pub const File = struct { path: Path, contents: string };
+pub const PathContentsPair = struct { path: Path, contents: string };
 
 pub const NodeJSPathName = struct {
     base: string,

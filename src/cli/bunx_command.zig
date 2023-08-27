@@ -141,10 +141,10 @@ pub const BunxCommand = struct {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, bun.argv.len -| 1);
+        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, bun.argv().len -| 1);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = bun.argv[1..];
+            var argv = bun.argv()[1..];
 
             var found_subcommand_name = false;
 

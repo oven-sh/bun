@@ -1207,7 +1207,7 @@ pub const Subprocess = struct {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
                             stdio_iter.len = @min(stdio_iter.len, 3);
-                            var i: usize = 0;
+                            var i: u32 = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 if (!extractStdio(globalThis, i, value, &stdio))
                                     return JSC.JSValue.jsUndefined();
@@ -1707,16 +1707,18 @@ pub const Subprocess = struct {
     fn extractStdioBlob(
         globalThis: *JSC.JSGlobalObject,
         blob: JSC.WebCore.AnyBlob,
-        i: usize,
+        i: u32,
         stdio_array: []Stdio,
     ) bool {
+        const fd = bun.stdio(i);
+
         if (blob.needsToReadFile()) {
             if (blob.store()) |store| {
                 if (store.data.file.pathlike == .fd) {
-                    if (store.data.file.pathlike.fd == @as(bun.FileDescriptor, @intCast(i))) {
+                    if (store.data.file.pathlike.fd == fd) {
                         stdio_array[i] = Stdio{ .inherit = {} };
                     } else {
-                        switch (bun.FDTag.get(bun.fdcast(i))) {
+                        switch (bun.FDTag.get(i)) {
                             .stdin => {
                                 if (i == 1 or i == 2) {
                                     globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
@@ -1750,7 +1752,7 @@ pub const Subprocess = struct {
 
     fn extractStdio(
         globalThis: *JSC.JSGlobalObject,
-        i: usize,
+        i: u32,
         value: JSValue,
         stdio_array: []Stdio,
     ) bool {

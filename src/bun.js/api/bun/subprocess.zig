@@ -1041,6 +1041,7 @@ pub const Subprocess = struct {
 
         var env: [*:null]?[*:0]const u8 = undefined;
 
+        var override_env = false;
         var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
             .items = &.{},
             .capacity = 0,
@@ -1168,6 +1169,7 @@ pub const Subprocess = struct {
                             return .zero;
                         }
 
+                        override_env = true;
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
@@ -1257,7 +1259,7 @@ pub const Subprocess = struct {
         }
         defer actions.deinit();
 
-        if (env_array.items.len == 0) {
+        if (!override_env and env_array.items.len == 0) {
             env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
             env_array.capacity = env_array.items.len;
         }
@@ -1302,13 +1304,11 @@ pub const Subprocess = struct {
             return .zero;
         };
 
-        if (env_array.items.len > 0) {
-            env_array.append(allocator, null) catch {
-                globalThis.throw("out of memory", .{});
-                return .zero;
-            };
-            env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
-        }
+        env_array.append(allocator, null) catch {
+            globalThis.throw("out of memory", .{});
+            return .zero;
+        };
+        env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
 
         const pid = brk: {
             defer {

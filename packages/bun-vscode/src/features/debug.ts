@@ -1,9 +1,8 @@
 import * as vscode from "vscode";
 import type { CancellationToken, DebugConfiguration, ProviderResult, WorkspaceFolder } from "vscode";
 import type { DAP } from "../../../bun-debug-adapter-protocol";
-import { DebugAdapter } from "../../../bun-debug-adapter-protocol";
+import { DebugAdapter, UnixSignal } from "../../../bun-debug-adapter-protocol";
 import { DebugSession } from "@vscode/debugadapter";
-import { inspect } from "node:util";
 import { tmpdir } from "node:os";
 
 const debugConfiguration: vscode.DebugConfiguration = {
@@ -110,7 +109,7 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
     const { configuration } = session;
     const { request, url } = configuration;
 
-    if (request === "attach" && url === terminal?.url) {
+    if (request === "attach" && url === terminal?.adapter.url) {
       return new vscode.DebugAdapterInlineImplementation(terminal);
     }
 
@@ -120,45 +119,25 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
 }
 
 class FileDebugSession extends DebugSession {
-  readonly url: string;
   readonly adapter: DebugAdapter;
+  readonly signal: UnixSignal;
 
   constructor(sessionId?: string) {
     super();
     const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
-    this.url = `ws+unix://${tmpdir()}/bun-vscode-${uniqueId}.sock`;
-    this.adapter = new DebugAdapter({
-      url: this.url,
-      send: this.sendMessage.bind(this),
-      logger(...messages) {
-        log("jsc", ...messages);
-      },
-      stdout(message) {
-        log("console", message);
-      },
-      stderr(message) {
-        log("console", message);
-      },
-    });
-  }
-
-  sendMessage(message: DAP.Request | DAP.Response | DAP.Event): void {
-    log("dap", "-->", message);
-
-    const { type } = message;
-    if (type === "response") {
-      this.sendResponse(message);
-    } else if (type === "event") {
-      this.sendEvent(message);
-    } else {
-      throw new Error(`Not supported: ${type}`);
-    }
+    this.adapter = new DebugAdapter(`ws+unix://${tmpdir()}/${uniqueId}.sock`);
+    this.adapter.on("Adapter.response", response => this.sendResponse(response));
+    this.adapter.on("Adapter.event", event => this.sendEvent(event));
+    this.signal = new UnixSignal();
   }
 
   handleMessage(message: DAP.Event | DAP.Request | DAP.Response): void {
-    log("dap", "<--", message);
-
-    this.adapter.accept(message);
+    const { type } = message;
+    if (type === "request") {
+      this.adapter.emit("Adapter.request", message);
+    } else {
+      throw new Error(`Not supported: ${type}`);
+    }
   }
 
   dispose() {
@@ -174,26 +153,19 @@ class TerminalDebugSession extends FileDebugSession {
     this.terminal = vscode.window.createTerminal({
       name: "Bun Terminal",
       env: {
-        "BUN_INSPECT": `1${this.url}`,
-        "BUN_INSPECT_NOTIFY": `unix://${this.adapter.inspector.unix}`,
+        "BUN_INSPECT": `1${this.adapter.url}`,
+        "BUN_INSPECT_NOTIFY": `${this.signal.url}`,
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
     this.terminal.show();
-    this.adapter.inspector.startDebugging = () => {
+    this.signal.on("Signal.received", () => {
       vscode.debug.startDebugging(undefined, {
         ...attachConfiguration,
-        url: this.url,
+        url: this.adapter.url,
       });
-    };
-  }
-}
-
-function log(channel: string, ...message: unknown[]): void {
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[${channel}]`, ...message);
-    channels[channel]?.appendLine(message.map(v => inspect(v)).join(" "));
+    });
   }
 }
 

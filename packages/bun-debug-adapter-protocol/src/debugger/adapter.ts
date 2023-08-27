@@ -1,12 +1,14 @@
 import type { DAP } from "../protocol";
+import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
+import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector";
 // @ts-ignore
-import type { JSC, InspectorListener, WebSocketInspectorOptions } from "../../../bun-inspector-protocol";
-import { UnixWebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
+import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import capabilities from "./capabilities";
 import { Location, SourceMap } from "./sourcemap";
 import { compare, parse } from "semver";
+import { EventEmitter } from "node:events";
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
@@ -46,6 +48,7 @@ type Source = DAP.Source & {
 type Breakpoint = DAP.Breakpoint & {
   id: number;
   breakpointId: string;
+  generatedLocation: JSC.Debugger.Location;
   source: Source;
 };
 
@@ -78,24 +81,28 @@ type IDebugAdapter = {
   ) => void | DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]> | Promise<void>;
 };
 
-export type DebugAdapterOptions = WebSocketInspectorOptions & {
-  url: string | URL;
-  send(message: DAP.Request | DAP.Response | DAP.Event): Promise<void>;
-  stdout?(message: string): void;
-  stderr?(message: string): void;
+export type DebugAdapterEventMap = InspectorEventMap & {
+  [E in keyof DAP.EventMap as E extends string ? `Adapter.${E}` : never]: [DAP.EventMap[E]];
+} & {
+  "Adapter.request": [DAP.Request];
+  "Adapter.response": [DAP.Response];
+  "Adapter.event": [DAP.Event];
+  "Adapter.error": [Error];
+} & {
+  "Process.requested": [unknown];
+  "Process.spawned": [ChildProcess];
+  "Process.exited": [number | Error | null, string | null];
+  "Process.stdout": [string];
+  "Process.stderr": [string];
 };
 
 // This adapter only support single-threaded debugging,
 // which means that there is only one thread at a time.
 const threadId = 1;
+const isDebug = process.env.NODE_ENV === "development";
 
-// @ts-ignore
-export class DebugAdapter implements IDebugAdapter, InspectorListener {
-  #url: URL;
-  #sendToAdapter: DebugAdapterOptions["send"];
-  #stdout?: DebugAdapterOptions["stdout"];
-  #stderr?: DebugAdapterOptions["stderr"];
-  #inspector: UnixWebSocketInspector;
+export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
+  #inspector: WebSocketInspector;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -110,13 +117,16 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #launched?: LaunchRequest;
   #connected?: boolean;
 
-  constructor({ url, send, stdout, stderr, ...options }: DebugAdapterOptions) {
-    this.#url = new URL(url);
-    // @ts-ignore
-    this.#inspector = new UnixWebSocketInspector({ ...options, url, listener: this });
-    this.#stdout = stdout;
-    this.#stderr = stderr;
-    this.#sendToAdapter = send;
+  constructor(url?: string | URL) {
+    super();
+    this.#inspector = new WebSocketInspector(url);
+    const emit = this.#inspector.emit.bind(this.#inspector);
+    this.#inspector.emit = (event, ...args) => {
+      let sent = false;
+      sent ||= emit(event, ...args);
+      sent ||= this.emit(event, ...(args as any));
+      return sent;
+    };
     this.#sourceId = 1;
     this.#pendingSources = new Map();
     this.#sources = new Map();
@@ -128,84 +138,200 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#variables = [{ name: "", value: "", type: undefined, variablesReference: 0 }];
   }
 
-  get inspector(): UnixWebSocketInspector {
-    return this.#inspector;
+  get url(): string {
+    return this.#inspector.url;
   }
 
-  async accept(message: DAP.Request | DAP.Response | DAP.Event): Promise<void> {
-    const { type } = message;
-
-    switch (type) {
-      case "request":
-        return this.#acceptRequest(message);
-    }
-
-    throw new Error(`Not supported: ${type}`);
+  start(url?: string): Promise<boolean> {
+    return this.#inspector.start(url);
   }
 
-  async #acceptRequest(request: DAP.Request): Promise<void> {
-    const { seq, command, arguments: args } = request;
-
-    let response;
-    try {
-      if (!(command! in this)) {
-        throw new Error(`Not supported: ${command}`);
-      }
-      response = await this[command as keyof this](args);
-    } catch (error) {
-      const { message } = unknownToError(error);
-      return this.#sendToAdapter({
-        type: "response",
-        success: false,
-        message,
-        request_seq: seq,
-        seq: 0,
-        command,
-      });
-    }
-
-    return this.#sendToAdapter({
-      type: "response",
-      success: true,
-      request_seq: seq,
-      seq: 0,
-      command,
-      body: response,
-    });
-  }
-
-  async #send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
-    method: M,
-    params?: JSC.RequestMap[M],
-  ): Promise<JSC.ResponseMap[M]> {
+  /**
+   * Sends a request to the JavaScript inspector.
+   * @param method the method name
+   * @param params the method parameters
+   * @returns the response
+   * @example
+   * const { result, wasThrown } = await adapter.send("Runtime.evaluate", {
+   *   expression: "1 + 1",
+   * });
+   * console.log(result.value); // 2
+   */
+  async send<M extends keyof JSC.ResponseMap>(method: M, params?: JSC.RequestMap[M]): Promise<JSC.ResponseMap[M]> {
     return this.#inspector.send(method, params);
   }
 
-  async #emit<E extends keyof DAP.EventMap>(name: E, body?: DAP.EventMap[E]): Promise<void> {
-    await this.#sendToAdapter({
+  /**
+   * Emits an event. For the adapter to work, you must:
+   * - emit `Adapter.request` when the client sends a request to the adapter.
+   * - listen to `Adapter.response` to receive responses from the adapter.
+   * - listen to `Adapter.event` to receive events from the adapter.
+   * @param event the event name
+   * @param args the event arguments
+   * @returns if the event was sent to a listener
+   */
+  emit<E extends keyof DebugAdapterEventMap>(event: E, ...args: DebugAdapterEventMap[E] | []): boolean {
+    if (isDebug && event !== "Adapter.event" && event !== "Inspector.event") {
+      console.log(event, ...args);
+    }
+
+    let sent = super.emit(event, ...(args as any));
+
+    if (!(event in this)) {
+      return sent;
+    }
+
+    let result: unknown;
+    try {
+      // @ts-ignore
+      result = this[event as keyof this](...(args as any));
+    } catch (cause) {
+      sent ||= this.emit("Adapter.error", unknownToError(cause));
+      return sent;
+    }
+
+    if (result instanceof Promise) {
+      result.catch(cause => {
+        this.emit("Adapter.error", unknownToError(cause));
+      });
+    }
+
+    return sent;
+  }
+
+  #emit<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
+    this.emit("Adapter.event", {
       type: "event",
       seq: 0,
-      event: name,
+      event,
       body,
+    });
+  }
+
+  async ["Adapter.request"](request: DAP.Request): Promise<void> {
+    const { command, arguments: args } = request;
+
+    if (!(command in this)) {
+      return;
+    }
+
+    let result: unknown;
+    try {
+      // @ts-ignore
+      result = await this[command as keyof this](args);
+    } catch (cause) {
+      const error = unknownToError(cause);
+      this.emit("Adapter.error", error);
+
+      const { message } = error;
+      this.emit("Adapter.response", {
+        type: "response",
+        command,
+        success: false,
+        message,
+        request_seq: request.seq,
+        seq: 0,
+      });
+      return;
+    }
+
+    this.emit("Adapter.response", {
+      type: "response",
+      command,
+      success: true,
+      request_seq: request.seq,
+      seq: 0,
+      body: result,
+    });
+  }
+
+  ["Adapter.event"](event: DAP.Event): void {
+    const { event: name, body } = event;
+    this.emit(`Adapter.${name}` as keyof DebugAdapterEventMap, body);
+  }
+
+  async #spawn(options: {
+    command: string;
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    strictEnv?: boolean;
+    isDebugee?: boolean;
+  }): Promise<boolean> {
+    const { command, args = [], cwd, env = {}, strictEnv, isDebugee } = options;
+    const request = {
+      command,
+      args,
+      cwd,
+      env: strictEnv ? env : { ...process.env, ...env },
+    };
+    this.emit("Process.requested", request);
+
+    let subprocess: ChildProcess;
+    try {
+      subprocess = spawn(command, args, {
+        ...request,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause) {
+      this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
+      return false;
+    }
+
+    subprocess.on("spawn", () => {
+      this.emit("Process.spawned", subprocess);
+
+      if (isDebugee) {
+        this.#emit("process", {
+          name: `${command} ${args.join(" ")}`,
+          systemProcessId: subprocess.pid,
+          isLocalProcess: true,
+          startMethod: "launch",
+        });
+      }
+    });
+
+    subprocess.on("exit", (code, signal) => {
+      this.emit("Process.exited", code, signal);
+
+      if (isDebugee) {
+        this.#emit("exited", {
+          exitCode: code ?? -1,
+        });
+      }
+    });
+
+    subprocess.stdout?.on("data", data => {
+      this.emit("Process.stdout", data.toString());
+    });
+
+    subprocess.stderr?.on("data", data => {
+      this.emit("Process.stderr", data.toString());
+    });
+
+    return new Promise(resolve => {
+      subprocess.on("spawn", () => resolve(true));
+      subprocess.on("exit", () => resolve(false));
+      subprocess.on("error", () => resolve(false));
     });
   }
 
   initialize(request: InitializeRequest): DAP.InitializeResponse {
     const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
 
-    this.#send("Inspector.enable");
-    this.#send("Runtime.enable");
-    this.#send("Console.enable");
-    this.#send("Debugger.enable");
-    this.#send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
-    this.#send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
-    this.#send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
-    this.#send("Debugger.setBreakpointsActive", { active: true });
+    this.send("Inspector.enable");
+    this.send("Runtime.enable");
+    this.send("Console.enable");
+    this.send("Debugger.enable");
+    this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
+    this.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    this.send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
+    this.send("Debugger.setBreakpointsActive", { active: true });
 
     // If the client will not send a `configurationDone` request, then we need to
     // tell the debugger that everything is ready.
     if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
-      this.#send("Inspector.initialized");
+      this.send("Inspector.initialized");
     }
 
     // Tell the client what capabilities this adapter supports.
@@ -216,16 +342,16 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     // If the client requested that `noDebug` mode be enabled,
     // then we need to disable all breakpoints and pause on statements.
     if (this.#launched?.noDebug) {
-      this.#send("Debugger.setBreakpointsActive", { active: false });
-      this.#send("Debugger.setPauseOnExceptions", { state: "none" });
-      this.#send("Debugger.setPauseOnDebuggerStatements", { enabled: false });
-      this.#send("Debugger.setPauseOnMicrotasks", { enabled: false });
-      this.#send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-      this.#send("Debugger.setPauseOnAssertions", { enabled: false });
+      this.send("Debugger.setBreakpointsActive", { active: false });
+      this.send("Debugger.setPauseOnExceptions", { state: "none" });
+      this.send("Debugger.setPauseOnDebuggerStatements", { enabled: false });
+      this.send("Debugger.setPauseOnMicrotasks", { enabled: false });
+      this.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
+      this.send("Debugger.setPauseOnAssertions", { enabled: false });
     }
 
     // Tell the debugger that everything is ready.
-    this.#send("Inspector.initialized");
+    this.send("Inspector.initialized");
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
@@ -241,11 +367,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         category: "stderr",
         output: `Failed to start debugger.\n${message}`,
       });
-      this.#emit("terminated");
+      this.terminate();
     }
   }
 
   async #launch(request: LaunchRequest): Promise<void> {
+    /*
     if (this.#process?.exitCode === null) {
       throw new Error("Another program is already running. Did you terminate the last session?");
     }
@@ -281,76 +408,14 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     finalEnv["BUN_INSPECT"] = `1${this.#url}`;
     finalEnv["BUN_INSPECT_NOTIFY"] = `unix://${this.#inspector.unix}`;
 
-    if (isTest) {
+    if (true) {
       finalEnv["FORCE_COLOR"] = "1";
     } else {
       // https://github.com/microsoft/vscode/issues/571
       finalEnv["NO_COLOR"] = "1";
     }
 
-    const subprocess = spawn(runtime, [...finalArgs, program], {
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd,
-      env: finalEnv,
-    });
-
-    subprocess.on("spawn", () => {
-      this.#process = subprocess;
-      this.#emit("process", {
-        name: program,
-        systemProcessId: subprocess.pid,
-        isLocalProcess: true,
-        startMethod: "launch",
-      });
-    });
-
-    subprocess.on("exit", (code, signal) => {
-      this.#emit("exited", {
-        exitCode: code ?? -1,
-      });
-      this.#process = undefined;
-    });
-
-    subprocess.stdout!.on("data", data => {
-      const text = data.toString();
-      this.#stdout?.(text);
-
-      if (isTest) {
-        this.#emit("output", {
-          category: "stdout",
-          output: text,
-          source: {
-            path: program,
-          },
-        });
-      }
-    });
-
-    subprocess.stderr!.on("data", data => {
-      const text = data.toString();
-      this.#stderr?.(text);
-
-      if (isTest) {
-        this.#emit("output", {
-          category: "stdout", // Not stderr, since VSCode will highlight it as red.
-          output: text,
-          source: {
-            path: program,
-          },
-        });
-      }
-    });
-
-    const start = new Promise<undefined>(resolve => {
-      subprocess.on("spawn", () => resolve(undefined));
-    });
-
-    const exitOrError = new Promise<number | string | Error>(resolve => {
-      subprocess.on("exit", (code, signal) => resolve(code ?? signal ?? -1));
-      subprocess.on("error", resolve);
-    });
-
-    const reason = await Promise.race([start, exitOrError]);
+    let reason = undefined;
 
     if (reason instanceof Error) {
       const { message } = reason;
@@ -379,14 +444,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
     }
 
-    throw new Error("Program started, but the debugger could not be attached.");
+    throw new Error("Program started, but the debugger could not be attached.");*/
   }
 
   async #start(url?: string | URL): Promise<boolean> {
-    if (url) {
-      this.#url = new URL(url);
-    }
-
     for (let i = 0; i < 5; i++) {
       const ok = await this.#inspector.start(url);
       if (ok) {
@@ -410,22 +471,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         category: "stderr",
         output: `Failed to start debugger.\n${message}`,
       });
-      this.#emit("terminated");
+      this.terminate();
     }
   }
 
   async #attach(request: AttachRequest): Promise<void> {
     const { url } = request;
-
-    if (this.#url.href === url) {
-      this.#emit("output", {
-        category: "debug console",
-        output: "Debugger attached.\n",
-      });
-
-      this.configurationDone();
-      return;
-    }
 
     if (await this.#start(url)) {
       this.configurationDone();
@@ -437,6 +488,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   terminate(): void {
     this.#process?.kill();
+    this.#emit("terminated");
   }
 
   disconnect(request: DAP.DisconnectRequest): void {
@@ -453,7 +505,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { source } = request;
 
     const { scriptId } = await this.#getSource(sourceToId(source));
-    const { scriptSource } = await this.#send("Debugger.getScriptSource", { scriptId });
+    const { scriptSource } = await this.send("Debugger.getScriptSource", { scriptId });
 
     return {
       content: scriptSource,
@@ -472,27 +524,27 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async pause(): Promise<void> {
-    await this.#send("Debugger.pause");
+    await this.send("Debugger.pause");
     this.#stopped = "pause";
   }
 
   async continue(): Promise<void> {
-    await this.#send("Debugger.resume");
+    await this.send("Debugger.resume");
     this.#stopped = undefined;
   }
 
   async next(): Promise<void> {
-    await this.#send("Debugger.stepNext");
+    await this.send("Debugger.stepNext");
     this.#stopped = "step";
   }
 
   async stepIn(): Promise<void> {
-    await this.#send("Debugger.stepInto");
+    await this.send("Debugger.stepInto");
     this.#stopped = "step";
   }
 
   async stepOut(): Promise<void> {
-    await this.#send("Debugger.stepOut");
+    await this.send("Debugger.stepOut");
     this.#stopped = "step";
   }
 
@@ -505,7 +557,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       this.#generatedLocation(source, endLine ?? line + 1, endColumn),
     ]);
 
-    const { locations } = await this.#send("Debugger.getBreakpointLocations", {
+    const { locations } = await this.send("Debugger.getBreakpointLocations", {
       start,
       end,
     });
@@ -590,17 +642,27 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const source = await this.#getSource(sourceId);
 
     const oldBreakpoints = this.#getBreakpoints(sourceId);
+    console.log("OLD BREAKPOINTS", oldBreakpoints);
 
     const breakpoints = await Promise.all(
       requests!.map(async ({ line, column, ...options }) => {
-        const breakpoint = this.#getBreakpoint(sourceId, line, column);
-        if (breakpoint) {
-          return breakpoint;
+        const location = this.#generatedLocation(source, line, column);
+        console.log("NEW BREAKPOINT", location);
+
+        for (const breakpoint of oldBreakpoints) {
+          const { generatedLocation } = breakpoint;
+          if (
+            location.lineNumber === generatedLocation.lineNumber &&
+            location.columnNumber === generatedLocation.columnNumber
+          ) {
+            console.log("SAME BREAKPOINT");
+            return breakpoint;
+          }
         }
 
-        const location = this.#generatedLocation(source, line, column);
+        console.log("CREATE BREAKPOINT");
         try {
-          const { breakpointId, actualLocation } = await this.#send("Debugger.setBreakpoint", {
+          const { breakpointId, actualLocation } = await this.send("Debugger.setBreakpoint", {
             location,
             options: breakpointOptions(options),
           });
@@ -611,6 +673,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
             breakpointId,
             source,
             verified: true,
+            generatedLocation: location,
             ...originalLocation,
           });
         } catch (error) {
@@ -626,6 +689,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
             source,
             verified: false,
             message,
+            generatedLocation: location,
           });
         }
       }),
@@ -635,7 +699,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       oldBreakpoints.map(async ({ breakpointId }) => {
         const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
         if (isRemoved) {
-          await this.#send("Debugger.removeBreakpoint", {
+          await this.send("Debugger.removeBreakpoint", {
             breakpointId,
           });
           this.#removeBreakpoint(breakpointId);
@@ -661,17 +725,12 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     return breakpoints;
   }
 
-  #getBreakpoint(sourceId: string | number, line?: number, column?: number): Breakpoint | undefined {
-    for (const breakpoint of this.#getBreakpoints(sourceId)) {
-      if (isSameLocation(breakpoint, { line, column })) {
-        return breakpoint;
-      }
-    }
-    return undefined;
-  }
-
   #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
     this.#breakpoints.push(breakpoint);
+
+    // For now, remove the column from breakpoints because
+    // it can be inaccurate and causes weird rendering issues in VSCode.
+    breakpoint.column = this.#lineFrom0BasedLine(0);
 
     this.#emit("breakpoint", {
       reason: "changed",
@@ -709,7 +768,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
         }
 
         try {
-          await this.#send("Debugger.addSymbolicBreakpoint", {
+          await this.send("Debugger.addSymbolicBreakpoint", {
             symbol: name,
             caseSensitive: true,
             isRegex: false,
@@ -737,7 +796,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       oldBreakpoints.map(async ({ name }) => {
         const isRemoved = !breakpoints.filter(({ name: n }) => name === n).length;
         if (isRemoved) {
-          await this.#send("Debugger.removeSymbolicBreakpoint", {
+          await this.send("Debugger.removeSymbolicBreakpoint", {
             symbol: name,
             caseSensitive: true,
             isRegex: false,
@@ -789,7 +848,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       filterIds.push(...filterOptions.map(({ filterId }) => filterId));
     }
 
-    await this.#send("Debugger.setPauseOnExceptions", {
+    await this.send("Debugger.setPauseOnExceptions", {
       state: exceptionFiltersToPauseOnExceptionsState(filterIds),
     });
   }
@@ -818,7 +877,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   async #evaluate(expression: string, callFrameId?: string): Promise<JSC.Runtime.EvaluateResponse> {
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
 
-    return this.#send(method, {
+    return this.send(method, {
       callFrameId,
       expression: sanitizeExpression(expression),
       generatePreview: true,
@@ -839,13 +898,6 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   ["Inspector.connected"](): void {
-    if (this.#connected) {
-      this.restart();
-      return;
-    }
-
-    this.#connected = true;
-
     this.#emit("output", {
       category: "debug console",
       output: "Debugger attached.\n",
@@ -855,18 +907,18 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
-    if (this.#connected && this.#process?.exitCode === null && (await this.#start())) {
-      return;
-    }
-
-    if (!this.#connected) {
-      return;
-    }
-
     this.#emit("output", {
       category: "debug console",
       output: "Debugger detached.\n",
     });
+
+    if (error) {
+      const { message } = error;
+      this.#emit("output", {
+        category: "stderr",
+        output: `${message}\n`,
+      });
+    }
 
     this.#emit("terminated");
     this.#reset();
@@ -915,6 +967,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   ["Debugger.scriptFailedToParse"](event: JSC.Debugger.ScriptFailedToParseEvent): void {
     const { url, errorMessage, errorLine } = event;
 
+    // If no url is present, the script is from a `evaluate` request.
+    if (!url) {
+      return;
+    }
+
     this.#emit("output", {
       category: "stderr",
       output: errorMessage,
@@ -931,7 +988,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (reason === "PauseOnNextStatement") {
       for (const { functionName } of callFrames) {
         if (functionName === "module code") {
-          this.#send("Debugger.resume");
+          this.send("Debugger.resume");
           return;
         }
       }
@@ -946,10 +1003,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       this.#addAsyncStackTrace(asyncStackTrace);
     }
 
-    let hitBreakpointIds: number[] | undefined;
     // Depending on the reason, the `data` property is set to the reason
     // why the execution was paused. For example, if the reason is "breakpoint",
     // the `data` property is set to the breakpoint ID.
+    let hitBreakpointIds: number[] | undefined;
+
     if (data) {
       if (reason === "exception") {
         const remoteObject = data as JSC.Runtime.RemoteObject;
@@ -1002,9 +1060,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
       const variables = parameters.map((parameter, i) => {
         const variable = this.#addVariable(parameter, { name: `${i}` });
-
         output += remoteObjectToString(parameter, true) + " ";
-
         return variable;
       });
 
@@ -1361,7 +1417,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       return [];
     }
 
-    const { properties, internalProperties } = await this.#send("Runtime.getDisplayableProperties", {
+    const { properties, internalProperties } = await this.send("Runtime.getDisplayableProperties", {
       objectId,
       generatePreview: true,
     });
@@ -1379,7 +1435,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     const hasEntries = type !== "array" && (indexedVariables || namedVariables);
     if (hasEntries) {
-      const { entries } = await this.#send("Runtime.getCollectionEntries", {
+      const { entries } = await this.send("Runtime.getCollectionEntries", {
         objectId,
         fetchStart: offset,
         fetchCount: count,
@@ -1555,14 +1611,6 @@ function consoleMessageGroup(type: JSC.Console.ConsoleMessage["type"]): DAP.Outp
   return undefined;
 }
 
-function sourceToPath(source?: DAP.Source): string {
-  const { path } = source ?? {};
-  if (!path) {
-    throw new Error("No source found.");
-  }
-  return path;
-}
-
 function sourceToId(source?: DAP.Source): string | number {
   const { path, sourceReference } = source ?? {};
   if (path) {
@@ -1657,41 +1705,6 @@ function isJavaScript(path: string): boolean {
 
 function isTestJavaScript(path: string): boolean {
   return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
-}
-
-function parseUrl(hostname?: string, port?: number): URL {
-  hostname ||= "localhost";
-  port ||= 6499;
-  let url: URL;
-  try {
-    if (hostname.includes("://")) {
-      url = new URL(hostname);
-    } else if (hostname.includes(":") && !hostname.startsWith("[")) {
-      url = new URL(`ws://[${hostname}]:${port}/`);
-    } else {
-      url = new URL(`ws://${hostname}:${port}/`);
-    }
-  } catch {
-    throw new Error(`Invalid URL or hostname/port: ${hostname}`);
-  }
-  // HACK: Bun sometimes has issues connecting through "127.0.0.1"
-  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-    url.hostname = "[::1]";
-  }
-  return url;
-}
-
-function parseUrlMaybe(string: string): URL | undefined {
-  const match = /(wss?:\/\/.*)/im.exec(string);
-  if (!match) {
-    return undefined;
-  }
-  const [_, href] = match;
-  try {
-    return parseUrl(href);
-  } catch {
-    return undefined;
-  }
 }
 
 function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {

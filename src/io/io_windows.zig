@@ -421,7 +421,7 @@ const FlushMode = enum {
     non_blocking,
 };
 
-fn flush(self: *IO, mode: FlushMode) !void {
+fn flush(self: *IO, comptime mode: FlushMode) anyerror!void {
     if (self.completed.peek() == null) {
         // Compute how long to poll by flushing timeout completions.
         // NOTE: this may push to completed queue
@@ -442,7 +442,7 @@ fn flush(self: *IO, mode: FlushMode) !void {
             // In blocking mode, we're always waiting at least until the timeout by run_for_ns.
             // In non-blocking mode, we shouldn't wait at all.
             const io_timeout = switch (mode) {
-                .blocking => timeout_ms orelse @panic("IO.flush blocking unbounded"),
+                .blocking => timeout_ms orelse 0,
                 .non_blocking => 0,
             };
 

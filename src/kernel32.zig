@@ -6,4 +6,9 @@ pub usingnamespace kernel;
 pub extern "kernel32" fn SetFileValidData(
     hFile: windows.HANDLE,
     validDataLength: c_longlong,
-) windows.BOOL;
+) callconv(windows.WINAPI) windows.BOOL;
+
+pub extern fn CommandLineToArgvW(
+    lpCmdLine: windows.LPCWSTR,
+    pNumArgs: *c_int,
+) [*]windows.LPWSTR;

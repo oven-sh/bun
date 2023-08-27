@@ -38,6 +38,18 @@ pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     allocator.free(this.ptr.?[0..this.cap]);
 }
 
+pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
+    var buf = this.writable();
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(slice, buf);
+    if (result.status == .success) {
+        this.len += result.count + 1;
+        buf[result.count] = 0;
+        return buf[0..result.count :0];
+    }
+
+    return null;
+}
+
 pub fn append(this: *StringBuilder, slice: string) string {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything

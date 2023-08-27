@@ -1314,9 +1314,9 @@ pub fn reloadProcess(
     clear_terminal: bool,
 ) void {
     const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
-
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, argv.len, null) catch unreachable;
-    for (argv, dupe_argv) |src, *dest| {
+    const bun = @This();
+    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
@@ -1703,6 +1703,46 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
     pub var argv: [][*:0]u8 = undefined;
+    var args_buf: [255][*:0]u8 = undefined;
+
+    pub fn populateArgv() void {
+        var wargv_all = kernel32.GetCommandLineW();
+        var num_args: c_int = 0;
+        var start = kernel32.CommandLineToArgvW(wargv_all, &num_args);
+        defer _ = kernel32.LocalFree(@ptrCast(start));
+        var wargv = start[0..@as(usize, @intCast(num_args))];
+        var argv_list = std.ArrayList([*:0]u8).init(default_allocator);
+        argv_list.items = &args_buf;
+        argv_list.capacity = args_buf.len;
+
+        if (wargv.len > args_buf.len) {
+            var ptrs = default_allocator.alloc(?[*]u8, wargv.len + 1) catch unreachable;
+            ptrs[ptrs.len - 1] = null;
+            argv_list.items = @ptrCast(ptrs[0 .. ptrs.len - 1]);
+            argv_list.capacity = argv_list.items.len + 1;
+        }
+
+        const probably_overestimated_length = strings.elementLengthUTF16IntoUTF8([]const u16, sliceTo(wargv_all, 0)) + argv_list.items.len;
+        var buf = default_allocator.alloc(u8, probably_overestimated_length) catch unreachable;
+        var builder = StringBuilder{
+            .cap = probably_overestimated_length,
+            .ptr = buf.ptr,
+            .len = 0,
+        };
+
+        for (wargv) |warg_| {
+            var warg = sliceTo(warg_, 0);
+            argv_list.appendAssumeCapacity(
+                (builder.append16(warg) orelse brk: {
+                    var list = strings.convertUTF16ToUTF8(std.ArrayList(u8).init(default_allocator), []const u16, warg) catch unreachable;
+                    list.append(0) catch unreachable;
+                    break :brk list.items.ptr[0..list.items.len :0];
+                }).ptr,
+            );
+        }
+
+        argv = argv_list.items.ptr[0..argv_list.items.len];
+    }
 };
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;

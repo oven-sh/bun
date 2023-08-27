@@ -361,24 +361,27 @@ pub const StandaloneModuleGraph = struct {
         //  gap (a "hole") return null bytes ('\0') until data is actually
         //  written into the gap.
         //
-        std.os.lseek_SET(cloned_executable_fd, seek_position) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>error<r><d>:<r> {s} seeking to end of temporary file (pos: {d})",
-                .{
-                    @errorName(err),
-                    seek_position,
-                },
-            );
-            cleanup(zname, cloned_executable_fd);
-            Global.exit(1);
-        };
+        switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
+            .err => |err| {
+                Output.prettyErrorln(
+                    "{}\nwhile seeking to end of temporary file (pos: {d})",
+                    .{
+                        err,
+                        seek_position,
+                    },
+                );
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            },
+            else => {},
+        }
 
         var remain = bytes;
         while (remain.len > 0) {
             switch (Syscall.write(cloned_executable_fd, bytes)) {
                 .result => |written| remain = remain[written..],
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{s}", .{err});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
                     cleanup(zname, cloned_executable_fd);
 
                     Global.exit(1);

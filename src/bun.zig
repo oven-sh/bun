@@ -1765,7 +1765,7 @@ pub const win32 = struct {
             );
         }
 
-        argv = argv_list.items.ptr[0..argv_list.items.len];
+        argv_ = argv_list.items.ptr[0..argv_list.items.len];
     }
 };
 

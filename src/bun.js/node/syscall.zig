@@ -625,7 +625,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
 pub fn ftruncate(fd: fd_t, size: isize) Maybe(void) {
     if (comptime Environment.isWindows) {
         if (kernel32.SetFileValidData(bun.fdcast(fd), size) == 0) {
-            return Maybe(void).errnoSys(0, .ftruncate);
+            return Maybe(void).errnoSys(0, .ftruncate) orelse Maybe(void).success;
         }
 
         return Maybe(void).success;
@@ -1010,4 +1010,30 @@ pub fn getMaxPipeSizeOnLinux() usize {
             }
         }.once, c_int)),
     );
+}
+
+pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
+    if (comptime Environment.isPosix) {
+        return Maybe(void).errnoSysFd(
+            system.llseek(fd, offset, null, os.SEEK.SET),
+            .lseek,
+            @intCast(fd),
+        ) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isWindows) {
+        const offset_high: u64 = @as(u32, @intCast(offset >> 32));
+        const offset_low: u64 = @as(u32, @intCast(offset & 0xFFFFFFFF));
+        var plarge_integer: i64 = @bitCast(offset_high);
+        const rc = kernel32.SetFilePointerEx(
+            bun.fdcast(fd),
+            @as(windows.LARGE_INTEGER, @bitCast(offset_low)),
+            &plarge_integer,
+            windows.FILE_BEGIN,
+        );
+        if (rc == windows.FALSE) {
+            return Maybe(void).errnoSys(0, .lseek) orelse Maybe(void).success;
+        }
+        return Maybe(void).success;
+    }
 }

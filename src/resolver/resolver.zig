@@ -2043,7 +2043,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = bun.toFD(open_dir.dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2064,7 +2064,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            open_dir.dir.fd,
+            bun.toFD(open_dir.dir.fd),
             package_id,
         );
         return dir_info_ptr;
@@ -2689,7 +2689,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -3713,7 +3713,7 @@ pub const Resolver = struct {
                             bin_folders = BinFolderArray.init(0) catch unreachable;
                         }
 
-                        const this_dir = std.fs.Dir{ .fd = fd };
+                        const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
                         var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
                         defer file.close();
                         var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;

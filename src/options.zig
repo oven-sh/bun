@@ -2039,7 +2039,7 @@ pub const OutputFile = struct {
 
     pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
         var res = initFile(file, pathname, size);
-        res.value.copy.dir_handle = dir.fd;
+        res.value.copy.dir_handle = bun.toFD(dir.fd);
         return res;
     }
 
@@ -2089,7 +2089,7 @@ pub const OutputFile = struct {
                 .file => |file| Value{
                     .copy = brk: {
                         var op = FileOperation.fromFile(file.file.handle, options.output_path);
-                        op.dir = file.dir.fd;
+                        op.dir = bun.toFD(file.dir.fd);
                         break :brk op;
                     },
                 },

@@ -4164,7 +4164,7 @@ pub const NodeFS = struct {
 
         // Only used in DOMFormData
         if (args.offset > 0) {
-            std.os.lseek_SET(fd, args.offset) catch {};
+            _ = Syscall.setFileOffset(fd, args.offset);
         }
         // For certain files, the size might be 0 but the file might still have contents.
         const size = @as(

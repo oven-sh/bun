@@ -1008,12 +1008,12 @@ pub const Bundler = struct {
                 output_file.size = css_writer.ctx.context.bytes_written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 
-                file_op.fd = file.handle;
+                file_op.fd = bun.toFD(file.handle);
 
                 file_op.is_tmpdir = false;
 
                 if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = bun.toFD(outstream.fd);
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{

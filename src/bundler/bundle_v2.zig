@@ -9166,7 +9166,7 @@ const LinkerContext = struct {
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                            .dirfd = bun.toFD(root_dir.dir.fd),
                             .file = .{
                                 .path = JSC.Node.PathLike{
                                     .string = JSC.PathString.init(source_map_final_rel_path),
@@ -9236,7 +9236,7 @@ const LinkerContext = struct {
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                    .dirfd = bun.toFD(root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(rel_path),
@@ -9305,7 +9305,7 @@ const LinkerContext = struct {
                         },
                     },
                     .encoding = .buffer,
-                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                    .dirfd = bun.toFD(root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(components_manifest_path),
@@ -9381,7 +9381,7 @@ const LinkerContext = struct {
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                        .dirfd = bun.toFD(root_dir.dir.fd),
                         .file = .{
                             .path = JSC.Node.PathLike{
                                 .string = JSC.PathString.init(src.dest_path),

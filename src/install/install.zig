@@ -689,9 +689,9 @@ const Task = struct {
                     return;
                 };
 
-                manager.git_repositories.put(manager.allocator, this.id, dir.fd) catch unreachable;
+                manager.git_repositories.put(manager.allocator, this.id, bun.toFD(dir.fd)) catch unreachable;
                 this.data = .{
-                    .git_clone = dir.fd,
+                    .git_clone = bun.toFD(dir.fd),
                 };
                 this.status = Status.success;
                 manager.resolve_tasks.writeItem(this.*) catch unreachable;
@@ -703,7 +703,7 @@ const Task = struct {
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory().dir,
-                    .{ .fd = this.request.git_checkout.repo_dir },
+                    .{ .fd = bun.toFD(this.request.git_checkout.repo_dir) },
                     this.request.git_checkout.name.slice(),
                     this.request.git_checkout.url.slice(),
                     this.request.git_checkout.resolved.slice(),
@@ -1462,7 +1462,17 @@ const PackageInstall = struct {
             },
         };
         const target = Path.relative(dest_dir_path, to_path);
-
+        if (comptime Environment.isWindows) {
+            return bun.todo(
+                @src(),
+                Result{
+                    .fail = .{
+                        .err = error.NotImplementedYetOnWindows,
+                        .step = .linking,
+                    },
+                },
+            );
+        }
         std.os.symlinkat(target, dest_dir.fd, std.fs.path.basename(dest_path)) catch |err| return Result{
             .fail = .{
                 .err = err,
@@ -3102,7 +3112,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        .{ .fd = repo_fd },
+                        .{ .fd = bun.toFD(repo_fd) },
                         alias,
                         this.lockfile.str(&dep.committish),
                     );
@@ -5454,6 +5464,11 @@ pub const PackageManager = struct {
     }
 
     pub inline fn link(ctx: Command.Context) !void {
+        if (comptime Environment.isWindows) {
+            Output.prettyErrorln("<r><red>error:<r> bun link is not supported on Windows yet", .{});
+            Global.crash();
+        }
+
         var manager = PackageManager.init(ctx, .link) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
@@ -5604,6 +5619,11 @@ pub const PackageManager = struct {
     }
 
     pub inline fn unlink(ctx: Command.Context) !void {
+        if (comptime Environment.isWindows) {
+            Output.prettyErrorln("<r><red>error:<r> bun unlink is not supported on Windows yet", .{});
+            Global.crash();
+        }
+
         var manager = PackageManager.init(ctx, .unlink) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();

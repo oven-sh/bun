@@ -34,6 +34,10 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_linux.zig"),
             });
+        } else if (target.isWindows()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/io/io_windows.zig"),
+            });
         }
 
         break :brk b.createModule(.{

@@ -873,42 +873,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  async dataBreakpointInfo(request: DAP.DataBreakpointInfoRequest): Promise<DAP.DataBreakpointInfoResponse> {
-    const { variablesReference, name, frameId } = request;
-    const variable = this.#getVariable(variablesReference);
-
-    if (!variable) {
-      return {
-        dataId: null,
-        description: "Variable not found.",
-      };
-    }
-
-    const { objectId } = variable;
-    if (!objectId) {
-      return {
-        dataId: null,
-        description: "Variable cannot be watched.",
-      };
-    }
-
-    console.log("dataBreakpointInfo", { variablesReference, name, frameId });
-    return {
-      dataId: variablesReference,
-      description: "",
-      accessTypes: ["read", "write", "readWrite"],
-      canPersist: false,
-    };
-  }
-
-  async setDataBreakpoints(request: DAP.SetDataBreakpointsRequest): Promise<DAP.SetDataBreakpointsResponse> {
-    console.log("setDataBreakpoints", request);
-
-    return {
-      breakpoints: [],
-    };
-  }
-
   async evaluate(request: DAP.EvaluateRequest): Promise<DAP.EvaluateResponse> {
     const { expression, frameId, context } = request;
     const callFrameId = this.#getCallFrameId(frameId);
@@ -1759,12 +1723,48 @@ function exceptionFiltersToPauseOnExceptionsState(
   return "none";
 }
 
-function breakpointOptions(breakpoint?: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {
-  const { condition } = breakpoint ?? {};
-  // TODO: hitCondition, logMessage
+function breakpointOptions(breakpoint: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {
+  const { condition, hitCondition, logMessage } = breakpoint;
   return {
     condition,
+    ignoreCount: hitConditionToIgnoreCount(hitCondition),
+    autoContinue: !!logMessage,
+    actions: [
+      {
+        type: "evaluate",
+        data: logMessageToExpression(logMessage),
+        emulateUserGesture: true,
+      },
+    ],
   };
+}
+
+function hitConditionToIgnoreCount(hitCondition?: string): number | undefined {
+  if (!hitCondition) {
+    return undefined;
+  }
+
+  if (hitCondition.includes("<")) {
+    throw new Error("Hit condition with '<' is not supported, use '>' or '>=' instead.");
+  }
+
+  const count = parseInt(hitCondition.replace(/[^\d+]/g, ""));
+  if (isNaN(count)) {
+    throw new Error("Hit condition is not a number.");
+  }
+
+  if (hitCondition.includes(">") && !hitCondition.includes("=")) {
+    return Math.max(0, count);
+  }
+  return Math.max(0, count - 1);
+}
+
+function logMessageToExpression(logMessage?: string): string | undefined {
+  if (!logMessage) {
+    return undefined;
+  }
+  // Convert expressions from "hello {name}!" to "`hello ${name}!`"
+  return `console.log(\`${logMessage.replace(/\$?{/g, "${")}\`);`;
 }
 
 function consoleMessageGroup(type: JSC.Console.ConsoleMessage["type"]): DAP.OutputEvent["group"] {
@@ -1869,6 +1869,7 @@ function propertyDescriptorToName(propertyDescriptor?: Partial<JSC.Runtime.Prope
 
 function propertyDescriptorToEvaluateName(
   propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & {
+    isSynthetic?: boolean;
     parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
   },
   evaluateName?: string,
@@ -1876,21 +1877,23 @@ function propertyDescriptorToEvaluateName(
   if (!propertyDescriptor) {
     return evaluateName;
   }
-  const { name: property, parentType: type } = propertyDescriptor;
+  const { name: property, isSynthetic, parentType: type } = propertyDescriptor;
   if (!property) {
     return evaluateName;
   }
   if (!evaluateName) {
     return property;
   }
-  if (isMap(type)) {
-    if (isNumeric(property)) {
-      return `${evaluateName}.get(${property})`;
+  if (isSynthetic) {
+    if (isMap(type)) {
+      if (isNumeric(property)) {
+        return `${evaluateName}.get(${property})`;
+      }
+      return `${evaluateName}.get(${JSON.stringify(property)})`;
     }
-    return `${evaluateName}.get(${JSON.stringify(property)})`;
-  }
-  if (isSet(type)) {
-    return `[...${evaluateName}.values()][${property}]`;
+    if (isSet(type)) {
+      return `[...${evaluateName}.values()][${property}]`;
+    }
   }
   if (isNumeric(property)) {
     return `${evaluateName}[${property}]`;

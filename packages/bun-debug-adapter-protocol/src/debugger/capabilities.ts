@@ -193,7 +193,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports the `setExpression` request.
    * @see setExpression
    */
-  supportsSetExpression: false,
+  supportsSetExpression: true,
 
   /**
    * The debug adapter supports the `terminate` request.

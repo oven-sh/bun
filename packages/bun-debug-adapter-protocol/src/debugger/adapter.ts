@@ -878,14 +878,22 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const callFrameId = this.#getCallFrameId(frameId);
     const objectGroup = callFrameId ? "debugger" : context;
 
-    const { result, wasThrown } = await this.#evaluate(expression, objectGroup, callFrameId);
-    const { className } = result;
+    const { result, wasThrown } = await this.#evaluate({
+      expression,
+      objectGroup,
+      callFrameId,
+    });
 
-    if (context === "hover" && wasThrown && (className === "SyntaxError" || className === "ReferenceError")) {
-      return {
-        result: "",
-        variablesReference: 0,
-      };
+    if (wasThrown) {
+      const { className } = result;
+      if (context === "hover" && (className === "SyntaxError" || className === "ReferenceError")) {
+        return {
+          result: "",
+          variablesReference: 0,
+        };
+      }
+
+      throw new Error(remoteObjectToString(result));
     }
 
     const { name, value, ...variable } = this.#addObject(result, { objectGroup });
@@ -895,11 +903,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  async #evaluate(
-    expression: string,
-    objectGroup?: string,
-    callFrameId?: string,
-  ): Promise<JSC.Runtime.EvaluateResponse> {
+  async #evaluate(options: {
+    expression: string;
+    objectGroup?: string;
+    callFrameId?: string;
+  }): Promise<JSC.Runtime.EvaluateResponse> {
+    const { expression, objectGroup, callFrameId } = options;
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
 
     return this.send(method, {
@@ -1452,6 +1461,24 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
 
     return this.#addObject(result, { name, objectGroup });
+  }
+
+  async setExpression(request: DAP.SetExpressionRequest): Promise<DAP.SetExpressionResponse> {
+    const { expression, value, frameId } = request;
+    const callFrameId = this.#getCallFrameId(frameId);
+    const objectGroup = callFrameId ? "debugger" : "repl";
+
+    const { result, wasThrown } = await this.#evaluate({
+      expression: `${expression} = (${value});`,
+      objectGroup: "repl",
+      callFrameId,
+    });
+
+    if (wasThrown) {
+      throw new Error(remoteObjectToString(result));
+    }
+
+    return this.#addObject(result, { objectGroup });
   }
 
   #addObject(

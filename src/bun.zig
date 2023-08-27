@@ -1633,3 +1633,5 @@ pub const HOST_NAME_MAX = if (Environment.isWindows)
     256
 else
     std.os.HOST_NAME_MAX;
+
+pub const enums = @import("./enums.zig");

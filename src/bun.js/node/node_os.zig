@@ -359,6 +359,11 @@ pub const Os = struct {
     pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
+        if (comptime Environment.isWindows) {
+            globalThis.throwTODO("hostname() is not implemented on Windows");
+            return .zero;
+        }
+
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
         return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);

@@ -4525,6 +4525,10 @@ pub fn isIPAddress(input: []const u8) bool {
     if (containsChar(input, ':'))
         return true;
 
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), false);
+    }
+
     if (std.net.Address.resolveIp(input, 0)) |_| {
         return true;
     } else |_| {
@@ -4533,6 +4537,10 @@ pub fn isIPAddress(input: []const u8) bool {
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), false);
+    }
+
     if (std.net.Address.parseIp6(input, 0)) |_| {
         return true;
     } else |_| {

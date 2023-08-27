@@ -281,9 +281,16 @@ pub const GenerateHeader = struct {
             if (comptime Environment.isMac) {
                 platform_ = forMac();
                 return platform_.?;
+            } else if (comptime Environment.isPosix) {
+                platform_ = forLinux();
+            } else {
+                platform_ = Platform{
+                    .os = Analytics.OperatingSystem.windows,
+                    .version = &[_]u8{},
+                    .arch = platform_arch,
+                };
             }
 
-            platform_ = forLinux();
             return platform_.?;
         }
 

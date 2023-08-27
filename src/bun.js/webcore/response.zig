@@ -293,10 +293,13 @@ pub const Response = struct {
     }
 
     pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
+        if (comptime Environment.isWindows) unreachable;
         return mimeTypeWithDefault(response, MimeType.other, request_ctx_);
     }
 
     pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
+        if (comptime Environment.isWindows) unreachable;
+
         if (response.header(.ContentType)) |content_type| {
             return content_type;
         }

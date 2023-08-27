@@ -96,7 +96,7 @@ fn disableSIGPIPESoClosingTheTabDoesntCrash(conn: anytype) void {
 }
 var http_editor_context: EditorContext = EditorContext{};
 
-pub const RequestContext = struct {
+const PosixRequestContext = struct {
     request: Request,
     method: Method,
     url: URLPath,
@@ -2512,6 +2512,8 @@ pub const RequestContext = struct {
     }
 };
 
+pub const RequestContext = if (!Environment.isPosix) struct {} else PosixRequestContext;
+
 // // u32 == File ID from Watcher
 // pub const WatcherBuildChannel = sync.Channel(u32, .Dynamic);
 // pub const WatcherBuildQueue = struct {
@@ -3287,6 +3289,8 @@ pub const Server = struct {
 
     pub var global_start_time: std.time.Timer = undefined;
     pub fn start(allocator: std.mem.Allocator, options: Api.TransformOptions, comptime DebugType: type, debug: DebugType) !void {
+        if (comptime Environment.isWindows) unreachable;
+
         var log = logger.Log.init(allocator);
         var server = try allocator.create(Server);
         server.* = Server{

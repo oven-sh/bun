@@ -340,158 +340,46 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-            if (comptime Environment.isMac) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\
-                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\That will only work until you reboot.
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-            } else {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\
-                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
-                    \\  <cyan>sudo sysctl -p<r>
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                if (comptime Environment.isMac) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work until you reboot.
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
 
-                if (bun.getenvZ("USER")) |user| {
-                    if (user.len > 0) {
-                        Output.prettyError(
-                            \\
-                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
-                            \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
-                            \\
-                        ,
-                            .{ user, user },
-                        );
-                    }
-                }
-            }
-
-            Global.exit(1);
-        },
-        error.@"Invalid Bunfig" => {
-            Global.exit(1);
-        },
-        error.ProcessFdQuotaExceeded => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-            if (comptime Environment.isMac) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\You may also need to run:
-                    \\
-                    \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-            } else {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                    \\That will only work for the current shell. To fix this for the entire system, run:
-                    \\
-                    \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
-                    \\  <cyan>sudo sysctl -p<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-
-                if (bun.getenvZ("USER")) |user| {
-                    if (user.len > 0) {
-                        Output.prettyError(
-                            \\
-                            \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
-                            \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
-                            \\
-                        ,
-                            .{ user, user },
-                        );
-                    }
-                }
-            }
-
-            Global.exit(1);
-        },
-        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
-        error.NotOpenForReading, error.Unexpected => {
-            const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
-
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
-                }
-            }
-
-            if (limit.cur > 0 and limit.cur < (8096 * 2)) {
-                Output.prettyError(
-                    \\
-                    \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
-                    \\
-                    \\<d>Current limit: {d}<r>
-                    \\
-                    \\To fix this, try running:
-                    \\
-                    \\  <cyan>ulimit -n 2147483646<r>
-                    \\
-                ,
-                    .{
-                        limit.cur,
-                    },
-                );
-
-                if (Environment.isLinux) {
                     if (bun.getenvZ("USER")) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
@@ -502,20 +390,156 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                                 \\ <cyan>{s} hard nofile 2147483646<r>
                                 \\
                             ,
-                                .{
-                                    user,
-                                    user,
-                                },
+                                .{ user, user },
                             );
                         }
                     }
-                } else if (Environment.isMac) {
+                }
+            } else {
+                Output.prettyError(
+                    \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            Global.exit(1);
+        },
+        error.@"Invalid Bunfig" => {
+            Global.exit(1);
+        },
+        error.ProcessFdQuotaExceeded => {
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                if (comptime Environment.isMac) {
                     Output.prettyError(
                         \\
-                        \\If that still doesn't work, you may need to run:
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\You may also need to run:
                         \\
                         \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
                         \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+                } else {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\That will only work for the current shell. To fix this for the entire system, run:
+                        \\
+                        \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
+                        \\  <cyan>sudo sysctl -p<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+
+                    if (bun.getenvZ("USER")) |user| {
+                        if (user.len > 0) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                \\
+                                \\ <cyan>{s} soft nofile 2147483646<r>
+                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\
+                            ,
+                                .{ user, user },
+                            );
+                        }
+                    }
+                }
+            } else {
+                Output.prettyErrorln(
+                    \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                ,
+                    .{},
+                );
+            }
+
+            Global.exit(1);
+        },
+        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        error.NotOpenForReading, error.Unexpected => {
+            if (trace_) |trace| {
+                print_stacktrace: {
+                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                    Output.disableBuffering();
+                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                }
+            }
+
+            if (comptime Environment.isPosix) {
+                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+
+                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {d}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            limit.cur,
+                        },
+                    );
+
+                    if (Environment.isLinux) {
+                        if (bun.getenvZ("USER")) |user| {
+                            if (user.len > 0) {
+                                Output.prettyError(
+                                    \\
+                                    \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                    \\
+                                    \\ <cyan>{s} soft nofile 2147483646<r>
+                                    \\ <cyan>{s} hard nofile 2147483646<r>
+                                    \\
+                                ,
+                                    .{
+                                        user,
+                                        user,
+                                    },
+                                );
+                            }
+                        }
+                    } else if (Environment.isMac) {
+                        Output.prettyError(
+                            \\
+                            \\If that still doesn't work, you may need to run:
+                            \\
+                            \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                            \\
+                        ,
+                            .{},
+                        );
+                    }
+                } else {
+                    Output.prettyError(
+                        \\<r><red>error<r>: An unknown error ocurred <d>(<red>Unexpected<r><d>)<r>
                     ,
                         .{},
                     );

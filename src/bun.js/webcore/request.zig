@@ -176,6 +176,7 @@ pub const Request = struct {
     }
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
+        if (comptime Environment.isWindows) unreachable;
         var req = Request{
             .url = bun.String.create(ctx.full_url),
             .body = try InitRequestBodyValue(.{ .Null = {} }),

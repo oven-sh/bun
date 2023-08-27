@@ -206,6 +206,8 @@ pub fn build(b: *Build) !void {
         .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
 
+    b.reference_trace = 16;
+
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
             !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));

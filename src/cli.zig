@@ -1130,7 +1130,10 @@ pub const Command = struct {
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
-            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => if (comptime Environment.isWindows) {
+                Output.prettyErrorln("<r><red>error:<r> bun dev is not supported on Windows.", .{});
+                Global.exit(1);
+            } else .DevCommand,
 
             RootCommandMatcher.case("help") => .HelpCommand,
             else => .AutoCommand,
@@ -1243,6 +1246,7 @@ pub const Command = struct {
                 try BuildCommand.exec(ctx);
             },
             .DevCommand => {
+                if (comptime Environment.isWindows) unreachable;
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .DevCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .DevCommand);
 

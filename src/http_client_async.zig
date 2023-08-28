@@ -146,7 +146,7 @@ pub const Sendfile = struct {
 
                 return .{ .err = AsyncIO.asError(errcode) };
             }
-        } else {
+        } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(

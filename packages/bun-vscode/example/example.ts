@@ -29,6 +29,6 @@ interface CoolThing {
 
 class SuperCoolThing implements CoolThing {
   doCoolThing(): void {
-    console.log("BLAH BLAH");
+    console.log("BLAH BLAH", new Map([[1, 2]]));
   }
 }

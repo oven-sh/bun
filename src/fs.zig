@@ -602,38 +602,39 @@ pub const FileSystem = struct {
         }
 
         pub const Tmpfile = struct {
-            fd: std.os.fd_t = 0,
-            dir_fd: std.os.fd_t = 0,
+            fd: bun.FileDescriptor = bun.invalid_fd,
+            dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *Tmpfile) std.fs.Dir {
                 return std.fs.Dir{
-                    .fd = this.dir_fd,
+                    .fd = bun.fdcast(this.dir_fd),
                 };
             }
 
             pub inline fn file(this: *Tmpfile) std.fs.File {
                 return std.fs.File{
-                    .handle = this.fd,
+                    .handle = bun.fdcast(this.fd),
                 };
             }
 
             pub fn close(this: *Tmpfile) void {
-                if (this.fd != 0) std.os.close(this.fd);
+                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             }
 
             pub fn create(this: *Tmpfile, rfs: *RealFS, name: [*:0]const u8) !void {
                 var tmpdir_ = try rfs.openTmpDir();
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
-                this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXU);
+                this.dir_fd = bun.toFD(tmpdir_.fd);
+
+                this.fd = bun.toFD(try std.os.openatZ(tmpdir_.fd, name, flags, if (comptime Environment.isPosix) std.os.S.IRWXU else 0));
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
-                std.debug.assert(this.fd != 0);
-                std.debug.assert(this.dir_fd != 0);
+                std.debug.assert(this.fd != bun.invalid_fd);
+                std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, from_name, destination_fd, name);
+                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, destination_fd, name);
                 this.close();
             }
 
@@ -641,7 +642,7 @@ pub const FileSystem = struct {
                 this.close();
 
                 if (comptime !Environment.isLinux) {
-                    if (this.dir_fd == 0) return;
+                    if (this.dir_fd == bun.invalid_fd) return;
 
                     this.dir().deleteFileZ(name) catch {};
                 }
@@ -682,6 +683,10 @@ pub const FileSystem = struct {
 
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() !usize {
+            if (comptime !Environment.isPosix) {
+                return std.math.maxInt(usize);
+            }
+
             const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
             inline for (LIMITS, 0..) |limit_type, i| {
                 const limit = try std.os.getrlimit(limit_type);
@@ -853,7 +858,7 @@ pub const FileSystem = struct {
 
             if (store_fd) {
                 FileSystem.setMaxFd(handle.fd);
-                dir.fd = handle.fd;
+                dir.fd = bun.toFD(handle.fd);
             }
 
             while (try iter.next()) |_entry| {
@@ -966,7 +971,7 @@ pub const FileSystem = struct {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
                 if (store_fd and entries.fd == 0)
-                    entries.fd = handle.fd;
+                    entries.fd = bun.toFD(handle.fd);
 
                 entries_ptr.* = entries;
                 const result = EntriesOption{
@@ -993,7 +998,7 @@ pub const FileSystem = struct {
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
-        ) !File {
+        ) !PathContentsPair {
             return readFileWithHandleAndAllocator(
                 fs,
                 bun.fs_allocator,
@@ -1015,7 +1020,7 @@ pub const FileSystem = struct {
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
-        ) !File {
+        ) !PathContentsPair {
             FileSystem.setMaxFd(file.handle);
 
             // Skip the extra file.stat() call when possible
@@ -1031,9 +1036,9 @@ pub const FileSystem = struct {
             if (size == 0) {
                 if (comptime use_shared_buffer) {
                     shared_buffer.reset();
-                    return File{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                    return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
                 } else {
-                    return File{ .path = Path.init(path), .contents = "" };
+                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
                 }
             }
 
@@ -1105,7 +1110,7 @@ pub const FileSystem = struct {
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
             }
 
-            return File{ .path = Path.init(path), .contents = file_contents };
+            return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
         }
 
         pub fn kindFromAbsolute(
@@ -1169,6 +1174,11 @@ pub const FileSystem = struct {
             existing_fd: StoredFileDescriptorType,
             store_fd: bool,
         ) !Entry.Cache {
+            var cache = Entry.Cache{
+                .kind = Entry.Kind.file,
+                .symlink = PathString.empty,
+            };
+
             var dir = _dir;
             var combo = [2]string{ dir, base };
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1179,13 +1189,22 @@ pub const FileSystem = struct {
 
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
+            if (comptime bun.Environment.isWindows) {
+                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
+                defer file.close();
+                const metadata = try file.metadata();
+                cache.kind = switch (metadata.kind()) {
+                    .directory => .dir,
+                    .sym_link => .file,
+                    else => .file,
+                };
+                return cache;
+            }
+
             var stat = try C.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
             var _kind = stat.kind;
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
+
             var symlink: []const u8 = "";
 
             if (is_symlink) {
@@ -1240,8 +1259,7 @@ pub const FileSystem = struct {
     // };
 };
 
-pub const Directory = struct { path: Path, contents: []string };
-pub const File = struct { path: Path, contents: string };
+pub const PathContentsPair = struct { path: Path, contents: string };
 
 pub const NodeJSPathName = struct {
     base: string,

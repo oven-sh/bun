@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const FetchRedirect = HTTPClient.FetchRedirect;
@@ -293,10 +293,13 @@ pub const Response = struct {
     }
 
     pub fn mimeType(response: *const Response, request_ctx_: ?*const RequestContext) string {
+        if (comptime Environment.isWindows) unreachable;
         return mimeTypeWithDefault(response, MimeType.other, request_ctx_);
     }
 
     pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
+        if (comptime Environment.isWindows) unreachable;
+
         if (response.header(.ContentType)) |content_type| {
             return content_type;
         }
@@ -679,7 +682,7 @@ pub const Fetch = struct {
                     .AnyBlob => this.AnyBlob.detach(),
                     .Sendfile => {
                         if (@max(this.Sendfile.offset, this.Sendfile.remain) > 0)
-                            _ = JSC.Node.Syscall.close(this.Sendfile.fd);
+                            _ = bun.sys.close(this.Sendfile.fd);
                         this.Sendfile.offset = 0;
                         this.Sendfile.remain = 0;
                     },
@@ -1792,8 +1795,8 @@ pub const Fetch = struct {
         if (body.needsToReadFile()) {
             prepare_body: {
                 const opened_fd_res: JSC.Node.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
-                    .fd => |fd| JSC.Node.Maybe(bun.FileDescriptor).errnoSysFd(JSC.Node.Syscall.system.dup(fd), .open, fd) orelse .{ .result = fd },
-                    .path => |path| JSC.Node.Syscall.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .fd => |fd| bun.sys.dup(fd),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {
@@ -1814,7 +1817,7 @@ pub const Fetch = struct {
 
                 if (proxy == null and bun.HTTP.Sendfile.isEligible(url)) {
                     use_sendfile: {
-                        const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(opened_fd)) {
+                        const stat: bun.Stat = switch (bun.sys.fstat(opened_fd)) {
                             .result => |result| result,
                             // bail out for any reason
                             .err => break :use_sendfile,
@@ -1822,7 +1825,7 @@ pub const Fetch = struct {
 
                         if (Environment.isMac) {
                             // macOS only supports regular files for sendfile()
-                            if (!std.os.S.ISREG(stat.mode)) {
+                            if (!bun.isRegularFile(stat.mode)) {
                                 break :use_sendfile;
                             }
                         }
@@ -1834,7 +1837,7 @@ pub const Fetch = struct {
 
                         const original_size = body.Blob.size;
                         const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-                        const blob_size = if (std.os.S.ISREG(stat.mode))
+                        const blob_size = if (bun.isRegularFile(stat.mode))
                             stat_size
                         else
                             @min(original_size, stat_size);
@@ -1848,7 +1851,7 @@ pub const Fetch = struct {
                             },
                         };
 
-                        if (std.os.S.ISREG(stat.mode)) {
+                        if (bun.isRegularFile(stat.mode)) {
                             http_body.Sendfile.offset = @min(http_body.Sendfile.offset, stat_size);
                             http_body.Sendfile.remain = @min(@max(http_body.Sendfile.remain, http_body.Sendfile.offset), stat_size) -| http_body.Sendfile.offset;
                         }
@@ -1871,7 +1874,7 @@ pub const Fetch = struct {
                 );
 
                 if (body.Blob.store.?.data.file.pathlike == .path) {
-                    _ = JSC.Node.Syscall.close(opened_fd);
+                    _ = bun.sys.close(opened_fd);
                 }
 
                 switch (res) {

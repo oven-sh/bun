@@ -915,7 +915,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
+            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 
@@ -1473,11 +1473,16 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    _ = C.fchmod(
-        tmpfile.fd,
-        // chmod 777
-        0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-    );
+    if (comptime Environment.isWindows) {
+        // TODO: make this executable
+        bun.todo(@src(), {});
+    } else {
+        _ = C.fchmod(
+            tmpfile.fd,
+            // chmod 777
+            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+        );
+    }
 
     tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
@@ -1898,8 +1903,8 @@ pub const Package = extern struct {
             defer pkg_dir.close();
             const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
             defer json_file.close();
-            const json_stat = try json_file.stat();
-            const json_buf = try lockfile.allocator.alloc(u8, json_stat.size + 64);
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
             const json_len = try json_file.preadAll(json_buf, 0);
             const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
             initializeStore();
@@ -3065,12 +3070,12 @@ pub const Package = extern struct {
                     );
 
                     if (entry.cache.fd == 0) {
-                        entry.cache.fd = std.os.openatZ(
-                            std.os.AT.FDCWD,
+                        entry.cache.fd = bun.toFD(std.os.openatZ(
+                            std.fs.cwd().fd,
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
                             0,
-                        ) catch continue;
+                        ) catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
@@ -3081,7 +3086,7 @@ pub const Package = extern struct {
                         allocator,
                         workspace_allocator,
                         std.fs.Dir{
-                            .fd = dir_fd,
+                            .fd = bun.fdcast(dir_fd),
                         },
                         "",
                         filepath_buf,

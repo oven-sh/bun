@@ -411,7 +411,7 @@ pub const BuildCommand = struct {
                                         },
                                         .encoding = .buffer,
                                         .mode = if (f.is_executable) 0o755 else 0o644,
-                                        .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                                        .dirfd = bun.toFD(root_dir.dir.fd),
                                         .file = .{
                                             .path = JSC.Node.PathLike{
                                                 .string = JSC.PathString.init(rel_path),
@@ -431,12 +431,12 @@ pub const BuildCommand = struct {
                                 rel_path = filepath_buf[0 .. primary.len + 2];
                                 rel_path = value.pathname;
 
-                                try f.moveTo(root_path, bun.constStrToU8(rel_path), root_dir.dir.fd);
+                                try f.moveTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
                             },
                             .copy => |value| {
                                 rel_path = value.pathname;
 
-                                try f.copyTo(root_path, bun.constStrToU8(rel_path), root_dir.dir.fd);
+                                try f.copyTo(root_path, bun.constStrToU8(rel_path), bun.toFD(root_dir.dir.fd));
                             },
                             .noop => {},
                             .pending => unreachable,

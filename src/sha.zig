@@ -200,7 +200,7 @@ const labels = [_][]const u8{
     "Blake3",
 };
 pub fn main() anyerror!void {
-    var file = try std.fs.cwd().openFileZ(std.os.argv[std.os.argv.len - 1], .{});
+    var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
     var bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
     var engine = BoringSSL.ENGINE_new().?;

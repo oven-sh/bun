@@ -97,7 +97,7 @@ pub const BunxCommand = struct {
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.os.AT.FDCWD, subpath_z);
+        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -141,10 +141,10 @@ pub const BunxCommand = struct {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, std.os.argv.len -| 1);
+        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, bun.argv().len -| 1);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = std.os.argv[1..];
+            var argv = bun.argv()[1..];
 
             var found_subcommand_name = false;
 
@@ -286,7 +286,7 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+        if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;

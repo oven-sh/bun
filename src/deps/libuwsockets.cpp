@@ -1,10 +1,10 @@
 #include "_libusockets.h"
 
-#include <uws/src/App.h>
-#include <uws/src/AsyncSocket.h>
+#include <bun-uws/src/App.h>
+#include <bun-uws/src/AsyncSocket.h>
 
+#include <bun-usockets//internal/internal.h>
 #include <string_view>
-#include <uws/uSockets/src/internal/internal.h>
 
 extern "C"
 {

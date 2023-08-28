@@ -89,29 +89,20 @@ function watch(
   };
 }
 
-let lazy_cp: typeof import("../internal/fs/cp").default | null = null;
-async function cp(src: string | URL, dest: string | URL, options): Promise<void> {
-  // attempt to use the native code version if possible
-  // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
-  if (!options) return fs.copyFile(src, dest);
+let lazy_cp: any = null;
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
+function cp(src, dest, options) {
+  if (!options) return fs.cp(src, dest);
   if (typeof options !== "object") {
     throw new TypeError("options must be an object");
   }
-  let mode = options.mode;
-  if (
-    options.dereference ||
-    options.filter ||
-    options.preserveTimestamps ||
-    options.verbatimSymlinks ||
-    !options.force ||
-    !options.errorOnExist
-  ) {
-    if (!lazy_cp) lazy_cp = require("../internal/fs/cp");
+  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+    if (!lazy_cp) lazy_cp = require("../internal/fs/cp-sync");
     return lazy_cp!(src, dest, options);
   }
-  // TODO: async
-  if (options.recursive) return fs.cpSync(src, dest, options.errorOnExist, options.force ?? true, options.mode);
-  return fs.copyFile(src, dest, mode);
+  return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
 export default {

@@ -1084,7 +1084,7 @@ let lazy_cpSync = null;
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  if (!options) return fs.copyFileSync(src, dest);
+  if (!options) return fs.cpSync(src, dest);
   if (typeof options !== "object") {
     throw new TypeError("options must be an object");
   }

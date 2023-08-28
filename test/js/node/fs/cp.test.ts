@@ -4,7 +4,7 @@ import { tempDirWithFiles } from "harness";
 
 const impls = [
   ["cpSync", fs.cpSync],
-  // ["cp", fs.promises.cp],
+  ["cp", fs.promises.cp],
 ] as const;
 
 for (const [name, copy] of impls) {
@@ -92,7 +92,6 @@ for (const [name, copy] of impls) {
         "result/w/y/v.txt": "keep this",
       });
 
-      console.log(basename);
       await copy(basename + "/from", basename + "/result", { recursive: true, force: false });
 
       assertContent(basename + "/result/a.txt", "win");
@@ -144,11 +143,17 @@ for (const [name, copy] of impls) {
       fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
 
       // Copy the symbolic link
-      await copy(basename + "/from/a_symlink.txt", basename + "/result.txt", { recursive: false });
+      await copy(basename + "/from/a_symlink.txt", basename + "/result.txt");
+      await copy(basename + "/from/a_symlink.txt", basename + "/result2.txt", { recursive: false });
 
       // Check if the resulting file is also a symbolic link
       const stats = fs.lstatSync(basename + "/result.txt");
       expect(stats.isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(basename + "/result.txt", "utf8")).toBe("a");
+
+      const stats2 = fs.lstatSync(basename + "/result2.txt");
+      expect(stats2.isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(basename + "/result2.txt", "utf8")).toBe("a");
     });
 
     test("symlinks - single file recursive", async () => {
@@ -162,6 +167,7 @@ for (const [name, copy] of impls) {
 
       const stats = fs.lstatSync(basename + "/result.txt");
       expect(stats.isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(basename + "/result.txt", "utf8")).toBe("a");
     });
 
     test("symlinks - directory recursive", async () => {
@@ -178,9 +184,11 @@ for (const [name, copy] of impls) {
 
       const statsFile = fs.lstatSync(basename + "/result/a_symlink.txt");
       expect(statsFile.isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(basename + "/result/a_symlink.txt", "utf8")).toBe("a");
 
       const statsDir = fs.lstatSync(basename + "/result/dir_symlink");
       expect(statsDir.isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
     test("symlinks - directory recursive", async () => {
@@ -198,9 +206,11 @@ for (const [name, copy] of impls) {
 
       const statsFile = fs.lstatSync(basename + "/result/a_symlink.txt");
       expect(statsFile.isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(basename + "/result/a_symlink.txt", "utf8")).toBe("a");
 
       const statsDir = fs.lstatSync(basename + "/result/dir_symlink");
       expect(statsDir.isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
     test("filter - works", async () => {
@@ -210,7 +220,9 @@ for (const [name, copy] of impls) {
       });
 
       await copy(basename + "/from", basename + "/result", {
-        filter: (src: string) => src.includes("a.txt"),
+        filter: (src: string) => {
+          return src.endsWith("/from") || src.includes("a.txt");
+        },
         recursive: true,
       });
 
@@ -236,7 +248,11 @@ for (const [name, copy] of impls) {
 
       process.chdir(prev);
 
-      // TODO: finish the test ll
+      expect(filter.mock.calls.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
+        [basename + "/from", basename + "/result"],
+        [basename + "/from/a.txt", basename + "/result/a.txt"],
+        [basename + "/from/b.txt", basename + "/result/b.txt"],
+      ]);
     });
   });
 }

@@ -109,7 +109,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             switch (comptime FunctionEnum) {
-                .readdir, .lstat, .stat, .readFile, .realpath, .copyFile => {},
+                .readdir, .lstat, .stat, .readFile, .realpath, .copyFile, .cp => {},
                 else => {
                     globalObject.throw("Not implemented yet", .{});
                     return .zero;
@@ -160,6 +160,10 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (comptime FunctionEnum == .copyFile) {
                 return JSC.Node.AsyncCopyFileTask.create(globalObject, args, slice.vm, slice.arena);
+            }
+
+            if (comptime FunctionEnum == .cp) {
+                return JSC.Node.AsyncCpTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
             // defer {

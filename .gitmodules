@@ -48,13 +48,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/uws"]
-path = src/deps/uws
-url = https://github.com/Jarred-Sumner/uWebSockets
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = true
 [submodule "src/deps/tinycc"]
 path = src/deps/tinycc
 url = https://github.com/Jarred-Sumner/tinycc.git

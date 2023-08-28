@@ -243,15 +243,28 @@ test("dns.reverse", done => {
       done(err);
     }
   });
+  dns.reverse("2606:4700:4700::1111", (err, hostnames) => {
+    try {
+      expect(err).toBeNull();
+      expect(hostnames).toContain("one.one.one.one");
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
 });
 
 test("dns.promises.reverse", async () => {
+  {
+    let hostnames = await dns.promises.reverse("8.8.8.8");
+    expect(hostnames).toContain("dns.google");
+  }
   {
     let hostnames = await dns.promises.reverse("1.1.1.1");
     expect(hostnames).toContain("one.one.one.one");
   }
   {
-    let hostnames = await dns.promises.reverse("8.8.8.8");
-    expect(hostnames).toContain("dns.google");
+    let hostnames = await dns.promises.reverse("2606:4700:4700::1111");
+    expect(hostnames).toContain("one.one.one.one");
   }
 });

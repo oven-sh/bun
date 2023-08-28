@@ -565,7 +565,7 @@ pub const Channel = opaque {
                 ares_gethostbyaddr(this, &addr, 4, std.os.AF.INET, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
                 return;
             } else if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &addr) == 1) {
-                return ares_gethostbyaddr(this, &addr, 6, std.os.AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+                return ares_gethostbyaddr(this, &addr, 16, std.os.AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
             }
         }
         struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);

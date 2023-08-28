@@ -2735,7 +2735,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
 
                 if (comptime reload_immediately) {
-                    bun.reloadProcess(bun.default_allocator, Output.enable_ansi_colors);
+                    bun.reloadProcess(bun.default_allocator, true);
                     unreachable;
                 }
 

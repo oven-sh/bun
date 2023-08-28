@@ -1,6 +1,6 @@
-// This file is a modified version of the fs-extra's copySync method.
+// Taken and modified from node.js: https://github.com/nodejs/node/blob/main/lib/internal/fs/cp/cp-sync.js
 
-const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
+// const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;

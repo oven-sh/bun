@@ -3074,8 +3074,6 @@ pub const Arguments = struct {
         }
     };
 
-    /// This function is used for `fs.cp` in the specific case where you are given the options { recursive: true } and nothing else,
-    /// Otherwise this is implemented in JS or calling copyFile
     pub const Cp = struct {
         src: PathLike,
         dest: PathLike,
@@ -5341,7 +5339,7 @@ pub const NodeFS = struct {
     }
 
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
-    /// The other options like `filter` use a JS fallback.
+    /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
         comptime std.debug.assert(flavor == .sync);
 

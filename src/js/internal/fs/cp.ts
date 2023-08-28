@@ -1,4 +1,4 @@
-// This file is a modified version of the fs-extra's copy method.
+// Taken and modified from node.js: https://github.com/nodejs/node/blob/main/lib/internal/fs/cp/cp.js
 
 // const {
 //   codes: {
@@ -13,7 +13,7 @@
 //     ERR_FS_EISDIR,
 //   },
 // } = require("internal/errors");
-const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
+// const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 

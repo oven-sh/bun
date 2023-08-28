@@ -118,6 +118,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #sources: Map<string | number, Source>;
   #stackFrames: StackFrame[];
   #stopped?: DAP.StoppedEvent["reason"];
+  #exception?: Variable;
   #breakpointId: number;
   #breakpoints: Breakpoint[];
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
@@ -343,7 +344,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       env = {},
       strictEnv = false,
       stopOnEntry = false,
-      noDebug = false,
       watch = false,
     } = request;
 
@@ -1053,6 +1053,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     if (data) {
       if (reason === "exception") {
         const remoteObject = data as JSC.Runtime.RemoteObject;
+        this.#exception = this.#addObject(remoteObject, { objectGroup: "debugger" });
       }
 
       if (reason === "FunctionCall") {
@@ -1085,6 +1086,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
+    this.#exception = undefined;
     for (const { variablesReference, objectGroup } of this.#variables.values()) {
       if (objectGroup === "debugger") {
         this.#variables.delete(variablesReference);
@@ -1613,6 +1615,62 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     return variables;
   }
 
+  async exceptionInfo(): Promise<DAP.ExceptionInfoResponse> {
+    const exception = this.#exception;
+    if (!exception) {
+      throw new Error("No exception found.");
+    }
+
+    const { code, ...details } = await this.#getExceptionDetails(exception);
+    return {
+      exceptionId: code || "",
+      breakMode: "always",
+      details,
+    };
+  }
+
+  async #getExceptionDetails(variable: Variable): Promise<DAP.ExceptionDetails & { code?: string }> {
+    const properties = await this.#getProperties(variable);
+
+    let fullTypeName: string | undefined;
+    let message: string | undefined;
+    let code: string | undefined;
+    let stackTrace: string | undefined;
+    let innerException: DAP.ExceptionDetails[] | undefined;
+
+    for (const property of properties) {
+      const { name, value, type } = property;
+      if (name === "name") {
+        fullTypeName = value;
+      } else if (name === "message") {
+        message = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "stack") {
+        stackTrace = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "code") {
+        code = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "cause") {
+        const cause = await this.#getExceptionDetails(property);
+        innerException = [cause];
+      } else if (name === "errors") {
+        const errors = await this.#getProperties(property);
+        innerException = await Promise.all(errors.map(error => this.#getExceptionDetails(error)));
+      }
+    }
+
+    if (!stackTrace) {
+      const { value } = variable;
+      stackTrace ||= value;
+    }
+
+    return {
+      fullTypeName,
+      message,
+      code,
+      stackTrace,
+      innerException,
+    };
+  }
+
   close(): void {
     this.#process?.kill();
     this.#signal?.close();
@@ -1626,6 +1684,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#sources.clear();
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
+    this.#exception = undefined;
     this.#breakpointId = 1;
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
@@ -1721,6 +1780,21 @@ function exceptionFiltersToPauseOnExceptionsState(
     return "uncaught";
   }
   return "none";
+}
+
+function variablesToExceptionDetails(variables: Variable[]): DAP.ExceptionDetails {
+  let fullTypeName: string | undefined;
+  let message: string | undefined;
+  let stackTrace: string | undefined;
+
+  for (const variable of variables) {
+  }
+
+  return {
+    fullTypeName,
+    message,
+    stackTrace,
+  };
 }
 
 function breakpointOptions(breakpoint: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {

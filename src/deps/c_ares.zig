@@ -1197,6 +1197,10 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
+        if (comptime bun.Environment.isWindows) {
+            return bun.todo(@src(), Error.ENOTIMP);
+        }
+
         return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {
             @as(std.os.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,

@@ -516,13 +516,26 @@ pub const Loader = struct {
         };
         defer file.close();
 
-        const stat = try file.stat();
-        const end = stat.size;
+        const end = brk: {
+            if (comptime Environment.isWindows) {
+                const pos = try file.getEndPos();
+                if (pos == 0) {
+                    @field(this, base) = logger.Source.initPathString(base, "");
+                    return;
+                }
 
-        if (end == 0 or stat.kind != .file) {
-            @field(this, base) = logger.Source.initPathString(base, "");
-            return;
-        }
+                break :brk pos;
+            }
+
+            const stat = try file.stat();
+
+            if (stat.size == 0 or stat.kind != .file) {
+                @field(this, base) = logger.Source.initPathString(base, "");
+                return;
+            }
+
+            break :brk stat.size;
+        };
 
         var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);

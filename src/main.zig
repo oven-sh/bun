@@ -15,6 +15,9 @@ pub fn main() void {
     const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
+    if (comptime Environment.isWindows) {
+        bun.win32.populateArgv();
+    }
 
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;

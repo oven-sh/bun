@@ -482,12 +482,12 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     // NOT IMPLEMENTED YET
     return 1024 * 1024;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
@@ -507,7 +507,7 @@ pub fn get_total_memory() u64 {
 pub const struct_BootTime = struct {
     sec: u32,
 };
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
@@ -528,7 +528,7 @@ pub const struct_LoadAvg = struct {
     ldavg: [3]u32,
     fscale: c_long,
 };
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
@@ -793,3 +793,10 @@ pub usingnamespace @cImport({
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
+
+pub const Mode = std.os.mode_t;
+
+pub const E = std.os.E;
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

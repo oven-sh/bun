@@ -31,9 +31,9 @@ const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
 const Mode = JSC.Node.Mode;
-
-const uid_t = std.os.uid_t;
-const gid_t = std.os.gid_t;
+const E = C.E;
+const uid_t = if (Environment.isPosix) std.os.uid_t else i32;
+const gid_t = if (Environment.isPosix) std.os.gid_t else i32;
 /// u63 to allow one null bit
 const ReadPosition = i64;
 
@@ -44,12 +44,16 @@ pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
 
-pub const default_permission = Syscall.S.IRUSR |
-    Syscall.S.IWUSR |
-    Syscall.S.IRGRP |
-    Syscall.S.IWGRP |
-    Syscall.S.IROTH |
-    Syscall.S.IWOTH;
+pub const default_permission = if (Environment.isPosix)
+    Syscall.S.IRUSR |
+        Syscall.S.IWUSR |
+        Syscall.S.IRGRP |
+        Syscall.S.IWGRP |
+        Syscall.S.IROTH |
+        Syscall.S.IWOTH
+else
+    // TODO:
+    0;
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
@@ -1212,7 +1216,9 @@ pub const Arguments = struct {
                 // be absolute. When using 'junction', the target argument
                 // will automatically be normalized to absolute path.
                 if (next_val.isString()) {
-                    comptime if (Environment.isWindows) @compileError("Add support for type argument on Windows");
+                    if (comptime Environment.isWindows) {
+                        bun.todo(@src(), {});
+                    }
                     arguments.eat();
                 }
             }
@@ -2174,7 +2180,7 @@ pub const Arguments = struct {
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
-        dirfd: FileDescriptor = @as(FileDescriptor, @intCast(std.fs.cwd().fd)),
+        dirfd: FileDescriptor,
 
         pub fn deinit(self: WriteFile) void {
             self.file.deinit();
@@ -2290,6 +2296,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
+                .dirfd = bun.toFD(std.fs.cwd().fd),
             };
         }
     };
@@ -3058,6 +3065,10 @@ pub const NodeFS = struct {
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Access).todo;
+        }
+
         var path = args.path.sliceZ(&this.sync_error_buf);
         const rc = Syscall.system.access(path, @intFromEnum(args.mode));
         return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
@@ -3391,6 +3402,10 @@ pub const NodeFS = struct {
     }
 
     pub fn chown(this: *NodeFS, args: Arguments.Chown, comptime flavor: Flavor) Maybe(Return.Chown) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fchmod).todo;
+        }
+
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         switch (comptime flavor) {
@@ -3403,6 +3418,10 @@ pub const NodeFS = struct {
 
     /// This should almost never be async
     pub fn chmod(this: *NodeFS, args: Arguments.Chmod, comptime flavor: Flavor) Maybe(Return.Chmod) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fchmod).todo;
+        }
+
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         switch (comptime flavor) {
@@ -3418,6 +3437,10 @@ pub const NodeFS = struct {
 
     /// This should almost never be async
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fchmod).todo;
+        }
+
         switch (comptime flavor) {
             .sync => {
                 return Syscall.fchmod(args.fd, args.mode);
@@ -3428,6 +3451,10 @@ pub const NodeFS = struct {
         return Maybe(Return.Fchmod).todo;
     }
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fchown).todo;
+        }
+
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
@@ -3439,6 +3466,9 @@ pub const NodeFS = struct {
         return Maybe(Return.Fchown).todo;
     }
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fdatasync).todo;
+        }
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
                 Maybe(Return.Fdatasync).success,
@@ -3448,12 +3478,18 @@ pub const NodeFS = struct {
         return Maybe(Return.Fdatasync).todo;
     }
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fstat).todo;
+        }
+
         switch (comptime flavor) {
             .sync => {
-                return switch (Syscall.fstat(args.fd)) {
-                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
-                    .err => |err| Maybe(Return.Fstat){ .err = err },
-                };
+                if (comptime Environment.isPosix) {
+                    return switch (Syscall.fstat(args.fd)) {
+                        .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
+                        .err => |err| Maybe(Return.Fstat){ .err = err },
+                    };
+                }
             },
             else => {},
         }
@@ -3462,6 +3498,10 @@ pub const NodeFS = struct {
     }
 
     pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Fsync).todo;
+        }
+
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
                 Maybe(Return.Fsync).success,
@@ -3472,8 +3512,7 @@ pub const NodeFS = struct {
     }
 
     pub fn ftruncateSync(args: Arguments.FTruncate) Maybe(Return.Ftruncate) {
-        return Maybe(Return.Ftruncate).errnoSys(system.ftruncate(args.fd, args.len orelse 0), .ftruncate) orelse
-            Maybe(Return.Ftruncate).success;
+        return Syscall.ftruncate(args.fd, args.len orelse 0);
     }
 
     pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
@@ -3485,6 +3524,10 @@ pub const NodeFS = struct {
         return Maybe(Return.Ftruncate).todo;
     }
     pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Futimes).todo;
+        }
+
         var times = [2]std.os.timespec{
             .{
                 .tv_sec = args.mtime,
@@ -3508,6 +3551,10 @@ pub const NodeFS = struct {
     }
 
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, comptime flavor: Flavor) Maybe(Return.Lchmod) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Lchmod).todo;
+        }
+
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         switch (comptime flavor) {
@@ -3522,6 +3569,10 @@ pub const NodeFS = struct {
     }
 
     pub fn lchown(this: *NodeFS, args: Arguments.LChown, comptime flavor: Flavor) Maybe(Return.Lchown) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Lchown).todo;
+        }
+
         const path = args.path.sliceZ(&this.sync_error_buf);
 
         switch (comptime flavor) {
@@ -3550,6 +3601,10 @@ pub const NodeFS = struct {
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Lstat).todo;
+        }
+
         _ = flavor;
         return switch (Syscall.lstat(
             args.path.sliceZ(
@@ -3589,7 +3644,7 @@ pub const NodeFS = struct {
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         const Option = Maybe(Return.Mkdir);
-        if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
+        if (comptime Environment.isWindows) return Option.todo;
 
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
@@ -3822,6 +3877,7 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        if (comptime Environment.isWindows) return Maybe(Return.Read).todo;
         return if (args.position != null)
             this._pread(
                 args,
@@ -3835,14 +3891,17 @@ pub const NodeFS = struct {
     }
 
     pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
+        if (comptime Environment.isWindows) return Maybe(Return.Read).todo;
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
 
     pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        if (comptime Environment.isWindows) return Maybe(Return.Write).todo;
         return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
     }
 
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
+        if (comptime Environment.isWindows) return Maybe(Return.Write).todo;
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
@@ -4023,7 +4082,7 @@ pub const NodeFS = struct {
         }
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-        var dir = std.fs.Dir{ .fd = fd };
+        var dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
         var iterator = DirIterator.iterate(dir);
         var entry = iterator.next();
         while (switch (entry) {
@@ -4159,9 +4218,8 @@ pub const NodeFS = struct {
 
         // Only used in DOMFormData
         if (args.offset > 0) {
-            std.os.lseek_SET(fd, args.offset) catch {};
+            _ = Syscall.setFileOffset(fd, args.offset);
         }
-
         // For certain files, the size might be 0 but the file might still have contents.
         const size = @as(
             u64,
@@ -4318,13 +4376,13 @@ pub const NodeFS = struct {
                         0
                     else brk: {
                         // on linux, it's absolutely positioned
-                        const pos = JSC.Node.Syscall.system.lseek(
+                        const pos = bun.sys.system.lseek(
                             fd,
                             @as(std.os.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
 
-                        switch (JSC.Node.Syscall.getErrno(pos)) {
+                        switch (bun.sys.getErrno(pos)) {
                             .SUCCESS => break :brk @as(usize, @intCast(pos)),
                             else => break :preallocate,
                         }
@@ -4551,7 +4609,7 @@ pub const NodeFS = struct {
                                 else => .FAULT,
                             };
                             return Maybe(Return.Rm){
-                                .err = JSC.Node.Syscall.Error.fromCode(errno, .rmdir),
+                                .err = bun.sys.Error.fromCode(errno, .rmdir),
                             };
                         };
 
@@ -4617,10 +4675,10 @@ pub const NodeFS = struct {
 
                         return Maybe(Return.Rm).success;
                     }
-                } else if (comptime Environment.isLinux) {
+                } else if (comptime Environment.isLinux or Environment.isWindows) {
                     if (args.recursive) {
                         std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                            const errno: std.os.E = switch (err) {
+                            const errno: E = switch (err) {
                                 error.InvalidHandle => .BADF,
                                 error.AccessDenied => .PERM,
                                 error.FileTooBig => .FBIG,
@@ -4650,15 +4708,15 @@ pub const NodeFS = struct {
                                 return Maybe(Return.Rm).success;
                             }
                             return Maybe(Return.Rm){
-                                .err = JSC.Node.Syscall.Error.fromCode(errno, .unlink),
+                                .err = bun.sys.Error.fromCode(errno, .unlink),
                             };
                         };
                         return Maybe(Return.Rm).success;
                     }
                 }
 
-                {
-                    var dest = args.path.sliceZ(&this.sync_error_buf);
+                if (comptime Environment.isPosix) {
+                    var dest = args.path.osPath(&this.sync_error_buf);
                     std.os.unlinkZ(dest) catch |er| {
                         // empircally, it seems to return AccessDenied when the
                         // file is actually a directory on macOS.
@@ -4670,7 +4728,7 @@ pub const NodeFS = struct {
                                     return Maybe(Return.Rm).success;
                                 }
 
-                                const code: std.os.E = switch (err) {
+                                const code: E = switch (err) {
                                     error.AccessDenied => .PERM,
                                     error.SymLinkLoop => .LOOP,
                                     error.NameTooLong => .NAMETOOLONG,
@@ -4684,7 +4742,7 @@ pub const NodeFS = struct {
                                 };
 
                                 return .{
-                                    .err = JSC.Node.Syscall.Error.fromCode(
+                                    .err = bun.sys.Error.fromCode(
                                         code,
                                         .rmdir,
                                     ),
@@ -4699,7 +4757,7 @@ pub const NodeFS = struct {
                         }
 
                         {
-                            const code: std.os.E = switch (er) {
+                            const code: E = switch (er) {
                                 error.AccessDenied => .PERM,
                                 error.SymLinkLoop => .LOOP,
                                 error.NameTooLong => .NAMETOOLONG,
@@ -4713,7 +4771,66 @@ pub const NodeFS = struct {
                             };
 
                             return .{
-                                .err = JSC.Node.Syscall.Error.fromCode(
+                                .err = bun.sys.Error.fromCode(
+                                    code,
+                                    .unlink,
+                                ),
+                            };
+                        }
+                    };
+
+                    return Maybe(Return.Rm).success;
+                }
+
+                if (comptime Environment.isWindows) {
+                    var dest = args.path.osPath(&this.sync_error_buf);
+                    std.os.windows.DeleteFile(dest, .{
+                        .dir = null,
+                        .remove_dir = brk: {
+                            const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
+                                if (args.force) {
+                                    return Maybe(Return.Rm).success;
+                                }
+
+                                const code: E = switch (err) {
+                                    error.FileNotFound => .NOENT,
+                                    error.PermissionDenied => .PERM,
+                                    else => .INVAL,
+                                };
+
+                                return .{
+                                    .err = bun.sys.Error.fromCode(
+                                        code,
+                                        .unlink,
+                                    ),
+                                };
+                            };
+                            // TODO: check FILE_ATTRIBUTE_INVALID
+                            break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        },
+                    }) catch |er| {
+                        // empircally, it seems to return AccessDenied when the
+                        // file is actually a directory on macOS.
+
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+
+                        {
+                            const code: E = switch (er) {
+                                error.FileNotFound => .NOENT,
+                                error.AccessDenied => .PERM,
+                                error.NameTooLong => .INVAL,
+                                error.FileBusy => .BUSY,
+                                error.NotDir => .NOTDIR,
+                                error.IsDir => .ISDIR,
+                                error.DirNotEmpty => .INVAL,
+                                error.NetworkNotFound => .NOENT,
+                                else => .UNKNOWN,
+                            };
+
+                            return .{
+                                .err = bun.sys.Error.fromCode(
                                     code,
                                     .unlink,
                                 ),
@@ -4730,6 +4847,9 @@ pub const NodeFS = struct {
         return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Stat).todo;
+        }
         _ = flavor;
 
         return @as(Maybe(Return.Stat), switch (Syscall.stat(
@@ -4748,6 +4868,10 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Symlink).todo;
+        }
+
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         switch (comptime flavor) {
@@ -4763,6 +4887,10 @@ pub const NodeFS = struct {
         return Maybe(Return.Symlink).todo;
     }
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Truncate).todo;
+        }
+
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse
@@ -4787,6 +4915,10 @@ pub const NodeFS = struct {
         };
     }
     pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime flavor: Flavor) Maybe(Return.Unlink) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Unlink).todo;
+        }
+
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
@@ -4801,6 +4933,10 @@ pub const NodeFS = struct {
         return Maybe(Return.UnwatchFile).todo;
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Utimes).todo;
+        }
+
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.mtime,
@@ -4829,6 +4965,10 @@ pub const NodeFS = struct {
     }
 
     pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime flavor: Flavor) Maybe(Return.Lutimes) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Lutimes).todo;
+        }
+
         var times = [2]std.c.timeval{
             .{
                 .tv_sec = args.mtime,
@@ -4856,6 +4996,11 @@ pub const NodeFS = struct {
         return Maybe(Return.Lutimes).todo;
     }
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+        if (comptime Environment.isWindows) {
+            args.global_this.throwTODO("watch is not supported on Windows yet");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        }
+
         const watcher = args.createFSWatcher() catch |err| {
             var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);

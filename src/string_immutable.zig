@@ -23,6 +23,20 @@ pub inline fn contains(self: string, str: string) bool {
     return indexOf(self, str) != null;
 }
 
+pub fn w(comptime str: []const u8) [:0]const u16 {
+    comptime var output: [str.len + 1]u16 = undefined;
+
+    for (str, 0..) |c, i| {
+        output[i] = c;
+    }
+    output[str.len] = 0;
+
+    const Static = struct {
+        pub const literal: [:0]const u16 = output[0 .. output.len - 1 :0];
+    };
+    return Static.literal;
+}
+
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
     return comptime brk: {
         comptime var output: [str.len]u16 = undefined;
@@ -1460,6 +1474,27 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     } else {
         return .{ .code_point = c0, .len = 1 };
     }
+}
+
+pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
+    std.debug.assert(buf.len > 0);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    std.debug.assert(encode_into_result.written < buf.len);
+    buf[encode_into_result.written] = 0;
+    return buf[0..encode_into_result.written :0];
+}
+
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    std.debug.assert(wbuf.len > 0);
+    var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
+        utf8,
+        wbuf[0..wbuf.len -| 1],
+    );
+
+    // TODO: error handling
+    // if (result.status == .surrogate) {
+    // }
+    return wbuf[0..result.count :0];
 }
 
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
@@ -4525,6 +4560,10 @@ pub fn isIPAddress(input: []const u8) bool {
     if (containsChar(input, ':'))
         return true;
 
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), false);
+    }
+
     if (std.net.Address.resolveIp(input, 0)) |_| {
         return true;
     } else |_| {
@@ -4533,6 +4572,10 @@ pub fn isIPAddress(input: []const u8) bool {
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), false);
+    }
+
     if (std.net.Address.parseIp6(input, 0)) |_| {
         return true;
     } else |_| {

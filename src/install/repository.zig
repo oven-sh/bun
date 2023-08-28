@@ -284,8 +284,8 @@ pub const Repository = extern struct {
             return error.InstallFailed;
         };
         defer json_file.close();
-        const json_stat = try json_file.stat();
-        var json_buf = try allocator.alloc(u8, json_stat.size + 64);
+        const size = try json_file.getEndPos();
+        var json_buf = try allocator.alloc(u8, size + 64);
         const json_len = try json_file.preadAll(json_buf, 0);
 
         const json_path = bun.getFdPath(

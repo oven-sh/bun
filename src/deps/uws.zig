@@ -748,7 +748,14 @@ pub const Loop = extern struct {
     /// The list of ready polls
     ready_polls: [1024]EventType align(16),
 
-    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
+    const EventType = switch (Environment.os) {
+        .linux => std.os.linux.epoll_event,
+        .mac => std.os.system.kevent64_s,
+        // TODO:
+        .windows => *anyopaque,
+        else => @compileError("Unsupported OS"),
+    };
+
     const log = bun.Output.scoped(.Loop, false);
 
     pub const InternalLoopData = extern struct {

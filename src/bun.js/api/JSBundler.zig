@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
@@ -287,7 +287,7 @@ pub const JSBundler = struct {
                 defer dir.close();
 
                 var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                this.rootdir.appendSliceExact(try bun.getFdPath(dir.fd, &rootdir_buf)) catch unreachable;
+                this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
             }
 
             if (try config.getArray(globalThis, "external")) |externals| {

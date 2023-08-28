@@ -970,30 +970,20 @@ WriteStream = (function (InternalWriteStream) {
 
       // TODO: Replace this when something like lseek is available
       var native = this.pos === undefined;
+      const callback = native
+        ? (err, bytes) => {
+            this[kIoDone] = false;
+            this.#handleWrite(err, bytes);
+            this.emit(kIoDone);
+            if (cb) !err ? cb() : cb(err);
+          }
+        : () => {};
       this[kIoDone] = true;
-      return super.write(
-        chunk,
-        encoding,
-        native
-          ? (err, bytes) => {
-              this[kIoDone] = false;
-              this.#handleWrite(err, bytes);
-              this.emit(kIoDone);
-              if (cb) !err ? cb() : cb(err);
-            }
-          : () => {},
-        native,
-      );
-    }
-
-    #internalWriteSlow(chunk, encoding, cb) {
-      this.#fs.write(this.fd, chunk, 0, chunk.length, this.pos, (err, bytes) => {
-        this[kIoDone] = false;
-        this.#handleWrite(err, bytes);
-        this.emit(kIoDone);
-
-        !err ? cb() : cb(err);
-      });
+      if (this._write) {
+        return this._write(chunk, encoding, callback);
+      } else {
+        return super.write(chunk, encoding, callback, native);
+      }
     }
 
     end(chunk, encoding, cb) {
@@ -1001,7 +991,7 @@ WriteStream = (function (InternalWriteStream) {
       return super.end(chunk, encoding, cb, native);
     }
 
-    _write = this.#internalWriteSlow;
+    _write = undefined;
     _writev = undefined;
 
     get pending() {

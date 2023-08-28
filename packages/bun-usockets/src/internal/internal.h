@@ -42,15 +42,6 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #include "internal/eventing/epoll_kqueue.h"
 #endif
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
-#endif
-#ifdef LIBUS_USE_GCD
-#include "internal/eventing/gcd.h"
-#endif
-#ifdef LIBUS_USE_ASIO
-#include "internal/eventing/asio.h"
-#endif
 
 /* Poll type and what it polls for */
 enum {

@@ -1288,6 +1288,17 @@ describe("fs.WriteStream", () => {
       done();
     });
   });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), "/not-used.txt");
+    // @ts-ignore-next-line
+    const ws = new WriteStream_(path, {
+      fd: 2,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(2);
+    expect(existsSync(path)).toBe(false);
+  });
 });
 
 describe("fs.ReadStream", () => {
@@ -1388,6 +1399,17 @@ describe("fs.ReadStream", () => {
       expect(data).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), "not-used.txt");
+    // @ts-ignore-next-line
+    const ws = new ReadStream_(path, {
+      fd: 0,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 });
 

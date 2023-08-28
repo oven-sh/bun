@@ -4,7 +4,7 @@ import { tempDirWithFiles } from "harness";
 
 const impls = [
   ["cpSync", fs.cpSync],
-  // ["cp", fs.promises.cp],
+  ["cp", fs.promises.cp],
 ] as const;
 
 for (const [name, copy] of impls) {

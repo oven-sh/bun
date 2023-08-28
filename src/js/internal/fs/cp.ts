@@ -32,19 +32,6 @@ async function cpFn(src, dest, opts) {
   return checkParentDir(destStat, src, dest, opts);
 }
 
-class ERR_FS_CP_EINVAL extends TypeError {
-  path: string;
-  syscall: string;
-  errno: number;
-  constructor(message, dest) {
-    super(message);
-    this.path = dest;
-    this.syscall = "cp";
-    this.errno = EINVAL;
-    this.code = "EINVAL";
-  }
-}
-
 async function checkPaths(src, dest, opts) {
   if (opts.filter && !(await opts.filter(src, dest))) {
     return { __proto__: null, skipped: true };
@@ -52,36 +39,39 @@ async function checkPaths(src, dest, opts) {
   const { 0: srcStat, 1: destStat } = await getStats(src, dest, opts);
   if (destStat) {
     if (areIdentical(srcStat, destStat)) {
-      throw new ERR_FS_CP_EINVAL("src and dest cannot be the same", dest);
+      throw new Error("Source and destination must not be the same.");
     }
     if (srcStat.isDirectory() && !destStat.isDirectory()) {
-      throw new ERR_FS_CP_DIR_TO_NON_DIR({
-        message: `cannot overwrite directory ${src} with non-directory ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: EISDIR,
-        code: "EISDIR",
-      });
+      // throw new ERR_FS_CP_DIR_TO_NON_DIR({
+      //   message: `cannot overwrite directory ${src} with non-directory ${dest}`,
+      //   path: dest,
+      //   syscall: "cp",
+      //   errno: EISDIR,
+      //   code: "EISDIR",
+      // });
+      throw new Error(`cannot overwrite directory ${src} with non-directory ${dest}`);
     }
     if (!srcStat.isDirectory() && destStat.isDirectory()) {
-      throw new ERR_FS_CP_NON_DIR_TO_DIR({
-        message: `cannot overwrite non-directory ${src} with directory ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: ENOTDIR,
-        code: "ENOTDIR",
-      });
+      // throw new ERR_FS_CP_NON_DIR_TO_DIR({
+      //   message: `cannot overwrite non-directory ${src} with directory ${dest}`,
+      //   path: dest,
+      //   syscall: "cp",
+      //   errno: ENOTDIR,
+      //   code: "ENOTDIR",
+      // });
+      throw new Error(`cannot overwrite non-directory ${src} with directory ${dest}`);
     }
   }
 
   if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw new ERR_FS_CP_EINVAL({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_EINVAL({
+    //   message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -135,13 +125,14 @@ async function checkParentPaths(src, srcStat, dest) {
     throw err;
   }
   if (areIdentical(srcStat, destStat)) {
-    throw new ERR_FS_CP_EINVAL({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_EINVAL({
+    //   message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
   }
   return checkParentPaths(src, srcStat, destParent);
 }
@@ -162,41 +153,45 @@ async function getStatsForCopy(destStat, src, dest, opts) {
   if (srcStat.isDirectory() && opts.recursive) {
     return onDir(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isDirectory()) {
-    throw new ERR_FS_EISDIR({
-      message: `${src} is a directory (not copied)`,
-      path: src,
-      syscall: "cp",
-      errno: EISDIR,
-      code: "EISDIR",
-    });
+    // throw new ERR_FS_EISDIR({
+    //   message: `${src} is a directory (not copied)`,
+    //   path: src,
+    //   syscall: "cp",
+    //   errno: EISDIR,
+    //   code: "EISDIR",
+    // });
+    throw new Error(`${src} is a directory (not copied)`);
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
     return onFile(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isSymbolicLink()) {
     return onLink(destStat, src, dest, opts);
   } else if (srcStat.isSocket()) {
-    throw new ERR_FS_CP_SOCKET({
-      message: `cannot copy a socket file: ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_SOCKET({
+    //   message: `cannot copy a socket file: ${dest}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot copy a socket file: ${dest}`);
   } else if (srcStat.isFIFO()) {
-    throw new ERR_FS_CP_FIFO_PIPE({
-      message: `cannot copy a FIFO pipe: ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_FIFO_PIPE({
+    //   message: `cannot copy a FIFO pipe: ${dest}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot copy a FIFO pipe: ${dest}`);
   }
-  throw new ERR_FS_CP_UNKNOWN({
-    message: `cannot copy an unknown file type: ${dest}`,
-    path: dest,
-    syscall: "cp",
-    errno: EINVAL,
-    code: "EINVAL",
-  });
+  // throw new ERR_FS_CP_UNKNOWN({
+  //   message: `cannot copy an unknown file type: ${dest}`,
+  //   path: dest,
+  //   syscall: "cp",
+  //   errno: EINVAL,
+  //   code: "EINVAL",
+  // });
+  throw new Error(`cannot copy an unknown file type: ${dest}`);
 }
 
 function onFile(srcStat, destStat, src, dest, opts) {
@@ -209,13 +204,14 @@ async function mayCopyFile(srcStat, src, dest, opts) {
     await unlink(dest);
     return _copyFile(srcStat, src, dest, opts);
   } else if (opts.errorOnExist) {
-    throw new ERR_FS_CP_EEXIST({
-      message: `${dest} already exists`,
-      path: dest,
-      syscall: "cp",
-      errno: EEXIST,
-      code: "EEXIST",
-    });
+    // throw new ERR_FS_CP_EEXIST({
+    //   message: `${dest} already exists`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EEXIST,
+    //   code: "EEXIST",
+    // });
+    throw new Error(`${dest} already exists`);
   }
 }
 
@@ -309,26 +305,28 @@ async function onLink(destStat, src, dest, opts) {
     resolvedDest = resolve(dirname(dest), resolvedDest);
   }
   if (isSrcSubdir(resolvedSrc, resolvedDest)) {
-    throw new ERR_FS_CP_EINVAL({
-      message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_EINVAL({
+    //   message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`);
   }
   // Do not copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
   // and therefore a broken symlink would be created.
   const srcStat = await stat(src);
   if (srcStat.isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
-    throw new ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY({
-      message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+    // throw new ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY({
+    //   message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
+    //   path: dest,
+    //   syscall: "cp",
+    //   errno: EINVAL,
+    //   code: "EINVAL",
+    // });
+    throw new Error(`cannot overwrite ${resolvedDest} with ${resolvedSrc}`);
   }
   return copyLink(resolvedSrc, dest);
 }

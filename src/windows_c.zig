@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
+const win32 = std.os.windows;
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;

@@ -10,10 +10,10 @@ fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?
     return @as(u16, @intCast(filepath.len));
 }
 
-extern "C" fn is_executable_file(path: [*:0]const u8) bool;
+pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 fn checkPath(filepath: [:0]const u8) bool {
     bun.JSC.markBinding(@src());
-    return is_executable_file(filepath);
+    return bun.sys.isExecutableFilePath(filepath);
 }
 
 // Like /usr/bin/which but without needing to exec a child process

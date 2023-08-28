@@ -290,6 +290,7 @@ pub inline fn constStrToU8(s: []const u8) []u8 {
 }
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_WPATH = [MAX_PATH_BYTES / 2:0]u16;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
@@ -985,6 +986,7 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
+pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1785,7 +1787,8 @@ pub fn isRegularFile(mode: JSC.Node.Mode) bool {
 
 pub const sys = @import("./bun.js/node/syscall.zig");
 
-pub const kernel32 = @import("./kernel32.zig");
+pub const kernel32 = @import("./windows.zig");
+pub const windows = kernel32;
 
 pub const FDTag = enum {
     none,
@@ -1826,3 +1829,5 @@ pub fn fdi32(fd_: anytype) i32 {
 
     return @intCast(fd_);
 }
+
+pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;

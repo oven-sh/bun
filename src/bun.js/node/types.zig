@@ -83,6 +83,12 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
 
+        pub fn throw(this: @This()) !void {
+            if (this == .err) {
+                return bun.AsyncIO.asError(this.err.errno);
+            }
+        }
+
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
                 .err => |e| {
@@ -691,9 +697,7 @@ pub const PathLike = union(Tag) {
         return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub const OSPath = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
-
-    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) OSPath {
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }

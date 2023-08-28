@@ -5235,7 +5235,7 @@ pub const PackageManager = struct {
             break :brk child_json;
         };
 
-        try std.os.chdir(fs.top_level_dir);
+        try bun.sys.chdir(fs.top_level_dir).throw();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = '/';
@@ -5973,11 +5973,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                if (comptime Environment.isWindows) {
-                    try std.os.chdir(final_path);
-                } else {
-                    try std.os.chdirZ(final_path);
-                }
+                try bun.sys.chdir(final_path).throw();
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {

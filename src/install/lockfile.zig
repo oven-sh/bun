@@ -915,7 +915,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
+            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 

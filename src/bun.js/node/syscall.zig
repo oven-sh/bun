@@ -139,9 +139,57 @@ pub fn fchmod(fd_: bun.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
-pub fn chdir(destination: [:0]const u8) Maybe(void) {
-    const rc = sys.chdir(destination);
-    return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
+pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
+    if (comptime Environment.isPosix) {
+        const rc = sys.chdir(destination);
+        return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isWindows) {
+        if (kernel32.SetCurrentDirectory(destination) != 0) {
+            return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+        }
+
+        return Maybe(void).success;
+    }
+
+    @compileError("Not implemented yet");
+}
+
+pub fn chdir(destination: anytype) Maybe(void) {
+    const Type = @TypeOf(destination);
+
+    if (comptime Environment.isPosix) {
+        if (comptime Type == []u8 or Type == []const u8) {
+            return chdirOSPath(
+                &(std.os.toPosixPath(destination) catch return .{ .err = .{
+                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .syscall = .chdir,
+                } }),
+            );
+        }
+
+        return chdirOSPath(destination);
+    }
+
+    if (comptime Environment.isWindows) {
+        if (comptime Type == bun.OSPathSlice or Type == [:0]u16) {
+            return chdirOSPath(@as(bun.OSPathSlice, destination));
+        }
+
+        if (comptime Type == *[*:0]u16) {
+            if (kernel32.SetCurrentDirectory(destination) != 0) {
+                return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
+            }
+
+            return Maybe(void).success;
+        }
+
+        var wbuf: bun.MAX_WPATH = undefined;
+        return chdirOSPath(bun.strings.toWPath(&wbuf, destination));
+    }
+
+    return Maybe(void).todo;
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -181,11 +229,8 @@ pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
-
-    var buf: [1024]u16 = undefined;
-    const len = bun.simdutf.convert.utf8.to.utf16.le(file_path, &buf);
-    buf[len] = 0;
-    _ = kernel32.CreateDirectoryW(buf[0..len :0], null);
+    var wbuf: bun.MAX_WPATH = undefined;
+    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
 }
@@ -1066,6 +1111,70 @@ pub fn getMaxPipeSizeOnLinux() usize {
             }
         }.once, c_int)),
     );
+}
+
+pub fn existsOSPath(path: bun.OSPathSlice) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        const rc = kernel32.GetFileAttributesW(path) != windows.INVALID_FILE_ATTRIBUTES;
+        if (rc == windows.FALSE) {
+            return false;
+        }
+        return true;
+    }
+
+    @compileError("TODO: existsOSPath");
+}
+
+pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
+    if (comptime Environment.isPosix) {
+        return bun.is_executable_fileZ(path);
+    }
+
+    if (comptime Environment.isWindows) {
+        var out: windows.DWORD = 8;
+        const rc = kernel32.GetBinaryTypeW(path, &out);
+        log("GetBinaryTypeW({}) = {d}", .{ bun.String.init(path), out });
+
+        if (rc == windows.FALSE) {
+            return false;
+        }
+
+        return switch (out) {
+            kernel32.SCS_32BIT_BINARY,
+            kernel32.SCS_64BIT_BINARY,
+            kernel32.SCS_DOS_BINARY,
+            kernel32.SCS_OS216_BINARY,
+            kernel32.SCS_PIF_BINARY,
+            kernel32.SCS_POSIX_BINARY,
+            => true,
+            else => false,
+        };
+    }
+
+    @compileError("TODO: isExecutablePath");
+}
+
+pub fn isExecutableFilePath(path: anytype) bool {
+    const Type = @TypeOf(path);
+    if (comptime Environment.isPosix) {
+        switch (Type) {
+            *[*:0]const u8, *[*:0]u8, [*:0]const u8, [*:0]u8 => return bun.is_executable_fileZ(path),
+            [:0]const u8, [:0]u8 => return bun.is_executable_fileZ(path.ptr),
+            []const u8, []u8 => return bun.is_executable_fileZ(&(std.os.toPosixPath(path) catch return false)),
+            else => @compileError("TODO: isExecutableFilePath"),
+        }
+    }
+
+    if (comptime Environment.isWindows) {
+        var buf: [(bun.MAX_PATH_BYTES / 2) + 1]u16 = undefined;
+        return isExecutableFileOSPath(bun.strings.toWPath(&buf, path));
+    }
+
+    @compileError("TODO: isExecutablePath");
 }
 
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {

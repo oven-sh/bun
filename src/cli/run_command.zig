@@ -62,8 +62,7 @@ pub const RunCommand = struct {
 
         const Try = struct {
             pub fn shell(str: stringZ) bool {
-                std.os.accessZ(str, std.os.X_OK) catch return false;
-                return true;
+                return bun.sys.isExecutableFilePath(str);
             }
         };
 
@@ -733,7 +732,7 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                std.os.accessZ(slice, std.os.X_OK) catch continue;
+                                if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
                             }

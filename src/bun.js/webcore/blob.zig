@@ -1820,6 +1820,11 @@ pub const Blob = struct {
             }
 
             fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
+                if (comptime Environment.isWindows) {
+                    bun.todo(@src(), {});
+                    return;
+                }
+
                 const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {

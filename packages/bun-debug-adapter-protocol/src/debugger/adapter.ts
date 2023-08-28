@@ -58,6 +58,10 @@ type Breakpoint = DAP.Breakpoint & {
   source: Source;
 };
 
+type Target = (DAP.GotoTarget | DAP.StepInTarget) & {
+  source: Source;
+};
+
 type FunctionBreakpoint = DAP.Breakpoint & {
   id: number;
   name: string;
@@ -122,6 +126,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #breakpointId: number;
   #breakpoints: Breakpoint[];
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
+  #targets: Map<number, Target>;
   #variableId: number;
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
@@ -146,6 +151,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#breakpointId = 1;
     this.#breakpoints = [];
     this.#functionBreakpoints = new Map();
+    this.#targets = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
   }
@@ -870,6 +876,56 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     await this.send("Debugger.setPauseOnExceptions", {
       state: exceptionFiltersToPauseOnExceptionsState(filterIds),
+    });
+  }
+
+  async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
+    const { source: source0 } = request;
+    const source = await this.#getSource(sourceToId(source0));
+
+    const { breakpoints } = await this.breakpointLocations(request);
+    const targets = breakpoints.map(({ line, column }) =>
+      this.#addTarget({
+        id: this.#targets.size,
+        label: `${line}:${column}`,
+        source,
+        line,
+        column,
+      }),
+    );
+
+    return {
+      targets,
+    };
+  }
+
+  #addTarget<T extends DAP.GotoTarget | DAP.StepInTarget>(target: T & { source: Source }): T {
+    const { id } = target;
+    this.#targets.set(id, target);
+
+    // For now, remove the column from targets because
+    // it can be inaccurate and causes weird rendering issues in VSCode.
+    target.column = this.#lineFrom0BasedLine(0);
+
+    return target;
+  }
+
+  #getTarget(targetId: number): Target | undefined {
+    return this.#targets.get(targetId);
+  }
+
+  async goto(request: DAP.GotoRequest): Promise<void> {
+    const { targetId } = request;
+    const target = this.#getTarget(targetId);
+    if (!target) {
+      throw new Error("No target found.");
+    }
+
+    const { source, line, column } = target;
+    const location = this.#generatedLocation(source, line, column);
+
+    await this.send("Debugger.continueToLocation", {
+      location,
     });
   }
 
@@ -1688,6 +1744,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#breakpointId = 1;
     this.#breakpoints.length = 0;
     this.#functionBreakpoints.clear();
+    this.#targets.clear();
     this.#variables.clear();
     this.#launched = undefined;
     this.#initialized = undefined;
@@ -1780,21 +1837,6 @@ function exceptionFiltersToPauseOnExceptionsState(
     return "uncaught";
   }
   return "none";
-}
-
-function variablesToExceptionDetails(variables: Variable[]): DAP.ExceptionDetails {
-  let fullTypeName: string | undefined;
-  let message: string | undefined;
-  let stackTrace: string | undefined;
-
-  for (const variable of variables) {
-  }
-
-  return {
-    fullTypeName,
-    message,
-    stackTrace,
-  };
 }
 
 function breakpointOptions(breakpoint: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {

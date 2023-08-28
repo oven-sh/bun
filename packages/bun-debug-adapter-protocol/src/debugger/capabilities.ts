@@ -85,7 +85,7 @@ const capabilities: DAP.Capabilities = {
    * The debug adapter supports the `gotoTargets` request.
    * @see gotoTargets
    */
-  supportsGotoTargetsRequest: false,
+  supportsGotoTargetsRequest: true,
 
   /**
    * The debug adapter supports the `stepInTargets` request.

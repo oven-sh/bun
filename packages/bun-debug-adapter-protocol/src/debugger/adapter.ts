@@ -5,11 +5,69 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
-import capabilities from "./capabilities";
 import { Location, SourceMap } from "./sourcemap";
 import { compare, parse } from "semver";
 import { EventEmitter } from "node:events";
 import { UnixSignal, randomUnixPath } from "./signal";
+
+const capabilities: DAP.Capabilities = {
+  supportsConfigurationDoneRequest: true,
+  supportsFunctionBreakpoints: true,
+  supportsConditionalBreakpoints: true,
+  supportsHitConditionalBreakpoints: true,
+  supportsEvaluateForHovers: true,
+  exceptionBreakpointFilters: [
+    {
+      filter: "all",
+      label: "Caught Exceptions",
+      default: false,
+      supportsCondition: true,
+      description: "Breaks on all throw errors, even if they're caught later.",
+      conditionDescription: `error.name == "CustomError"`,
+    },
+    {
+      filter: "uncaught",
+      label: "Uncaught Exceptions",
+      default: false,
+      supportsCondition: true,
+      description: "Breaks only on errors or promise rejections that are not handled.",
+      conditionDescription: `error.name == "CustomError"`,
+    },
+  ],
+  supportsStepBack: false,
+  supportsSetVariable: true,
+  supportsRestartFrame: false,
+  supportsGotoTargetsRequest: true,
+  supportsStepInTargetsRequest: false,
+  supportsCompletionsRequest: true,
+  completionTriggerCharacters: [".", "[", '"', "'"],
+  supportsModulesRequest: false,
+  additionalModuleColumns: [],
+  supportedChecksumAlgorithms: [],
+  supportsRestartRequest: false, // TODO
+  supportsExceptionOptions: false, // TODO
+  supportsValueFormattingOptions: false,
+  supportsExceptionInfoRequest: true,
+  supportTerminateDebuggee: true,
+  supportSuspendDebuggee: false,
+  supportsDelayedStackTraceLoading: true,
+  supportsLoadedSourcesRequest: true,
+  supportsLogPoints: true,
+  supportsTerminateThreadsRequest: false,
+  supportsSetExpression: true,
+  supportsTerminateRequest: true,
+  supportsDataBreakpoints: false, // TODO
+  supportsReadMemoryRequest: false,
+  supportsWriteMemoryRequest: false,
+  supportsDisassembleRequest: false,
+  supportsCancelRequest: false,
+  supportsBreakpointLocationsRequest: true,
+  supportsClipboardContext: false,
+  supportsSteppingGranularity: false,
+  supportsInstructionBreakpoints: false,
+  supportsExceptionFilterOptions: true,
+  supportsSingleThreadExecutionRequests: false,
+};
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
@@ -941,8 +999,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
 
     if (wasThrown) {
-      const { className } = result;
-      if (context === "hover" && (className === "SyntaxError" || className === "ReferenceError")) {
+      if (context === "hover" && isSyntaxError(result)) {
         return {
           result: "",
           variablesReference: 0,
@@ -976,6 +1033,42 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       doNotPauseOnExceptionsAndMuteConsole: true,
       includeCommandLineAPI: true,
     });
+  }
+
+  async completions(request: DAP.CompletionsRequest): Promise<DAP.CompletionsResponse> {
+    const { text, column, frameId } = request;
+    const callFrameId = this.#getCallFrameId(frameId);
+
+    const { expression, hint } = completionToExpression(text);
+    const { result, wasThrown } = await this.#evaluate({
+      expression: expression || "this",
+      callFrameId,
+      objectGroup: "repl",
+    });
+
+    if (wasThrown) {
+      if (isSyntaxError(result)) {
+        return {
+          targets: [],
+        };
+      }
+      throw new Error(remoteObjectToString(result));
+    }
+
+    const variable = this.#addObject(result, {
+      objectGroup: "repl",
+      evaluateName: expression,
+    });
+
+    const properties = await this.#getProperties(variable);
+    const targets = properties
+      .filter(({ name }) => isIdentifier(name) && (!hint || name.includes(hint)))
+      .sort(variablesSortBy)
+      .map(variableToCompletionItem);
+
+    return {
+      targets,
+    };
   }
 
   restart(): void {
@@ -1567,8 +1660,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
 
-    console.log("VARIABLE", variable);
-
     if (variablesReference) {
       this.#variables.set(variablesReference, variable);
     }
@@ -1883,6 +1974,33 @@ function logMessageToExpression(logMessage?: string): string | undefined {
   return `console.log(\`${logMessage.replace(/\$?{/g, "${")}\`);`;
 }
 
+function completionToExpression(completion: string): { expression: string; hint?: string } {
+  const lastDot = completion.lastIndexOf(".");
+  const last = (s0: string, s1: string) => {
+    const i0 = completion.lastIndexOf(s0);
+    const i1 = completion.lastIndexOf(s1);
+    return i1 > i0 ? i1 + 1 : i0;
+  };
+
+  const lastIdentifier = Math.max(lastDot, last("[", "]"), last("(", ")"), last("{", "}"));
+
+  let expression: string;
+  let remainder: string;
+  if (lastIdentifier > 0) {
+    expression = completion.slice(0, lastIdentifier);
+    remainder = completion.slice(lastIdentifier);
+  } else {
+    expression = "";
+    remainder = completion;
+  }
+
+  const [hint] = completion.slice(lastIdentifier).match(/[#$a-z_][0-9a-z_$]*/gi) ?? [];
+  return {
+    expression,
+    hint,
+  };
+}
+
 function consoleMessageGroup(type: JSC.Console.ConsoleMessage["type"]): DAP.OutputEvent["group"] {
   switch (type) {
     case "startGroup":
@@ -1933,7 +2051,7 @@ function remoteObjectToVariablePresentationHint(
   },
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
-  const { name, configurable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } =
+  const { name, enumerable, configurable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } =
     propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
@@ -1950,7 +2068,10 @@ function remoteObjectToVariablePresentationHint(
   if (subtype === "class") {
     kind = "class";
   }
-  if (isPrivate || isSynthetic || configurable === false || hasSymbol || name === "__proto__") {
+  if (isSynthetic || isPrivate || hasSymbol) {
+    visibility = "protected";
+  }
+  if (enumerable === false || configurable === false || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {
@@ -2043,6 +2164,36 @@ function isTestJavaScript(path: string): boolean {
   return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
 }
 
+function isSyntaxError(remoteObject: JSC.Runtime.RemoteObject): boolean {
+  const { className } = remoteObject;
+
+  switch (className) {
+    case "SyntaxError":
+    case "ReferenceError":
+      return true;
+  }
+
+  return false;
+}
+
+function variableToCompletionItem(variable: Variable): DAP.CompletionItem {
+  const { name, type } = variable;
+  return {
+    label: name,
+    type: variableTypeToCompletionItemType(type),
+  };
+}
+
+function variableTypeToCompletionItemType(type: Variable["type"]): DAP.CompletionItem["type"] {
+  switch (type) {
+    case "class":
+      return "class";
+    case "function":
+      return "function";
+  }
+  return "property";
+}
+
 function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
   const visibility = (variable: DAP.Variable): number => {
     const { presentationHint } = variable;
@@ -2067,6 +2218,13 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
     const index = parseInt(name);
     if (isFinite(index)) {
       return index;
+    }
+    switch (name[0]) {
+      case "_":
+      case "$":
+        return 1;
+      case "#":
+        return 2;
     }
     return 0;
   };

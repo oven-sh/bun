@@ -3,7 +3,7 @@
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/AsyncSocket.h>
 
-#include <bun-usockets//internal/internal.h>
+#include <bun-usockets/src/internal/internal.h>
 #include <string_view>
 
 extern "C"

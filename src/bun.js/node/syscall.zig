@@ -15,7 +15,7 @@ const fd_t = bun.FileDescriptor;
 const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
-const kernel32 = bun.kernel32;
+const kernel32 = bun.windows;
 
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
@@ -49,7 +49,7 @@ else if (Environment.isLinux)
 else
     @compileError("STAT");
 
-const windows = std.os.windows;
+const windows = bun.windows;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -296,8 +296,106 @@ pub fn getErrno(rc: anytype) bun.C.E {
 //         .follow_symlinks = follow_symlinks,
 //     };
 // }
+const O = std.os.O;
+const w = std.os.windows;
 
-pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+    const nonblock = flags & O.NONBLOCK != 0;
+
+    var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
+
+    if (flags & O.RDWR != 0) {
+        access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
+    } else if (flags & O.WRONLY != 0) {
+        access_mask |= w.GENERIC_WRITE;
+    } else if (flags & O.APPEND != 0) {
+        access_mask |= w.FILE_APPEND_DATA;
+    } else {
+        access_mask |= w.GENERIC_READ;
+    }
+
+    var result: windows.HANDLE = undefined;
+
+    const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
+        .err = .{
+            .errno = @intFromEnum(bun.C.E.NOMEM),
+            .syscall = .open,
+        },
+    };
+    var nt_name = windows.UNICODE_STRING{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(path.ptr),
+    };
+    var attr = windows.OBJECT_ATTRIBUTES{
+        .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (dirfD == bun.invalid_fd or std.fs.path.isAbsoluteWindowsWTF16(path)) null else bun.fdcast(dirfD),
+        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io: windows.IO_STATUS_BLOCK = undefined;
+    const blocking_flag: windows.ULONG = if (!nonblock) windows.FILE_SYNCHRONOUS_IO_NONALERT else 0;
+    const file_or_dir_flag: windows.ULONG = switch (flags & O.DIRECTORY != 0) {
+        // .file_only => windows.FILE_NON_DIRECTORY_FILE,
+        true => windows.FILE_DIRECTORY_FILE,
+        false => 0,
+    };
+    const follow_symlinks = flags & O.NOFOLLOW == 0;
+    const creation: w.ULONG = blk: {
+        if (flags & O.CREAT != 0) {
+            if (flags & O.EXCL != 0) {
+                break :blk w.FILE_CREATE;
+            }
+        }
+        break :blk w.FILE_OPEN;
+    };
+
+    const wflags: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
+
+    while (true) {
+        const rc = windows.ntdll.NtCreateFile(
+            &result,
+            access_mask,
+            &attr,
+            &io,
+            null,
+            w.FILE_ATTRIBUTE_NORMAL,
+            w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
+            creation,
+            wflags,
+            null,
+            0,
+        );
+        switch (windows.Win32Error.fromNTStatus(rc)) {
+            .SUCCESS => {
+                return JSC.Maybe(bun.FileDescriptor){
+                    .result = bun.toFD(result),
+                };
+            },
+            else => |code| {
+                if (code.toSystemErrno()) |sys_err| {
+                    return .{
+                        .err = .{
+                            .errno = @truncate(@intFromEnum(sys_err)),
+                            .syscall = .open,
+                        },
+                    };
+                }
+
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                        .syscall = .open,
+                    },
+                };
+            },
+        }
+    }
+}
+
+pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
@@ -315,17 +413,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
     }
 
     if (comptime Environment.isWindows) {
-        // TODO: this is not right, but we will fix it after we ship this.
-        const handle = std.os.openatZ(bun.fdcast(dirfd), file_path, @intCast(flags), 0) catch {
-            return Maybe(bun.FileDescriptor){
-                .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
-                    .syscall = .open,
-                },
-            };
-        };
-
-        return Maybe(bun.FileDescriptor){ .result = bun.toFD(handle) };
+        return openatWindows(dirfd, file_path, flags);
     }
 
     while (true) {
@@ -346,6 +434,15 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
     }
 
     unreachable;
+}
+
+pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.MAX_WPATH = undefined;
+        return openatWindows(dirfd, bun.strings.toWPath(&wbuf, file_path), flags);
+    }
+
+    return openatOSPath(dirfd, file_path, flags, perm);
 }
 
 pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
@@ -828,13 +925,12 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wide_slice = windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
+            const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]) catch {
                 return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF) } };
             };
 
             // Trust that Windows gives us valid UTF-16LE.
-            const end_index = std.unicode.utf16leToUtf8(out_buffer, wide_slice) catch unreachable;
-            return .{ .result = out_buffer[0..end_index] };
+            return .{ .result = @constCast(bun.strings.fromWPath(out_buffer, wide_slice)) };
         },
         .macos, .ios, .watchos, .tvos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
@@ -1216,14 +1312,15 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: *windows.HANDLE = undefined;
+        const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
-            kernel32.GetCurrentProcess(),
+            process,
             bun.fdcast(fd),
-            kernel32.GetCurrentProcess(),
+            process,
             target,
             0,
-            windows.TRUE,
-            windows.DUPLICATE_SAME_ACCESS,
+            w.TRUE,
+            w.DUPLICATE_SAME_ACCESS,
         );
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {

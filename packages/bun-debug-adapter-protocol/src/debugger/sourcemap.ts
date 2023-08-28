@@ -52,6 +52,7 @@ class ActualSourceMap implements SourceMap {
 
   generatedLocation(request: LocationRequest): Location {
     const { line, column, url } = request;
+
     let lineRange: LineRange;
     try {
       const source = this.#getSource(url);
@@ -68,6 +69,7 @@ class ActualSourceMap implements SourceMap {
         message: unknownToError(error),
       };
     }
+
     if (!locationIsValid(lineRange)) {
       return {
         line: lineToLine(line),
@@ -75,6 +77,7 @@ class ActualSourceMap implements SourceMap {
         verified: false,
       };
     }
+
     const { line: gline, column: gcolumn } = lineRange;
     return {
       line: lineToLine(gline),
@@ -85,6 +88,7 @@ class ActualSourceMap implements SourceMap {
 
   originalLocation(request: LocationRequest): Location {
     const { line, column } = request;
+
     let mappedPosition: MappedPosition;
     try {
       mappedPosition = this.#sourceMap.originalPositionFor({
@@ -99,6 +103,7 @@ class ActualSourceMap implements SourceMap {
         message: unknownToError(error),
       };
     }
+
     if (!locationIsValid(mappedPosition)) {
       return {
         line: lineToLine(line),
@@ -106,6 +111,7 @@ class ActualSourceMap implements SourceMap {
         verified: false,
       };
     }
+
     const { line: oline, column: ocolumn } = mappedPosition;
     return {
       line: lineTo0BasedLine(oline),

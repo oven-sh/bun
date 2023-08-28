@@ -2,12 +2,22 @@
 name: Run your tests with the Bun test runner
 ---
 
-Bun has a built-in test runner with a Jest-like `expect` API. To use it, run `bun test` from your project directory. The test runner will search for all files in the directory that match the following patterns:
+Bun has a built-in [test runner](/docs/cli/test) with a Jest-like `expect` API.
 
-- `*.test.{js|jsx|ts|tsx}`
-- `*_test.{js|jsx|ts|tsx}`
-- `*.spec.{js|jsx|ts|tsx}`
-- `*_spec.{js|jsx|ts|tsx}`
+---
+
+To use it, run the `bun test` command from your project directory. The test runner will recursively search for all files in the directory that match the following patterns and execute the tests they contain.
+
+```txt
+*.test.{js|jsx|ts|tsx}
+*_test.{js|jsx|ts|tsx}
+*.spec.{js|jsx|ts|tsx}
+*_spec.{js|jsx|ts|tsx}
+```
+
+---
+
+Here's what the output of a typical test run looks like. In this case, there are three tests files (`test.test.js`, `test2.test.js`, and `test3.test.js`) containing two tests each (`add` and `multiply`).
 
 ```sh
 $ bun test
@@ -51,17 +61,19 @@ Ran 2 tests across 1 files. [15.00ms]
 
 ---
 
-All tests have a name, defined as the first parameter to the `test` function. Tests can also be inside a `describe` block.
+All tests have a name, defined using the first parameter to the `test` function. Tests can also be grouped into suites with `describe`.
 
 ```ts
 import { test, expect } from "bun:test";
 
-test("add", () => {
-  expect(2 + 2).toEqual(4);
-});
+describe("math", () => {
+  test("add", () => {
+    expect(2 + 2).toEqual(4);
+  });
 
-test("multiply", () => {
-  expect(2 * 2).toEqual(4);
+  test("multiply", () => {
+    expect(2 * 2).toEqual(4);
+  });
 });
 ```
 
@@ -69,7 +81,7 @@ test("multiply", () => {
 
 To filter which tests are executed by name, use the `-t`/`--test-name-pattern` flag.
 
-Adding `-t add` will only run tests with "add" in the name. This flag also checks the name of the test suite (the first parameter to `describe`).
+Adding `-t add` will only run tests with "add" in the name. This works with test names defined with `test` or test suite names defined with `describe`.
 
 ```sh
 $ bun test -t add

@@ -8,7 +8,7 @@ Use the `spyOn` utility to track method calls with Bun's test runner.
 import { test, expect, spyOn } from "bun:test";
 
 const leo = {
-  name: "Leonard",
+  name: "Leonardo",
   sayHi(thing: string) {
     console.log(`Sup I'm ${this.name} and I like ${thing}`);
   },
@@ -27,7 +27,7 @@ Once the spy is created, it can be used to write `expect` assertions relating to
   const leo = {
     name: "Leonardo",
     sayHi(thing: string) {
-      console.log(`Sup, I'm ${this.name} and I like ${thing}`);
+      console.log(`Sup I'm ${this.name} and I like ${thing}`);
     },
   };
 

@@ -5,7 +5,7 @@ name: Set the system time in Bun's test runner
 Bun's test runner supports setting the system time programmatically with the `setSystemTime` function.
 
 ```ts
-import { test, expect, beforeAll, setSystemTime } from "bun:test";
+import { test, expect, setSystemTime } from "bun:test";
 
 test("party like it's 1999", () => {
   const date = new Date("1999-01-01T00:00:00.000Z");

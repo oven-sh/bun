@@ -1242,6 +1242,28 @@ pub const JSDebugHTTPSServer = struct {
         return result;
     }
 
+    extern fn DebugHTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of DebugHTTPSServer
     pub fn toJS(this: *DebugHTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -1286,6 +1308,9 @@ pub const JSDebugHTTPSServer = struct {
         if (@TypeOf(DebugHTTPSServer.getHostname) != GetterType)
             @compileLog("Expected DebugHTTPSServer.getHostname to be a getter");
 
+        if (@TypeOf(DebugHTTPSServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getId to be a getter");
+
         if (@TypeOf(DebugHTTPSServer.getPendingRequests) != GetterType)
             @compileLog("Expected DebugHTTPSServer.getPendingRequests to be a getter");
 
@@ -1315,6 +1340,7 @@ pub const JSDebugHTTPSServer = struct {
             @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
             @export(DebugHTTPSServer.getDevelopment, .{ .name = "DebugHTTPSServerPrototype__getDevelopment" });
             @export(DebugHTTPSServer.getHostname, .{ .name = "DebugHTTPSServerPrototype__getHostname" });
+            @export(DebugHTTPSServer.getId, .{ .name = "DebugHTTPSServerPrototype__getId" });
             @export(DebugHTTPSServer.getPendingRequests, .{ .name = "DebugHTTPSServerPrototype__getPendingRequests" });
             @export(DebugHTTPSServer.getPendingWebSockets, .{ .name = "DebugHTTPSServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPSServer.getPort, .{ .name = "DebugHTTPSServerPrototype__getPort" });
@@ -1353,6 +1379,28 @@ pub const JSDebugHTTPServer = struct {
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
         const result = DebugHTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DebugHTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPServerPrototype__idGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
@@ -1403,6 +1451,9 @@ pub const JSDebugHTTPServer = struct {
         if (@TypeOf(DebugHTTPServer.getHostname) != GetterType)
             @compileLog("Expected DebugHTTPServer.getHostname to be a getter");
 
+        if (@TypeOf(DebugHTTPServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getId to be a getter");
+
         if (@TypeOf(DebugHTTPServer.getPendingRequests) != GetterType)
             @compileLog("Expected DebugHTTPServer.getPendingRequests to be a getter");
 
@@ -1432,6 +1483,7 @@ pub const JSDebugHTTPServer = struct {
             @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
             @export(DebugHTTPServer.getDevelopment, .{ .name = "DebugHTTPServerPrototype__getDevelopment" });
             @export(DebugHTTPServer.getHostname, .{ .name = "DebugHTTPServerPrototype__getHostname" });
+            @export(DebugHTTPServer.getId, .{ .name = "DebugHTTPServerPrototype__getId" });
             @export(DebugHTTPServer.getPendingRequests, .{ .name = "DebugHTTPServerPrototype__getPendingRequests" });
             @export(DebugHTTPServer.getPendingWebSockets, .{ .name = "DebugHTTPServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPServer.getPort, .{ .name = "DebugHTTPServerPrototype__getPort" });
@@ -3059,6 +3111,28 @@ pub const JSHTTPSServer = struct {
         return result;
     }
 
+    extern fn HTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of HTTPSServer
     pub fn toJS(this: *HTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -3103,6 +3177,9 @@ pub const JSHTTPSServer = struct {
         if (@TypeOf(HTTPSServer.getHostname) != GetterType)
             @compileLog("Expected HTTPSServer.getHostname to be a getter");
 
+        if (@TypeOf(HTTPSServer.getId) != GetterType)
+            @compileLog("Expected HTTPSServer.getId to be a getter");
+
         if (@TypeOf(HTTPSServer.getPendingRequests) != GetterType)
             @compileLog("Expected HTTPSServer.getPendingRequests to be a getter");
 
@@ -3132,6 +3209,7 @@ pub const JSHTTPSServer = struct {
             @export(HTTPSServer.finalize, .{ .name = "HTTPSServerClass__finalize" });
             @export(HTTPSServer.getDevelopment, .{ .name = "HTTPSServerPrototype__getDevelopment" });
             @export(HTTPSServer.getHostname, .{ .name = "HTTPSServerPrototype__getHostname" });
+            @export(HTTPSServer.getId, .{ .name = "HTTPSServerPrototype__getId" });
             @export(HTTPSServer.getPendingRequests, .{ .name = "HTTPSServerPrototype__getPendingRequests" });
             @export(HTTPSServer.getPendingWebSockets, .{ .name = "HTTPSServerPrototype__getPendingWebSockets" });
             @export(HTTPSServer.getPort, .{ .name = "HTTPSServerPrototype__getPort" });
@@ -3170,6 +3248,28 @@ pub const JSHTTPServer = struct {
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
         const result = HTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn HTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPServerPrototype__idGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
@@ -3220,6 +3320,9 @@ pub const JSHTTPServer = struct {
         if (@TypeOf(HTTPServer.getHostname) != GetterType)
             @compileLog("Expected HTTPServer.getHostname to be a getter");
 
+        if (@TypeOf(HTTPServer.getId) != GetterType)
+            @compileLog("Expected HTTPServer.getId to be a getter");
+
         if (@TypeOf(HTTPServer.getPendingRequests) != GetterType)
             @compileLog("Expected HTTPServer.getPendingRequests to be a getter");
 
@@ -3249,6 +3352,7 @@ pub const JSHTTPServer = struct {
             @export(HTTPServer.finalize, .{ .name = "HTTPServerClass__finalize" });
             @export(HTTPServer.getDevelopment, .{ .name = "HTTPServerPrototype__getDevelopment" });
             @export(HTTPServer.getHostname, .{ .name = "HTTPServerPrototype__getHostname" });
+            @export(HTTPServer.getId, .{ .name = "HTTPServerPrototype__getId" });
             @export(HTTPServer.getPendingRequests, .{ .name = "HTTPServerPrototype__getPendingRequests" });
             @export(HTTPServer.getPendingWebSockets, .{ .name = "HTTPServerPrototype__getPendingWebSockets" });
             @export(HTTPServer.getPort, .{ .name = "HTTPServerPrototype__getPort" });

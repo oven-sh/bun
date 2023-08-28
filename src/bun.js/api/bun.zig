@@ -2481,7 +2481,7 @@ pub fn serve(
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
-    const config: JSC.API.ServerConfig = brk: {
+    var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
         var exception = &exception_;
 
@@ -2496,6 +2496,40 @@ pub fn serve(
     };
 
     var exception_value: *JSC.JSValue = undefined;
+
+    if (config.allow_hot) {
+        if (globalObject.bunVM().hotMap()) |hot| {
+            if (config.id.len == 0) {
+                config.id = config.computeID(globalObject.allocator());
+            }
+
+            if (hot.getEntry(config.id)) |entry| {
+                switch (entry.tag()) {
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
+                        var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
+                        var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
+                        var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
+                        var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
 
     // Listen happens on the next tick!
     // This is so we can return a Server object
@@ -2515,6 +2549,12 @@ pub fn serve(
             obj.protect();
 
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         } else {
             var server = JSC.API.HTTPSServer.init(config, globalObject.ptr());
@@ -2530,6 +2570,12 @@ pub fn serve(
             const obj = server.toJS(globalObject);
             obj.protect();
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         }
     } else {
@@ -2547,6 +2593,12 @@ pub fn serve(
             const obj = server.toJS(globalObject);
             obj.protect();
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         } else {
             var server = JSC.API.HTTPServer.init(config, globalObject.ptr());
@@ -2563,6 +2615,12 @@ pub fn serve(
             obj.protect();
 
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         }
     }

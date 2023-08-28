@@ -45,6 +45,8 @@ $ echo $?
 1 # this is the exit code of the previous command
 ```
 
+---
+
 Different thresholds can be set for line-level and function-level coverage.
 
 ```toml

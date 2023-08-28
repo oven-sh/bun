@@ -2,6 +2,7 @@ import type * as BunType from "bun";
 
 // We want to avoid dealing with creating a prototype for the inspector class
 let sendFn_, disconnectFn_;
+const colors = Bun.enableANSIColors && process.env.NO_COLOR !== "1";
 
 var debuggerCounter = 1;
 class DebuggerWithMessageQueue {
@@ -31,7 +32,7 @@ function generatePath() {
 }
 
 function terminalLink(url) {
-  if (Bun.enableANSIColors) {
+  if (colors) {
     // bold + hyperlink + reset
     return "\x1b[1m\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\" + "\x1b[22m";
   }
@@ -40,7 +41,7 @@ function terminalLink(url) {
 }
 
 function dim(text) {
-  if (Bun.enableANSIColors) {
+  if (colors) {
     return "\x1b[2m" + text + "\x1b[22m";
   }
 
@@ -63,7 +64,12 @@ class WebSocketListener {
   start(url: string): BunType.Server {
     let defaultHostname = "localhost";
     let usingDefaultPort = false;
-    if (/^[0-9]*$/.test(url)) {
+    let isUnix = false;
+
+    if (url.startsWith("ws+unix://")) {
+      isUnix = true;
+      url = url.slice(10);
+    } else if (/^[0-9]*$/.test(url)) {
       url = "ws://" + defaultHostname + ":" + url + generatePath();
     } else if (!url || url.startsWith("/")) {
       url = "ws://" + defaultHostname + ":" + defaultPort + generatePath();
@@ -81,19 +87,21 @@ class WebSocketListener {
       }
     }
 
-    try {
-      var { hostname, port, pathname } = new URL(url);
-      this.url = pathname.toLowerCase();
-    } catch (e) {
-      console.error("[Inspector]", "Failed to parse url", '"' + url + '"');
-      process.exit(1);
+    if (!isUnix) {
+      try {
+        var { hostname, port, pathname } = new URL(url);
+        this.url = pathname.toLowerCase();
+      } catch (e) {
+        console.error("[Inspector]", "Failed to parse url", '"' + url + '"');
+        process.exit(1);
+      }
     }
 
     const serveOptions: BunType.WebSocketServeOptions<DebuggerWithMessageQueue> = {
-      hostname,
+      ...(isUnix ? { unix: url } : { hostname }),
       development: false,
 
-      //  ts-ignore
+      // @ts-ignore
       reusePort: false,
 
       websocket: {
@@ -130,16 +138,18 @@ class WebSocketListener {
             },
           );
 
-          console.log(
-            "[Inspector]",
-            "Connection #" + connection.count + " opened",
-            "(" +
-              new Intl.DateTimeFormat(undefined, {
-                "timeStyle": "long",
-                "dateStyle": "short",
-              }).format(new Date()) +
-              ")",
-          );
+          if (!isUnix) {
+            console.log(
+              "[Inspector]",
+              "Connection #" + connection.count + " opened",
+              "(" +
+                new Intl.DateTimeFormat(undefined, {
+                  "timeStyle": "long",
+                  "dateStyle": "short",
+                }).format(new Date()) +
+                ")",
+            );
+          }
         },
         drain: socket => {
           const queue = socket.data.messageQueue;
@@ -160,16 +170,18 @@ class WebSocketListener {
         },
         close: socket => {
           socket.data.disconnect();
-          console.log(
-            "[Inspector]",
-            "Connection #" + socket.data.count + " closed",
-            "(" +
-              new Intl.DateTimeFormat(undefined, {
-                "timeStyle": "long",
-                "dateStyle": "short",
-              }).format(new Date()) +
-              ")",
-          );
+          if (!isUnix) {
+            console.log(
+              "[Inspector]",
+              "Connection #" + socket.data.count + " closed",
+              "(" +
+                new Intl.DateTimeFormat(undefined, {
+                  "timeStyle": "long",
+                  "dateStyle": "short",
+                }).format(new Date()) +
+                ")",
+            );
+          }
           this.activeConnections.delete(socket);
         },
       },
@@ -186,7 +198,7 @@ class WebSocketListener {
           });
         }
 
-        if (pathname === this.url) {
+        if (!this.url || pathname === this.url) {
           const refHeader = req.headers.get("Ref-Event-Loop");
           if (
             server.upgrade(req, {
@@ -224,6 +236,9 @@ class WebSocketListener {
             ...serveOptions,
             port: portNumber++,
           });
+          if (isUnix) {
+            notify();
+          }
         } catch (e) {
           lastError = e;
         }
@@ -234,6 +249,9 @@ class WebSocketListener {
           ...serveOptions,
           port: portNumber,
         });
+        if (isUnix) {
+          notify();
+        }
       } catch (e) {
         lastError = e;
       }
@@ -253,10 +271,16 @@ class WebSocketListener {
       console.write(textToWrite);
     }
 
+    if (!this.url) {
+      return server;
+    }
+
     // yellow foreground
     writeToConsole(dim(`------------------ Bun Inspector ------------------` + "\n"));
-    // reset background
-    writeToConsole("\x1b[49m");
+    if (colors) {
+      // reset background
+      writeToConsole("\x1b[49m");
+    }
 
     writeToConsole(
       "Listening at:\n  " +
@@ -271,6 +295,24 @@ class WebSocketListener {
 
     return server;
   }
+}
+
+function notify(): void {
+  const unix = process.env["BUN_INSPECT_NOTIFY"];
+  if (!unix || !unix.startsWith("unix://")) {
+    return;
+  }
+  Bun.connect({
+    unix: unix.slice(7),
+    socket: {
+      open: socket => {
+        socket.end("1");
+      },
+      data: () => {}, // required or it errors
+    },
+  }).finally(() => {
+    // Do nothing
+  });
 }
 
 interface Debugger {

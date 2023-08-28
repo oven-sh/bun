@@ -1818,6 +1818,12 @@ pub const PackageManager = struct {
             else => |pkg_id| pkg_id,
         };
 
+        if (resolution_id == invalid_package_id) {
+            return .{
+                .not_found = {},
+            };
+        }
+
         return .{
             .resolution = .{
                 .resolution = this.lockfile.packages.items(.resolution)[resolution_id],

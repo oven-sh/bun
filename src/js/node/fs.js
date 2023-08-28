@@ -345,7 +345,7 @@ var kIoDone = Symbol.for("kIoDone");
 
 var defaultReadStreamOptions = {
   file: undefined,
-  fd: undefined,
+  fd: null,
   flags: "r",
   encoding: undefined,
   mode: 0o666,
@@ -408,6 +408,7 @@ ReadStream = (function (InternalReadStream) {
         autoDestroy = defaultReadStreamOptions.autoClose,
         fs = defaultReadStreamOptions.fs,
         highWaterMark = defaultReadStreamOptions.highWaterMark,
+        fd = defaultReadStreamOptions.fd,
       } = options;
 
       if (pathOrFd?.constructor?.name === "URL") {
@@ -416,7 +417,13 @@ ReadStream = (function (InternalReadStream) {
 
       // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
       var tempThis = {};
-      if (typeof pathOrFd === "string") {
+      if (fd !== null) {
+        if (typeof options.fd !== "number") {
+          throw new TypeError("Expected options.fd to be a number");
+        }
+        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = options.fd;
+        tempThis.autoClose = false;
+      } else if (typeof pathOrFd === "string") {
         if (pathOrFd.startsWith("file://")) {
           pathOrFd = Bun.fileURLToPath(pathOrFd);
         }
@@ -437,7 +444,7 @@ ReadStream = (function (InternalReadStream) {
       }
 
       // If fd not open for this file, open it
-      if (!tempThis.fd) {
+      if (tempThis.fd === undefined) {
         // NOTE: this fs is local to constructor, from options
         tempThis.fd = fs.openSync(pathOrFd, flags, mode);
       }
@@ -756,7 +763,13 @@ WriteStream = (function (InternalWriteStream) {
       } = options;
 
       var tempThis = {};
-      if (typeof path === "string") {
+      if (fd !== null) {
+        if (typeof fd !== "number") {
+          throw new Error("Expected options.fd to be a number");
+        }
+        tempThis.fd = fd;
+        tempThis[writeStreamPathFastPathSymbol] = false;
+      } else if (typeof path === "string") {
         if (path.length === 0) {
           throw new TypeError("Expected a non-empty path");
         }
@@ -772,12 +785,9 @@ WriteStream = (function (InternalWriteStream) {
           (start === undefined || start === 0) &&
           fs.write === defaultWriteStreamOptions.fs.write &&
           fs.close === defaultWriteStreamOptions.fs.close;
-      } else {
-        tempThis.fd = fd;
-        tempThis[writeStreamPathFastPathSymbol] = false;
       }
 
-      if (!tempThis.fd) {
+      if (tempThis.fd === null || tempThis.fd === undefined) {
         tempThis.fd = fs.openSync(path, flags, mode);
       }
 

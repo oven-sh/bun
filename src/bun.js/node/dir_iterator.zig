@@ -189,10 +189,37 @@ pub const Iterator = switch (builtin.os.tag) {
                     if (io.Information == 0) return .{ .result = null };
                     self.index = 0;
                     self.end_index = io.Information;
-                    if (rc == 0) {
-                        if (Result.errnoSys(rc, .getdirentries64)) |err| {
-                            return err;
+                    // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
+                    if (rc == .INVALID_PARAMETER) {
+                        return .{
+                            .err = .{
+                                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(bun.C.SystemErrno.ENOTDIR))),
+                                .syscall = .NtQueryDirectoryFile,
+                            },
+                        };
+                    }
+
+                    if (rc == .NO_MORE_FILES) {
+                        self.end_index = self.index;
+                        return .{ .result = null };
+                    }
+
+                    if (rc != .SUCCESS) {
+                        if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
+                            return .{
+                                .err = .{
+                                    .errno = @truncate(@intFromEnum(errno)),
+                                    .syscall = .NtQueryDirectoryFile,
+                                },
+                            };
                         }
+
+                        return .{
+                            .err = .{
+                                .errno = @truncate(@intFromEnum(bun.C.SystemErrno.EUNKNOWN)),
+                                .syscall = .NtQueryDirectoryFile,
+                            },
+                        };
                     }
                 }
 

@@ -113,6 +113,8 @@ pub const Tag = enum(u8) {
     pwritev,
     readv,
     preadv,
+    NtQueryDirectoryFile,
+
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("root").bun.PathString;
@@ -244,7 +246,7 @@ pub fn fcntl(fd_: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
 
 pub fn getErrno(rc: anytype) bun.C.E {
     if (comptime Environment.isWindows) {
-        if (bun.C.Win32Error.get().toSystemErrno()) |e| {
+        if (bun.windows.Win32Error.get().toSystemErrno()) |e| {
             return e.toE();
         }
 

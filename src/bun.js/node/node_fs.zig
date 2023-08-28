@@ -5221,7 +5221,7 @@ pub const NodeFS = struct {
         const src = src_buf[0..src_dir_len :0];
         const dest = dest_buf[0..dest_dir_len :0];
 
-        const stat_ = switch (Syscall.stat(src)) {
+        const stat_ = switch (Syscall.lstat(src)) {
             .result => |result| result,
             .err => |err| {
                 @memcpy(this.sync_error_buf[0..src.len], src);
@@ -5230,12 +5230,16 @@ pub const NodeFS = struct {
         };
 
         if (!os.S.ISDIR(stat_.mode)) {
-            return this._copySingleFileSync(
+            const r = this._copySingleFileSync(
                 src,
                 dest,
-                @enumFromInt((if (args.errorOnExist) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
+            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+                return Maybe(Return.Cp).success;
+            }
+            return r;
         }
 
         if (comptime Environment.isMac) {
@@ -5288,24 +5292,37 @@ pub const NodeFS = struct {
             dest_buf[dest_dir_len] = std.fs.path.sep;
             dest_buf[dest_dir_len + 1 + current.name.len] = 0;
 
-            var result = switch (current.kind) {
-                .directory => this._copyRecursiveSync(
-                    src_buf,
-                    src_dir_len + 1 + current.name.len,
-                    dest_buf,
-                    dest_dir_len + 1 + current.name.len,
-                    args,
-                ),
-                else => this._copySingleFileSync(
-                    src_buf[0 .. src_dir_len + 1 + current.name.len :0],
-                    dest_buf[0 .. dest_dir_len + 1 + current.name.len :0],
-                    @enumFromInt((if (args.errorOnExist) Constants.COPYFILE_EXCL else @as(u8, 0))),
-                    null,
-                ),
-            };
-            switch (result) {
-                .err => return result,
-                .result => {},
+            switch (current.kind) {
+                .directory => {
+                    const r = this._copyRecursiveSync(
+                        src_buf,
+                        src_dir_len + 1 + current.name.len,
+                        dest_buf,
+                        dest_dir_len + 1 + current.name.len,
+                        args,
+                    );
+                    switch (r) {
+                        .err => return r,
+                        .result => {},
+                    }
+                },
+                else => {
+                    const r = this._copySingleFileSync(
+                        src_buf[0 .. src_dir_len + 1 + current.name.len :0],
+                        dest_buf[0 .. dest_dir_len + 1 + current.name.len :0],
+                        @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                        null,
+                    );
+                    switch (r) {
+                        .err => {
+                            if (r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+                                continue;
+                            }
+                            return r;
+                        },
+                        .result => {},
+                    }
+                },
             }
         }
         return Maybe(Return.Cp).success;

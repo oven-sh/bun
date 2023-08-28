@@ -482,9 +482,20 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
+// https://opensource.apple.com/source/xnu/xnu-4570.61.1/osfmk/mach/host_info.h.auto.html
+pub const HOST_VM_INFO64 = 4;
+// https://developer.apple.com/documentation/kernel/1502863-host_statistics64
+pub extern fn host_statistics64(host_priv: std.c.host_t, flavor: std.c.host_flavor_t, host_info64_out: std.c.host_info64_t, host_info64_outCnt: *std.c.mach_msg_type_number_t) std.c.E;
+
 pub fn get_free_memory() u64 {
-    // NOT IMPLEMENTED YET
-    return 1024 * 1024;
+    var count = std.c.TASK_VM_INFO_COUNT;
+
+    var stats: std.c.vm_statistics64 = undefined;
+    if (host_statistics64(std.c.mach_host_self(), HOST_VM_INFO64, @as(std.c.host_info64_t, @ptrCast(&stats)), &count) != .SUCCESS) {
+        return 0;
+    }
+    
+    return stats.free_count *% std.mem.page_size;
 }
 
 pub fn get_total_memory() u64 {

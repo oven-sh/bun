@@ -21,7 +21,8 @@
         "${workspaceFolder}/src/deps/boringssl/include/",
         "${workspaceFolder}/src/deps",
         "${workspaceFolder}/src/napi/*",
-        "${workspaceFolder}/src/deps/uws/uSockets/src"
+        "${workspaceFolder}/packages/bun-usockets/src",
+        "${workspaceFolder}/packages/"
       ],
       "browse": {
         "path": [
@@ -43,7 +44,8 @@
           "${workspaceFolder}/src/bun.js/modules/*",
           "${workspaceFolder}/src/deps",
           "${workspaceFolder}/src/deps/boringssl/include/",
-          "${workspaceFolder}/src/deps/uws/uSockets/src",
+          "${workspaceFolder}/packages/bun-usockets/",
+          "${workspaceFolder}/packages/bun-uws/",
           "${workspaceFolder}/src/napi"
         ],
         "limitSymbolsToIncludedHeaders": true,

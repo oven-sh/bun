@@ -31,3 +31,5 @@ src/bun.js/bindings/ZigGeneratedClasses+lazyStructureHeader.h linguist-generated
 src/bun.js/bindings/ZigGeneratedClasses+lazyStructureImpl.h linguist-generated
 
 docs/**/* linguist-documentation
+
+packages/bun-uws/fuzzing/seed-corpus/**/* linguist-generated

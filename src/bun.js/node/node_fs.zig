@@ -431,14 +431,14 @@ pub const AsyncCopyFileTask = struct {
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
-        readdir_args: Arguments.CopyFile,
+        copyfile_args: Arguments.CopyFile,
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
     ) JSC.JSValue {
         var task = bun.default_allocator.create(AsyncCopyFileTask) catch @panic("out of memory");
         task.* = AsyncCopyFileTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = readdir_args,
+            .args = copyfile_args,
             .result = undefined,
             .globalObject = globalObject,
             .tracker = JSC.AsyncTaskTracker.init(vm),
@@ -448,6 +448,190 @@ pub const AsyncCopyFileTask = struct {
         task.args.src.toThreadSafe();
         task.args.dest.toThreadSafe();
         task.tracker.didSchedule(globalObject);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncCopyFileTask = @fieldParentPtr(AsyncCopyFileTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.copyFile(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncCopyFileTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.CopyFile).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.CopyFile, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncCopyFileTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        this.promise.strong.deinit();
+        this.arena.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+pub const AsyncCpTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.CopyFile,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Cp),
+    ref: JSC.PollRef = .{},
+    arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        cp_args: Arguments.Cp,
+        vm: *JSC.VirtualMachine,
+        arena: bun.ArenaAllocator,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncCpTask) catch @panic("out of memory");
+        task.* = AsyncCpTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = cp_args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
+            .arena = arena,
+            .subtask_count = 0,
+            .subtasks_completed = 0,
+        };
+        task.ref.ref(vm);
+        task.args.src.toThreadSafe();
+        task.args.dest.toThreadSafe();
+        task.tracker.didSchedule(globalObject);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
+
+        var node_fs = NodeFS{};
+        node_fs.cp(this.args, .promise);
+    }
+
+    fn finishConcurrently(this: *AsyncCpTask, result: Maybe(Return.Cp)) void {
+        this.result = result;
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncCpTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Cp, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncCpTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        this.promise.strong.deinit();
+        this.arena.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+/// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
+/// When clonefile cannot be used, this task is started once per file.
+pub const AsyncCpSingleFileTask = struct {
+    cp_task: *AsyncCpTask,
+    // promise: JSC.JSPromise.Strong,
+    // args: Arguments.CopyFile,
+    // globalObject: *JSC.JSGlobalObject,
+    // task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    // result: JSC.Maybe(Return.Cp),
+    // ref: JSC.PollRef = .{},
+    // arena: bun.ArenaAllocator,
+    // tracker: JSC.AsyncTaskTracker,
+
+    pub fn create(
+        parent: *AsyncCpTask,
+    ) JSC.JSValue {
+        _ = parent;
+        var task = bun.default_allocator.create(AsyncCopyFileTask) catch @panic("out of memory");
+        task.* = AsyncCopyFileTask{
+            // .promise = JSC.JSPromise.Strong.init(globalObject),
+            // .args = readdir_args,
+            // .result = undefined,
+            // .globalObject = globalObject,
+            // .tracker = JSC.AsyncTaskTracker.init(vm),
+            // .arena = arena,
+        };
+        // task.ref.ref(vm);
+        // task.args.src.toThreadSafe();
+        // task.args.dest.toThreadSafe();
+        // task.tracker.didSchedule(globalObject);
 
         JSC.WorkPool.schedule(&task.task);
 
@@ -3362,79 +3546,109 @@ pub const NodeFS = struct {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
-        _ = flavor;
-
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var src = args.src.sliceZ(&src_buf);
-        var dest = args.dest.sliceZ(&dest_buf);
-
-        // TODO: do we need to fchown?
-
-        return this._copySingleFileSync(src, dest, args.mode, null);
-    }
-
-    /// Shared logic by copyFile and _copyRecursive
-    /// The latter uses `reuse_stat` to avoid doing a stat twice
-    fn _copySingleFileSync(this: *NodeFS, src: [:0]const u8, dest: [:0]const u8, mode: Constants.Copyfile, reuse_stat: ?os.Stat) Maybe(void) {
+    pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
-        if (comptime Environment.isMac) {
-            if (mode.isForceClone()) {
-                // https://www.manpagez.com/man/2/clonefile/
-                return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
-            } else {
-                const stat_ = reuse_stat orelse switch (Syscall.stat(src)) {
-                    .result => |result| result,
-                    .err => |err| {
-                        @memcpy(this.sync_error_buf[0..src.len], src);
-                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..src.len]) };
-                    },
-                };
+        switch (comptime flavor) {
+            .sync => {
+                var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var src = args.src.sliceZ(&src_buf);
+                var dest = args.dest.sliceZ(&dest_buf);
 
-                if (os.S.ISDIR(stat_.mode)) {
-                    @memcpy(this.sync_error_buf[0..src.len], src);
-                    return Maybe(Return.CopyFile){ .err = .{
-                        .errno = @intFromEnum(C.SystemErrno.EISDIR),
-                        .path = this.sync_error_buf[0..src.len],
-                        .syscall = .stat,
-                    } };
-                }
+                // TODO: do we need to fchown?
+                if (comptime Environment.isMac) {
+                    if (args.mode.isForceClone()) {
+                        // https://www.manpagez.com/man/2/clonefile/
+                        return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
+                    } else {
+                        const stat_ = switch (Syscall.stat(src)) {
+                            .result => |result| result,
+                            .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                        };
 
-                if (!os.S.ISREG(stat_.mode)) {
-                    @memcpy(this.sync_error_buf[0..src.len], src);
-                    return Maybe(Return.CopyFile){ .err = .{
-                        .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
-                        .syscall = .stat,
-                        .path = this.sync_error_buf[0..src.len],
-                    } };
-                }
+                        if (!os.S.ISREG(stat_.mode)) {
+                            return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                        }
 
-                // 64 KB is about the break-even point for clonefile() to be worth it
-                // at least, on an M1 with an NVME SSD.
-                if (stat_.size > 128 * 1024) {
-                    if (!mode.shouldntOverwrite()) {
-                        // clonefile() will fail if it already exists
-                        _ = Syscall.unlink(dest);
+                        // 64 KB is about the break-even point for clonefile() to be worth it
+                        // at least, on an M1 with an NVME SSD.
+                        if (stat_.size > 128 * 1024) {
+                            if (!args.mode.shouldntOverwrite()) {
+                                // clonefile() will fail if it already exists
+                                _ = Syscall.unlink(dest);
+                            }
+
+                            if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
+                                _ = C.chmod(dest, stat_.mode);
+                                return ret.success;
+                            }
+                        } else {
+                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                                .result => |result| result,
+                                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
+                            };
+                            defer {
+                                _ = Syscall.close(src_fd);
+                            }
+
+                            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                            var wrote: usize = 0;
+                            if (args.mode.shouldntOverwrite()) {
+                                flags |= std.os.O.EXCL;
+                            }
+
+                            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                                .result => |result| result,
+                                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                            };
+                            defer {
+                                _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                                _ = C.fchmod(dest_fd, stat_.mode);
+                                _ = Syscall.close(dest_fd);
+                            }
+
+                            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
+                        }
                     }
 
-                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
-                        _ = C.chmod(dest, stat_.mode);
-                        return ret.success;
+                    // we fallback to copyfile() when the file is > 128 KB and clonefile fails
+                    // clonefile() isn't supported on all devices
+                    // nor is it supported across devices
+                    var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
+                    if (args.mode.shouldntOverwrite()) {
+                        mode |= C.darwin.COPYFILE_EXCL;
                     }
-                } else {
+
+                    return ret.errnoSysP(C.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
+                }
+
+                if (comptime Environment.isLinux) {
+                    // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+                    if (args.mode.isForceClone()) {
+                        return Maybe(Return.CopyFile).todo;
+                    }
+
                     const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                         .result => |result| result,
-                        .err => |err| return .{ .err = err.withPath(src) },
+                        .err => |err| return .{ .err = err },
                     };
                     defer {
                         _ = Syscall.close(src_fd);
                     }
 
+                    const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
+                        .result => |result| result,
+                        .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                    };
+
+                    if (!os.S.ISREG(stat_.mode)) {
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                    }
+
                     var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
                     var wrote: usize = 0;
-                    if (mode.shouldntOverwrite()) {
+                    if (args.mode.shouldntOverwrite()) {
                         flags |= std.os.O.EXCL;
                     }
 
@@ -3442,114 +3656,62 @@ pub const NodeFS = struct {
                         .result => |result| result,
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
+
+                    var size: usize = @intCast(@max(stat_.size, 0));
+
                     defer {
-                        _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd, stat_.mode);
+                        _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = linux.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
-                    return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
+                    var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
+                    var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
+
+                    if (!bun.canUseCopyFileRangeSyscall()) {
+                        return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                    }
+
+                    if (size == 0) {
+                        // copy until EOF
+                        while (true) {
+
+                            // Linux Kernel 5.3 or later
+                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                                return switch (err.getErrno()) {
+                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                                    else => return err,
+                                };
+                            }
+                            // wrote zero bytes means EOF
+                            if (written == 0) break;
+                            wrote +|= written;
+                        }
+                    } else {
+                        while (size > 0) {
+                            // Linux Kernel 5.3 or later
+                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                                return switch (err.getErrno()) {
+                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                                    else => return err,
+                                };
+                            }
+                            // wrote zero bytes means EOF
+                            if (written == 0) break;
+                            wrote +|= written;
+                            size -|= written;
+                        }
+                    }
+
+                    return ret.success;
                 }
-            }
-
-            // we fallback to copyfile() when the file is > 128 KB or clonefile fails
-            // clonefile() isn't supported on all devices
-            // nor is it supported across devices
-            var copyfile_mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
-            if (mode.shouldntOverwrite()) {
-                copyfile_mode |= C.darwin.COPYFILE_EXCL;
-            }
-
-            return ret.errnoSysP(C.copyfile(src, dest, null, copyfile_mode), .copyfile, src) orelse ret.success;
+            },
+            else => {},
         }
 
-        if (comptime Environment.isLinux) {
-            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-            if (mode.isForceClone()) {
-                return Maybe(Return.CopyFile).todo;
-            }
-
-            const src_fd = reuse_stat orelse switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
-                .result => |result| result,
-                .err => |err| return .{ .err = err },
-            };
-
-            defer {
-                _ = Syscall.close(src_fd);
-            }
-
-            const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
-                .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
-            };
-
-            if (!os.S.ISREG(stat_.mode)) {
-                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
-            }
-
-            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
-            var wrote: usize = 0;
-            if (mode.shouldntOverwrite()) {
-                flags |= std.os.O.EXCL;
-            }
-
-            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
-                .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
-            };
-
-            var size: usize = @intCast(@max(stat_.size, 0));
-
-            defer {
-                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                _ = linux.fchmod(dest_fd, stat_.mode);
-                _ = Syscall.close(dest_fd);
-            }
-
-            var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
-            var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
-
-            if (!bun.canUseCopyFileRangeSyscall()) {
-                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
-            }
-
-            if (size == 0) {
-                // copy until EOF
-                while (true) {
-
-                    // Linux Kernel 5.3 or later
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
-                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                        return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
-                            else => return err,
-                        };
-                    }
-                    // wrote zero bytes means EOF
-                    if (written == 0) break;
-                    wrote +|= written;
-                }
-            } else {
-                while (size > 0) {
-                    // Linux Kernel 5.3 or later
-                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
-                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                        return switch (err.getErrno()) {
-                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
-                            else => return err,
-                        };
-                    }
-                    // wrote zero bytes means EOF
-                    if (written == 0) break;
-                    wrote +|= written;
-                    size -|= written;
-                }
-            }
-
-            return ret.success;
-        }
-
-        return ret.todo;
+        return Maybe(Return.CopyFile).todo;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -5189,28 +5351,20 @@ pub const NodeFS = struct {
         return Maybe(Return.CreateWriteStream).todo;
     }
 
-    /// This function is `fs.cp/cpSync`, but only if you pass `{ recursive: true, force: ..., errorOnExist: ... }`
-    /// - Passing `{ recursive: false }` will call `fs.copyFile` instead,
-    /// - The other options `{ filter }` use a JS fallback.
-    /// Otherwise this is implemented in JS or calling copyFile
+    /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
+    /// The other options like `filter` use a JS fallback.
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
-        switch (comptime flavor) {
-            .sync => {
-                // TODO: check if these are proper absolute paths
-                var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var src = args.src.sliceZ(&src_buf);
-                var dest = args.dest.sliceZ(&dest_buf);
+        comptime std.debug.assert(flavor == .sync);
 
-                return this._copyRecursiveSync(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len), args.flags);
-            },
-            else => {},
-        }
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src = args.src.sliceZ(&src_buf);
+        var dest = args.dest.sliceZ(&dest_buf);
 
-        return Maybe(Return.Cp).todo;
+        return this._cpSync(&src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len), args.flags);
     }
 
-    fn _copyRecursiveSync(
+    fn _cpSync(
         this: *NodeFS,
         src_buf: *[bun.MAX_PATH_BYTES]u8,
         src_dir_len: PathString.PathInt,
@@ -5240,6 +5394,17 @@ pub const NodeFS = struct {
                 return Maybe(Return.Cp).success;
             }
             return r;
+        }
+
+        if (!args.recursive) {
+            @memcpy(this.sync_error_buf[0..src.len], src);
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(std.os.E.ISDIR),
+                    .syscall = .copyfile,
+                    .path = this.sync_error_buf[0..src.len],
+                },
+            };
         }
 
         if (comptime Environment.isMac) {
@@ -5294,7 +5459,7 @@ pub const NodeFS = struct {
 
             switch (current.kind) {
                 .directory => {
-                    const r = this._copyRecursiveSync(
+                    const r = this._cpSync(
                         src_buf,
                         src_dir_len + 1 + current.name.len,
                         dest_buf,
@@ -5328,10 +5493,306 @@ pub const NodeFS = struct {
         return Maybe(Return.Cp).success;
     }
 
-    // fn _copyRecursiveAsync(
-    //     promise: *JSC.JSPromise,
-    // ) Maybe(Return.CopyRecursive) {
-    // }
+    /// This is `copyFile`, but it copies symlinks as-is
+    pub fn _copySingleFileSync(
+        this: *NodeFS,
+        src: [:0]const u8,
+        dest: [:0]const u8,
+        mode: Constants.Copyfile,
+        reuse_stat: ?std.os.Stat,
+    ) Maybe(Return.CopyFile) {
+        const ret = Maybe(Return.CopyFile);
+
+        // TODO: do we need to fchown?
+        if (comptime Environment.isMac) {
+            if (mode.isForceClone()) {
+                // https://www.manpagez.com/man/2/clonefile/
+                return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
+            } else {
+                const stat_ = reuse_stat orelse switch (Syscall.lstat(src)) {
+                    .result => |result| result,
+                    .err => |err| {
+                        @memcpy(this.sync_error_buf[0..src.len], src);
+                        return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                    },
+                };
+
+                if (!os.S.ISREG(stat_.mode)) {
+                    if (os.S.ISLNK(stat_.mode)) {
+                        var mode_: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
+                        if (mode.shouldntOverwrite()) {
+                            mode_ |= C.darwin.COPYFILE_EXCL;
+                        }
+
+                        return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+                    }
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
+                        .path = this.sync_error_buf[0..src.len],
+                    } };
+                }
+
+                // 64 KB is about the break-even point for clonefile() to be worth it
+                // at least, on an M1 with an NVME SSD.
+                if (stat_.size > 128 * 1024) {
+                    if (!mode.shouldntOverwrite()) {
+                        // clonefile() will fail if it already exists
+                        _ = Syscall.unlink(dest);
+                    }
+
+                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
+                        _ = C.chmod(dest, stat_.mode);
+                        return ret.success;
+                    }
+                } else {
+                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                        .result => |result| result,
+                        .err => |err| {
+                            @memcpy(this.sync_error_buf[0..src.len], src);
+                            return .{ .err = err.withPath(this.sync_error_buf[0..src.len]) };
+                        },
+                    };
+                    defer {
+                        _ = Syscall.close(src_fd);
+                    }
+
+                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var wrote: usize = 0;
+                    if (mode.shouldntOverwrite()) {
+                        flags |= std.os.O.EXCL;
+                    }
+
+                    const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                        .result => |result| result,
+                        .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                    };
+                    defer {
+                        _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd, stat_.mode);
+                        _ = Syscall.close(dest_fd);
+                    }
+
+                    return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
+                }
+            }
+
+            // we fallback to copyfile() when the file is > 128 KB and clonefile fails
+            // clonefile() isn't supported on all devices
+            // nor is it supported across devices
+            var mode_: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
+            if (mode.shouldntOverwrite()) {
+                mode_ |= C.darwin.COPYFILE_EXCL;
+            }
+
+            return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+        }
+
+        if (comptime Environment.isLinux) {
+            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+            if (mode.isForceClone()) {
+                return Maybe(Return.CopyFile).todo;
+            }
+
+            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
+                .result => |result| result,
+                .err => |err| return .{ .err = err },
+            };
+            defer {
+                _ = Syscall.close(src_fd);
+            }
+
+            const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+
+            // TODO: this probably doesnt work
+            if (!os.S.ISREG(stat_.mode) and !os.S.ISLNK(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+            }
+
+            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var wrote: usize = 0;
+            if (mode.shouldntOverwrite()) {
+                flags |= std.os.O.EXCL;
+            }
+
+            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+
+            var size: usize = @intCast(@max(stat_.size, 0));
+
+            defer {
+                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = Syscall.close(dest_fd);
+            }
+
+            var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
+            var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
+
+            if (!bun.canUseCopyFileRangeSyscall()) {
+                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+            }
+
+            if (size == 0) {
+                // copy until EOF
+                while (true) {
+                    // Linux Kernel 5.3 or later
+                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                        return switch (err.getErrno()) {
+                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            else => return err,
+                        };
+                    }
+                    // wrote zero bytes means EOF
+                    if (written == 0) break;
+                    wrote +|= written;
+                }
+            } else {
+                while (size > 0) {
+                    // Linux Kernel 5.3 or later
+                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                        return switch (err.getErrno()) {
+                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            else => return err,
+                        };
+                    }
+                    // wrote zero bytes means EOF
+                    if (written == 0) break;
+                    wrote +|= written;
+                    size -|= written;
+                }
+            }
+
+            return ret.success;
+        }
+
+        return ret.todo;
+    }
+
+    /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
+    /// calls "_copySingleFileSync") will be dispatched as a separate task.
+    pub fn cpAsync(this: *NodeFS, args: Arguments.Cp, task: *AsyncCpTask) void {
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src = args.src.sliceZ(&src_buf);
+        var dest = args.dest.sliceZ(&dest_buf);
+
+        const stat_ = switch (Syscall.lstat(src)) {
+            .result => |result| result,
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                task.finishConcurrently(.{ .err = err.withPath(this.sync_error_buf[0..src.len]) });
+                return;
+            },
+        };
+
+        if (!os.S.ISDIR(stat_.mode)) {
+            // This is the only file, there is no point in dispatching a task.
+            const r = this._copySingleFileSync(
+                src,
+                dest,
+                @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                stat_,
+            );
+            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+                task.finishConcurrently(Maybe(Return.Cp).success);
+                return;
+            }
+            task.finishConcurrently(r);
+            return;
+        }
+
+        if (!args.recursive) {
+            @memcpy(this.sync_error_buf[0..src.len], src);
+            task.finishConcurrently(.{ .err = .{
+                .errno = @intFromEnum(std.os.E.ISDIR),
+                .syscall = .copyfile,
+                .path = this.sync_error_buf[0..src.len],
+            } });
+            return;
+        }
+
+        this._cpAsyncDirectory(args.flags, task, &src_buf, src.len, &dest_buf, dest.len);
+
+        if (task.subtask_count == 0) {
+            task.finishConcurrently(Maybe(Return.Cp).success);
+        }
+    }
+
+    fn _cpAsyncDirectory(
+        this: *NodeFS,
+        args: Arguments.Cp.Flags,
+        task: *AsyncCpTask,
+        src_buf: *[bun.MAX_PATH_BYTES]u8,
+        src_dir_len: PathString.PathInt,
+        dest_buf: *[bun.MAX_PATH_BYTES]u8,
+        dest_dir_len: PathString.PathInt,
+    ) void {
+        const src = src_buf[0..src_dir_len :0];
+        const dest = dest_buf[0..dest_dir_len :0];
+        _ = dest;
+
+        const open_flags = os.O.DIRECTORY | os.O.RDONLY;
+        const fd = switch (Syscall.open(src, open_flags, 0)) {
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                task.promise.reject(task.globalObject, err.withPath(this.sync_error_buf[0..src.len]).toJSC(task.globalObject));
+                return;
+            },
+            .result => |fd_| fd_,
+        };
+        defer _ = Syscall.close(fd);
+
+        var dir = std.fs.Dir{ .fd = fd };
+        var iterator = DirIterator.iterate(dir);
+        var entry = iterator.next();
+        while (switch (entry) {
+            .err => |err| {
+                @memcpy(this.sync_error_buf[0..src.len], src);
+                task.promise.reject(task.globalObject, err.withPath(this.sync_error_buf[0..src.len]).toJSC(task.globalObject));
+                return;
+            },
+            .result => |ent| ent,
+        }) |current| : (entry = iterator.next()) {
+            switch (current.kind) {
+                .directory => {
+                    @memcpy(src_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], current.name.slice());
+                    src_buf[src_dir_len] = std.fs.path.sep;
+                    src_buf[src_dir_len + 1 + current.name.len] = 0;
+
+                    @memcpy(dest_buf[dest_dir_len + 1 .. dest_dir_len + 1 + current.name.len], current.name.slice());
+                    dest_buf[dest_dir_len] = std.fs.path.sep;
+                    dest_buf[dest_dir_len + 1 + current.name.len] = 0;
+
+                    const r = this._cpAsyncDirectory(
+                        args,
+                        task,
+                        src_buf,
+                        src_dir_len + 1 + current.name.len,
+                        dest_buf,
+                        dest_dir_len + 1 + current.name.len,
+                    );
+                    switch (r) {
+                        .err => {
+                            task.promise.reject(task.globalObject, r.err.toJSC(task.globalObject));
+                            return;
+                        },
+                        .result => {},
+                    }
+                },
+                else => {
+                    @atomicRmw(usize, &task.subtasks, .Add, 1, .Monotonic);
+                },
+            }
+        }
+    }
 };
 
 pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) bool {

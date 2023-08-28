@@ -620,7 +620,7 @@ pub const Fetch = struct {
 
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
-        metadata: ?HTTPClient.HTTPClientResult.ResultMetadata = .{},
+        metadata: ?HTTPClient.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
@@ -695,6 +695,7 @@ pub const Fetch = struct {
         }
 
         fn clearData(this: *FetchTasklet) void {
+            log("clearData", .{});
             const allocator = this.memory_reporter.allocator();
             if (this.url_proxy_buffer.len > 0) {
                 allocator.free(this.url_proxy_buffer);
@@ -735,9 +736,12 @@ pub const Fetch = struct {
         }
 
         pub fn deinit(this: *FetchTasklet) void {
+            log("deinit", .{});
             var reporter = this.memory_reporter;
-            if (this.http) |http| reporter.allocator().destroy(http);
-            reporter.allocator().destroy(this);
+            const allocator = reporter.allocator();
+
+            if (this.http) |http| allocator.destroy(http);
+            allocator.destroy(this);
             // reporter.assert();
             bun.default_allocator.destroy(reporter);
         }
@@ -746,11 +750,11 @@ pub const Fetch = struct {
             this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
+            const is_done = !success or !this.result.has_more;
             defer {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
-
-                if (!success or !this.result.has_more) {
+                if (is_done) {
                     var vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
                     this.clearData();
@@ -836,7 +840,7 @@ pub const Fetch = struct {
                             response.body.value = body_value;
 
                             this.scheduled_response_buffer = .{
-                                .allocator = bun.default_allocator,
+                                .allocator = this.memory_reporter.allocator(),
                                 .list = .{
                                     .items = &.{},
                                     .capacity = 0,
@@ -854,6 +858,7 @@ pub const Fetch = struct {
 
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
+            log("onProgressUpdate", .{});
             if (this.is_waiting_body) {
                 return this.onBodyReceived();
             }
@@ -867,6 +872,7 @@ pub const Fetch = struct {
             var vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                log("onProgressUpdate: promise_value is null", .{});
                 ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
@@ -880,6 +886,7 @@ pub const Fetch = struct {
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
+                log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 ref.strong.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
@@ -910,6 +917,8 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            log("onReject", .{});
+
             if (this.signal) |signal| {
                 this.signal = null;
                 signal.detach(this);
@@ -931,8 +940,9 @@ pub const Fetch = struct {
 
             var path: bun.String = undefined;
 
+            // some times we don't have metadata so we also check http.url
             if (this.metadata) |metadata| {
-                path = bun.String.create(metadata.href);
+                path = bun.String.create(metadata.url);
             } else if (this.http) |http| {
                 path = bun.String.create(http.url.href);
             } else {
@@ -972,8 +982,9 @@ pub const Fetch = struct {
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
+                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                 this.scheduled_response_buffer = .{
-                    .allocator = default_allocator,
+                    .allocator = this.memory_reporter.allocator(),
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -1022,7 +1033,7 @@ pub const Fetch = struct {
                 },
             };
             this.scheduled_response_buffer = .{
-                .allocator = default_allocator,
+                .allocator = this.memory_reporter.allocator(),
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1033,13 +1044,15 @@ pub const Fetch = struct {
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+            log("toResponse", .{});
+            std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
             var metadata = this.metadata.?;
             const http_response = metadata.response;
             this.is_waiting_body = this.result.has_more;
             return Response{
                 .allocator = allocator,
-                .url = bun.String.createAtomIfPossible(metadata.href),
+                .url = bun.String.createAtomIfPossible(metadata.url),
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
                 .redirected = this.result.redirected,
                 .body = .{
@@ -1053,6 +1066,7 @@ pub const Fetch = struct {
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
+            log("onResolve", .{});
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
@@ -1224,8 +1238,10 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             task.result = result;
+
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
+                std.debug.assert(task.metadata == null);
                 task.metadata = metadata;
             }
             task.body_size = result.body_size;
@@ -1235,7 +1251,6 @@ pub const Fetch = struct {
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }
-
             // reset for reuse
             task.response_buffer.reset();
 
@@ -1244,6 +1259,7 @@ pub const Fetch = struct {
                     return;
                 }
             }
+
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
@@ -1357,6 +1373,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 free_memory_reporter = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -1380,6 +1397,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 free_memory_reporter = true;
                 return JSPromise.rejectedPromiseValue(
@@ -1410,6 +1428,7 @@ pub const Fetch = struct {
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     allocator.free(host);
+                                    hostname = null;
                                 }
                                 // an error was thrown
                                 return JSC.JSValue.jsUndefined();
@@ -1421,18 +1440,27 @@ pub const Fetch = struct {
                         if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 // TODO: make this one pass
                             } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 headers__.deref();
                             } else if (request.headers) |head| {
                                 if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
@@ -1480,6 +1508,7 @@ pub const Fetch = struct {
                                     // clean hostname if any
                                     if (hostname) |host| {
                                         allocator.free(host);
+                                        hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
 
@@ -1504,6 +1533,9 @@ pub const Fetch = struct {
                     body = request.body.value.useAsAnyBlob();
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                            if (hostname) |host| {
+                                allocator.free(host);
+                            }
                             hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                         }
                         headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
@@ -1520,6 +1552,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
@@ -1541,6 +1574,7 @@ pub const Fetch = struct {
                 // clean hostname if any
                 if (hostname) |host| {
                     allocator.free(host);
+                    hostname = null;
                 }
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
                 return JSPromise.rejectedPromiseValue(globalThis, err);
@@ -1567,6 +1601,7 @@ pub const Fetch = struct {
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     allocator.free(host);
+                                    hostname = null;
                                 }
                                 // an error was thrown
                                 return JSC.JSValue.jsUndefined();
@@ -1576,6 +1611,9 @@ pub const Fetch = struct {
                         if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
@@ -1583,6 +1621,9 @@ pub const Fetch = struct {
                             } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
                                 defer headers__.deref();
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+                                    if (hostname) |host| {
+                                        allocator.free(host);
+                                    }
                                     hostname = _hostname.toOwnedSliceZ(allocator) catch unreachable;
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
@@ -1633,6 +1674,7 @@ pub const Fetch = struct {
                                     // clean hostname if any
                                     if (hostname) |host| {
                                         allocator.free(host);
+                                        hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
                                     free_memory_reporter = true;

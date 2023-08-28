@@ -11,6 +11,7 @@ const os = std.os;
 const Dir = std.fs.Dir;
 const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
+const bun = @import("root").bun;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
@@ -188,11 +189,10 @@ pub const Iterator = switch (builtin.os.tag) {
                     if (io.Information == 0) return .{ .result = null };
                     self.index = 0;
                     self.end_index = io.Information;
-                    switch (rc) {
-                        .SUCCESS => {},
-                        .ACCESS_DENIED => return error.AccessDenied, // Double-check that the Dir was opened with iteration ability
-
-                        else => return w.unexpectedStatus(rc),
+                    if (rc == 0) {
+                        if (Result.errnoSys(rc, .getdirentries64)) |err| {
+                            return err;
+                        }
                     }
                 }
 
@@ -208,8 +208,7 @@ pub const Iterator = switch (builtin.os.tag) {
                 if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
                     continue;
                 // Trust that Windows gives us valid UTF-16LE
-                const name_utf8_len = std.unicode.utf16leToUtf8(self.name_data[0..], name_utf16le) catch unreachable;
-                const name_utf8 = self.name_data[0..name_utf8_len];
+                const name_utf8 = strings.fromWPath(self.name_data[0..], name_utf16le);
                 const kind = blk: {
                     const attrs = dir_info.FileAttributes;
                     if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.directory;

@@ -371,7 +371,7 @@ pub const Subprocess = struct {
         } else {
             const err = std.c.kill(this.pid, sig);
             if (err != 0) {
-                const errno = std.c.getErrno(err);
+                const errno = bun.C.getErrno(err);
 
                 // if the process was already killed don't throw
                 if (errno != .SRCH)

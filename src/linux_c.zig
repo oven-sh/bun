@@ -573,3 +573,8 @@ pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 
 pub const Mode = u32;
+pub const E = std.os.E;
+
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

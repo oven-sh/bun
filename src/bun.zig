@@ -715,7 +715,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 
 pub const invalid_fd = if (Environment.isWindows)
     // on windows, max usize is the process handle, a very valid fd
-    std.math.maxInt(usize) - 1
+    std.math.maxInt(i32) + 1
 else
     std.math.maxInt(FileDescriptor);
 

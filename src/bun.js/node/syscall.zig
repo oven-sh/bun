@@ -197,7 +197,15 @@ pub fn fcntl(fd_: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
     return .{ .result = @as(usize, @intCast(result)) };
 }
 
-pub fn getErrno(rc: anytype) std.os.E {
+pub fn getErrno(rc: anytype) bun.C.E {
+    if (comptime Environment.isWindows) {
+        if (bun.C.Win32Error.get().toSystemErrno()) |e| {
+            return e.toE();
+        }
+
+        return bun.C.E.UNKNOWN;
+    }
+
     if (comptime use_libc) return std.os.errno(rc);
     const Type = @TypeOf(rc);
 
@@ -880,9 +888,10 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 }
 
 pub const Error = struct {
+    const E = bun.C.E;
     const max_errno_value = brk: {
-        const errno_values = std.enums.values(os.E);
-        var err = @intFromEnum(os.E.SUCCESS);
+        const errno_values = std.enums.values(E);
+        var err = @intFromEnum(E.SUCCESS);
         for (errno_values) |errn| {
             err = @max(err, @intFromEnum(errn));
         }
@@ -893,13 +902,13 @@ pub const Error = struct {
     errno: Int,
     syscall: Syscall.Tag = @as(Syscall.Tag, @enumFromInt(0)),
     path: []const u8 = "",
-    fd: i32 = -1,
+    fd: bun.FileDescriptor = bun.invalid_fd,
 
     pub inline fn isRetry(this: *const Error) bool {
         return this.getErrno() == .AGAIN;
     }
 
-    pub fn fromCode(errno: os.E, syscall: Syscall.Tag) Error {
+    pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
         return .{ .errno = @as(Int, @truncate(@intFromEnum(errno))), .syscall = syscall };
     }
 
@@ -907,20 +916,20 @@ pub const Error = struct {
         try self.toSystemError().format(fmt, opts, writer);
     }
 
-    pub const oom = fromCode(os.E.NOMEM, .read);
+    pub const oom = fromCode(E.NOMEM, .read);
 
     pub const retry = Error{
         .errno = if (Environment.isLinux)
-            @as(Int, @intCast(@intFromEnum(os.E.AGAIN)))
+            @as(Int, @intCast(@intFromEnum(E.AGAIN)))
         else if (Environment.isMac)
-            @as(Int, @intCast(@intFromEnum(os.E.WOULDBLOCK)))
+            @as(Int, @intCast(@intFromEnum(E.WOULDBLOCK)))
         else
-            @as(Int, @intCast(@intFromEnum(os.E.INTR))),
+            @as(Int, @intCast(@intFromEnum(E.INTR))),
         .syscall = .retry,
     };
 
-    pub inline fn getErrno(this: Error) os.E {
-        return @as(os.E, @enumFromInt(this.errno));
+    pub inline fn getErrno(this: Error) E {
+        return @as(E, @enumFromInt(this.errno));
     }
 
     pub inline fn withPath(this: Error, path: anytype) Error {
@@ -935,7 +944,7 @@ pub const Error = struct {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .fd = @as(i32, @intCast(fd)),
+            .fd = @intCast(fd),
         };
     }
 
@@ -976,8 +985,10 @@ pub const Error = struct {
             err.path = bun.String.create(this.path);
         }
 
-        if (this.fd != -1) {
-            err.fd = this.fd;
+        if (this.fd != bun.invalid_fd) {
+            if (this.fd <= std.math.maxInt(i32)) {
+                err.fd = @intCast(this.fd);
+            }
         }
 
         return err;
@@ -1060,7 +1071,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
 pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysFd(
-            linux.llseek(fd, offset, null, os.SEEK.SET),
+            linux.lseek(@intCast(fd), @intCast(offset), os.SEEK.SET),
             .lseek,
             @as(bun.FileDescriptor, @intCast(fd)),
         ) orelse Maybe(void).success;

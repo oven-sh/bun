@@ -1476,6 +1476,27 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
+pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
+    std.debug.assert(buf.len > 0);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    std.debug.assert(encode_into_result.written < buf.len);
+    buf[encode_into_result.written] = 0;
+    return buf[0..encode_into_result.written :0];
+}
+
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    std.debug.assert(wbuf.len > 0);
+    var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
+        utf8,
+        wbuf[0..wbuf.len -| 1],
+    );
+
+    // TODO: error handling
+    // if (result.status == .surrogate) {
+    // }
+    return wbuf[0..result.count :0];
+}
+
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
     var result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(

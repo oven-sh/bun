@@ -231,7 +231,7 @@ pub const Snapshots = struct {
                     .result => this.snapshot_dir_path = dir_path,
                     .err => |err| {
                         switch (err.getErrno()) {
-                            std.os.E.EXIST => this.snapshot_dir_path = dir_path,
+                            .EXIST => this.snapshot_dir_path = dir_path,
                             else => return JSC.Maybe(void){
                                 .err = err,
                             },

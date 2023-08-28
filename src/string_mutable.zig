@@ -14,8 +14,8 @@ pub const MutableString = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub fn init2048(allocator: std.mem.Allocator) !MutableString {
-        return try MutableString.init(allocator, 2048);
+    pub fn init2048(allocator: std.mem.Allocator) std.mem.Allocator.Error!MutableString {
+        return MutableString.init(allocator, 2048);
     }
 
     pub const Writer = std.io.Writer(*@This(), anyerror, MutableString.writeAll);
@@ -53,7 +53,7 @@ pub const MutableString = struct {
         return BufferedWriter{ .context = self };
     }
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) std.mem.Allocator.Error!MutableString {
         return MutableString{ .allocator = allocator, .list = if (capacity > 0)
             try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
         else

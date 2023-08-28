@@ -687,6 +687,20 @@ pub const PathLike = union(Tag) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
+    pub inline fn sliceW(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u16 {
+        return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
+    }
+
+    pub const OSPath = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) OSPath {
+        if (comptime Environment.isWindows) {
+            return sliceW(this, buf);
+        }
+
+        return sliceZWithForceCopy(this, buf, false);
+    }
+
     pub inline fn sliceZAssume(
         this: PathLike,
     ) [:0]const u8 {

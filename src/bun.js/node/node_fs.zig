@@ -31,7 +31,7 @@ const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
 const Mode = JSC.Node.Mode;
-
+const E = C.E;
 const uid_t = if (Environment.isPosix) std.os.uid_t else i32;
 const gid_t = if (Environment.isPosix) std.os.gid_t else i32;
 /// u63 to allow one null bit
@@ -4675,10 +4675,10 @@ pub const NodeFS = struct {
 
                         return Maybe(Return.Rm).success;
                     }
-                } else if (comptime Environment.isLinux) {
+                } else if (comptime Environment.isLinux or Environment.isWindows) {
                     if (args.recursive) {
                         std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                            const errno: std.os.E = switch (err) {
+                            const errno: E = switch (err) {
                                 error.InvalidHandle => .BADF,
                                 error.AccessDenied => .PERM,
                                 error.FileTooBig => .FBIG,
@@ -4715,22 +4715,20 @@ pub const NodeFS = struct {
                     }
                 }
 
-                {
-                    var dest = args.path.sliceZ(&this.sync_error_buf);
-                    const unlinkFn = if (comptime Environment.isWindows) std.os.unlink else std.os.unlinkZ;
-                    const rmdirFn = if (comptime Environment.isWindows) std.os.rmdir else std.os.rmdirZ;
-                    unlinkFn(dest) catch |er| {
+                if (comptime Environment.isPosix) {
+                    var dest = args.path.osPath(&this.sync_error_buf);
+                    std.os.unlinkZ(dest) catch |er| {
                         // empircally, it seems to return AccessDenied when the
                         // file is actually a directory on macOS.
                         if (args.recursive and
                             (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
                         {
-                            rmdirFn(dest) catch |err| {
+                            std.os.rmdirZ(dest) catch |err| {
                                 if (args.force) {
                                     return Maybe(Return.Rm).success;
                                 }
 
-                                const code: std.os.E = switch (err) {
+                                const code: E = switch (err) {
                                     error.AccessDenied => .PERM,
                                     error.SymLinkLoop => .LOOP,
                                     error.NameTooLong => .NAMETOOLONG,
@@ -4759,7 +4757,7 @@ pub const NodeFS = struct {
                         }
 
                         {
-                            const code: std.os.E = switch (er) {
+                            const code: E = switch (er) {
                                 error.AccessDenied => .PERM,
                                 error.SymLinkLoop => .LOOP,
                                 error.NameTooLong => .NAMETOOLONG,
@@ -4770,6 +4768,65 @@ pub const NodeFS = struct {
                                 error.BadPathName => .INVAL,
                                 error.FileNotFound => .NOENT,
                                 else => .FAULT,
+                            };
+
+                            return .{
+                                .err = bun.sys.Error.fromCode(
+                                    code,
+                                    .unlink,
+                                ),
+                            };
+                        }
+                    };
+
+                    return Maybe(Return.Rm).success;
+                }
+
+                if (comptime Environment.isWindows) {
+                    var dest = args.path.osPath(&this.sync_error_buf);
+                    std.os.windows.DeleteFile(dest, .{
+                        .dir = null,
+                        .remove_dir = brk: {
+                            const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
+                                if (args.force) {
+                                    return Maybe(Return.Rm).success;
+                                }
+
+                                const code: E = switch (err) {
+                                    error.FileNotFound => .NOENT,
+                                    error.PermissionDenied => .PERM,
+                                    else => .INVAL,
+                                };
+
+                                return .{
+                                    .err = bun.sys.Error.fromCode(
+                                        code,
+                                        .unlink,
+                                    ),
+                                };
+                            };
+                            // TODO: check FILE_ATTRIBUTE_INVALID
+                            break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        },
+                    }) catch |er| {
+                        // empircally, it seems to return AccessDenied when the
+                        // file is actually a directory on macOS.
+
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+
+                        {
+                            const code: E = switch (er) {
+                                error.FileNotFound => .NOENT,
+                                error.AccessDenied => .PERM,
+                                error.NameTooLong => .INVAL,
+                                error.FileBusy => .BUSY,
+                                error.NotDir => .NOTDIR,
+                                error.IsDir => .ISDIR,
+                                error.DirNotEmpty => .INVAL,
+                                error.NetworkNotFound => .NOENT,
+                                else => .UNKNOWN,
                             };
 
                             return .{

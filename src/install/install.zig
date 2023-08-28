@@ -2855,11 +2855,13 @@ pub const PackageManager = struct {
         try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
         try buffered_writer.flush();
 
-        _ = C.fchmod(
-            tmpfile.fd,
-            // chmod 666,
-            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+        if (comptime Environment.isPosix) {
+            _ = C.fchmod(
+                tmpfile.fd,
+                // chmod 666,
+                0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+            );
+        }
 
         try tmpfile.promote(tmpname, std.fs.cwd().fd, "yarn.lock");
     }
@@ -7342,12 +7344,13 @@ pub const PackageManager = struct {
                     if (!installer.has_created_bin) {
                         if (!this.options.global) {
                             if (comptime Environment.isWindows) {
-                                node_modules_folder.dir.makeDirW(bun.strings.w(".bin")) catch {};
+                                std.os.mkdiratW(node_modules_folder.dir.fd, bun.strings.w(".bin"), 0) catch {};
                             } else {
                                 node_modules_folder.dir.makeDirZ(".bin") catch {};
                             }
                         }
-                        Bin.Linker.umask = C.umask(0);
+                        if (comptime Environment.isPosix)
+                            Bin.Linker.umask = C.umask(0);
                         installer.has_created_bin = true;
                     }
 

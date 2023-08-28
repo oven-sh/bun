@@ -34,7 +34,7 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-
+const E = bun.C.E;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
@@ -1385,7 +1385,7 @@ pub const FileSink = struct {
 
                 if (res == .err) {
                     const retry =
-                        std.os.E.AGAIN;
+                        E.AGAIN;
 
                     switch (res.err.getErrno()) {
                         retry => {
@@ -4015,8 +4015,8 @@ pub const FIFO = struct {
     ) ReadResult {
         switch (Syscall.read(this.fd, buf)) {
             .err => |err| {
-                const retry = std.os.E.AGAIN;
-                const errno: std.os.E = brk: {
+                const retry = E.AGAIN;
+                const errno: E = brk: {
                     const _errno = err.getErrno();
 
                     if (comptime Environment.isLinux) {
@@ -4152,7 +4152,7 @@ pub const File = struct {
             } else {
                 // ensure we have non-blocking IO set
                 switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                    .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
+                    .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
                     .result => |flags| {
                         // if we do not, clone the descriptor and set non-blocking
                         // it is important for us to clone it so we don't cause Weird Things to happen
@@ -4291,7 +4291,7 @@ pub const File = struct {
                     const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
                     switch (Syscall.read(this.fd, remaining[0..to_read])) {
                         .err => |err| {
-                            const retry = std.os.E.AGAIN;
+                            const retry = E.AGAIN;
 
                             switch (err.getErrno()) {
                                 retry => break,
@@ -4422,7 +4422,7 @@ pub const File = struct {
     pub fn doRead(this: *File, buf: []u8) ReadResult {
         switch (Syscall.read(this.fd, buf)) {
             .err => |err| {
-                const retry = std.os.E.AGAIN;
+                const retry = bun.C.E.AGAIN;
                 const errno = err.getErrno();
 
                 switch (errno) {

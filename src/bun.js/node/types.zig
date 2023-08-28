@@ -8,7 +8,7 @@ const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
-const Syscall = @import("./syscall.zig");
+const Syscall = bun.sys;
 const os = std.os;
 pub const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -20,7 +20,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = bun.meta;
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
-pub const Mode = bun.C.Mode;
+const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);

@@ -166,7 +166,7 @@ pub const Completion = struct {
         },
         open: struct {
             path: [:0]const u8,
-            flags: bun.JSC.Node.Mode,
+            flags: bun.Mode,
         },
         connect: struct {
             socket: os.socket_t,
@@ -417,8 +417,8 @@ pub fn open(
     ) void,
     completion: *Completion,
     path: [:0]const u8,
-    flags: bun.JSC.Node.Mode,
-    _: bun.JSC.Node.Mode,
+    flags: bun.Mode,
+    _: bun.Mode,
 ) void {
     self.submit(
         context,

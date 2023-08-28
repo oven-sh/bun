@@ -2635,7 +2635,7 @@ pub const Blob = struct {
         pathlike: JSC.Node.PathOrFileDescriptor,
         mime_type: HTTPClient.MimeType = HTTPClient.MimeType.other,
         is_atty: ?bool = null,
-        mode: JSC.Node.Mode = 0,
+        mode: bun.Mode = 0,
         seekable: ?bool = null,
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch

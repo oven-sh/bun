@@ -356,7 +356,7 @@ pub const StreamStart = union(Tag) {
         input_path: PathOrFileDescriptor,
         truncate: bool = true,
         close: bool = false,
-        mode: JSC.Node.Mode = 0o664,
+        mode: bun.Mode = 0o664,
     },
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
@@ -1175,7 +1175,7 @@ pub const FileSink = struct {
     auto_close: bool = false,
     auto_truncate: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
-    mode: JSC.Node.Mode = 0,
+    mode: bun.Mode = 0,
     chunk_size: usize = 0,
     pending: StreamResult.Writable.Pending = StreamResult.Writable.Pending{
         .result = .{ .done = {} },
@@ -1207,7 +1207,7 @@ pub const FileSink = struct {
     }
 
     const max_fifo_size = 64 * 1024;
-    pub fn prepare(this: *FileSink, input_path: PathOrFileDescriptor, mode: JSC.Node.Mode) JSC.Node.Maybe(void) {
+    pub fn prepare(this: *FileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Node.Maybe(void) {
         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const auto_close = this.auto_close;
         const fd = if (!auto_close)
@@ -4075,7 +4075,7 @@ pub const File = struct {
     remaining_bytes: Blob.SizeType = std.math.maxInt(Blob.SizeType),
     user_chunk_size: Blob.SizeType = 0,
     total_read: Blob.SizeType = 0,
-    mode: JSC.Node.Mode = 0,
+    mode: bun.Mode = 0,
     pending: StreamResult.Pending = .{},
     scheduled_count: u32 = 0,
 
@@ -4198,7 +4198,7 @@ pub const File = struct {
                 return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
             }
 
-            file.mode = @as(JSC.Node.Mode, @intCast(stat.mode));
+            file.mode = @as(bun.Mode, @intCast(stat.mode));
             this.mode = file.mode;
 
             this.seekable = bun.isRegularFile(stat.mode);

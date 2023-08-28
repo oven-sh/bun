@@ -1666,7 +1666,7 @@ const WindowsStat = extern struct {
     ino: u32,
     nlink: usize,
 
-    mode: JSC.Node.Mode,
+    mode: Mode,
     uid: u32,
     gid: u32,
     rdev: u32,
@@ -1775,7 +1775,7 @@ pub const win32 = struct {
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
 
-pub fn isRegularFile(mode: JSC.Node.Mode) bool {
+pub fn isRegularFile(mode: Mode) bool {
     if (comptime Environment.isPosix) {
         return std.os.S.ISREG(mode);
     }
@@ -1787,7 +1787,9 @@ pub fn isRegularFile(mode: JSC.Node.Mode) bool {
     @compileError("Unsupported platform");
 }
 
-pub const sys = @import("./bun.js/node/syscall.zig");
+pub const sys = @import("./sys.zig");
+
+pub const Mode = C.Mode;
 
 pub const windows = @import("./windows.zig");
 

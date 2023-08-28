@@ -1562,23 +1562,45 @@ pub const Blob = struct {
                             var path_buffer = completion.operation.open.path;
                             defer bun.default_allocator.free(bun.span(path_buffer));
                             defer bun.default_allocator.destroy(state);
-                            this.opened_fd = result catch {
-                                this.errno = AsyncIO.asError(-completion.result);
-                                // do not use path_buffer here because it is a temporary
-                                var path_string = if (@hasField(This, "file_store"))
-                                    this.file_store.pathlike.path
-                                else
-                                    this.file_blob.store.?.data.file.pathlike.path;
+                            if (comptime Environment.isPosix) {
+                                this.opened_fd = result catch {
+                                    this.errno = AsyncIO.asError(-completion.result);
+                                    // do not use path_buffer here because it is a temporary
+                                    var path_string = if (@hasField(This, "file_store"))
+                                        this.file_store.pathlike.path
+                                    else
+                                        this.file_blob.store.?.data.file.pathlike.path;
 
-                                this.system_error = (bun.sys.Error{
-                                    .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
-                                    .path = path_string.slice(),
-                                    .syscall = .open,
-                                }).toSystemError();
+                                    this.system_error = (bun.sys.Error{
+                                        .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
+                                        .path = path_string.slice(),
+                                        .syscall = .open,
+                                    }).toSystemError();
 
-                                callback(this, null_fd);
-                                return;
-                            };
+                                    callback(this, null_fd);
+                                    return;
+                                };
+                            } else if (comptime Environment.isWindows) {
+                                this.opened_fd = result catch |err| {
+                                    this.errno = err;
+                                    // do not use path_buffer here because it is a temporary
+                                    var path_string = if (@hasField(This, "file_store"))
+                                        this.file_store.pathlike.path
+                                    else
+                                        this.file_blob.store.?.data.file.pathlike.path;
+
+                                    this.system_error = (bun.sys.Error{
+                                        .errno = @as(bun.sys.Error.Int, @intFromEnum(bun.C.SystemErrno.fromError(err).?)),
+                                        .path = path_string.slice(),
+                                        .syscall = .open,
+                                    }).toSystemError();
+
+                                    callback(this, null_fd);
+                                    return;
+                                };
+                            } else {
+                                @compileError("Unsupported platform");
+                            }
 
                             callback(this, this.opened_fd);
                         }

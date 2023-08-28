@@ -1,27 +1,78 @@
-const kernel = @import("std").os.windows.kernel32;
-const windows = @import("std").os.windows;
 const bun = @import("root").bun;
-const win32 = @This();
-pub usingnamespace kernel;
-pub usingnamespace windows.ntdll;
+const windows = std.os.windows;
+const win32 = windows;
+pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
+pub const MAX_PATH = windows.MAX_PATH;
+pub const DWORD = windows.DWORD;
+pub const BOOL = windows.BOOL;
+pub const LPVOID = windows.LPVOID;
+pub const LPCVOID = windows.LPCVOID;
+pub const LPWSTR = windows.LPWSTR;
+pub const LPCWSTR = windows.LPCWSTR;
+pub const LPSTR = windows.LPSTR;
+pub const LPCSTR = windows.LPCSTR;
+pub const FALSE = windows.FALSE;
+pub const TRUE = windows.TRUE;
+pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
+pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_CURRENT = windows.FILE_CURRENT;
+pub const ULONG = windows.ULONG;
+pub const LARGE_INTEGER = windows.LARGE_INTEGER;
+pub const UNICODE_STRING = windows.UNICODE_STRING;
+pub const NTSTATUS = windows.NTSTATUS;
+pub const NT_SUCCESS = windows.NT_SUCCESS;
+pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
+pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
+pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
+pub const kernel32 = windows.kernel32;
+pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
+pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
+pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
+pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
+pub const FILE_ATTRIBUTE_NORMAL = windows.FILE_ATTRIBUTE_NORMAL;
+pub const FILE_ATTRIBUTE_READONLY = windows.FILE_ATTRIBUTE_READONLY;
+pub const FILE_ATTRIBUTE_HIDDEN = windows.FILE_ATTRIBUTE_HIDDEN;
+pub const FILE_ATTRIBUTE_SYSTEM = windows.FILE_ATTRIBUTE_SYSTEM;
+pub const FILE_ATTRIBUTE_DIRECTORY = windows.FILE_ATTRIBUTE_DIRECTORY;
+pub const FILE_ATTRIBUTE_ARCHIVE = windows.FILE_ATTRIBUTE_ARCHIVE;
+pub const FILE_ATTRIBUTE_DEVICE = windows.FILE_ATTRIBUTE_DEVICE;
+pub const FILE_ATTRIBUTE_TEMPORARY = windows.FILE_ATTRIBUTE_TEMPORARY;
+pub const FILE_ATTRIBUTE_SPARSE_FILE = windows.FILE_ATTRIBUTE_SPARSE_FILE;
+pub const FILE_ATTRIBUTE_REPARSE_POINT = windows.FILE_ATTRIBUTE_REPARSE_POINT;
+pub const FILE_ATTRIBUTE_COMPRESSED = windows.FILE_ATTRIBUTE_COMPRESSED;
+pub const FILE_ATTRIBUTE_OFFLINE = windows.FILE_ATTRIBUTE_OFFLINE;
+pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = windows.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+pub const FILE_DIRECTORY_FILE = windows.FILE_DIRECTORY_FILE;
+pub const FILE_WRITE_THROUGH = windows.FILE_WRITE_THROUGH;
+pub const FILE_SEQUENTIAL_ONLY = windows.FILE_SEQUENTIAL_ONLY;
+pub const FILE_SYNCHRONOUS_IO_NONALERT = windows.FILE_SYNCHRONOUS_IO_NONALERT;
+pub const FILE_OPEN_REPARSE_POINT = windows.FILE_OPEN_REPARSE_POINT;
+pub usingnamespace kernel32;
+pub const ntdll = windows.ntdll;
+pub usingnamespace ntdll;
+pub const user32 = windows.user32;
+pub const advapi32 = windows.advapi32;
+
+const std = @import("std");
+pub const HANDLE = win32.HANDLE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
-    hFile: windows.HANDLE,
+    hFile: win32.HANDLE,
     validDataLength: c_longlong,
-) callconv(windows.WINAPI) windows.BOOL;
+) callconv(windows.WINAPI) win32.BOOL;
 
 pub extern fn CommandLineToArgvW(
-    lpCmdLine: windows.LPCWSTR,
+    lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) [*]windows.LPWSTR;
+) [*]win32.LPWSTR;
 
-pub const LPDWORD = *windows.DWORD;
+pub const LPDWORD = *win32.DWORD;
 
 pub extern "kernel32" fn GetBinaryTypeW(
-    lpApplicationName: windows.LPCWSTR,
+    lpApplicationName: win32.LPCWSTR,
     lpBinaryType: LPDWORD,
-) callconv(windows.WINAPI) windows.BOOL;
+) callconv(windows.WINAPI) win32.BOOL;
 
 /// A 32-bit Windows-based application
 pub const SCS_32BIT_BINARY = 0;
@@ -45,10 +96,10 @@ pub const SCS_POSIX_BINARY = 4;
 ///
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
 pub extern "kernel32" fn SetCurrentDirectory(
-    lpPathName: windows.LPCWSTR,
-) callconv(windows.WINAPI) windows.BOOL;
+    lpPathName: win32.LPCWSTR,
+) callconv(windows.WINAPI) win32.BOOL;
 
-pub extern "ntdll" fn RtlNtStatusToDosError(windows.NTSTATUS) callconv(windows.WINAPI) Win32Error;
+pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
 
 const SystemErrno = bun.C.SystemErrno;
 
@@ -1841,7 +1892,7 @@ pub const Win32Error = enum(u16) {
     CLASS_ALREADY_EXISTS = 1410,
     /// Class does not exist.
     CLASS_DOES_NOT_EXIST = 1411,
-    /// Class still has open windows.
+    /// Class still has openwin32.
     CLASS_HAS_WINDOWS = 1412,
     /// Invalid index.
     INVALID_INDEX = 1413,
@@ -1893,7 +1944,7 @@ pub const Win32Error = enum(u16) {
     /// The data present in the reparse point buffer is invalid.
     INVALID_REPARSE_DATA = 3492,
 
-    /// Child windows cannot have menus.
+    /// Childwin32.cannot have menus.
     CHILD_WINDOW_MENU = 1436,
     /// The window does not have a system menu.
     NO_SYSTEM_MENU = 1437,
@@ -1903,7 +1954,7 @@ pub const Win32Error = enum(u16) {
     INVALID_SPI_VALUE = 1439,
     /// Screen already locked.
     SCREEN_ALREADY_LOCKED = 1440,
-    /// All handles to windows in a multiple-window position structure must have the same parent.
+    /// All handles towin32.in a multiple-window position structure must have the same parent.
     HWNDS_HAVE_DIFF_PARENT = 1441,
     /// The window is not a child window.
     NOT_CHILD_WINDOW = 1442,
@@ -2853,14 +2904,14 @@ pub const Win32Error = enum(u16) {
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = @enumFromInt(11031);
 
     pub fn get() Win32Error {
-        return @enumFromInt(@intFromEnum(bun.kernel32.GetLastError()));
+        return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
         return SystemErrno.init(this);
     }
 
-    pub fn fromNTStatus(status: windows.NTSTATUS) Win32Error {
+    pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {
         return RtlNtStatusToDosError(status);
     }
 };

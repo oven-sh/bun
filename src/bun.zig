@@ -1732,6 +1732,8 @@ pub const win32 = struct {
     }
 
     pub fn populateArgv() void {
+        const kernel32 = windows;
+
         var wargv_all = kernel32.GetCommandLineW();
         var num_args: c_int = 0;
         var start = kernel32.CommandLineToArgvW(wargv_all, &num_args);
@@ -1787,8 +1789,7 @@ pub fn isRegularFile(mode: JSC.Node.Mode) bool {
 
 pub const sys = @import("./bun.js/node/syscall.zig");
 
-pub const kernel32 = @import("./windows.zig");
-pub const windows = kernel32;
+pub const windows = @import("./windows.zig");
 
 pub const FDTag = enum {
     none,

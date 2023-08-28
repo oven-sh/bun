@@ -6,6 +6,8 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.io);
 const bun = @import("root").bun;
 const FIFO = @import("./fifo.zig").FIFO;
+const windows = bun.windows;
+
 const Time = struct {
     const Self = @This();
 
@@ -161,6 +163,10 @@ pub const Completion = struct {
             listen_socket: os.socket_t,
             client_socket: os.socket_t,
             addr_buffer: [(@sizeOf(std.net.Address) + 16) * 2]u8 align(4),
+        },
+        open: struct {
+            path: [:0]const u8,
+            flags: bun.JSC.Node.Mode,
         },
         connect: struct {
             socket: os.socket_t,
@@ -396,6 +402,42 @@ fn submit(
         .timeout => self.timeouts.push(completion),
         else => self.completed.push(completion),
     }
+}
+
+pub const OpenError = bun.C.SystemErrno.Error;
+
+pub fn open(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: *const fn (
+        context: Context,
+        completion: *Completion,
+        result: OpenError!bun.FileDescriptor,
+    ) void,
+    completion: *Completion,
+    path: [:0]const u8,
+    flags: bun.JSC.Node.Mode,
+    _: bun.JSC.Node.Mode,
+) void {
+    self.submit(
+        context,
+        callback,
+        completion,
+        .open,
+        .{
+            .path = path,
+            .flags = flags,
+        },
+        struct {
+            fn do_operation(ctx: Completion.Context, op: anytype) OpenError!bun.FileDescriptor {
+                _ = ctx;
+                const result = bun.sys.openat(bun.invalid_fd, op.path, op.flags, 0);
+                try result.throw();
+                return result.result;
+            }
+        },
+    );
 }
 
 pub fn accept(

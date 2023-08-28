@@ -510,13 +510,15 @@ pub const AsyncCopyFileTask = struct {
 
 pub const AsyncCpTask = struct {
     promise: JSC.JSPromise.Strong,
-    args: Arguments.CopyFile,
+    args: Arguments.Cp,
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Cp),
     ref: JSC.PollRef = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
+    subtask_count: usize,
+    subtasks_completed: usize,
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -549,7 +551,7 @@ pub const AsyncCpTask = struct {
         var this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
 
         var node_fs = NodeFS{};
-        node_fs.cp(this.args, .promise);
+        node_fs.cpAsync(this);
     }
 
     fn finishConcurrently(this: *AsyncCpTask, result: Maybe(Return.Cp)) void {
@@ -5678,7 +5680,8 @@ pub const NodeFS = struct {
 
     /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
     /// calls "_copySingleFileSync") will be dispatched as a separate task.
-    pub fn cpAsync(this: *NodeFS, args: Arguments.Cp, task: *AsyncCpTask) void {
+    pub fn cpAsync(this: *NodeFS, task: *AsyncCpTask) void {
+        const args = task.args;
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var src = args.src.sliceZ(&src_buf);
@@ -5698,10 +5701,10 @@ pub const NodeFS = struct {
             const r = this._copySingleFileSync(
                 src,
                 dest,
-                @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
+                @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
-            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.flags.errorOnExist) {
                 task.finishConcurrently(Maybe(Return.Cp).success);
                 return;
             }
@@ -5709,7 +5712,7 @@ pub const NodeFS = struct {
             return;
         }
 
-        if (!args.recursive) {
+        if (!args.flags.recursive) {
             @memcpy(this.sync_error_buf[0..src.len], src);
             task.finishConcurrently(.{ .err = .{
                 .errno = @intFromEnum(std.os.E.ISDIR),
@@ -5719,13 +5722,13 @@ pub const NodeFS = struct {
             return;
         }
 
-        this._cpAsyncDirectory(args.flags, task, &src_buf, src.len, &dest_buf, dest.len);
-
-        if (task.subtask_count == 0) {
+        const success = this._cpAsyncDirectory(args.flags, task, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
+        if (task.subtask_count == 0 and success) {
             task.finishConcurrently(Maybe(Return.Cp).success);
         }
     }
 
+    // returns boolean `should_continue`
     fn _cpAsyncDirectory(
         this: *NodeFS,
         args: Arguments.Cp.Flags,
@@ -5734,17 +5737,40 @@ pub const NodeFS = struct {
         src_dir_len: PathString.PathInt,
         dest_buf: *[bun.MAX_PATH_BYTES]u8,
         dest_dir_len: PathString.PathInt,
-    ) void {
+    ) bool {
         const src = src_buf[0..src_dir_len :0];
-        const dest = dest_buf[0..dest_dir_len :0];
-        _ = dest;
+
+        if (comptime Environment.isMac) {
+            const dest = dest_buf[0..dest_dir_len :0];
+
+            if (Maybe(Return.Cp).errnoSysP(C.clonefile(src, dest, 0), .clonefile, src)) |err| {
+                switch (err.getErrno()) {
+                    .ACCES,
+                    .NAMETOOLONG,
+                    .ROFS,
+                    .NOENT,
+                    .PERM,
+                    .INVAL,
+                    => {
+                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        task.finishConcurrently(.{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) });
+                        return false;
+                    },
+                    // Other errors may be due to clonefile() not being supported
+                    // We'll fall back to other implementations
+                    else => {},
+                }
+            } else {
+                return true;
+            }
+        }
 
         const open_flags = os.O.DIRECTORY | os.O.RDONLY;
         const fd = switch (Syscall.open(src, open_flags, 0)) {
             .err => |err| {
                 @memcpy(this.sync_error_buf[0..src.len], src);
-                task.promise.reject(task.globalObject, err.withPath(this.sync_error_buf[0..src.len]).toJSC(task.globalObject));
-                return;
+                task.finishConcurrently(.{ .err = err.withPath(this.sync_error_buf[0..src.len]) });
+                return false;
             },
             .result => |fd_| fd_,
         };
@@ -5756,8 +5782,8 @@ pub const NodeFS = struct {
         while (switch (entry) {
             .err => |err| {
                 @memcpy(this.sync_error_buf[0..src.len], src);
-                task.promise.reject(task.globalObject, err.withPath(this.sync_error_buf[0..src.len]).toJSC(task.globalObject));
-                return;
+                task.finishConcurrently(.{ .err = err.withPath(this.sync_error_buf[0..src.len]) });
+                return false;
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
@@ -5771,7 +5797,7 @@ pub const NodeFS = struct {
                     dest_buf[dest_dir_len] = std.fs.path.sep;
                     dest_buf[dest_dir_len + 1 + current.name.len] = 0;
 
-                    const r = this._cpAsyncDirectory(
+                    const should_continue = this._cpAsyncDirectory(
                         args,
                         task,
                         src_buf,
@@ -5779,19 +5805,35 @@ pub const NodeFS = struct {
                         dest_buf,
                         dest_dir_len + 1 + current.name.len,
                     );
-                    switch (r) {
-                        .err => {
-                            task.promise.reject(task.globalObject, r.err.toJSC(task.globalObject));
-                            return;
-                        },
-                        .result => {},
-                    }
+                    if (!should_continue) return false;
                 },
                 else => {
-                    @atomicRmw(usize, &task.subtasks, .Add, 1, .Monotonic);
+                    _ = @atomicRmw(usize, &task.subtask_count, .Add, 1, .Monotonic);
+
+                    var path_buf = bun.default_allocator.alloc(
+                        u8,
+                        src_dir_len + 1 + current.name.len + 1 + dest_dir_len + 1 + current.name.len + 1,
+                    );
+
+                    @memcpy(path_buf[0..src_dir_len], src_buf[0..src_dir_len]);
+                    path_buf[src_dir_len] = std.fs.path.sep;
+                    @memcpy(path_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], current.name.slice());
+                    path_buf[src_dir_len + 1 + current.name.len] = 0;
+
+                    @memcpy(path_buf[src_dir_len + 1 + current.name.len + 1 .. src_dir_len + 1 + current.name.len + 1 + dest_dir_len], dest_buf[0..dest_dir_len]);
+                    path_buf[src_dir_len + 1 + current.name.len + 1 + dest_dir_len] = std.fs.path.sep;
+                    @memcpy(path_buf[src_dir_len + 1 + current.name.len + 1 + dest_dir_len + 1 .. src_dir_len + 1 + current.name.len + 1 + dest_dir_len + 1 + current.name.len], current.name.slice());
+
+                    // AsyncCpSingleFileTask.create(
+                    //     task,
+                    //     bun.String.init()
+                    // );
+                    std.debug.print("TODO:\n", .{});
                 },
             }
         }
+
+        return true;
     }
 };
 

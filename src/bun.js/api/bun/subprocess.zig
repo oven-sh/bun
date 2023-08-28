@@ -1338,7 +1338,7 @@ pub const Subprocess = struct {
 
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux) {
-                break :brk 0;
+                break :brk pid;
             }
 
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
@@ -1375,7 +1375,7 @@ pub const Subprocess = struct {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
-            .pidfd = pidfd,
+            .pidfd = @truncate(pidfd),
             .stdin = Writable.init(stdio[bun.STDIN_FD], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return .zero;
@@ -1398,9 +1398,10 @@ pub const Subprocess = struct {
         subprocess.this_jsvalue = out;
 
         var send_exit_notification = false;
+        const watchfd = if (comptime Environment.isLinux) pidfd else pid;
 
         if (comptime !is_sync) {
-            var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
+            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
                 jsc_vm.uws_event_loop.?,
@@ -1463,7 +1464,7 @@ pub const Subprocess = struct {
         subprocess.closeIO(.stdin);
 
         {
-            var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
+            var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
                 jsc_vm.uws_event_loop.?,

@@ -1283,7 +1283,7 @@ pub const Source = struct {
         return Source{ .path = path, .key_path = path, .contents = "" };
     }
 
-    pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {
+    pub fn initFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
@@ -1293,7 +1293,7 @@ pub const Source = struct {
         return source;
     }
 
-    pub fn initRecycledFile(file: fs.File, _: std.mem.Allocator) !Source {
+    pub fn initRecycledFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),

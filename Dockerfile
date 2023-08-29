@@ -284,7 +284,8 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/uws ${BUN_DIR}/src/deps/uws
+COPY packages/bun-uws ${BUN_DIR}/packages/bun-uws
+COPY packages/bun-usockets ${BUN_DIR}/packages/bun-usockets
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
@@ -293,7 +294,7 @@ COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make uws && rm -rf src/deps/uws Makefile
+    make uws && rm -rf packages/bun-uws Makefile
 
 FROM bun-base as base64
 

@@ -2499,6 +2499,12 @@ pub const JSGlobalObject = extern struct {
         this.throwValue(this.createErrorInstance("Out of memory", .{}));
     }
 
+    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
+        const err = this.createErrorInstance("{s}", .{msg});
+        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJSConst(this));
+        this.throwValue(err);
+    }
+
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
     pub const throwTerminationException = JSGlobalObject__throwTerminationException;
@@ -3763,7 +3769,14 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
             // u0 => jsNumberFromInt32(0),
-            else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
+            else => {
+                // windows
+                if (comptime Number == std.os.fd_t) {
+                    return jsNumber(bun.toFD(number));
+                }
+
+                @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
+            },
         };
     }
 

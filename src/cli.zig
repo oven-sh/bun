@@ -114,8 +114,8 @@ pub const Arguments = struct {
         defer allocator.free(outpath);
         var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
-        const stats = try file.stat();
-        return try file.readToEndAlloc(allocator, stats.size);
+        const size = try file.getEndPos();
+        return try file.readToEndAlloc(allocator, size);
     }
 
     pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
@@ -1076,7 +1076,7 @@ pub const Command = struct {
     };
 
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = std.os.argv };
+        var args_iter = ArgsIterator{ .buf = bun.argv() };
         // first one is the executable name
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
@@ -1130,7 +1130,10 @@ pub const Command = struct {
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
-            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => .DevCommand,
+            RootCommandMatcher.case("d"), RootCommandMatcher.case("dev") => if (comptime Environment.isWindows) {
+                Output.prettyErrorln("<r><red>error:<r> bun dev is not supported on Windows.", .{});
+                Global.exit(1);
+            } else .DevCommand,
 
             RootCommandMatcher.case("help") => .HelpCommand,
             else => .AutoCommand,
@@ -1210,9 +1213,9 @@ pub const Command = struct {
             };
 
             ctx.args.target = Api.Target.bun;
-            var argv = try bun.default_allocator.alloc(string, std.os.argv.len -| 1);
-            if (std.os.argv.len > 1) {
-                for (argv, std.os.argv[1..]) |*dest, src| {
+            var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+            if (bun.argv().len > 1) {
+                for (argv, bun.argv()[1..]) |*dest, src| {
                     dest.* = bun.span(src);
                 }
             }
@@ -1231,7 +1234,7 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             else => {},
         }
 
@@ -1243,6 +1246,7 @@ pub const Command = struct {
                 try BuildCommand.exec(ctx);
             },
             .DevCommand => {
+                if (comptime Environment.isWindows) unreachable;
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .DevCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .DevCommand);
 
@@ -1465,7 +1469,7 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (std.os.argv) |arg| {
+                        for (bun.argv()) |arg| {
                             if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;

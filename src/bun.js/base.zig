@@ -1696,7 +1696,7 @@ const KQueueGenerationNumber = if (Environment.isMac and Environment.allow_asser
 pub const FilePoll = struct {
     var max_generation_number: KQueueGenerationNumber = 0;
 
-    fd: u32 = invalid_fd,
+    fd: bun.UFileDescriptor = invalid_fd,
     flags: Flags.Set = Flags.Set{},
     owner: Owner = undefined,
 
@@ -2009,7 +2009,7 @@ pub const FilePoll = struct {
 
     pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
-        poll.fd = @as(u32, @intCast(fd));
+        poll.fd = @intCast(fd);
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         if (KQueueGenerationNumber != u0) {
@@ -2194,11 +2194,11 @@ pub const FilePoll = struct {
 
             if (errno != .SUCCESS) {
                 return JSC.Maybe(void){
-                    .err = JSC.Node.Syscall.Error.fromCode(errno, .kqueue),
+                    .err = bun.sys.Error.fromCode(errno, .kqueue),
                 };
             }
         } else {
-            @compileError("TODO: Pollable");
+            bun.todo(@src(), {});
         }
         if (this.canActivate())
             this.activate(loop);
@@ -2220,7 +2220,7 @@ pub const FilePoll = struct {
         return this.unregisterWithFd(loop, this.fd);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *uws.Loop, fd: u64) JSC.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *uws.Loop, fd: bun.UFileDescriptor) JSC.Maybe(void) {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
             // no-op
             return JSC.Maybe(void).success;
@@ -2338,7 +2338,7 @@ pub const FilePoll = struct {
                 else => {},
             }
         } else {
-            @compileError("TODO: Pollable");
+            bun.todo(@src(), {});
         }
 
         this.flags.remove(.needs_rearm);

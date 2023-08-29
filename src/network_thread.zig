@@ -236,7 +236,7 @@ pub fn init() !void {
     } else if (comptime Environment.isMac) {
         global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     } else {
-        @compileLog("TODO: Waker");
+        global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     }
 
     global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{

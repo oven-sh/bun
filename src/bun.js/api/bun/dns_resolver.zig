@@ -225,6 +225,11 @@ pub fn addressToJS(
     address: std.net.Address,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
+    if (comptime Environment.isWindows) {
+        globalThis.throwTODO("TODO: windows");
+        return .zero;
+    }
+
     return addressToString(allocator, address).toValueGC(globalThis);
 }
 
@@ -823,6 +828,10 @@ pub const GetAddrInfoRequest = struct {
             query: GetAddrInfo,
 
             pub fn run(this: *@This()) void {
+                if (comptime Environment.isWindows) {
+                    bun.todo(@src(), {});
+                    return;
+                }
                 const query = this.query;
                 defer bun.default_allocator.free(bun.constStrToU8(query.name));
                 var hints = query.options.toLibC();
@@ -842,7 +851,7 @@ pub const GetAddrInfoRequest = struct {
                     if (hints) |*hint| hint else null,
                     &addrinfo,
                 );
-                JSC.Node.Syscall.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
                     query.name,
                     port,
                     err,
@@ -1043,7 +1052,7 @@ pub const DNSLookup = struct {
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
-                    break :brk JSC.Node.Syscall.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(-1), .getaddrinfo).toJSC(globalThis);
                 }
                 const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
                 error_value.put(
@@ -1435,7 +1444,7 @@ pub const DNSResolver = struct {
         var poll_entry = this.polls.getOrPut(fd) catch unreachable;
 
         if (!poll_entry.found_existing) {
-            poll_entry.value_ptr.* = JSC.FilePoll.init(vm, fd, .{}, DNSResolver, this);
+            poll_entry.value_ptr.* = JSC.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
         }
 
         var poll = poll_entry.value_ptr.*.?;

@@ -31,7 +31,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../http.zig");
+const http = @import("../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -408,7 +408,7 @@ pub const RuntimeTranspilerStore = struct {
 
             defer {
                 if (should_close_input_file_fd and input_file_fd != 0) {
-                    _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                    _ = bun.sys.close(input_file_fd);
                     input_file_fd = 0;
                 }
             }
@@ -1444,7 +1444,7 @@ pub const ModuleLoader = struct {
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != 0) {
-                        _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                        _ = bun.sys.close(input_file_fd);
                         input_file_fd = 0;
                     }
                 }

@@ -45,7 +45,7 @@ pub const ErrorCSS = struct {
                 content.error_css,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_css;
         }
@@ -68,7 +68,7 @@ pub const ErrorJS = struct {
                 content.error_js,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_js;
         }
@@ -133,7 +133,7 @@ pub const Fallback = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
@@ -220,7 +220,7 @@ pub const Runtime = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
@@ -257,7 +257,7 @@ pub const Runtime = struct {
                 ProdSourceContentWithRefresh,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContentWithRefresh;
         }

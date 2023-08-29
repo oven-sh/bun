@@ -517,9 +517,11 @@ pub const AsyncCpTask = struct {
     ref: JSC.PollRef = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
-    has_result: bool = false,
-    subtask_count: usize,
-    subtasks_completed: usize,
+    has_result: std.atomic.Atomic(bool),
+    /// On each creation of a `AsyncCpSingleFileTask`, this is incremented.
+    /// When each task is finished, decrement.
+    /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
+    subtask_count: std.atomic.Atomic(usize),
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -531,13 +533,12 @@ pub const AsyncCpTask = struct {
         task.* = AsyncCpTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = cp_args,
-            .has_result = false,
+            .has_result = .{ .value = false },
             .result = undefined,
             .globalObject = globalObject,
             .tracker = JSC.AsyncTaskTracker.init(vm),
             .arena = arena,
-            .subtask_count = 0,
-            .subtasks_completed = 0,
+            .subtask_count = .{ .value = 1 },
         };
         task.ref.ref(vm);
         task.args.src.toThreadSafe();
@@ -556,12 +557,11 @@ pub const AsyncCpTask = struct {
         node_fs.cpAsync(this);
     }
 
+    /// May be called from any thread (the subtasks)
     fn finishConcurrently(this: *AsyncCpTask, result: Maybe(Return.Cp)) void {
-        // TODO: i am not confident this is correct
-        if (@atomicLoad(bool, &this.has_result, .Acquire)) {
+        if (this.has_result.compareAndSwap(false, true, .Monotonic, .Monotonic)) |_| {
             return;
         }
-        @atomicStore(bool, &this.has_result, true, .Release);
 
         this.result = result;
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
@@ -663,10 +663,8 @@ pub const AsyncCpSingleFileTask = struct {
             }
         }
 
-        // TODO: the atomics are not right here
-        _ = @atomicRmw(usize, &this.cp_task.subtasks_completed, .Add, 1, .Monotonic);
-
-        if (this.cp_task.subtasks_completed == this.cp_task.subtask_count) {
+        const old_count = this.cp_task.subtask_count.fetchSub(1, .Monotonic);
+        if (old_count == 1) {
             this.cp_task.finishConcurrently(Maybe(Return.Cp).success);
         }
 
@@ -674,10 +672,10 @@ pub const AsyncCpSingleFileTask = struct {
     }
 
     pub fn deinit(this: *AsyncCpSingleFileTask) void {
-        bun.default_allocator.destroy(this);
-
         // There is only one path buffer for both paths. 2 extra bytes are the nulls at the end of each
         bun.default_allocator.free(this.src.ptr[0 .. this.src.len + this.dest.len + 2]);
+
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -5619,15 +5617,11 @@ pub const NodeFS = struct {
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
                 .result => |result| result,
                 .err => |err| {
-                    if(err.getErrno() == .LOOP) {
+                    if (err.getErrno() == .LOOP) {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-return Syscall.symlink(
-                    src,
-                    dest
-                );
+                        return Syscall.symlink(src, dest);
                     }
-
 
                     return .{ .err = err };
                 },
@@ -5779,7 +5773,8 @@ return Syscall.symlink(
         }
 
         const success = this._cpAsyncDirectory(args.flags, task, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
-        if (task.subtask_count == 0 and success) {
+        const old_count = task.subtask_count.fetchSub(1, .Monotonic);
+        if (success and old_count == 1) {
             task.finishConcurrently(Maybe(Return.Cp).success);
         }
     }
@@ -5875,7 +5870,7 @@ return Syscall.symlink(
                     if (!should_continue) return false;
                 },
                 else => {
-                    _ = @atomicRmw(usize, &task.subtask_count, .Add, 1, .Monotonic);
+                    _ = task.subtask_count.fetchAdd(1, .Monotonic);
 
                     // Allocate a path buffer for the path data
                     var path_buf = bun.default_allocator.alloc(
@@ -5883,7 +5878,6 @@ return Syscall.symlink(
                         src_dir_len + 1 + current.name.len + 1 + dest_dir_len + 1 + current.name.len + 1,
                     ) catch @panic("Out of memory");
 
-                    // TODO: make this more readable
                     @memcpy(path_buf[0..src_dir_len], src_buf[0..src_dir_len]);
                     path_buf[src_dir_len] = std.fs.path.sep;
                     @memcpy(path_buf[src_dir_len + 1 .. src_dir_len + 1 + current.name.len], current.name.slice());

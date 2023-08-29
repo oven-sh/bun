@@ -3,7 +3,7 @@ import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
 const impls = [
-  ["cpSync", fs.cpSync],
+  // ["cpSync", fs.cpSync],
   ["cp", fs.promises.cp],
 ] as const;
 

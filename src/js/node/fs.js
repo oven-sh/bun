@@ -442,7 +442,6 @@ ReadStream = (function (InternalReadStream) {
         tempThis.path = tempThis.file = tempThis[readStreamPathOrFdSymbol] = pathOrFd;
       } else if (typeof pathOrFd === "number") {
         pathOrFd |= 0;
-        console.log("pathOrFd", pathOrFd);
         if (pathOrFd < 0) {
           throw new TypeError("Expected fd to be a positive integer");
         }

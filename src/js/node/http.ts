@@ -615,16 +615,6 @@ class IncomingMessage extends Readable {
     this.url = url.pathname + url.search;
     this.#nodeReq = this.req = nodeReq;
     assignHeaders(this, req);
-
-    this.statusCode = req.status;
-    this.statusMessage = STATUS_CODES[req.status];
-
-    this.httpVersion = "1.1";
-    this.httpVersionMajor = 1;
-    this.httpVersionMinor = 1;
-
-    this.rawTrailers = [];
-    this.trailers = kEmptyObject;
   }
 
   headers;
@@ -691,6 +681,48 @@ class IncomingMessage extends Readable {
   get connection() {
     return this.#fakeSocket;
   }
+
+  get statusCode() {
+    return this.#req.status;
+  }
+
+  set statusCode(val) {}
+
+  get statusMessage() {
+    return STATUS_CODES[this.#req.status];
+  }
+
+  set statusMessage(val) {}
+
+  get httpVersion() {
+    return "1.1";
+  }
+
+  set httpVersion(val) {}
+
+  get rawTrailers() {
+    return [];
+  }
+
+  set rawTrailers(val) {}
+
+  get httpVersionMajor() {
+    return 1;
+  }
+
+  set httpVersionMajor(val) {}
+
+  get httpVersionMinor() {
+    return 1;
+  }
+
+  set httpVersionMinor(val) {}
+
+  get trailers() {
+    return kEmptyObject;
+  }
+
+  set trailers(val) {}
 
   get socket() {
     return (this.#fakeSocket ??= new FakeSocket());

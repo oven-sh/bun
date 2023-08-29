@@ -417,11 +417,11 @@ ReadStream = (function (InternalReadStream) {
 
       // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
       var tempThis = {};
-      if (fd !== null) {
-        if (typeof options.fd !== "number") {
+      if (fd != null) {
+        if (typeof fd !== "number") {
           throw new TypeError("Expected options.fd to be a number");
         }
-        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = options.fd;
+        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
         tempThis.autoClose = false;
       } else if (typeof pathOrFd === "string") {
         if (pathOrFd.startsWith("file://")) {
@@ -763,7 +763,7 @@ WriteStream = (function (InternalWriteStream) {
       } = options;
 
       var tempThis = {};
-      if (fd !== null) {
+      if (fd != null) {
         if (typeof fd !== "number") {
           throw new Error("Expected options.fd to be a number");
         }
@@ -787,7 +787,7 @@ WriteStream = (function (InternalWriteStream) {
           fs.close === defaultWriteStreamOptions.fs.close;
       }
 
-      if (tempThis.fd === null || tempThis.fd === undefined) {
+      if (tempThis.fd == null) {
         tempThis.fd = fs.openSync(path, flags, mode);
       }
 

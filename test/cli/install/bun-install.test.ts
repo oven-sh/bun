@@ -5794,3 +5794,50 @@ it("should handle `workspace:*` on both root & child", async () => {
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).text()).toEqual(baz_package);
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should fail on invalid registry URLS", async () => {
+  var urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "::::::::::::::::"
+`,
+  );
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "0.0.2",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBeEmpty();
+  // console.log("stdout: ", await new Response(stdout).text());
+
+  expect(stderr).toBeDefined();
+  // console.log("stderr: ", await new Response(stderr).text());
+  const err = await new Response(stderr).text();
+  const registryURL = "::::::::::::::::";
+  expect(err.includes(`Failed to join registry \"${registryURL}\" and package \"bar\" URLs`)).toBeTrue();
+  expect(err.includes("error: InvalidURL")).toBeTrue();
+  // console.log(err);
+
+  expect(await exited).toBe(1);
+});

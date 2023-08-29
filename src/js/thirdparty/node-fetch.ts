@@ -1,12 +1,12 @@
-const { Headers, Request, Response, Blob, File = Blob, FormData } = globalThis;
-const realFetch = Bun.fetch;
+const { Headers, Request, Response, Blob, File = Blob, FormData } = globalThis as any;
+const nativeFetch = Bun.fetch;
 
-function fetch(...args) {
+async function fetch(...args: Parameters<typeof nativeFetch>) {
   // require("node-fetch") returns the default export which means we need to
   // repeat the ESM exports onto it.
   //
   // We don't want to copy that onto the global fetch object, so we wrap it.
-  return realFetch(...args);
+  return await nativeFetch(...args);
 }
 
 class AbortError extends DOMException {
@@ -30,11 +30,11 @@ class FetchError extends FetchBaseError {
 }
 
 function blobFrom(path, options) {
-  return Promise.resolve(Bun.file(data));
+  return Promise.resolve(Bun.file(path, options));
 }
 
 function blobFromSync(path, options) {
-  return Bun.file(data);
+  return Bun.file(path, options);
 }
 
 var fileFrom = blobFrom;

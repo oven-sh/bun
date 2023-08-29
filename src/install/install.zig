@@ -250,60 +250,19 @@ const NetworkTask = struct {
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
-        const pathname: string = if (!strings.eqlComptime(scope.url.pathname, "/"))
-            scope.url.pathname
-        else
-            @as(string, "");
+        this.url_buf = blk: {
+            const href = bun.String.fromUTF8(scope.url.href);
+            const name2 = bun.String.fromUTF8(name);
 
-        if (pathname.len > 0) {
-            if (scope.url.getPort()) |port_number| {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}:{d}/{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        port_number,
-                        strings.withoutTrailingSlash(pathname),
-                        name,
-                    },
-                );
-            } else {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}/{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        strings.withoutTrailingSlash(pathname),
-                        name,
-                    },
-                );
+            const tmp = bun.JSC.URL.join(href, name2);
+            defer tmp.deref();
+
+            if (tmp.tag == .Dead) {
+                return error.@"Failed to join package name for manifest";
             }
-        } else {
-            if (scope.url.getPort()) |port_number| {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}:{d}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        port_number,
-                        name,
-                    },
-                );
-            } else {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        name,
-                    },
-                );
-            }
-        }
+            // This actually duplicates the string! So we defer deref above.
+            break :blk try tmp.toOwnedSlice(allocator);
+        };
 
         var last_modified: string = "";
         var etag: string = "";

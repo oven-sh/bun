@@ -482,7 +482,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
 }
 
-extern "C" BunString Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString)
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -498,12 +498,7 @@ extern "C" BunString Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGloba
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
 
-    JSValue serverURLValue = JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
-
-    if (serverURLValue.isUndefinedOrNull())
-        return BunStringEmpty;
-
-    return Bun::toStringRef(debuggerGlobalObject, serverURLValue);
+    JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
 }
 
 enum class AsyncCallTypeUint8 : uint8_t {

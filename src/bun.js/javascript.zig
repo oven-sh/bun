@@ -500,6 +500,7 @@ pub const VirtualMachine = struct {
     worker: ?*JSC.WebWorker = null,
 
     debugger: ?Debugger = null,
+    has_started_debugger: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -777,7 +778,8 @@ pub const VirtualMachine = struct {
     pub var has_created_debugger: bool = false;
 
     pub const Debugger = struct {
-        path_or_port: []const u8 = "",
+        path_or_port: ?[]const u8 = null,
+        unix: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
@@ -788,8 +790,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) bun.String;
-        var has_started_debugger_thread: bool = false;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
         var futex_atomic: std.atomic.Atomic(u32) = undefined;
 
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
@@ -799,8 +800,8 @@ pub const VirtualMachine = struct {
             has_created_debugger = true;
             var debugger = &this.debugger.?;
             debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
-            if (!has_started_debugger_thread) {
-                has_started_debugger_thread = true;
+            if (!this.has_started_debugger) {
+                this.has_started_debugger = true;
                 futex_atomic = std.atomic.Atomic(u32).init(0);
                 var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
                 thread.detach();
@@ -848,8 +849,6 @@ pub const VirtualMachine = struct {
             vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
         }
 
-        pub export var Bun__debugger_server_url: bun.String = undefined;
-
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
             std.debug.assert(this.debugger.?.wait_for_connection);
@@ -861,9 +860,17 @@ pub const VirtualMachine = struct {
             JSC.markBinding(@src());
 
             var this = VirtualMachine.get();
-            var str = bun.String.create(other_vm.debugger.?.path_or_port);
-            Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
-            Bun__debugger_server_url.toThreadSafe();
+            var debugger = other_vm.debugger.?;
+
+            if (debugger.unix.len > 0) {
+                var url = bun.String.create(debugger.unix);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
+
+            if (debugger.path_or_port) |path_or_port| {
+                var url = bun.String.create(path_or_port);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
 
             this.global.handleRejectedPromises();
 
@@ -1172,13 +1179,27 @@ pub const VirtualMachine = struct {
     }
 
     fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+        var unix = bun.getenvZ("BUN_INSPECT") orelse "";
+        var set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
+        var wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+
         switch (debugger) {
-            .unspecified => {},
+            .unspecified => {
+                if (unix.len > 0) {
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .unix = unix,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                    };
+                }
+            },
             .enable => {
                 this.debugger = Debugger{
                     .path_or_port = debugger.enable.path_or_port,
-                    .wait_for_connection = debugger.enable.wait_for_connection,
-                    .set_breakpoint_on_first_line = debugger.enable.set_breakpoint_on_first_line,
+                    .unix = unix,
+                    .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
+                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
                 };
             },
         }

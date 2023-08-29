@@ -19,7 +19,7 @@ const capabilities: DAP.Capabilities = {
   exceptionBreakpointFilters: [
     {
       filter: "all",
-      label: "Caught Exceptions",
+      label: "All Exceptions",
       default: false,
       supportsCondition: true,
       description: "Breaks on all throw errors, even if they're caught later.",
@@ -33,6 +33,28 @@ const capabilities: DAP.Capabilities = {
       description: "Breaks only on errors or promise rejections that are not handled.",
       conditionDescription: `error.name == "CustomError"`,
     },
+    {
+      filter: "debugger",
+      label: "Debugger Statements",
+      default: true,
+      supportsCondition: false,
+      description: "Breaks on `debugger` statements.",
+    },
+    // TODO: Verify that these actually work
+    // {
+    //   filter: "assert",
+    //   label: "Assertion Failures",
+    //   default: false,
+    //   supportsCondition: false,
+    //   description: "Breaks on failed assertions.",
+    // },
+    // {
+    //   filter: "microtask",
+    //   label: "Microtasks",
+    //   default: false,
+    //   supportsCondition: false,
+    //   description: "Breaks on microtasks.",
+    // },
   ],
   supportsStepBack: false,
   supportsSetVariable: true,
@@ -351,7 +373,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.send("Console.enable");
     this.send("Debugger.enable");
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
-    this.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
     this.send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.send("Debugger.setBreakpointsActive", { active: true });
 
@@ -926,15 +947,31 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async setExceptionBreakpoints(request: DAP.SetExceptionBreakpointsRequest): Promise<void> {
     const { filters, filterOptions } = request;
-
-    const filterIds = [...filters];
     if (filterOptions) {
-      filterIds.push(...filterOptions.map(({ filterId }) => filterId));
+      filters.push(...filterOptions.map(({ filterId }) => filterId));
     }
 
-    await this.send("Debugger.setPauseOnExceptions", {
-      state: exceptionFiltersToPauseOnExceptionsState(filterIds),
-    });
+    let state: "all" | "uncaught" | "none";
+    if (filters.includes("all")) {
+      state = "all";
+    } else if (filters.includes("uncaught")) {
+      state = "uncaught";
+    } else {
+      state = "none";
+    }
+
+    await Promise.all([
+      this.send("Debugger.setPauseOnExceptions", { state }),
+      this.send("Debugger.setPauseOnAssertions", {
+        enabled: filters.includes("assert"),
+      }),
+      this.send("Debugger.setPauseOnDebuggerStatements", {
+        enabled: filters.includes("debugger"),
+      }),
+      this.send("Debugger.setPauseOnMicrotasks", {
+        enabled: filters.includes("microtask"),
+      }),
+    ]);
   }
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
@@ -1916,18 +1953,6 @@ function isArrayLike(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.Rem
 
 function isMap(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
   return subtype === "map" || subtype === "weakmap";
-}
-
-function exceptionFiltersToPauseOnExceptionsState(
-  filters?: string[],
-): JSC.Debugger.SetPauseOnExceptionsRequest["state"] {
-  if (filters?.includes("all")) {
-    return "all";
-  }
-  if (filters?.includes("uncaught")) {
-    return "uncaught";
-  }
-  return "none";
 }
 
 function breakpointOptions(breakpoint: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {

@@ -1640,7 +1640,7 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.uws_event_loop.?.unref();
+        vm.event_loop_handle.?.unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -1648,7 +1648,7 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.uws_event_loop.?.unrefConcurrently();
+        vm.event_loop_handle.?.unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -1672,7 +1672,7 @@ pub const PollRef = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.uws_event_loop.?.ref();
+        vm.event_loop_handle.?.ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -1680,7 +1680,7 @@ pub const PollRef = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.uws_event_loop.?.refConcurrently();
+        vm.event_loop_handle.?.refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
@@ -1801,7 +1801,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        var loop = vm.uws_event_loop.?;
+        var loop = vm.event_loop_handle.?;
         this.deinitWithoutVM(loop, vm.rareData().filePolls(vm));
     }
 
@@ -1971,7 +1971,7 @@ pub const FilePoll = struct {
             return;
         this.flags.insert(.disable);
 
-        vm.uws_event_loop.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
@@ -1979,7 +1979,7 @@ pub const FilePoll = struct {
             return;
         this.flags.remove(.disable);
 
-        vm.uws_event_loop.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        vm.event_loop_handle.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn canActivate(this: *const FilePoll) bool {
@@ -2035,7 +2035,7 @@ pub const FilePoll = struct {
         if (!this.canUnref())
             return;
         log("unref", .{});
-        this.deactivate(vm.uws_event_loop.?);
+        this.deactivate(vm.event_loop_handle.?);
     }
 
     /// Allow a poll to keep the process alive.
@@ -2043,7 +2043,7 @@ pub const FilePoll = struct {
         if (this.canRef())
             return;
         log("ref", .{});
-        this.activate(vm.uws_event_loop.?);
+        this.activate(vm.event_loop_handle.?);
     }
 
     pub fn onTick(loop: *uws.Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {

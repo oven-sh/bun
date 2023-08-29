@@ -835,7 +835,7 @@ pub const TestCommand = struct {
             vm.eventLoop().tickPossiblyForever();
 
             while (true) {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.event_loop_handle.?.active > 0) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }

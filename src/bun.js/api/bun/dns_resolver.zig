@@ -122,7 +122,7 @@ const LibInfo = struct {
         request.backend.libinfo.file_poll = bun.JSC.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, GetAddrInfoRequest, request);
         std.debug.assert(
             request.backend.libinfo.file_poll.?.registerWithFd(
-                this.vm.uws_event_loop.?,
+                this.vm.event_loop_handle.?,
                 .machport,
                 true,
                 @intFromPtr(request.backend.libinfo.machport),
@@ -1656,10 +1656,10 @@ pub const DNSResolver = struct {
         var poll = poll_entry.value_ptr.*.?;
 
         if (readable and !poll.flags.contains(.poll_readable))
-            _ = poll.register(vm.uws_event_loop.?, .readable, false);
+            _ = poll.register(vm.event_loop_handle.?, .readable, false);
 
         if (writable and !poll.flags.contains(.poll_writable))
-            _ = poll.register(vm.uws_event_loop.?, .writable, false);
+            _ = poll.register(vm.event_loop_handle.?, .writable, false);
     }
 
     const DNSQuery = struct {

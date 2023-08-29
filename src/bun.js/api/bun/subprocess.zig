@@ -1404,7 +1404,7 @@ pub const Subprocess = struct {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
-                jsc_vm.uws_event_loop.?,
+                jsc_vm.event_loop_handle.?,
                 .process,
                 true,
             )) {
@@ -1467,7 +1467,7 @@ pub const Subprocess = struct {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
-                jsc_vm.uws_event_loop.?,
+                jsc_vm.event_loop_handle.?,
                 .process,
                 true,
             )) {
@@ -1530,7 +1530,7 @@ pub const Subprocess = struct {
     pub fn watch(this: *Subprocess) void {
         if (this.poll_ref) |poll| {
             _ = poll.register(
-                this.globalThis.bunVM().uws_event_loop.?,
+                this.globalThis.bunVM().event_loop_handle.?,
                 .process,
                 true,
             );

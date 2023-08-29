@@ -401,7 +401,7 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     timer: Bun.Timer = Bun.Timer{},
-    uws_event_loop: ?*uws.Loop = null,
+    event_loop_handle: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
@@ -724,7 +724,7 @@ pub const VirtualMachine = struct {
     pub fn prepareLoop(_: *VirtualMachine) void {}
 
     pub fn enterUWSLoop(this: *VirtualMachine) void {
-        var loop = this.uws_event_loop.?;
+        var loop = this.event_loop_handle.?;
         loop.run();
     }
 
@@ -732,7 +732,7 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {
-            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) : (dispatch = true) {
+            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) : (dispatch = true) {
                 this.tick();
                 this.eventLoop().autoTickActive();
             }
@@ -741,7 +741,7 @@ pub const VirtualMachine = struct {
                 this.exit_handler.dispatchOnBeforeExit();
                 dispatch = false;
 
-                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) continue;
+                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) continue;
             }
 
             break;
@@ -884,7 +884,7 @@ pub const VirtualMachine = struct {
             this.eventLoop().tick();
 
             while (true) {
-                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) {
+                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) {
                     this.tick();
                     this.eventLoop().autoTickActive();
                 }

@@ -276,9 +276,9 @@ pub const JSCScheduler = struct {
         JSC.markBinding(@src());
 
         if (delta > 0) {
-            jsc_vm.uws_event_loop.?.refConcurrently();
+            jsc_vm.event_loop_handle.?.refConcurrently();
         } else {
-            jsc_vm.uws_event_loop.?.unrefConcurrently();
+            jsc_vm.event_loop_handle.?.unrefConcurrently();
         }
     }
 
@@ -375,7 +375,7 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer_fast: bool = true,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
-        var actual = vm.uws_event_loop.?;
+        var actual = vm.event_loop_handle.?;
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
@@ -526,7 +526,7 @@ pub const EventLoop = struct {
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.uws_event_loop.?.tick();
+            this.virtual_machine.event_loop_handle.?.tick();
         }
     }
 
@@ -720,7 +720,7 @@ pub const EventLoop = struct {
 
     pub fn autoTick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
-        var loop = ctx.uws_event_loop.?;
+        var loop = ctx.event_loop_handle.?;
 
         // Some tasks need to keep the event loop alive for one more tick.
         // We want to keep the event loop alive long enough to process those ticks and any microtasks
@@ -743,7 +743,7 @@ pub const EventLoop = struct {
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
         var ctx = this.virtual_machine;
-        var loop = ctx.uws_event_loop.?;
+        var loop = ctx.event_loop_handle.?;
 
         const pending_unref = ctx.pending_unref_counter;
         if (pending_unref > 0) {
@@ -770,7 +770,7 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTickActive(this: *EventLoop) void {
-        var loop = this.virtual_machine.uws_event_loop.?;
+        var loop = this.virtual_machine.event_loop_handle.?;
 
         var ctx = this.virtual_machine;
 
@@ -822,7 +822,7 @@ pub const EventLoop = struct {
 
         ctx.global.vm().releaseWeakRefs();
         ctx.global.vm().drainMicrotasks();
-        var loop = ctx.uws_event_loop orelse return;
+        var loop = ctx.event_loop_handle orelse return;
 
         if (loop.active > 0 or (ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered and (loop.num_polls > 0 or this.start_server_on_next_tick))) {
             if (this.tickConcurrentWithCount() > 0) {
@@ -881,11 +881,11 @@ pub const EventLoop = struct {
         while (this.tasks.count > 0) {
             this.tick();
 
-            if (this.virtual_machine.uws_event_loop != null) {
+            if (this.virtual_machine.event_loop_handle != null) {
                 this.runUSocketsLoop();
             }
         } else {
-            if (this.virtual_machine.uws_event_loop != null) {
+            if (this.virtual_machine.event_loop_handle != null) {
                 this.runUSocketsLoop();
             }
         }
@@ -897,7 +897,7 @@ pub const EventLoop = struct {
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
         // TODO: make this more efficient!
-        var loop = this.virtual_machine.uws_event_loop orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
+        var loop = this.virtual_machine.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
         var timer = uws.Timer.createFallthrough(loop, task.ptr());
         timer.set(task.ptr(), callTask, timeout, 0);
     }
@@ -911,9 +911,9 @@ pub const EventLoop = struct {
 
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
-        if (this.virtual_machine.uws_event_loop == null) {
+        if (this.virtual_machine.event_loop_handle == null) {
             var actual = uws.Loop.get().?;
-            this.virtual_machine.uws_event_loop = actual;
+            this.virtual_machine.event_loop_handle = actual;
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
@@ -926,7 +926,7 @@ pub const EventLoop = struct {
     }
 
     pub fn wakeup(this: *EventLoop) void {
-        if (this.virtual_machine.uws_event_loop) |loop| {
+        if (this.virtual_machine.event_loop_handle) |loop| {
             loop.wakeup();
         }
     }

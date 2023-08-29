@@ -264,7 +264,7 @@ pub const WebWorker = struct {
 
         // don't run the GC if we don't actually need to
         if (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or
-            vm.uws_event_loop.?.active > 0 or
+            vm.event_loop_handle.?.active > 0 or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
@@ -275,7 +275,7 @@ pub const WebWorker = struct {
         // always doing a first tick so we call CppTask without delay after dispatchOnline
         vm.tick();
 
-        while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+        while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.event_loop_handle.?.active > 0) {
             vm.tick();
             if (this.requested_terminate) break;
             vm.eventLoop().autoTickActive();

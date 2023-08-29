@@ -547,7 +547,7 @@ ReadStream = (function (InternalReadStream) {
     }
 
     close(cb) {
-      if (typeof cb === "function") eos_()(this, cb);
+      if (typeof cb === "function") Stream.eos(this, cb);
       this.destroy();
     }
 

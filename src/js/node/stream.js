@@ -5497,7 +5497,11 @@ var NativeWritable = class NativeWritable extends Writable {
   #internalConstruct(cb) {
     this._writableState.constructed = true;
     this.constructed = true;
-    cb();
+    if (typeof cb === "function") cb();
+    process.nextTick(() => {
+      this.emit("open", this.fd);
+      this.emit("ready");
+    });
   }
 
   #lazyConstruct() {
@@ -5548,8 +5552,23 @@ var NativeWritable = class NativeWritable extends Writable {
   }
 
   #internalDestroy(error, cb) {
-    this._writableState.destroyed = true;
-    if (cb) cb(error);
+    const w = this._writableState;
+    const r = this._readableState;
+
+    if (w) {
+      w.destroyed = true;
+      w.closeEmitted = true;
+    }
+    if (r) {
+      r.destroyed = true;
+      r.closeEmitted = true;
+    }
+
+    if (typeof cb === "function") cb(error);
+
+    if (w?.closeEmitted || r?.closeEmitted) {
+      this.emit("close");
+    }
   }
 
   #internalFinal(cb) {

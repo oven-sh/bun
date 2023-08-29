@@ -3532,103 +3532,48 @@ pub const NodeFS = struct {
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
+        _ = flavor;
         const ret = Maybe(Return.CopyFile);
 
-        switch (comptime flavor) {
-            .sync => {
-                var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var src = args.src.sliceZ(&src_buf);
-                var dest = args.dest.sliceZ(&dest_buf);
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src = args.src.sliceZ(&src_buf);
+        var dest = args.dest.sliceZ(&dest_buf);
 
-                // TODO: do we need to fchown?
-                if (comptime Environment.isMac) {
-                    if (args.mode.isForceClone()) {
-                        // https://www.manpagez.com/man/2/clonefile/
-                        return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
-                    } else {
-                        const stat_ = switch (Syscall.stat(src)) {
-                            .result => |result| result,
-                            .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
-                        };
+        // TODO: do we need to fchown?
+        if (comptime Environment.isMac) {
+            if (args.mode.isForceClone()) {
+                // https://www.manpagez.com/man/2/clonefile/
+                return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
+            } else {
+                const stat_ = switch (Syscall.stat(src)) {
+                    .result => |result| result,
+                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                };
 
-                        if (!os.S.ISREG(stat_.mode)) {
-                            return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
-                        }
-
-                        // 64 KB is about the break-even point for clonefile() to be worth it
-                        // at least, on an M1 with an NVME SSD.
-                        if (stat_.size > 128 * 1024) {
-                            if (!args.mode.shouldntOverwrite()) {
-                                // clonefile() will fail if it already exists
-                                _ = Syscall.unlink(dest);
-                            }
-
-                            if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
-                                _ = C.chmod(dest, stat_.mode);
-                                return ret.success;
-                            }
-                        } else {
-                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
-                                .result => |result| result,
-                                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
-                            };
-                            defer {
-                                _ = Syscall.close(src_fd);
-                            }
-
-                            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
-                            var wrote: usize = 0;
-                            if (args.mode.shouldntOverwrite()) {
-                                flags |= std.os.O.EXCL;
-                            }
-
-                            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
-                                .result => |result| result,
-                                .err => |err| return Maybe(Return.CopyFile){ .err = err },
-                            };
-                            defer {
-                                _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                                _ = C.fchmod(dest_fd, stat_.mode);
-                                _ = Syscall.close(dest_fd);
-                            }
-
-                            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
-                        }
-                    }
-
-                    // we fallback to copyfile() when the file is > 128 KB and clonefile fails
-                    // clonefile() isn't supported on all devices
-                    // nor is it supported across devices
-                    var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
-                    if (args.mode.shouldntOverwrite()) {
-                        mode |= C.darwin.COPYFILE_EXCL;
-                    }
-
-                    return ret.errnoSysP(C.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
+                if (!os.S.ISREG(stat_.mode)) {
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                 }
 
-                if (comptime Environment.isLinux) {
-                    // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-                    if (args.mode.isForceClone()) {
-                        return Maybe(Return.CopyFile).todo;
+                // 64 KB is about the break-even point for clonefile() to be worth it
+                // at least, on an M1 with an NVME SSD.
+                if (stat_.size > 128 * 1024) {
+                    if (!args.mode.shouldntOverwrite()) {
+                        // clonefile() will fail if it already exists
+                        _ = Syscall.unlink(dest);
                     }
 
+                    if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
+                        _ = C.chmod(dest, stat_.mode);
+                        return ret.success;
+                    }
+                } else {
                     const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                         .result => |result| result,
-                        .err => |err| return .{ .err = err },
+                        .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                     };
                     defer {
                         _ = Syscall.close(src_fd);
-                    }
-
-                    const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
-                        .result => |result| result,
-                        .err => |err| return Maybe(Return.CopyFile){ .err = err },
-                    };
-
-                    if (!os.S.ISREG(stat_.mode)) {
-                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                     }
 
                     var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
@@ -3641,62 +3586,111 @@ pub const NodeFS = struct {
                         .result => |result| result,
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
-
-                    var size: usize = @intCast(@max(stat_.size, 0));
-
                     defer {
-                        _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = linux.fchmod(dest_fd, stat_.mode);
+                        _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd, stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
-                    var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
-                    var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
-
-                    if (!bun.canUseCopyFileRangeSyscall()) {
-                        return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
-                    }
-
-                    if (size == 0) {
-                        // copy until EOF
-                        while (true) {
-
-                            // Linux Kernel 5.3 or later
-                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
-                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                return switch (err.getErrno()) {
-                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
-                                    else => return err,
-                                };
-                            }
-                            // wrote zero bytes means EOF
-                            if (written == 0) break;
-                            wrote +|= written;
-                        }
-                    } else {
-                        while (size > 0) {
-                            // Linux Kernel 5.3 or later
-                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
-                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
-                                return switch (err.getErrno()) {
-                                    .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
-                                    else => return err,
-                                };
-                            }
-                            // wrote zero bytes means EOF
-                            if (written == 0) break;
-                            wrote +|= written;
-                            size -|= written;
-                        }
-                    }
-
-                    return ret.success;
+                    return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote);
                 }
-            },
-            else => {},
+            }
+
+            // we fallback to copyfile() when the file is > 128 KB and clonefile fails
+            // clonefile() isn't supported on all devices
+            // nor is it supported across devices
+            var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
+            if (args.mode.shouldntOverwrite()) {
+                mode |= C.darwin.COPYFILE_EXCL;
+            }
+
+            return ret.errnoSysP(C.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
         }
 
-        return Maybe(Return.CopyFile).todo;
+        if (comptime Environment.isLinux) {
+            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile).todo;
+            }
+
+            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                .result => |result| result,
+                .err => |err| return .{ .err = err },
+            };
+            defer {
+                _ = Syscall.close(src_fd);
+            }
+
+            const stat_: linux.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+
+            if (!os.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+            }
+
+            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var wrote: usize = 0;
+            if (args.mode.shouldntOverwrite()) {
+                flags |= std.os.O.EXCL;
+            }
+
+            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+
+            var size: usize = @intCast(@max(stat_.size, 0));
+
+            defer {
+                _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = linux.fchmod(dest_fd, stat_.mode);
+                _ = Syscall.close(dest_fd);
+            }
+
+            var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
+            var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
+
+            if (!bun.canUseCopyFileRangeSyscall()) {
+                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+            }
+
+            if (size == 0) {
+                // copy until EOF
+                while (true) {
+
+                    // Linux Kernel 5.3 or later
+                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                        return switch (err.getErrno()) {
+                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            else => return err,
+                        };
+                    }
+                    // wrote zero bytes means EOF
+                    if (written == 0) break;
+                    wrote +|= written;
+                }
+            } else {
+                while (size > 0) {
+                    // Linux Kernel 5.3 or later
+                    const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
+                    if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                        return switch (err.getErrno()) {
+                            .XDEV, .NOSYS => copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote),
+                            else => return err,
+                        };
+                    }
+                    // wrote zero bytes means EOF
+                    if (written == 0) break;
+                    wrote +|= written;
+                    size -|= written;
+                }
+            }
+
+            return ret.success;
+        }
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {

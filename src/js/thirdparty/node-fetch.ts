@@ -27,6 +27,7 @@ async function fetch(url: any, init?: RequestInit & { body?: any }) {
   if (body) {
     const chunks: any = [];
     if (body instanceof Readable) {
+      // TODO: Bun fetch() doesn't support ReadableStream at all.
       for await (const chunk of body) {
         chunks.push(chunk);
       }

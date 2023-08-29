@@ -314,3 +314,38 @@ it("TTY streams", () => {
   expect(stderr.toString()).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
+
+it("Readable.toWeb", async () => {
+  const readable = new Readable({
+    read() {
+      this.push("Hello ");
+      this.push("World!\n");
+      this.push(null);
+    },
+  });
+
+  const webReadable = Readable.toWeb(readable);
+  expect(webReadable).toBeInstanceOf(ReadableStream);
+
+  const result = await new Response(webReadable).text();
+  expect(result).toBe("Hello World!\n");
+});
+
+it("Readable.fromWeb", async () => {
+  const readable = Readable.fromWeb(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue("Hello ");
+        controller.enqueue("World!\n");
+        controller.close();
+      },
+    }),
+  );
+  expect(readable).toBeInstanceOf(Readable);
+
+  const chunks = [];
+  for await (const chunk of readable) {
+    chunks.push(chunk);
+  }
+  expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});

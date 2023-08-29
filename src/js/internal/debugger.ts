@@ -1,16 +1,13 @@
-import type {
-  Server as WebSocketServer,
-  WebSocketHandler,
-  ServerWebSocket,
-  SocketListener,
-  SocketHandler,
-  Socket,
-} from "bun";
+import type { Server as WebSocketServer, WebSocketHandler, ServerWebSocket, SocketHandler, Socket } from "bun";
 
 export default function (
   executionContextId: string,
   url: string,
-  createBackend: (executionContextId: string, refEventLoop: boolean, receive: (message: string) => void) => unknown,
+  createBackend: (
+    executionContextId: string,
+    refEventLoop: boolean,
+    receive: (...messages: string[]) => void,
+  ) => unknown,
   send: (message: string) => void,
   close: () => void,
 ): void {
@@ -42,12 +39,16 @@ export default function (
 
 class Debugger {
   #url: URL;
-  #createBackend: (refEventLoop: boolean, receive: (message: string) => void) => Writer;
+  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Writer;
 
   constructor(
     executionContextId: string,
     url: string,
-    createBackend: (executionContextId: string, refEventLoop: boolean, receive: (message: string) => void) => unknown,
+    createBackend: (
+      executionContextId: string,
+      refEventLoop: boolean,
+      receive: (...messages: string[]) => void,
+    ) => unknown,
     send: (message: string) => void,
     close: () => void,
   ) {
@@ -104,6 +105,8 @@ class Debugger {
       message: (ws, message) => {
         if (typeof message === "string") {
           this.#message(ws, message);
+        } else {
+          this.#error(ws, new Error(`Unexpected binary message: ${message.toString()}`));
         }
       },
       drain: ws => this.#drain(ws),
@@ -165,8 +168,10 @@ class Debugger {
     const { refEventLoop } = data;
 
     const client = bufferedWriter(writer);
-    const backend = this.#createBackend(refEventLoop, message => {
-      client.write(message);
+    const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
+      for (const message of messages) {
+        client.write(message);
+      }
     });
 
     data.client = client;
@@ -194,6 +199,7 @@ class Debugger {
   #error(connection: ConnectionOwner, error: Error): void {
     const { data } = connection;
     const { backend } = data;
+    console.error(error);
     backend?.close();
   }
 }
@@ -236,11 +242,16 @@ function bufferedWriter(writer: Writer): Writer {
       return true;
     },
     drain: () => {
-      for (let i = 0; i < pendingMessages.length; i++) {
-        if (!writer.write(pendingMessages[i])) {
-          pendingMessages = pendingMessages.slice(i);
-          return;
+      draining = true;
+      try {
+        for (let i = 0; i < pendingMessages.length; i++) {
+          if (!writer.write(pendingMessages[i])) {
+            pendingMessages = pendingMessages.slice(i);
+            return;
+          }
         }
+      } finally {
+        draining = false;
       }
     },
     close: () => {

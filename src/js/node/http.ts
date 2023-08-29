@@ -615,6 +615,16 @@ class IncomingMessage extends Readable {
     this.url = url.pathname + url.search;
     this.#nodeReq = this.req = nodeReq;
     assignHeaders(this, req);
+
+    this.statusCode = req.status;
+    this.statusMessage = STATUS_CODES[req.status];
+
+    this.httpVersion = "1.1";
+    this.httpVersionMajor = 1;
+    this.httpVersionMinor = 1;
+
+    this.rawTrailers = [];
+    this.trailers = kEmptyObject;
   }
 
   headers;
@@ -624,7 +634,7 @@ class IncomingMessage extends Readable {
   #bodyStream: ReadableStreamDefaultReader | undefined;
   #fakeSocket: FakeSocket | undefined;
   #noBody = false;
-  #aborted = false;
+  aborted = false;
   #req;
   url;
   #type;
@@ -651,7 +661,7 @@ class IncomingMessage extends Readable {
   async #consumeStream(reader: ReadableStreamDefaultReader) {
     while (true) {
       var { done, value } = await reader.readMany();
-      if (this.#aborted) return;
+      if (this.aborted) return;
       if (done) {
         this.push(null);
         this.destroy();
@@ -678,51 +688,8 @@ class IncomingMessage extends Readable {
     }
   }
 
-  get aborted() {
-    return this.#aborted;
-  }
-
-  #abort() {
-    if (this.#aborted) return;
-    this.#aborted = true;
-    var bodyStream = this.#bodyStream;
-    if (!bodyStream) return;
-    bodyStream.cancel();
-    this.complete = true;
-    this.#bodyStream = undefined;
-    this.push(null);
-  }
-
   get connection() {
     return this.#fakeSocket;
-  }
-
-  get statusCode() {
-    return this.#req.status;
-  }
-
-  get statusMessage() {
-    return STATUS_CODES[this.#req.status];
-  }
-
-  get httpVersion() {
-    return "1.1";
-  }
-
-  get rawTrailers() {
-    return [];
-  }
-
-  get httpVersionMajor() {
-    return 1;
-  }
-
-  get httpVersionMinor() {
-    return 1;
-  }
-
-  get trailers() {
-    return kEmptyObject;
   }
 
   get socket() {

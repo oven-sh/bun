@@ -9,6 +9,7 @@ import {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import * as http from "node:http";
 import { createTest } from "node-harness";
 import url from "node:url";
 import { tmpdir } from "node:os";

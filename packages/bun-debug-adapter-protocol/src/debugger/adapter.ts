@@ -462,8 +462,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const url = `ws+unix://${randomUnixPath()}`;
     const signal = new UnixSignal();
 
-    const i = stopOnEntry ? "2" : "1";
-    processEnv["BUN_INSPECT"] = `${i}${url}`;
+    const query = stopOnEntry ? "break=1" : "wait=1";
+    processEnv["BUN_INSPECT"] = `${url}?${query}`;
     processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
     processEnv["FORCE_COLOR"] = "1";
 

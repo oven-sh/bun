@@ -40,21 +40,20 @@ const capabilities: DAP.Capabilities = {
       supportsCondition: false,
       description: "Breaks on `debugger` statements.",
     },
-    // TODO: Verify that these actually work
-    // {
-    //   filter: "assert",
-    //   label: "Assertion Failures",
-    //   default: false,
-    //   supportsCondition: false,
-    //   description: "Breaks on failed assertions.",
-    // },
-    // {
-    //   filter: "microtask",
-    //   label: "Microtasks",
-    //   default: false,
-    //   supportsCondition: false,
-    //   description: "Breaks on microtasks.",
-    // },
+    {
+      filter: "assert",
+      label: "Assertion Failures",
+      default: false,
+      supportsCondition: false,
+      description: "Breaks on failed assertions.",
+    },
+    {
+      filter: "microtask",
+      label: "Microtasks",
+      default: false,
+      supportsCondition: false,
+      description: "Breaks on microtasks.",
+    },
   ],
   supportsStepBack: false,
   supportsSetVariable: true,
@@ -87,7 +86,7 @@ const capabilities: DAP.Capabilities = {
   supportsClipboardContext: false,
   supportsSteppingGranularity: false,
   supportsInstructionBreakpoints: false,
-  supportsExceptionFilterOptions: true,
+  supportsExceptionFilterOptions: false,
   supportsSingleThreadExecutionRequests: false,
 };
 
@@ -110,9 +109,7 @@ type LaunchRequest = DAP.LaunchRequest & {
 
 type AttachRequest = DAP.AttachRequest & {
   url?: string;
-  hostname?: string;
-  port?: number;
-  restart?: boolean;
+  signalUrl?: string;
 };
 
 type Source = DAP.Source & {
@@ -234,6 +231,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#targets = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
+    // @ts-ignore
+    globalThis.jsc = (...args) => this.send(...args);
   }
 
   /**
@@ -249,7 +248,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * @returns if the inspector was able to connect
    */
   start(url?: string): Promise<boolean> {
-    return this.#inspector.start(url);
+    return this.#attach(url);
   }
 
   /**
@@ -314,15 +313,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  #reverseSend<R extends keyof DAP.RequestMap>(name: R, request: DAP.RequestMap[R]): void {
-    this.emit("Adapter.request", {
-      type: "request",
-      seq: 0,
-      command: name,
-      arguments: request,
-    });
-  }
-
   async ["Adapter.request"](request: DAP.Request): Promise<void> {
     const { command, arguments: args } = request;
 
@@ -330,10 +320,16 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return;
     }
 
+    let timerId: number | undefined;
     let result: unknown;
     try {
-      // @ts-ignore
-      result = await this[command](args);
+      result = await Promise.race([
+        // @ts-ignore
+        this[command](args),
+        new Promise((_, reject) => {
+          timerId = +setTimeout(() => reject(new Error(`Timed out: ${command}`)), 5000);
+        }),
+      ]);
     } catch (cause) {
       const error = unknownToError(cause);
       this.emit("Adapter.error", error);
@@ -348,6 +344,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         seq: 0,
       });
       return;
+    } finally {
+      if (timerId) {
+        clearTimeout(timerId);
+      }
     }
 
     this.emit("Adapter.response", {
@@ -371,16 +371,16 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
-    this.send("Debugger.enable");
+    this.send("Debugger.enable").catch(error => {
+      const { message } = unknownToError(error);
+      if (message !== "Debugger domain is already enabled") {
+        throw error;
+      }
+    });
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
     this.send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.send("Debugger.setBreakpointsActive", { active: true });
-
-    // If the client will not send a `configurationDone` request, then we need to
-    // tell the debugger that everything is ready.
-    if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
-      this.send("Inspector.initialized");
-    }
+    this.send("Inspector.initialized");
 
     // Tell the client what capabilities this adapter supports.
     return capabilities;
@@ -391,15 +391,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     // then we need to disable all breakpoints and pause on statements.
     if (this.#launched?.noDebug) {
       this.send("Debugger.setBreakpointsActive", { active: false });
-      this.send("Debugger.setPauseOnExceptions", { state: "none" });
-      this.send("Debugger.setPauseOnDebuggerStatements", { enabled: false });
-      this.send("Debugger.setPauseOnMicrotasks", { enabled: false });
-      this.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-      this.send("Debugger.setPauseOnAssertions", { enabled: false });
+      this.setExceptionBreakpoints({ filters: [] });
     }
-
-    // Tell the debugger that everything is ready.
-    this.send("Inspector.initialized");
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
@@ -428,7 +421,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       cwd,
       env = {},
       strictEnv = false,
-      stopOnEntry = false,
       watch = false,
     } = request;
 
@@ -462,9 +454,21 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const url = `ws+unix://${randomUnixPath()}`;
     const signal = new UnixSignal();
 
-    const query = stopOnEntry ? "break=1" : "wait=1";
-    processEnv["BUN_INSPECT"] = `${url}?${query}`;
+    signal.on("Signal.received", () => {
+      this.#attach(url);
+    });
+
+    this.once("Adapter.terminated", () => {
+      signal.close();
+    });
+
+    // Break on entry is always set so the debugger has a chance
+    // to set breakpoints before the program starts. If `stopOnEntry`
+    // was not set, then the debugger will auto-continue after the first pause.
+    processEnv["BUN_INSPECT"] = `${url}?break=1`;
     processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
+
+    // This is probably not correct, but it's the best we can do for now.
     processEnv["FORCE_COLOR"] = "1";
 
     const started = await this.#spawn({
@@ -478,22 +482,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     if (!started) {
       throw new Error("Program could not be started.");
     }
-
-    this.#signal = signal;
-    const attached = await this.#attach(url);
-
-    if (attached) {
-      return;
-    }
-
-    const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
-
-    const minVersion = "0.8.2";
-    if (parse(version, true) && compare(minVersion, version, true)) {
-      throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
-    }
-
-    throw new Error("Program started, but the debugger could not be attached.");
   }
 
   async #spawn(options: {
@@ -537,7 +525,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
       if (isDebugee) {
         this.#process = undefined;
-        this.#signal = undefined;
         this.#emit("exited", {
           exitCode: code ?? -1,
         });
@@ -545,11 +532,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
 
     subprocess.stdout?.on("data", data => {
-      this.emit("Process.stdout", data.toString());
+      // this.emit("Process.stdout", data.toString());
     });
 
     subprocess.stderr?.on("data", data => {
-      this.emit("Process.stderr", data.toString());
+      // this.emit("Process.stderr", data.toString());
     });
 
     return new Promise(resolve => {
@@ -577,18 +564,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #attach(url?: string | URL): Promise<boolean> {
-    if (this.#signal) {
-      await new Promise<void>(resolve => {
-        this.#signal?.once("Signal.received", () => {
-          resolve();
-        });
-        setTimeout(resolve, 3000);
-      });
-    }
-
-    for (let i = 0; i < 5; i++) {
-      const connected = await this.#inspector.start(url);
-      if (connected) {
+    for (let i = 0; i < 3; i++) {
+      const ok = await this.#inspector.start(url);
+      if (ok) {
         return true;
       }
       await new Promise(resolve => setTimeout(resolve, 100 * i));
@@ -598,7 +576,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   terminate(): void {
-    this.#process?.kill();
+    if (!this.#process?.kill()) {
+      this.#evaluate({
+        expression: "process.exit(0)",
+      });
+    }
+
     this.#emit("terminated");
   }
 
@@ -662,14 +645,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const { line, endLine, column, endColumn, source: source0 } = request;
     const source = await this.#getSource(sourceToId(source0));
 
-    const [start, end] = await Promise.all([
-      this.#generatedLocation(source, line, column),
-      this.#generatedLocation(source, endLine ?? line + 1, endColumn),
-    ]);
-
     const { locations } = await this.send("Debugger.getBreakpointLocations", {
-      start,
-      end,
+      start: this.#generatedLocation(source, line, column),
+      end: this.#generatedLocation(source, endLine ?? line + 1, endColumn),
     });
 
     return {
@@ -945,11 +923,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  async setExceptionBreakpoints(request: DAP.SetExceptionBreakpointsRequest): Promise<void> {
-    const { filters, filterOptions } = request;
-    if (filterOptions) {
-      filters.push(...filterOptions.map(({ filterId }) => filterId));
-    }
+  async setExceptionBreakpoints(
+    request: DAP.SetExceptionBreakpointsRequest,
+  ): Promise<DAP.SetExceptionBreakpointsResponse> {
+    const { filters } = request;
 
     let state: "all" | "uncaught" | "none";
     if (filters.includes("all")) {
@@ -972,6 +949,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         enabled: filters.includes("microtask"),
       }),
     ]);
+
+    return {
+      breakpoints: [],
+    };
   }
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
@@ -1128,13 +1109,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
-    if (this.#process?.exitCode === null) {
-      const connected = await this.#attach();
-      if (connected) {
-        return;
-      }
-    }
-
     this.#emit("output", {
       category: "debug console",
       output: "Debugger detached.\n",
@@ -1148,8 +1122,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       });
     }
 
-    this.#emit("terminated");
     this.#reset();
+
+    if (this.#process?.exitCode !== null) {
+      this.#emit("terminated");
+    }
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
@@ -1216,7 +1193,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     // if (reason === "PauseOnNextStatement") {
     //   for (const { functionName } of callFrames) {
     //     if (functionName === "module code") {
-    //       this.send("Debugger.resume");
+    //       this.#stopped = "initial";
     //       return;
     //     }
     //   }
@@ -1284,19 +1261,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  ["Process.stdout"](output: string): void {
-    this.#emit("output", {
-      category: "debug console",
-      output,
-    });
-  }
+  // ["Process.stdout"](output: string): void {
+  //   this.#emit("output", {
+  //     category: "debug console",
+  //     output,
+  //   });
+  // }
 
-  ["Process.stderr"](output: string): void {
-    this.#emit("output", {
-      category: "debug console",
-      output,
-    });
-  }
+  // ["Process.stderr"](output: string): void {
+  //   this.#emit("output", {
+  //     category: "debug console",
+  //     output,
+  //   });
+  // }
 
   ["Console.messageAdded"](event: JSC.Console.MessageAddedEvent): void {
     // const { message } = event;
@@ -1758,6 +1735,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     }
 
+    console.log("getProperties", { objectId, evaluateName, properties, variables });
     return variables;
   }
 
@@ -1857,13 +1835,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   close(): void {
     this.#process?.kill();
-    this.#signal?.close();
+    // this.#signal?.close();
     this.#inspector.close();
+    this.#reset();
   }
 
   #reset(): void {
-    this.#process = undefined;
-    this.#signal = undefined;
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;
@@ -1875,7 +1852,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#targets.clear();
     this.#variables.clear();
     this.#launched = undefined;
-    this.#initialized = undefined;
   }
 }
 
@@ -2076,8 +2052,7 @@ function remoteObjectToVariablePresentationHint(
   },
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
-  const { name, enumerable, configurable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } =
-    propertyDescriptor ?? {};
+  const { name, enumerable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
   const hasSymbol = symbol?.type === "symbol";
@@ -2096,7 +2071,7 @@ function remoteObjectToVariablePresentationHint(
   if (isSynthetic || isPrivate || hasSymbol) {
     visibility = "protected";
   }
-  if (enumerable === false || configurable === false || name === "__proto__") {
+  if (enumerable === false || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {

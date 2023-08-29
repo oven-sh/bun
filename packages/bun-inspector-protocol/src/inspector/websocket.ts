@@ -67,18 +67,23 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
     webSocket.addEventListener("open", () => {
       this.emit("Inspector.connected");
 
-      for (const request of this.#pendingRequests) {
+      for (let i = 0; i < this.#pendingRequests.length; i++) {
+        const request = this.#pendingRequests[i];
+
         if (this.#send(request)) {
           this.emit("Inspector.request", request);
+        } else {
+          this.#pendingRequests = this.#pendingRequests.slice(i);
+          break;
         }
       }
-
-      this.#pendingRequests.length = 0;
     });
 
     webSocket.addEventListener("message", ({ data }) => {
       if (typeof data === "string") {
         this.#accept(data);
+      } else {
+        this.emit("Inspector.error", new Error(`WebSocket received unexpected binary message: ${data.toString()}`));
       }
     });
 
@@ -125,8 +130,12 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
     };
 
     return new Promise((resolve, reject) => {
+      let timerId: number | undefined;
       const done = (result: any) => {
         this.#pendingResponses.delete(id);
+        if (timerId) {
+          clearTimeout(timerId);
+        }
         if (result instanceof Error) {
           reject(result);
         } else {
@@ -136,6 +145,7 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
 
       this.#pendingResponses.set(id, done);
       if (this.#send(request)) {
+        timerId = +setTimeout(() => done(new Error(`Timed out: ${method}`)), 3000);
         this.emit("Inspector.request", request);
       } else {
         this.emit("Inspector.pendingRequest", request);
@@ -183,7 +193,6 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
       return;
     }
 
-    this.#pendingResponses.delete(id);
     if ("error" in data) {
       const { error } = data;
       const { message } = error;
@@ -218,6 +227,7 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
       resolve(error ?? new Error("WebSocket closed"));
     }
     this.#pendingResponses.clear();
+
     if (error) {
       this.emit("Inspector.error", error);
     }

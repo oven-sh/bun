@@ -178,7 +178,7 @@ class TerminalDebugSession extends FileDebugSession {
     return new vscode.TerminalProfile({
       name: "Bun Terminal",
       env: {
-        "BUN_INSPECT": `${this.adapter.url}?wait=1`,
+        "BUN_INSPECT": `${this.adapter.url}?break=1`,
         "BUN_INSPECT_NOTIFY": `${this.signal.url}`,
       },
       isTransient: true,

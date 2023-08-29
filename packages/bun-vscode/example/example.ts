@@ -8,8 +8,7 @@ export default {
     };
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();
-    debugger;
-    return new Response("???");
+    return new Response("!!!");
   },
 };
 

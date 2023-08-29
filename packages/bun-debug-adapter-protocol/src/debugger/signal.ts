@@ -21,7 +21,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
   #server: Server;
   #ready: Promise<void>;
 
-  constructor(path?: string) {
+  constructor(path?: string | URL) {
     super();
     this.#path = path ? parseUnixPath(path) : randomUnixPath();
     this.#server = createServer();
@@ -74,8 +74,8 @@ export function randomUnixPath(): string {
   return join(tmpdir(), `${Math.random().toString(36).slice(2)}.sock`);
 }
 
-function parseUnixPath(path: string): string {
-  if (path.startsWith("/")) {
+function parseUnixPath(path: string | URL): string {
+  if (typeof path === "string" && path.startsWith("/")) {
     return path;
   }
   try {

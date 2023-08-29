@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 
 describe("example", () => {
-  test("it works", () => {
+  test("it works", function poop() {
     expect(1).toBe(1);
     expect(1).not.toBe(2);
     expect(() => {

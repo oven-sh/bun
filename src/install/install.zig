@@ -251,14 +251,21 @@ const NetworkTask = struct {
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
         this.url_buf = blk: {
-            const href = bun.String.fromUTF8(scope.url.href);
-            const name2 = bun.String.fromUTF8(name);
-
-            const tmp = bun.JSC.URL.join(href, name2);
+            const tmp = bun.JSC.URL.join(
+                bun.String.fromUTF8(scope.url.href),
+                bun.String.fromUTF8(name),
+            );
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
-                return error.@"Failed to join package name for manifest";
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    .{},
+                    allocator,
+                    "Failed to join registry \"{s}\" and package \"{s}\" URLs",
+                    .{ scope.url.href, name },
+                ) catch unreachable;
+                return error.InvalidURL;
             }
             // This actually duplicates the string! So we defer deref above.
             break :blk try tmp.toOwnedSlice(allocator);
@@ -3391,7 +3398,18 @@ pub const PackageManager = struct {
                 i,
                 &dependency,
                 resolution,
-            ) catch {};
+            ) catch |err| {
+                this.log.addZigErrorWithNote(
+                    this.allocator,
+                    err,
+                    "error occured while resolving {s}@{}",
+                    .{
+                        lockfile.str(&dependency.name),
+                        strings.QuotedFormatter{ .text = lockfile.str(&dependency.version.literal) },
+                    },
+                ) catch unreachable;
+                continue;
+            };
         }
 
         this.drainDependencyList();

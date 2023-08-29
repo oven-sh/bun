@@ -1027,6 +1027,20 @@ pub const Log = struct {
         });
     }
 
+    pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) !void {
+        @setCold(true);
+        log.errors += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(null, Range.None, allocPrint(allocator, noteFmt, args) catch unreachable);
+
+        try log.addMsg(.{
+            .kind = .err,
+            .data = rangeData(null, Range.None, @errorName(err)),
+            .notes = notes,
+        });
+    }
+
     pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;

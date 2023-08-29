@@ -5618,7 +5618,19 @@ pub const NodeFS = struct {
 
             const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
                 .result => |result| result,
-                .err => |err| return .{ .err = err },
+                .err => |err| {
+                    if(err.getErrno() == .LOOP) {
+                        // ELOOP is returned when you open a symlink with NOFOLLOW.
+                        // as in, it does not actually let you open it.
+return Syscall.symlink(
+                    src,
+                    dest
+                );
+                    }
+
+
+                    return .{ .err = err };
+                },
             };
             defer {
                 _ = Syscall.close(src_fd);
@@ -5629,8 +5641,7 @@ pub const NodeFS = struct {
                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
             };
 
-            // TODO: this probably doesnt work. Handle ISLNK
-            if (!os.S.ISREG(stat_.mode) and !os.S.ISLNK(stat_.mode)) {
+            if (!os.S.ISREG(stat_.mode)) {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
             }
 
@@ -5640,9 +5651,34 @@ pub const NodeFS = struct {
                 flags |= std.os.O.EXCL;
             }
 
-            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
-                .result => |result| result,
-                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            const dest_fd = dest_fd: {
+                switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                    .result => |result| break :dest_fd result,
+                    .err => |err| {
+                        if (err.getErrno() == .NOENT) {
+                            // Create the parent directory if it doesn't exist
+                            var len = dest.len;
+                            while (len > 0 and dest[len - 1] != std.fs.path.sep) {
+                                len -= 1;
+                            }
+                            const mkdirResult = this.mkdirRecursive(.{
+                                .path = PathLike{ .string = PathString.init(dest[0..len]) },
+                                .recursive = true,
+                            }, .sync);
+                            if (mkdirResult == .err) {
+                                return Maybe(Return.CopyFile){ .err = mkdirResult.err };
+                            }
+
+                            switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                                .result => |result| break :dest_fd result,
+                                .err => {},
+                            }
+                        }
+
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..dest.len]) };
+                    },
+                }
             };
 
             var size: usize = @intCast(@max(stat_.size, 0));

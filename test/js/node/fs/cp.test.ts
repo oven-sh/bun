@@ -139,14 +139,11 @@ for (const [name, copy] of impls) {
         "from/a.txt": "a",
       });
 
-      // Create a symbolic link
       fs.symlinkSync(basename + "/from/a.txt", basename + "/from/a_symlink.txt");
 
-      // Copy the symbolic link
       await copy(basename + "/from/a_symlink.txt", basename + "/result.txt");
       await copy(basename + "/from/a_symlink.txt", basename + "/result2.txt", { recursive: false });
 
-      // Check if the resulting file is also a symbolic link
       const stats = fs.lstatSync(basename + "/result.txt");
       expect(stats.isSymbolicLink()).toBe(true);
       expect(fs.readFileSync(basename + "/result.txt", "utf8")).toBe("a");
@@ -191,7 +188,7 @@ for (const [name, copy] of impls) {
       expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
-    test("symlinks - directory recursive", async () => {
+    test("symlinks - directory recursive 2", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",
         "from/b.txt": "b",

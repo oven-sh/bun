@@ -61,7 +61,7 @@ test("node-fetch uses node streams instead of web streams", async () => {
     for await (const chunk of result.body) {
       chunks.push(chunk);
     }
-    // expect(Buffer.concat(chunks).toString()).toBe("hello world");
+    expect(Buffer.concat(chunks).toString()).toBe("hello world");
   } finally {
     server.stop(true);
   }

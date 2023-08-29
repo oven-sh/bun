@@ -11,9 +11,13 @@ import {
   ServerResponse,
   IncomingMessage,
 } from "node:http";
+<<<<<<< HEAD
 
 import https from "node:https";
 import { createServer as createHttpsServer } from "node:https";
+=======
+import * as http from "node:http";
+>>>>>>> f2ef69d68 (feat(compat): support `got`)
 import { createTest } from "node-harness";
 import url from "node:url";
 import { tmpdir } from "node:os";
@@ -920,6 +924,18 @@ describe("node:http", () => {
     });
   });
 
+  test("should not decompress gzip, issue#4397", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      res.on("data", function cb(chunk) {
+        resolve(chunk);
+        res.off("data", cb);
+      });
+    }).end();
+    const chunk = await promise;
+    expect(chunk.toString()).not.toContain("<html");
+  });
+
   test("test unix socket server", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {
@@ -977,6 +993,7 @@ describe("node:http", () => {
     });
   });
 
+<<<<<<< HEAD
   test("error event not fired, issue#4651", done => {
     const server = createServer((req, res) => {
       res.end();
@@ -1045,11 +1062,35 @@ describe("server.address should be valid IP", () => {
         server.close();
         expect(server.address()).toBeNull();
         done();
+=======
+  test("IncomingMessage.statusMessage is overridable", done => {
+    const server = createServer((req, res) => {
+      // From `got` library
+      const statusCode = res.statusCode;
+      res.statusMessage = http.STATUS_CODES[statusCode];
+      res.url = "any";
+      res.requestUrl = "any";
+      res.redirectUrls = "any";
+      res.request = "any";
+      res.isFromCache = "any";
+      res.ip = "any";
+      res.retryCount = "any";
+      res.ok = true;
+      res.end("success");
+    });
+    server.listen({ port: 0 }, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(200);
+          done();
+        });
+>>>>>>> f2ef69d68 (feat(compat): support `got`)
       } catch (err) {
         done(err);
       }
     });
   });
+<<<<<<< HEAD
   it("test default hostname, issue#5850", done => {
     const server = createServer((req, res) => {});
     server.listen(0, async (_err, host, port) => {
@@ -1555,4 +1596,6 @@ it("#6892", () => {
     expect(req.url).toBe(url);
     expect(req.method).toBeNull();
   }
+=======
+>>>>>>> f2ef69d68 (feat(compat): support `got`)
 });

@@ -6,28 +6,18 @@ Bun supports [Nuxt](https://nuxt.com) out of the box. Initialize a Nuxt app with
 
 ```sh
 $ bunx nuxi init my-nuxt-app
-Nuxi 3.6.5
-✨ Nuxt project is created with v3 template. Next steps:
- › cd my-nuxt-app
- › Install dependencies with npm install or yarn install or pnpm install
- › Start development server with npm run dev or yarn dev or pnpm run dev
-```
-
----
-
-Then move into the project directory and install dependencies.
-
-```sh
-$ cd my-app
-$ bun install
-bun install v0.8.0
- + @nuxt/devtools@0.8.0
- + @types/node@18.17.6
- + nuxt@3.6.5
-Nuxi 3.6.5
+✔ Which package manager would you like to use?
+bun
+◐ Installing dependencies...
+bun install v0.8.1 (16b4bf34)
+ + @nuxt/devtools@0.8.2
+ + nuxt@3.7.0
+ 785 packages installed [2.67s]
+✔ Installation completed.
 ✔ Types generated in .nuxt
-
- 776 packages installed [1.72s]
+✨ Nuxt project has been created with the v3 template. Next steps:
+ › cd my-nuxt-app
+ › Start development server with bun run dev
 ```
 
 ---
@@ -39,6 +29,7 @@ The `nuxt` CLI uses Node.js by default; passing the `--bun` flag forces the dev 
 {% /callout %}
 
 ```
+$ cd my-nuxt-app
 $ bun --bun run dev
  $ nuxt dev
 Nuxi 3.6.5

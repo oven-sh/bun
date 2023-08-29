@@ -1,0 +1,6 @@
+{
+  "name": "test-got",
+  "dependencies": {
+    "got": "13.0.0"
+  }
+}

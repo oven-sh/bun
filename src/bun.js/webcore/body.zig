@@ -209,6 +209,7 @@ pub const Body = struct {
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, readable: *JSC.WebCore.ReadableStream) void = null,
         size_hint: Blob.SizeType = 0,
 
         deinit: bool = false,
@@ -526,6 +527,10 @@ pub const Body = struct {
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toJS(globalThis),
                     };
+
+                    if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
+                        onReadableStreamAvailable(locked.task.?, &locked.readable.?);
+                    }
 
                     locked.readable.?.value.protect();
                     return locked.readable.?.value;
@@ -1517,10 +1522,12 @@ pub const BodyValueBufferer = struct {
                     }
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;
+                    _ = sink.stream_buffer.write(byte_stream.buffer.items) catch @panic("OOM");
                     return;
                 },
             }
         }
+
         if (locked.onReceiveValue != null or locked.task != null) {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             const readable = value.toReadableStream(sink.global);

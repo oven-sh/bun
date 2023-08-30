@@ -1125,6 +1125,47 @@ fn NewFlags(comptime debug_mode: bool) type {
     };
 }
 
+pub const AnyRequestContext = union(enum) {
+    none: void,
+    RequestContext: *NewRequestContext(false, false, Server),
+    SSLRequestContext: *NewRequestContext(true, false, SSLServer),
+    DebugRequestContext: *NewRequestContext(false, true, DebugServer),
+    DebugSSLRequestContext: *NewRequestContext(true, true, DebugSSLServer),
+
+    // TODO need to cast a runtime NewRequestContext to one of the valid ones in the enum
+    pub fn fromExisting(request_ctx: anytype) AnyRequestContext {
+        return switch (@TypeOf(request_ctx)) {
+            @TypeOf(AnyRequestContext.RequestContext) => .{ .RequestContext = request_ctx },
+            @TypeOf(AnyRequestContext.SSLRequestContext) => .{ .SSLRequestContext = request_ctx },
+            @TypeOf(AnyRequestContext.DebugRequestContext) => .{ .DebugRequestContext = request_ctx },
+            @TypeOf(AnyRequestContext.DebugSSLRequestContext) => .{ .DebugSSLRequestContext = request_ctx },
+            else => .{ .none = {} },
+        };
+    }
+
+    /// Returns length of text written to dests
+    pub fn getRemoteAddressAsText(self: AnyRequestContext, dest: []u8) usize {
+        return switch (self) {
+            .none => 0,
+            inline else => |req_ctx| if (req_ctx.resp) |response|
+                response.getRemoteAddressAsText(dest)
+            else
+                0,
+        };
+    }
+
+    pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
+        return switch (self) {
+            .none => null,
+            inline else => |req_ctx| req_ctx.req,
+        };
+    }
+
+    // pub fn getURL(req_ctx: AnyRequestContext) void {
+
+    // }
+};
+
 // This is defined separately partially to work-around an LLVM debugger bug.
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
@@ -4749,6 +4790,19 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             globalThis.throw("Server() is not a constructor", .{});
             return null;
         }
+
+        pub fn requestIp(this: ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            var buf = [_]u8{0} ** 64;
+
+            const len = request.request_context.getRemoteAddressAsText(&buf);
+
+            if (len == 0) {
+                return JSValue.jsNull();
+            }
+
+            return ZigString.init(buf[0..len]).toValueGC(this.globalThis);
+        }
+
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
@@ -5524,7 +5578,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .uws_request = req,
+                .request_context = AnyRequestContext.fromExisting(ctx),
                 .https = ssl_enabled,
                 .signal = ctx.signal,
                 .body = body.ref(),
@@ -5645,7 +5699,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .uws_request = req,
+                .request_context = AnyRequestContext.fromExisting(ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = ctx.signal,

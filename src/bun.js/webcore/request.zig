@@ -68,7 +68,7 @@ pub const Request = struct {
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
     method: Method = Method.GET,
-    uws_request: ?*uws.Request = null,
+    request_context: JSC.API.AnyRequestContext = .{ .none = {} },
     https: bool = false,
     upgrader: ?*anyopaque = null,
 
@@ -89,7 +89,7 @@ pub const Request = struct {
     pub fn getContentType(
         this: *Request,
     ) ?ZigString.Slice {
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             if (req.header("content-type")) |value| {
                 return ZigString.Slice.fromUTF8NeverFree(value);
             }
@@ -324,7 +324,7 @@ pub const Request = struct {
         if (this.url.length() > 0)
             return this.url.byteSlice().len;
 
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
@@ -351,7 +351,7 @@ pub const Request = struct {
     pub fn ensureURL(this: *Request) !void {
         if (!this.url.isEmpty()) return;
 
-        if (this.uws_request) |req| {
+        if (this.request_context.getRequest()) |req| {
             const req_url = req.url();
             if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
@@ -724,7 +724,7 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         if (this.headers == null) {
-            if (this.uws_request) |req| {
+            if (this.request_context.getRequest()) |req| {
                 this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
@@ -743,7 +743,7 @@ pub const Request = struct {
 
     pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
         if (this.headers == null) {
-            if (this.uws_request) |uws_req| {
+            if (this.request_context.getRequest()) |uws_req| {
                 this.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
             }
         }

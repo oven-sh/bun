@@ -994,6 +994,22 @@ extern "C"
     return value.length();
   }
 
+  size_t uws_res_get_remote_address_as_text(int ssl, uws_res_t *res, const char **dest)
+  {
+      if (ssl)
+      {
+          uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+          std::string_view value = uwsRes->getRemoteAddressAsText();
+          *dest = value.data();
+          return value.length();
+      }
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+
+      std::string_view value = uwsRes->getRemoteAddressAsText();
+      *dest = value.data();
+      return value.length();
+  }
+
   size_t uws_ws_get_remote_address_as_text(int ssl, uws_websocket_t *ws,
                                            const char **dest)
   {

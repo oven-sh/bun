@@ -260,7 +260,7 @@ describe("node:http", () => {
     });
 
     it("should make a https:// GET request when passed string as first arg", done => {
-      const req = request("https://example.com", res => {
+      const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -629,6 +629,7 @@ describe("node:http", () => {
           path: "http://example.com",
           headers: {
             Host: "example.com",
+            "accept-encoding": "identity",
           },
         };
 
@@ -825,7 +826,17 @@ describe("node:http", () => {
       }
     });
   });
-
+  test("should not decompress gzip, issue#4397", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      res.on("data", function cb(chunk) {
+        resolve(chunk);
+        res.off("data", cb);
+      });
+    }).end();
+    const chunk = await promise;
+    expect(chunk.toString()).not.toContain("<html");
+  });
   test("test unix socket server", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {

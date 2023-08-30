@@ -144,8 +144,16 @@ class NoopSourceMap implements SourceMap {
 const defaultSourceMap = new NoopSourceMap();
 
 export function SourceMap(url?: string): SourceMap {
-  if (!url || !url.startsWith("data:")) {
+  if (!url) {
     return defaultSourceMap;
+  }
+  if (!url.startsWith("data:")) {
+    const match = url.match(/\/\/[#@]\s*sourceMappingURL=(.*)$/m);
+    if (!match) {
+      return defaultSourceMap;
+    }
+    const [_, sourceMapUrl] = match;
+    url = sourceMapUrl;
   }
   try {
     const [_, base64] = url.split(",", 2);

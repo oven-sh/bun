@@ -145,7 +145,7 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
 
       this.#pendingResponses.set(id, done);
       if (this.#send(request)) {
-        timerId = +setTimeout(() => done(new Error(`Timed out: ${method}`)), 3000);
+        timerId = +setTimeout(() => done(new Error(`Timed out: ${method}`)), 10_000);
         this.emit("Inspector.request", request);
       } else {
         this.emit("Inspector.pendingRequest", request);

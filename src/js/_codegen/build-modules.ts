@@ -84,7 +84,7 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
     const found = moduleList.indexOf(path.relative(BASE, relativeMatch));
     if (found === -1) {
       throw new Error(
-        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here.`,
+        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,
       );
     }
     return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);

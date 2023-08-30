@@ -3327,7 +3327,7 @@ var require_readable = __commonJS({
 
         streamReadable.pause();
 
-        const cleanup = finished(streamReadable, error => {
+        const cleanup = eos(streamReadable, error => {
           if (error?.code === "ERR_STREAM_PREMATURE_CLOSE") {
             const err = new AbortError(undefined, { cause: error });
             error = err;

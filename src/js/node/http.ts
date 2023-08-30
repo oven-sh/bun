@@ -1280,6 +1280,7 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     try {
+      //@ts-ignore
       this.#fetchRequest = fetch(url, {
         method,
         headers: this.getHeaders(),
@@ -1291,6 +1292,8 @@ class ClientRequest extends OutgoingMessage {
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
       })
         .then(response => {
           var res = (this.#res = new IncomingMessage(response, {

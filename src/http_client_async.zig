@@ -1217,7 +1217,7 @@ received_keep_alive: bool = false,
 
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
-
+disable_decompression: bool = false,
 state: InternalState = .{},
 
 result_callback: HTTPClientResult.Callback = undefined,
@@ -3038,19 +3038,25 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Content-Encoding") => {
-                if (strings.eqlComptime(header.value, "gzip")) {
-                    this.state.encoding = Encoding.gzip;
-                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                } else if (strings.eqlComptime(header.value, "deflate")) {
-                    this.state.encoding = Encoding.deflate;
-                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                if (!this.disable_decompression) {
+                    if (strings.eqlComptime(header.value, "gzip")) {
+                        this.state.encoding = Encoding.gzip;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    } else if (strings.eqlComptime(header.value, "deflate")) {
+                        this.state.encoding = Encoding.deflate;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    }
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
-                    this.state.transfer_encoding = Encoding.gzip;
+                    if (!this.disable_decompression) {
+                        this.state.transfer_encoding = Encoding.gzip;
+                    }
                 } else if (strings.eqlComptime(header.value, "deflate")) {
-                    this.state.transfer_encoding = Encoding.deflate;
+                    if (!this.disable_decompression) {
+                        this.state.transfer_encoding = Encoding.deflate;
+                    }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;
                 } else if (strings.eqlComptime(header.value, "chunked")) {

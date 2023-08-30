@@ -449,6 +449,9 @@ pub const VirtualMachine = struct {
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?OpaqueCallback = null,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -530,6 +533,15 @@ pub const VirtualMachine = struct {
 
     pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
         return this.rareData().mimeTypeFromString(this.allocator, str);
+    }
+
+    pub fn onAfterEventLoop(this: *VirtualMachine) void {
+        if (this.after_event_loop_callback) |cb| {
+            var ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {

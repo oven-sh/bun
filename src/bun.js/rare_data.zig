@@ -26,7 +26,7 @@ hot_map: ?HotMap = null,
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
-file_polls_: ?*JSC.FilePoll.HiveArray = null,
+file_polls_: ?*JSC.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
@@ -102,10 +102,10 @@ pub const HotMap = struct {
     }
 };
 
-pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;
-        this.file_polls_.?.* = JSC.FilePoll.HiveArray.init(vm.allocator);
+        this.file_polls_ = vm.allocator.create(JSC.FilePoll.Store) catch unreachable;
+        this.file_polls_.?.* = JSC.FilePoll.Store.init(vm.allocator);
         return this.file_polls_.?;
     };
 }

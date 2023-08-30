@@ -737,6 +737,7 @@ pub const EventLoop = struct {
         if (loop.num_polls > 0 or loop.active > 0) {
             loop.tick();
             this.processGCTimer();
+            ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
     }
@@ -760,6 +761,7 @@ pub const EventLoop = struct {
         if (loop.num_polls > 0 or loop.active > 0) {
             loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
+            ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
     }
@@ -784,6 +786,7 @@ pub const EventLoop = struct {
 
         loop.tick();
         this.processGCTimer();
+        ctx.onAfterEventLoop();
         this.tickConcurrent();
         this.tick();
     }
@@ -806,6 +809,7 @@ pub const EventLoop = struct {
         if (loop.active > 0) {
             loop.tick();
             this.processGCTimer();
+            ctx.onAfterEventLoop();
             // this.afterUSocketsTick();
         }
     }

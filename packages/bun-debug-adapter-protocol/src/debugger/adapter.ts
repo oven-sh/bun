@@ -549,6 +549,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         this.#emit("exited", {
           exitCode: code ?? -1,
         });
+        this.#emit("terminated");
       }
     });
 

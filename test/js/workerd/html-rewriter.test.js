@@ -589,3 +589,46 @@ payloads.forEach(type => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+it("works with fetch", async () => {
+  const url = "https://bun.sh";
+  const res = await fetch(url);
+  let calls = 0;
+
+  const rw = new HTMLRewriter();
+  rw.on("html", {
+    text() {
+      calls++;
+    },
+  });
+
+  const transformed = rw.transform(res);
+  const body = await transformed.text();
+  expect(body).toContain("Bun");
+  expect(body).toEndWith("html>");
+  expect(calls).toBeGreaterThan(0);
+});
+
+it("works with fetch after getting a reader", async () => {
+  const url = "https://bun.sh";
+  const res = await fetch(url);
+  const reader = res.body.getReader();
+  let calls = 0;
+
+  const rw = new HTMLRewriter();
+  rw.on("h1", {
+    text() {
+      calls++;
+    },
+  });
+
+  const transformed = rw.transform(res);
+  const body = await transformed.text();
+
+  await Bun.sleep(100);
+  expect(body).toContain("Bun");
+  expect(body).toEndWith("html>");
+  expect(calls).toBeGreaterThan(0);
+  const { done } = await reader.read();
+  expect(done).toBeTrue();
+});

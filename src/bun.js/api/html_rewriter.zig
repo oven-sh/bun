@@ -170,10 +170,6 @@ pub const HTMLRewriter = struct {
     }
 
     pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        if (response.body.len() == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
-            return this.returnEmptyResponse(global, response);
-        }
-
         return this.beginTransform(global, response);
     }
 

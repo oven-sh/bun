@@ -1,8 +1,7 @@
 #include <spawn.h>
 #include <signal.h>
 
-extern "C" int posix_spawnattr_reset_signals(posix_spawnattr_t* attr,
-    int isDetached)
+extern "C" int posix_spawnattr_reset_signals(posix_spawnattr_t* attr)
 {
     sigset_t signal_set;
     sigfillset(&signal_set);

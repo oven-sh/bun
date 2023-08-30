@@ -76,13 +76,13 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn resetSignals(this: *Attr, isDetached: bool) !void {
-            if (posix_spawnattr_reset_signals(&this.attr, @intFromBool(isDetached)) != 0) {
+        pub fn resetSignals(this: *Attr) !void {
+            if (posix_spawnattr_reset_signals(&this.attr) != 0) {
                 return error.SystemResources;
             }
         }
 
-        extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t, isDetached: c_int) c_int;
+        extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t) c_int;
     };
 
     pub const Actions = struct {

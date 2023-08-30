@@ -1276,7 +1276,7 @@ pub const Subprocess = struct {
             attr.set(@intCast(flags)) catch |err| return globalThis.handleError(err, "in posix_spawn");
         }
 
-        attr.resetSignals(detached) catch {
+        attr.resetSignals() catch {
             globalThis.throw("Failed to reset signals in posix_spawn", .{});
             return .zero;
         };

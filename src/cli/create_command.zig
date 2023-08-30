@@ -554,7 +554,7 @@ pub const CreateCommand = struct {
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = plucker.fd };
+                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
                     }
                 }
             },
@@ -615,9 +615,13 @@ pub const CreateCommand = struct {
                             var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
-                            // Assumption: you only really care about making sure something that was executable is still executable
-                            const stat = infile.stat() catch continue;
-                            _ = C.fchmod(outfile.handle, stat.mode);
+                            if (comptime Environment.isPosix) {
+                                // Assumption: you only really care about making sure something that was executable is still executable
+                                const stat = infile.stat() catch continue;
+                                _ = C.fchmod(outfile.handle, stat.mode);
+                            } else {
+                                bun.todo(@src(), void{});
+                            }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
                                 Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
@@ -633,24 +637,33 @@ pub const CreateCommand = struct {
 
                 read_package_json: {
                     if (package_json_file) |pkg| {
-                        const stat = pkg.stat() catch |err| {
-                            node.end();
+                        const size = brk: {
+                            if (comptime Environment.isWindows) {
+                                break :brk try pkg.getEndPos();
+                            }
 
-                            progress.refresh();
+                            const stat = pkg.stat() catch |err| {
+                                node.end();
 
-                            package_json_file = null;
-                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
-                            break :read_package_json;
+                                progress.refresh();
+
+                                package_json_file = null;
+                                Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                                break :read_package_json;
+                            };
+
+                            if (stat.kind != .file or stat.size == 0) {
+                                package_json_file = null;
+                                node.end();
+
+                                progress.refresh();
+                                break :read_package_json;
+                            }
+
+                            break :brk stat.size;
                         };
 
-                        if (stat.kind != .file or stat.size == 0) {
-                            package_json_file = null;
-                            node.end();
-
-                            progress.refresh();
-                            break :read_package_json;
-                        }
-                        package_json_contents = try MutableString.init(ctx.allocator, stat.size);
+                        package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
@@ -1717,36 +1730,36 @@ pub const Example = struct {
         {
             var folders = [3]std.fs.IterableDir{
                 .{
-                    .dir = .{ .fd = 0 },
+                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
                 },
                 .{
-                    .dir = .{ .fd = 0 },
+                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
                 },
-                .{ .dir = .{ .fd = 0 } },
+                .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             // subfolders with package.json
             for (folders) |folder__| {
                 const folder_ = folder__.dir;
 
-                if (folder_.fd != 0) {
+                if (folder_.fd != bun.fdcast(bun.invalid_fd)) {
                     const folder: std.fs.Dir = folder_;
                     var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
 

@@ -187,7 +187,17 @@ pub fn main() anyerror!void {
     var ctx = try default_allocator.create(HTTP.HTTPChannelContext);
     ctx.* = .{
         .channel = channel,
-        .http = try HTTP.AsyncHTTP.init(default_allocator, args.method, args.url, args.headers, args.headers_buf, response_body_string, args.body, 0, HTTP.FetchRedirect.follow,),
+        .http = try HTTP.AsyncHTTP.init(
+            default_allocator,
+            args.method,
+            args.url,
+            args.headers,
+            args.headers_buf,
+            response_body_string,
+            args.body,
+            0,
+            HTTP.FetchRedirect.follow,
+        ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;
     var batch = HTTPThread.Batch{};

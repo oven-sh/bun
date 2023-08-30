@@ -110,12 +110,25 @@ pub const InitCommand = struct {
         initializeStore();
         read_package_json: {
             if (package_json_file) |pkg| {
-                const stat = pkg.stat() catch break :read_package_json;
+                const size = brk: {
+                    if (comptime bun.Environment.isWindows) {
+                        const end = pkg.getEndPos() catch break :read_package_json;
+                        if (end == 0) {
+                            break :read_package_json;
+                        }
 
-                if (stat.kind != .file or stat.size == 0) {
-                    break :read_package_json;
-                }
-                package_json_contents = try MutableString.init(alloc, stat.size);
+                        break :brk end;
+                    }
+                    const stat = pkg.stat() catch break :read_package_json;
+
+                    if (stat.kind != .file or stat.size == 0) {
+                        break :read_package_json;
+                    }
+
+                    break :brk stat.size;
+                };
+
+                package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {

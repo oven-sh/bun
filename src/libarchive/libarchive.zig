@@ -437,9 +437,10 @@ pub const Archive = struct {
                     const size = @as(usize, @intCast(@max(lib.archive_entry_size(entry), 0)));
                     if (size > 0) {
                         var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
-                        var stat = try opened.stat();
+                        defer opened.close();
+                        const stat_size = try opened.getEndPos();
 
-                        if (stat.size > 0) {
+                        if (stat_size > 0) {
                             const is_already_top_level = dirname.len == 0;
                             const path_to_use_: string = brk: {
                                 const __pathname: string = bun.asByteSlice(pathname);
@@ -539,26 +540,37 @@ pub const Archive = struct {
                             if ((mode & 0o4) != 0)
                                 mode |= 0o1;
 
-                            std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
-                                if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                try std.os.mkdiratZ(dir_fd, pathname, 0o777);
-                            };
+                            if (comptime Environment.isWindows) {
+                                std.os.mkdirat(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    try std.os.mkdirat(dir_fd, pathname, 0o777);
+                                };
+                            } else {
+                                std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
+                                    try dir.makePath(std.fs.path.dirname(slice) orelse return err);
+                                    try std.os.mkdiratZ(dir_fd, pathname, 0o777);
+                                };
+                            }
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
-
-                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                    },
-                                    else => {
-                                        return err;
-                                    },
-                                }
-                            };
+                            if (comptime Environment.isWindows) {
+                                bun.todo(@src(), {});
+                            } else {
+                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                    switch (err) {
+                                        error.AccessDenied, error.FileNotFound => {
+                                            dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                        },
+                                        else => {
+                                            return err;
+                                        },
+                                    }
+                                };
+                            }
                         },
                         Kind.file => {
                             const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));
@@ -601,7 +613,7 @@ pub const Archive = struct {
                                             var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
-                                            plucker_.fd = file.handle;
+                                            plucker_.fd = bun.toFD(file.handle);
                                             continue :loop;
                                         }
                                     }
@@ -618,7 +630,7 @@ pub const Archive = struct {
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (lib.archive_read_data_into_fd(archive, file.handle)) {
+                                    switch (lib.archive_read_data_into_fd(archive, bun.fdi32(file.handle))) {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {

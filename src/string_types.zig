@@ -31,6 +31,10 @@ pub const PathString = packed struct {
         return this.toValue().asObjectRef();
     }
 
+    pub fn estimatedSize(this: *const PathString) usize {
+        return @as(usize, this.len);
+    }
+
     pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         var zig_str = JSC.ZigString.init(this.slice());
         zig_str.detectEncoding();

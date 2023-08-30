@@ -42,6 +42,7 @@ public:
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -57,6 +58,9 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
+    size_t m_memoryCost { 0 };
+    void computeMemoryCost();
 
 protected:
     JSFetchHeaders(JSC::Structure*, JSDOMGlobalObject&, Ref<FetchHeaders>&&);

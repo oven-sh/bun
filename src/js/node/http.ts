@@ -447,6 +447,10 @@ class Server extends EventEmitter {
 
   listen(port, host, backlog, onListen) {
     const server = this;
+    let socketPath;
+    if (typeof port == "string") {
+      socketPath = port;
+    }
     if (typeof host === "function") {
       onListen = host;
       host = undefined;
@@ -481,6 +485,7 @@ class Server extends EventEmitter {
         tls,
         port,
         hostname: host,
+        unix: socketPath,
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {

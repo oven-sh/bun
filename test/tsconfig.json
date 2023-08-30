@@ -1,14 +1,13 @@
 {
   "include": [".", "../packages/bun-types/index.d.ts"],
   "compilerOptions": {
-    "noEmit": true,
     "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
-    "emitDeclarationOnly": true,
+    "noEmit": true,
     "composite": true,
     "strict": true,
     "downlevelIteration": true,

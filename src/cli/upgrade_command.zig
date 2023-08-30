@@ -408,14 +408,14 @@ pub const UpgradeCommand = struct {
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.span(std.os.argv), "--stable"))
+            if (default_use_canary and strings.containsAny(bun.span(bun.argv()), "--stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.span(std.os.argv), "--canary") or default_use_canary;
+                strings.containsAny(bun.span(bun.argv()), "--canary") or default_use_canary;
         };
 
-        const use_profile = strings.containsAny(bun.span(std.os.argv), "--profile");
+        const use_profile = strings.containsAny(bun.span(bun.argv()), "--profile");
 
         if (!use_canary) {
             var refresher = std.Progress{};
@@ -532,7 +532,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             var tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            std.os.chdirZ(tmpdir_z) catch {};
+            _ = bun.sys.chdir(tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =

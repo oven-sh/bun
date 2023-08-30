@@ -126,6 +126,7 @@ export default [
     klass: {},
     configurable: false,
     structuredClone: { transferable: false, tag: 254 },
+    estimatedSize: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

@@ -199,7 +199,7 @@ pub const HTMLRewriter = struct {
             this.finalized = true;
         }
 
-        pub fn fail(this: *HTMLRewriterLoader, err: JSC.Node.Syscall.Error) void {
+        pub fn fail(this: *HTMLRewriterLoader, err: bun.sys.Error) void {
             this.signal.close(err);
             this.output.end(err);
             this.failed = true;
@@ -213,7 +213,7 @@ pub const HTMLRewriter = struct {
         pub fn writeToDestination(this: *HTMLRewriterLoader, bytes: []const u8) void {
             if (this.backpressure.count > 0) {
                 this.backpressure.write(bytes) catch {
-                    this.fail(JSC.Node.Syscall.Error.oom);
+                    this.fail(bun.sys.Error.oom);
                     this.finalize();
                 };
                 return;
@@ -287,9 +287,9 @@ pub const HTMLRewriter = struct {
             return JSC.WebCore.Sink.init(this);
         }
 
-        fn writeBytes(this: *HTMLRewriterLoader, bytes: bun.ByteList, comptime deinit_: bool) ?JSC.Node.Syscall.Error {
+        fn writeBytes(this: *HTMLRewriterLoader, bytes: bun.ByteList, comptime deinit_: bool) ?bun.sys.Error {
             this.rewriter.write(bytes.slice()) catch {
-                return JSC.Node.Syscall.Error{
+                return bun.sys.Error{
                     .errno = 1,
                     // TODO: make this a union
                     .path = bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice()) catch unreachable,

@@ -2327,8 +2327,8 @@ pub const ParseTask = struct {
         task: EventLoop.Task = undefined,
 
         value: union(Tag) {
-            err: Error,
             success: Success,
+            err: Error,
             empty: struct {
                 source_index: Index,
 
@@ -2555,7 +2555,7 @@ pub const ParseTask = struct {
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd > 2 and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
-            _ = JSC.Node.Syscall.close(entry.fd);
+            _ = bun.sys.close(entry.fd);
         }
 
         if (!will_close_file_descriptor and entry.fd > 2) task.contents_or_fd = .{
@@ -9166,7 +9166,7 @@ const LinkerContext = struct {
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                            .dirfd = bun.toFD(root_dir.dir.fd),
                             .file = .{
                                 .path = JSC.Node.PathLike{
                                     .string = JSC.PathString.init(source_map_final_rel_path),
@@ -9236,7 +9236,7 @@ const LinkerContext = struct {
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                    .dirfd = bun.toFD(root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(rel_path),
@@ -9305,7 +9305,7 @@ const LinkerContext = struct {
                         },
                     },
                     .encoding = .buffer,
-                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                    .dirfd = bun.toFD(root_dir.dir.fd),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(components_manifest_path),
@@ -9381,7 +9381,7 @@ const LinkerContext = struct {
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
+                        .dirfd = bun.toFD(root_dir.dir.fd),
                         .file = .{
                             .path = JSC.Node.PathLike{
                                 .string = JSC.PathString.init(src.dest_path),

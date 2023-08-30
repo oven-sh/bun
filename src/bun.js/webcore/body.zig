@@ -1,8 +1,7 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -450,8 +449,8 @@ pub const Body = struct {
 
         pub const Tag = enum {
             Blob,
-            InternalBlob,
             WTFStringImpl,
+            InternalBlob,
             // InlineBlob,
             Locked,
             Used,

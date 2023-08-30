@@ -29,8 +29,8 @@ pub const Chunk = struct {
 
     pub const Content = union(Tag) {
         t_url: TextContent,
-        t_import: Import,
         t_verbatim: Verbatim,
+        t_import: Import,
     };
 
     pub fn raw(chunk: *const Chunk, source: *const logger.Source) string {
@@ -1255,8 +1255,13 @@ pub fn NewBundler(
 
         pub fn getSource(this: *CSSBundler, url: string, input_fd: ?StoredFileDescriptorType) !logger.Source {
             const entry = try this.fs_reader.readFile(this.fs, url, 0, true, input_fd);
-            const file = Fs.File{ .path = Fs.Path.init(url), .contents = entry.contents };
-            return logger.Source.initFile(file, this.allocator);
+            return logger.Source.initFile(
+                .{
+                    .path = Fs.Path.init(url),
+                    .contents = entry.contents,
+                },
+                this.allocator,
+            );
         }
 
         pub fn addCSSImport(this: *CSSBundler, absolute_path: string) anyerror!void {

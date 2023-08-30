@@ -1353,6 +1353,7 @@ pub const ZigConsoleClient = struct {
                     Set: void,
                     BigInt: void,
                     Symbol: void,
+                    CustomFormattedObject: CustomFormattedObject,
                     GlobalObject: void,
                     Private: void,
                     Promise: void,
@@ -1363,8 +1364,6 @@ pub const ZigConsoleClient = struct {
                     JSX: void,
                     Event: void,
                     Getter: void,
-
-                    CustomFormattedObject: CustomFormattedObject,
 
                     pub fn isPrimitive(this: @This()) bool {
                         return @as(Tag, this).isPrimitive();

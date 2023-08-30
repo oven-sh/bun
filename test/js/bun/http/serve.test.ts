@@ -1,11 +1,12 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { resolve } from "path";
+import { join, resolve } from "path";
 import { bunExe, bunEnv } from "harness";
 import { renderToReadableStream } from "react-dom/server";
 import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
+import { tmpdir } from "os";
 
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
@@ -225,7 +226,7 @@ describe("streaming", () => {
             return new Response(
               new ReadableStream({
                 pull(controller) {
-                  throw new Error("Not a real error");
+                  throw new Error("TestPassed");
                 },
                 cancel(reason) {},
               }),
@@ -449,11 +450,12 @@ describe("streaming", () => {
     const textToExpect = readFileSync(fixture, "utf-8");
     await runTest(
       {
-        fetch(req) {
+        async fetch(req) {
           return new Response(
             new ReadableStream({
-              start(controller) {
+              async start(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
+                await Bun.sleep(0);
                 queueMicrotask(() => {
                   controller.enqueue(textToExpect.substring(100));
                   controller.close();
@@ -502,8 +504,9 @@ describe("streaming", () => {
         fetch(req) {
           return new Response(
             new ReadableStream({
-              pull(controller) {
+              async pull(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
+                await Bun.sleep(0);
                 queueMicrotask(() => {
                   controller.enqueue(textToExpect.substring(100));
                   controller.close();
@@ -540,9 +543,9 @@ describe("streaming", () => {
                 async pull(controller) {
                   for (let chunk of chunks) {
                     controller.enqueue(Buffer.from(chunk));
-                    await 1;
+                    await Bun.sleep(0);
                   }
-                  await 1;
+                  await Bun.sleep(0);
                   controller.close();
                 },
               }),
@@ -569,9 +572,9 @@ describe("streaming", () => {
             new ReadableStream({
               async pull(controller) {
                 controller.enqueue(textToExpect.substring(0, 100));
-                await Promise.resolve();
+                await Bun.sleep(0);
                 controller.enqueue(textToExpect.substring(100));
-                await Promise.resolve();
+                await Bun.sleep(0);
                 controller.close();
               },
             }),
@@ -598,7 +601,7 @@ describe("streaming", () => {
                 for (let i = 0; i < 10 && remain.length > 0; i++) {
                   controller.enqueue(remain.substring(0, 100));
                   remain = remain.substring(100);
-                  await new Promise(resolve => queueMicrotask(resolve));
+                  await Bun.sleep(0);
                 }
 
                 controller.enqueue(remain);
@@ -1114,4 +1117,51 @@ it("does propagate type for Blob", async () => {
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
 
   server.stop(true);
+});
+
+it("unix socket connection in Bun.serve", async () => {
+  const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
+  const server = Bun.serve({
+    port: 0,
+    unix,
+
+    async fetch(req) {
+      expect(req.headers.get("Content-Type")).toBeNull();
+      return new Response(new Blob(["hey"], { type: "text/plain;charset=utf-8" }));
+    },
+  });
+
+  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers();
+  const connection = await Bun.connect({
+    unix,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        resolve();
+      },
+    },
+  });
+  connection.write(requestText);
+  connection.flush();
+  await promise;
+  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nhey");
+  connection.end();
+  server.stop(true);
+});
+
+it("unix socket connection throws an error on a bad domain without crashing", async () => {
+  const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
+  expect(() => {
+    const server = Bun.serve({
+      port: 0,
+      unix,
+
+      async fetch(req) {
+        expect(req.headers.get("Content-Type")).toBeNull();
+        return new Response(new Blob(["hey"], { type: "text/plain;charset=utf-8" }));
+      },
+    });
+  }).toThrow();
 });

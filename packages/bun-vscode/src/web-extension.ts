@@ -1,10 +1,5 @@
 import * as vscode from "vscode";
-import { activateBunDebug } from "./activate";
 
-export function activate(context: vscode.ExtensionContext) {
-  activateBunDebug(context);
-}
+export function activate(context: vscode.ExtensionContext) {}
 
-export function deactivate() {
-  // No-op
-}
+export function deactivate() {}

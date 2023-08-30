@@ -24,9 +24,8 @@ for (const [value, _method] of [
   [Object(BigInt(0)), "isBigIntObject"],
   [new Error(), "isNativeError"],
   [new RegExp()],
-  [async function () {}, "isAsyncFunction"],
-  [function* () {}, "isGeneratorFunction"],
   [(function* () {})(), "isGeneratorObject"],
+  [(async function* () {})(), "isGeneratorObject"],
   [Promise.resolve()],
   [new Map()],
   [new Set()],
@@ -248,3 +247,22 @@ test("isBoxedPrimitive", () => {
   }
 }
 // */
+
+test("isAsyncFunction", () => {
+  for (let fn of [async function asyncFn() {}, async function* asyncGeneratorFn() {}]) {
+    expect(types.isAsyncFunction(fn)).toBeTrue();
+  }
+
+  for (let fn of [function normal() {}, function* generatorFn() {}]) {
+    expect(types.isAsyncFunction(fn)).toBeFalse();
+  }
+});
+test("isGeneratorFunction", () => {
+  for (let fn of [function* generator() {}, async function* asyncGenerator() {}]) {
+    expect(types.isGeneratorFunction(fn)).toBeTrue();
+  }
+
+  for (let fn of [function normal() {}, async function asyncFn() {}]) {
+    expect(types.isGeneratorFunction(fn)).toBeFalse();
+  }
+});

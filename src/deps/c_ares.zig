@@ -221,6 +221,22 @@ pub const struct_hostent = extern struct {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_hostent) void;
     }
 
+    pub fn hostCallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_host_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, hostent);
+            }
+        }.handle;
+    }
+
     pub fn callbackWrapper(
         comptime lookup_name: []const u8,
         comptime Type: type,
@@ -522,6 +538,37 @@ pub const Channel = opaque {
 
         const field_name = comptime std.fmt.comptimePrint("ns_t_{s}", .{lookup_name});
         ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(lookup_name, Type, callback), ctx);
+    }
+
+    pub fn getHostByAddr(this: *Channel, ip_addr: []const u8, comptime Type: type, ctx: *Type, comptime callback: struct_hostent.Callback(Type)) void {
+        // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
+        const buf_size = 46;
+        var addr_buf: [buf_size]u8 = undefined;
+        const addr_ptr: ?[*:0]const u8 = brk: {
+            if (ip_addr.len == 0 or ip_addr.len >= buf_size) {
+                break :brk null;
+            }
+            const len = @min(ip_addr.len, addr_buf.len - 1);
+            @memcpy(addr_buf[0..len], ip_addr[0..len]);
+
+            addr_buf[len] = 0;
+            break :brk addr_buf[0..len :0];
+        };
+
+        // https://c-ares.org/ares_inet_pton.html
+        // https://github.com/c-ares/c-ares/blob/7f3262312f246556d8c1bdd8ccc1844847f42787/src/lib/ares_gethostbyaddr.c#L71-L72
+        // `ares_inet_pton` allows passing raw bytes as `dst`,
+        // which can avoid the use of `struct_in_addr` to reduce extra bytes.
+        var addr: [16]u8 = undefined;
+        if (addr_ptr != null) {
+            if (ares_inet_pton(std.os.AF.INET, addr_ptr, &addr) == 1) {
+                ares_gethostbyaddr(this, &addr, 4, std.os.AF.INET, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+                return;
+            } else if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &addr) == 1) {
+                return ares_gethostbyaddr(this, &addr, 16, std.os.AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+            }
+        }
+        struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
@@ -1091,6 +1138,7 @@ pub const struct_ares_soa_reply = extern struct {
         ares_free_data(this);
     }
 };
+
 pub const struct_ares_uri_reply = extern struct {
     next: [*c]struct_ares_uri_reply,
     priority: c_ushort,
@@ -1197,6 +1245,10 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
+        if (comptime bun.Environment.isWindows) {
+            return bun.todo(@src(), Error.ENOTIMP);
+        }
+
         return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {
             @as(std.os.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,

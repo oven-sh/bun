@@ -25,7 +25,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -722,7 +722,7 @@ pub const FFI = struct {
                 var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "FFI.h" }) catch unreachable;
                 const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/bun.js/api/FFI.h.");
                 defer file.close();
-                return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+                return file.readToEndAlloc(default_allocator, file.getEndPos() catch unreachable) catch unreachable;
             } else {
                 return FFI_HEADER;
             }
@@ -937,7 +937,7 @@ pub const FFI = struct {
             var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.allow_assert and Environment.isPosix) {
                 debug_write: {
                     const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
                     _ = std.os.write(fd, source_code.items) catch break :debug_write;

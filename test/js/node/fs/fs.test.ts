@@ -1205,6 +1205,23 @@ describe("createReadStream", () => {
       });
     });
   });
+
+  it("should emit open", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.close(err => {
+      expect(err).toBeDefined();
+      expect(err?.message).toContain("Premature close");
+      done();
+    });
+  });
 });
 
 describe("fs.WriteStream", () => {
@@ -1287,6 +1304,17 @@ describe("fs.WriteStream", () => {
       expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), "/not-used.txt");
+    // @ts-ignore-next-line
+    const ws = new WriteStream_(path, {
+      fd: 2,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(2);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -1388,6 +1416,17 @@ describe("fs.ReadStream", () => {
       expect(data).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), "not-used.txt");
+    // @ts-ignore-next-line
+    const ws = new ReadStream_(path, {
+      fd: 0,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -1495,6 +1534,44 @@ describe("createWriteStream", () => {
         expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
         resolve(true);
       });
+    });
+  });
+
+  it("should emit open and call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.close(err => {
+      expect(err).toBeUndefined();
+      done();
+    });
+  });
+
+  it("should call callbacks in the correct order", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    let counter = 0;
+    ws.on("open", () => {
+      expect(counter++).toBe(1);
+    });
+
+    ws.close(() => {
+      expect(counter++).toBe(3);
+      done();
+    });
+
+    const rs = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    rs.on("open", () => {
+      expect(counter++).toBe(0);
+    });
+
+    rs.close(() => {
+      expect(counter++).toBe(2);
     });
   });
 });

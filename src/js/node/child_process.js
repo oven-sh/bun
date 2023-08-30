@@ -888,9 +888,13 @@ function normalizeSpawnArguments(file, args, options) {
     cwd = getValidatedPath(cwd, "options.cwd");
   }
 
-  // TODO: Detached check
   // TODO: Gid check
   // TODO: Uid check
+  var detached = false;
+  const { detached: detachedOption } = options;
+  if (detachedOption != null) {
+    detached = !!detachedOption;
+  }
 
   // Validate the shell, if present.
   if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
@@ -945,7 +949,7 @@ function normalizeSpawnArguments(file, args, options) {
 
   // TODO: Windows env support here...
 
-  return { ...options, file, args, cwd, envPairs };
+  return { ...options, detached, file, args, cwd, envPairs };
 }
 
 function checkExecSyncError(ret, args, cmd) {
@@ -1155,7 +1159,7 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
 
     var env = options.envPairs || undefined;
-
+    const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     this.#handle = Bun.spawn({
@@ -1165,6 +1169,7 @@ class ChildProcess extends EventEmitter {
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
       env: env || process.env,
+      detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         this.#handle = handle;
         this.pid = this.#handle.pid;

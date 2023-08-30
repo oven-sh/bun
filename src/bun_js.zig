@@ -297,8 +297,7 @@ pub const Run = struct {
         }
 
         // don't run the GC if we don't actually need to
-        if (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or
-            vm.uws_event_loop.?.active > 0 or
+        if (vm.isEventLoopAlive() or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
@@ -315,7 +314,7 @@ pub const Run = struct {
                 }
 
                 while (true) {
-                    while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
@@ -343,7 +342,7 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }

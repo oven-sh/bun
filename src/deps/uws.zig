@@ -748,7 +748,14 @@ pub const Loop = extern struct {
     /// The list of ready polls
     ready_polls: [1024]EventType align(16),
 
-    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
+    const EventType = switch (Environment.os) {
+        .linux => std.os.linux.epoll_event,
+        .mac => std.os.system.kevent64_s,
+        // TODO:
+        .windows => *anyopaque,
+        else => @compileError("Unsupported OS"),
+    };
+
     const log = bun.Output.scoped(.Loop, false);
 
     pub const InternalLoopData = extern struct {
@@ -820,7 +827,11 @@ pub const Loop = extern struct {
     }
 
     pub fn tick(this: *Loop) void {
-        us_loop_run_bun_tick(this);
+        us_loop_run_bun_tick(this, 0);
+    }
+
+    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
+        us_loop_run_bun_tick(this, timeoutMs);
     }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -882,7 +893,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
@@ -1635,6 +1646,37 @@ pub fn NewApp(comptime ssl: bool) type {
             };
             return uws_app_listen_with_config(ssl_flag, @as(*uws_app_t, @ptrCast(app)), config.host, @as(u16, @intCast(config.port)), config.options, Wrapper.handle, user_data);
         }
+
+        pub fn listenOnUnixSocket(
+            app: *ThisApp,
+            comptime UserData: type,
+            user_data: UserData,
+            comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
+            domain: [*:0]const u8,
+            flags: i32,
+        ) void {
+            const Wrapper = struct {
+                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.C) void {
+                    if (comptime UserData == void) {
+                        @call(.always_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                    } else {
+                        @call(.always_inline, handler, .{
+                            @as(UserData, @ptrCast(@alignCast(data))),
+                            @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
+                        });
+                    }
+                }
+            };
+            return uws_app_listen_domain_with_options(
+                ssl_flag,
+                @as(*uws_app_t, @ptrCast(app)),
+                domain,
+                flags,
+                Wrapper.handle,
+                user_data,
+            );
+        }
+
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
         }
@@ -2206,3 +2248,12 @@ pub const State = enum(i32) {
 };
 
 extern fn us_socket_sendfile_needs_more(socket: *Socket) void;
+
+extern fn uws_app_listen_domain_with_options(
+    ssl_flag: c_int,
+    app: *uws_app_t,
+    domain: [*:0]const u8,
+    i32,
+    *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
+    ?*anyopaque,
+) void;

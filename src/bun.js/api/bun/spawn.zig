@@ -75,6 +75,14 @@ pub const PosixSpawn = struct {
                 else => |err| return unexpectedErrno(err),
             }
         }
+
+        pub fn resetSignals(this: *Attr) !void {
+            if (posix_spawnattr_reset_signals(&this.attr) != 0) {
+                return error.SystemResources;
+            }
+        }
+
+        extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t) c_int;
     };
 
     pub const Actions = struct {
@@ -206,7 +214,7 @@ pub const PosixSpawn = struct {
             envp,
         );
         if (comptime bun.Environment.allow_assert)
-            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
+            bun.sys.syslog("posix_spawn({s}) = {d} ({d})", .{
                 path,
                 rc,
                 pid,

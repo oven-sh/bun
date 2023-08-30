@@ -191,6 +191,8 @@ public:
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
+    size_t memoryCost() const;
+
     // Instead of passing a string literal to any of these functions, just use a HTTPHeaderName instead.
     template<size_t length> String get(const char (&)[length]) const = delete;
     template<size_t length> void set(const char (&)[length], const String &) = delete;

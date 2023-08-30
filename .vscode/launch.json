@@ -4,8 +4,6 @@
   // it makes our tests very slow
   // But it helps catch memory bugs
 
-  // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits:
-  // { "initCommands": ["process handle -p false -s false -n false SIGHUP"] }
   "version": "0.2.0",
   "configurations": [
     {
@@ -21,7 +19,6 @@
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -36,7 +33,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
 
@@ -51,7 +47,6 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -66,7 +61,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -81,7 +75,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -96,7 +89,6 @@
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -111,7 +103,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -126,7 +117,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -140,7 +130,6 @@
         "FORCE_COLOR": "1",
         "NODE_ENV": "development"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -155,7 +144,6 @@
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -168,7 +156,6 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -181,7 +168,6 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -194,7 +180,6 @@
       "env": {
         "FORCE_COLOR": "1"
       },
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
@@ -216,9 +201,7 @@
       "console": "internalConsole",
       "env": {
         "BUN_CONFIG_MINIFY_WHITESPACE": "1"
-      },
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
+      }
     },
     {
       "type": "lldb",

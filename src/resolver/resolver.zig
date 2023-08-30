@@ -26,7 +26,7 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../http.zig").Watcher;
+const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../bun_dev_http_server.zig").Watcher;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
@@ -1001,12 +1001,12 @@ pub const Resolver = struct {
                                 bun.openFileForPath(span);
 
                             if (!store_fd) {
-                                std.debug.assert(file.handle > 2);
+                                std.debug.assert(bun.FDTag.get(file.handle) == .none);
                                 out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
                                 query.entry.cache.fd = 0;
                             } else {
-                                query.entry.cache.fd = file.handle;
+                                query.entry.cache.fd = bun.toFD(file.handle);
                                 Fs.FileSystem.setMaxFd(file.handle);
                             }
                         }
@@ -1014,7 +1014,7 @@ pub const Resolver = struct {
                         defer {
                             if (r.fs.fs.needToCloseFiles()) {
                                 if (query.entry.cache.fd != 0) {
-                                    var file = std.fs.File{ .handle = query.entry.cache.fd };
+                                    var file = std.fs.File{ .handle = bun.fdcast(query.entry.cache.fd) };
                                     file.close();
                                     query.entry.cache.fd = 0;
                                 }
@@ -2040,10 +2040,10 @@ pub const Resolver = struct {
 
             if (r.store_fd) {
                 Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                dir_entries_ptr.fd = open_dir.dir.fd;
+                dir_entries_ptr.fd = bun.toFD(open_dir.dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2064,7 +2064,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            open_dir.dir.fd,
+            bun.toFD(open_dir.dir.fd),
             package_id,
         );
         return dir_info_ptr;
@@ -2337,7 +2337,7 @@ pub const Resolver = struct {
             false,
             null,
         );
-        _ = bun.JSC.Node.Syscall.close(entry.fd);
+        _ = bun.sys.close(entry.fd);
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -2527,7 +2527,7 @@ pub const Resolver = struct {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 var open_dirs: []std.fs.IterableDir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    _ = bun.JSC.Node.Syscall.close(open_dir.dir.fd);
+                    _ = bun.sys.close(bun.toFD(open_dir.dir.fd));
                 }
             }
         }
@@ -2572,7 +2572,7 @@ pub const Resolver = struct {
                 // }
             }
 
-            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = queue_top.fd } } else (_open_dir catch |err| {
+            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(queue_top.fd) } } else (_open_dir catch |err| {
                 switch (err) {
                     error.EACCESS => {},
 
@@ -2683,13 +2683,13 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) open_dir.dir.fd else 0;
+                new_entry.fd = if (r.store_fd) bun.toFD(open_dir.dir.fd) else 0;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ open_dir.dir.fd, dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2704,7 +2704,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                open_dir.dir.fd,
+                bun.toFD(open_dir.dir.fd),
                 null,
             );
 
@@ -3713,7 +3713,7 @@ pub const Resolver = struct {
                             bin_folders = BinFolderArray.init(0) catch unreachable;
                         }
 
-                        const this_dir = std.fs.Dir{ .fd = fd };
+                        const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
                         var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
                         defer file.close();
                         var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
@@ -3738,7 +3738,7 @@ pub const Resolver = struct {
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
                             }
 
-                            const this_dir = std.fs.Dir{ .fd = fd };
+                            const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
                             var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
                             defer file.close();
                             var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;

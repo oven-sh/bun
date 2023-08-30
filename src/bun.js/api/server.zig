@@ -24,7 +24,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -80,7 +80,7 @@ const Blob = JSC.WebCore.Blob;
 const BoringSSL = @import("root").bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
-    fd: i32,
+    fd: bun.FileDescriptor,
     socket_fd: i32 = 0,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
@@ -120,8 +120,28 @@ const BlobFileContentResult = struct {
 };
 
 pub const ServerConfig = struct {
-    port: u16 = 0,
-    hostname: ?[*:0]const u8 = null,
+    address: union(enum) {
+        tcp: struct {
+            port: u16 = 0,
+            hostname: ?[*:0]const u8 = null,
+        },
+        unix: [*:0]const u8,
+
+        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+            switch (this.*) {
+                .tcp => |tcp| {
+                    if (tcp.hostname) |host| {
+                        allocator.free(bun.sliceTo(host, 0));
+                    }
+                },
+                .unix => |addr| {
+                    allocator.free(bun.sliceTo(addr, 0));
+                },
+            }
+        }
+    } = .{
+        .tcp = .{},
+    },
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -138,6 +158,36 @@ pub const ServerConfig = struct {
 
     inspector: bool = false,
     reuse_port: bool = false,
+    id: []const u8 = "",
+    allow_hot: bool = true,
+
+    pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
+        var arraylist = std.ArrayList(u8).init(allocator);
+        var writer = arraylist.writer();
+
+        writer.writeAll("[http]-") catch {};
+        switch (this.address) {
+            .tcp => {
+                if (this.address.tcp.hostname) |host| {
+                    writer.print("tcp:{s}:{d}", .{
+                        bun.sliceTo(host, 0),
+                        this.address.tcp.port,
+                    }) catch {};
+                } else {
+                    writer.print("tcp:localhost:{d}", .{
+                        this.address.tcp.port,
+                    }) catch {};
+                }
+            },
+            .unix => {
+                writer.print("unix:{s}", .{
+                    bun.sliceTo(this.address.unix, 0),
+                }) catch {};
+            },
+        }
+
+        return arraylist.items;
+    }
 
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,
@@ -657,8 +707,12 @@ pub const ServerConfig = struct {
         var env = arguments.vm.bundler.env;
 
         var args = ServerConfig{
-            .port = 3000,
-            .hostname = null,
+            .address = .{
+                .tcp = .{
+                    .port = 3000,
+                    .hostname = null,
+                },
+            },
             .development = true,
         };
         var has_hostname = false;
@@ -670,19 +724,24 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
+        args.address.tcp.port = brk: {
+            const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
 
-        inline for (PORT_ENV) |PORT| {
-            if (env.get(PORT)) |port| {
-                if (std.fmt.parseInt(u16, port, 10)) |_port| {
-                    args.port = _port;
-                } else |_| {}
+            inline for (PORT_ENV) |PORT| {
+                if (env.get(PORT)) |port| {
+                    if (std.fmt.parseInt(u16, port, 10)) |_port| {
+                        break :brk _port;
+                    } else |_| {}
+                }
             }
-        }
 
-        if (arguments.vm.bundler.options.transform_options.port) |port| {
-            args.port = port;
-        }
+            if (arguments.vm.bundler.options.transform_options.port) |port| {
+                break :brk port;
+            }
+
+            break :brk args.address.tcp.port;
+        };
+        var port = args.address.tcp.port;
 
         if (arguments.vm.bundler.options.transform_options.origin) |origin| {
             args.base_uri = origin;
@@ -714,13 +773,14 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
-                args.port = @as(
+                args.address.tcp.port = @as(
                     u16,
                     @intCast(@min(
                         @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
                     )),
                 );
+                port = args.address.tcp.port;
             }
 
             if (arg.getTruthy(global, "baseURI")) |baseURI| {
@@ -737,9 +797,47 @@ pub const ServerConfig = struct {
                     global,
                     bun.default_allocator,
                 );
+                defer host_str.deinit();
+
                 if (host_str.len > 0) {
-                    args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                    args.address.tcp.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
                     has_hostname = true;
+                }
+            }
+
+            if (arg.getTruthy(global, "unix")) |unix| {
+                const unix_str = unix.toSlice(
+                    global,
+                    bun.default_allocator,
+                );
+                defer unix_str.deinit();
+                if (unix_str.len > 0) {
+                    if (has_hostname) {
+                        JSC.throwInvalidArguments("Cannot specify both hostname and unix", .{}, global, exception);
+                        if (args.ssl_config) |*conf| {
+                            conf.deinit();
+                        }
+                        return args;
+                    }
+
+                    args.address = .{ .unix = bun.default_allocator.dupeZ(u8, unix_str.slice()) catch unreachable };
+                }
+            }
+
+            if (arg.get(global, "id")) |id| {
+                if (id.isUndefinedOrNull()) {
+                    args.allow_hot = false;
+                } else {
+                    const id_str = id.toSlice(
+                        global,
+                        bun.default_allocator,
+                    );
+
+                    if (id_str.len > 0) {
+                        args.id = (id_str.cloneIfNeeded(bun.default_allocator) catch unreachable).slice();
+                    } else {
+                        args.allow_hot = false;
+                    }
                 }
             }
 
@@ -846,7 +944,7 @@ pub const ServerConfig = struct {
                 const hostname = args.base_url.hostname;
                 const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
                 if (needsBrackets) {
-                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
                             protocol,
                             hostname,
@@ -856,11 +954,11 @@ pub const ServerConfig = struct {
                         std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
                             protocol,
                             hostname,
-                            args.port,
+                            port,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })) catch unreachable;
                 } else {
-                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                         std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
                             protocol,
                             hostname,
@@ -870,7 +968,7 @@ pub const ServerConfig = struct {
                         std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
                             protocol,
                             hostname,
-                            args.port,
+                            port,
                             strings.trimLeadingChar(args.base_url.pathname, '/'),
                         })) catch unreachable;
                 }
@@ -879,27 +977,27 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname.?).len > 0) std.mem.span(args.hostname.?) else "0.0.0.0";
+                if (has_hostname) std.mem.span(args.address.tcp.hostname.?) else "0.0.0.0";
 
             const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
 
             const protocol: string = if (args.ssl_config != null) "https" else "http";
             if (needsBrackets) {
-                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                     std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
             } else {
-                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
                     std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
                         protocol,
                         hostname,
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
             }
 
             if (!strings.isAllASCII(hostname)) {
@@ -1084,7 +1182,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        // TODO: Use TransmitFile on Windows
+        const can_sendfile = !ssl_enabled and !bun.Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1646,7 +1745,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
-                _ = JSC.Node.Syscall.close(this.sendfile.fd);
+                _ = bun.sys.close(this.sendfile.fd);
             this.sendfile = undefined;
             this.finalize();
         }
@@ -1739,8 +1838,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
+            const write_offset: usize = write_offset_;
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
@@ -1753,7 +1853,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+            const write_offset: usize = write_offset_;
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
@@ -1784,7 +1885,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
                 file.pathlike.fd
-            else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
                     this.server.globalThis,
@@ -1792,27 +1893,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // stat only blocks if the target is a file descriptor
-            const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
                     return;
                 },
             };
 
             if (Environment.isMac) {
-                if (!std.os.S.ISREG(stat.mode)) {
+                if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1825,13 +1926,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (Environment.isLinux) {
-                if (!(std.os.S.ISREG(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
+                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1845,7 +1946,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const original_size = this.blob.Blob.size;
             const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
+            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
                 stat_size
             else
                 @min(original_size, stat_size);
@@ -1863,12 +1964,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if we are sending only part of a file, include the content-range header
             // only include content-range automatically when using a file path instead of an fd
             // this is to better support manually controlling the behavior
-            if (std.os.S.ISREG(stat.mode) and auto_close) {
+            if (bun.isRegularFile(stat.mode) and auto_close) {
                 this.flags.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
             }
 
             // we know the bounds when we are sending a regular file
-            if (std.os.S.ISREG(stat.mode)) {
+            if (bun.isRegularFile(stat.mode)) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
@@ -1937,7 +2038,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 // this is used by content-range
                 this.sendfile = .{
-                    .fd = @as(i32, @truncate(bun.invalid_fd)),
+                    .fd = bun.invalid_fd,
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
                     .offset = this.blob.Blob.offset,
                     .auto_close = false,
@@ -4816,26 +4917,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSC.jsBoolean(true);
         }
 
-        pub fn onReload(
-            this: *ThisServer,
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
-            const arguments = callframe.arguments(1).slice();
-            if (arguments.len < 1) {
-                globalThis.throwNotEnoughArguments("reload", 1, 0);
-                return .zero;
-            }
-
-            var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
-            defer args_slice.deinit();
-            var exception_ref = [_]JSC.C.JSValueRef{null};
-            var exception: JSC.C.ExceptionRef = &exception_ref;
-            var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
-            if (exception.* != null) {
-                globalThis.throwValue(exception_ref[0].?.value());
-                return .zero;
-            }
+        pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *JSC.JSGlobalObject) void {
+            httplog("onReload", .{});
 
             // only reload those two
             if (this.config.onRequest != new_config.onRequest) {
@@ -4864,6 +4947,30 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.config.websocket = ws.*;
                 } // we don't remove it
             }
+        }
+
+        pub fn onReload(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(1).slice();
+            if (arguments.len < 1) {
+                globalThis.throwNotEnoughArguments("reload", 1, 0);
+                return .zero;
+            }
+
+            var args_slice = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+            defer args_slice.deinit();
+            var exception_ref = [_]JSC.C.JSValueRef{null};
+            var exception: JSC.C.ExceptionRef = &exception_ref;
+            var new_config = ServerConfig.fromJS(globalThis, &args_slice, exception);
+            if (exception.* != null) {
+                globalThis.throwValue(exception_ref[0].?.value());
+                return .zero;
+            }
+
+            this.onReloadFromZig(&new_config, globalThis);
 
             return this.thisObject;
         }
@@ -5007,8 +5114,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.port);
+            if (this.config.address != .tcp) {
+                return JSValue.undefined;
+            }
+
+            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.address.tcp.port);
             return JSC.JSValue.jsNumber(listener.getLocalPort());
+        }
+
+        pub fn getId(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue {
+            var str = bun.String.create(this.config.id);
+            defer str.deref();
+            return str.toJS(globalThis);
         }
 
         pub fn getPendingRequests(
@@ -5036,8 +5156,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     }
                 }
 
-                if (this.cached_hostname.isEmpty())
-                    this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "localhost"));
+                if (this.cached_hostname.isEmpty()) {
+                    switch (this.config.address) {
+                        .tcp => |tcp| {
+                            if (tcp.hostname) |hostname| {
+                                this.cached_hostname = bun.String.create(bun.sliceTo(hostname, 0));
+                            } else {
+                                this.cached_hostname = bun.String.createAtom("localhost");
+                            }
+                        },
+                        else => {},
+                    }
+                }
             }
 
             return this.cached_hostname.toJS(globalThis);
@@ -5105,6 +5235,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
+            if (this.config.allow_hot and this.config.id.len > 0) {
+                if (this.globalThis.bunVM().hotMap()) |hot| {
+                    hot.remove(this.config.id);
+                }
+            }
+
             this.stopListening(abrupt);
             this.deinitIfWeCan();
         }
@@ -5130,9 +5266,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.cached_hostname.deref();
             this.cached_protocol.deref();
 
-            if (this.config.hostname) |host| {
-                bun.default_allocator.free(host[0 .. std.mem.len(host) + 1]);
-            }
+            this.config.address.deinit(bun.default_allocator);
 
             if (this.config.base_url.href.len > 0) {
                 bun.default_allocator.free(this.config.base_url.href);
@@ -5224,7 +5358,28 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (error_instance == .zero) {
-                error_instance = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server").toErrorInstance(this.globalThis);
+                switch (this.config.address) {
+                    .tcp => |tcp| {
+                        error_instance = ZigString.init(
+                            std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server",
+                        ).toErrorInstance(
+                            this.globalThis,
+                        );
+                    },
+                    .unix => |unix| {
+                        error_instance = ZigString.init(
+                            std.fmt.bufPrint(
+                                &output_buf,
+                                "Failed to listen on unix socket {}",
+                                .{
+                                    strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
+                                },
+                            ) catch "Failed to start server",
+                        ).toErrorInstance(
+                            this.globalThis,
+                        );
+                    },
+                }
             }
 
             // store the exception in here
@@ -5244,7 +5399,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.uws_event_loop = uws.Loop.get();
+            this.vm.event_loop_handle = uws.Loop.get();
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -5545,19 +5700,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
-            var host: ?[*:0]const u8 = null;
-            var host_buff: [1024:0]u8 = undefined;
-
-            if (this.config.hostname) |existing| {
-                const hostname = bun.span(existing);
-
-                if (hostname.len > 2 and hostname[0] == '[') {
-                    // remove "[" and "]" from hostname
-                    host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
-                } else {
-                    host = this.config.hostname;
-                }
-            }
 
             this.ref();
 
@@ -5568,11 +5710,39 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.vm.eventLoop().performGC();
             }
 
-            this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                .port = this.config.port,
-                .host = host,
-                .options = if (this.config.reuse_port) 0 else 1,
-            });
+            switch (this.config.address) {
+                .tcp => |tcp| {
+                    var host: ?[*:0]const u8 = null;
+                    var host_buff: [1024:0]u8 = undefined;
+
+                    if (tcp.hostname) |existing| {
+                        const hostname = bun.span(existing);
+
+                        if (hostname.len > 2 and hostname[0] == '[') {
+                            // remove "[" and "]" from hostname
+                            host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
+                        } else {
+                            host = tcp.hostname;
+                        }
+                    }
+
+                    this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                        .port = tcp.port,
+                        .host = host,
+                        .options = if (this.config.reuse_port) 0 else 1,
+                    });
+                },
+
+                .unix => |unix| {
+                    this.app.listenOnUnixSocket(
+                        *ThisServer,
+                        this,
+                        onListen,
+                        unix,
+                        if (this.config.reuse_port) 0 else 1,
+                    );
+                },
+            }
         }
     };
 }

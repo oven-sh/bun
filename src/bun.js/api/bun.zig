@@ -179,7 +179,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -2481,7 +2481,7 @@ pub fn serve(
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
-    const config: JSC.API.ServerConfig = brk: {
+    var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
         var exception = &exception_;
 
@@ -2496,6 +2496,40 @@ pub fn serve(
     };
 
     var exception_value: *JSC.JSValue = undefined;
+
+    if (config.allow_hot) {
+        if (globalObject.bunVM().hotMap()) |hot| {
+            if (config.id.len == 0) {
+                config.id = config.computeID(globalObject.allocator());
+            }
+
+            if (hot.getEntry(config.id)) |entry| {
+                switch (entry.tag()) {
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
+                        var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
+                        var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
+                        var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
+                        var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
+                        server.onReloadFromZig(&config, globalObject);
+                        return server.thisObject;
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
 
     // Listen happens on the next tick!
     // This is so we can return a Server object
@@ -2515,6 +2549,12 @@ pub fn serve(
             obj.protect();
 
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         } else {
             var server = JSC.API.HTTPSServer.init(config, globalObject.ptr());
@@ -2530,6 +2570,12 @@ pub fn serve(
             const obj = server.toJS(globalObject);
             obj.protect();
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         }
     } else {
@@ -2547,6 +2593,12 @@ pub fn serve(
             const obj = server.toJS(globalObject);
             obj.protect();
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         } else {
             var server = JSC.API.HTTPServer.init(config, globalObject.ptr());
@@ -2563,6 +2615,12 @@ pub fn serve(
             obj.protect();
 
             server.thisObject = obj;
+
+            if (config.allow_hot) {
+                if (globalObject.bunVM().hotMap()) |hot| {
+                    hot.insert(config.id, server);
+                }
+            }
             return obj;
         }
     }
@@ -2680,6 +2738,11 @@ pub fn mmapFile(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
+    if (comptime Environment.isWindows) {
+        globalThis.throwTODO("mmapFile is not supported on Windows");
+        return JSC.JSValue.zero;
+    }
+
     const arguments_ = callframe.arguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
@@ -2731,7 +2794,7 @@ pub fn mmapFile(
         flags |= std.os.MAP.SHARED;
     }
 
-    const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags, map_size, offset)) {
+    const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {
         .result => |map| map,
 
         .err => |err| {
@@ -2742,7 +2805,7 @@ pub fn mmapFile(
 
     return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = JSC.Node.Syscall.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
 }
@@ -3262,7 +3325,7 @@ pub const Timer = struct {
 
                             if (val.did_unref_timer) {
                                 val.did_unref_timer = false;
-                                vm.uws_event_loop.?.num_polls += 1;
+                                vm.event_loop_handle.?.num_polls += 1;
                             }
                         }
                     }
@@ -3335,7 +3398,7 @@ pub const Timer = struct {
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
                     .timer = uws.Timer.create(
-                        vm.uws_event_loop.?,
+                        vm.event_loop_handle.?,
                         id,
                     ),
                 };
@@ -3381,7 +3444,7 @@ pub const Timer = struct {
 
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.uws_event_loop.?.num_polls -= 1;
+                                vm.event_loop_handle.?.num_polls -= 1;
                             }
                         }
                     }
@@ -3534,7 +3597,7 @@ pub const Timer = struct {
             this.timer.deinit();
 
             // balance double unreffing in doUnref
-            vm.uws_event_loop.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+            vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -3590,7 +3653,7 @@ pub const Timer = struct {
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
             .timer = uws.Timer.create(
-                vm.uws_event_loop.?,
+                vm.event_loop_handle.?,
                 Timeout.ID{
                     .id = id,
                     .kind = kind,

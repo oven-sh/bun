@@ -214,6 +214,11 @@ ExceptionOr<void> FetchHeaders::remove(const String& name)
     return {};
 }
 
+size_t FetchHeaders::memoryCost() const
+{
+    return m_headers.memoryCost() + sizeof(*this);
+}
+
 ExceptionOr<String> FetchHeaders::get(const String& name) const
 {
     if (!isValidHTTPToken(name))

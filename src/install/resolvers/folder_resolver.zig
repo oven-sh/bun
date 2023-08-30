@@ -18,8 +18,8 @@ const bun = @import("root").bun;
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
-    new_package_id: PackageID,
     err: anyerror,
+    new_package_id: PackageID,
 
     pub const Tag = enum { package_id, err, new_package_id };
 

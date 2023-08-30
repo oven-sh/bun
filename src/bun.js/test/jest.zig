@@ -3,8 +3,7 @@ const bun = @import("root").bun;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -147,7 +146,7 @@ pub const TestRunner = struct {
         this.pending_test = null;
 
         // disable idling
-        JSC.VirtualMachine.get().uws_event_loop.?.wakeup();
+        JSC.VirtualMachine.get().event_loop_handle.?.wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {
@@ -1449,9 +1448,9 @@ pub const TestRunnerTask = struct {
 };
 
 pub const Result = union(TestRunner.Test.Status) {
-    fail: u32,
-    pass: u32, // assertion count
     pending: void,
+    pass: u32, // assertion count
+    fail: u32,
     skip: void,
     todo: void,
     fail_because_todo_passed: u32,

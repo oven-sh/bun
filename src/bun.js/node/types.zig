@@ -8,7 +8,7 @@ const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
-const Syscall = @import("./syscall.zig");
+const Syscall = bun.sys;
 const os = std.os;
 pub const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -20,7 +20,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const meta = bun.meta;
 /// Time in seconds. Not nanos!
 pub const TimeLike = c_int;
-pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
+const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
@@ -82,6 +82,12 @@ pub fn Maybe(comptime ResultType: type) type {
         };
 
         pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
+
+        pub fn throw(this: @This()) !void {
+            if (this == .err) {
+                return bun.AsyncIO.asError(this.err.errno);
+            }
+        }
 
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
@@ -171,7 +177,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
                         .syscall = syscall,
-                        .fd = @as(i32, @intCast(fd)),
+                        .fd = @intCast(bun.toFD(fd)),
                     },
                 },
             };
@@ -626,6 +632,14 @@ pub const PathLike = union(Tag) {
 
     pub const Tag = enum { string, buffer, slice_with_underlying_string };
 
+    pub fn estimatedSize(this: *const PathLike) usize {
+        return switch (this.*) {
+            .string => this.string.estimatedSize(),
+            .buffer => this.buffer.slice().len,
+            .slice_with_underlying_string => 0,
+        };
+    }
+
     pub fn deinit(this: *const PathLike) void {
         if (this.* == .slice_with_underlying_string) {
             this.slice_with_underlying_string.deinit();
@@ -676,6 +690,18 @@ pub const PathLike = union(Tag) {
     }
 
     pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+        return sliceZWithForceCopy(this, buf, false);
+    }
+
+    pub inline fn sliceW(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u16 {
+        return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
+    }
+
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
+        if (comptime Environment.isWindows) {
+            return sliceW(this, buf);
+        }
+
         return sliceZWithForceCopy(this, buf, false);
     }
 
@@ -764,7 +790,7 @@ pub const PathLike = union(Tag) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: bun.FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
             JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
             return false;
@@ -977,12 +1003,12 @@ pub const ArgumentsSlice = struct {
 
 pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
     if (!value.isNumber() or value.isBigInt()) return null;
-    const fd = value.toInt32();
+    const fd = value.toInt64();
     if (!Valid.fileDescriptor(fd, ctx, exception)) {
         return null;
     }
 
-    return @as(bun.FileDescriptor, @truncate(fd));
+    return @as(bun.FileDescriptor, @intCast(fd));
 }
 
 // Node.js docs:
@@ -1044,8 +1070,8 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    path: PathLike,
     fd: bun.FileDescriptor,
+    path: PathLike,
 
     pub const Tag = enum { fd, path };
 
@@ -1057,6 +1083,13 @@ pub const PathOrFileDescriptor = union(Tag) {
         if (this == .path) {
             this.path.deinit();
         }
+    }
+
+    pub fn estimatedSize(this: *const PathOrFileDescriptor) usize {
+        return switch (this.*) {
+            .path => this.path.estimatedSize(),
+            .fd => 0,
+        };
     }
 
     pub fn toThreadSafe(this: *PathOrFileDescriptor) void {
@@ -1412,26 +1445,46 @@ pub fn StatType(comptime Big: bool) type {
         }
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isCharacterDevice(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isDirectory(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isFIFO(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@as(Mode, @intCast(this.modeInternal()))));
+            return JSC.JSValue.jsBoolean(bun.isRegularFile(@as(Mode, @intCast(this.modeInternal()))));
         }
 
         pub fn isSocket(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
@@ -1441,6 +1494,10 @@ pub fn StatType(comptime Big: bool) type {
         ///
         /// See https://nodejs.org/api/fs.html#statsissymboliclink
         pub fn isSymbolicLink(this: *This) JSC.JSValue {
+            if (comptime Environment.isWindows) {
+                JSC.VirtualMachine.get().global.throwTODO(comptime @src().fn_name ++ " is not implemented yet");
+                return .zero;
+            }
             return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
         }
 
@@ -1450,7 +1507,7 @@ pub fn StatType(comptime Big: bool) type {
             bun.default_allocator.destroy(this);
         }
 
-        pub fn init(stat_: os.Stat) This {
+        pub fn init(stat_: bun.Stat) This {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
@@ -1480,7 +1537,7 @@ pub fn StatType(comptime Big: bool) type {
             };
         }
 
-        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat) *This {
+        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: bun.Stat) *This {
             var this = allocator.create(This) catch unreachable;
             this.* = init(stat);
             return this;
@@ -1543,7 +1600,7 @@ pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,
 
-    pub inline fn init(stat_: os.Stat, big: bool) Stats {
+    pub inline fn init(stat_: bun.Stat, big: bool) Stats {
         if (big) {
             return .{ .big = StatsBig.init(stat_) };
         } else {
@@ -2270,7 +2327,7 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.span(std.os.argv[0])).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.span(bun.argv()[0])).toValueGC(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -2290,13 +2347,13 @@ pub const Process = struct {
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            std.os.argv.len -| 1,
+            bun.argv().len -| 1,
         ) catch unreachable;
         defer allocator.free(args);
         var used: usize = 0;
         const offset: usize = 1;
 
-        for (std.os.argv[@min(std.os.argv.len, offset)..]) |arg_| {
+        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg_| {
             const arg = bun.span(arg_);
             if (arg.len == 0)
                 continue;

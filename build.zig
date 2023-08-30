@@ -34,6 +34,10 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
             break :brk b.createModule(.{
                 .source_file = FileSource.relative("src/io/io_linux.zig"),
             });
+        } else if (target.isWindows()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/io/io_windows.zig"),
+            });
         }
 
         break :brk b.createModule(.{
@@ -132,6 +136,16 @@ const Module = std.build.Module;
 const fs = std.fs;
 
 pub fn build(b: *Build) !void {
+    build_(b) catch |err| {
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+
+        return err;
+    };
+}
+
+pub fn build_(b: *Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -187,12 +201,12 @@ pub fn build(b: *Build) !void {
     else
         "root.zig";
 
-    const min_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
+    const min_version: std.SemanticVersion = if (!(target.isWindows() or target.getOsTag() == .freestanding))
         target.getOsVersionMin().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
 
-    const max_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
+    const max_version: std.SemanticVersion = if (!(target.isWindows() or target.getOsTag() == .freestanding))
         target.getOsVersionMax().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
@@ -205,6 +219,8 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
         .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
+
+    b.reference_trace = 16;
 
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or

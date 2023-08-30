@@ -609,7 +609,7 @@ pub const PackageJSON = struct {
 
         defer {
             if (entry.fd != 0) {
-                _ = bun.JSC.Node.Syscall.close(entry.fd);
+                _ = bun.sys.close(entry.fd);
             }
         }
 
@@ -1194,12 +1194,12 @@ pub const ExportsMap = struct {
             map: Map,
 
             pub const Tag = enum {
+                invalid,
                 null,
-                string,
                 boolean,
+                string,
                 array,
                 map,
-                invalid,
             };
 
             pub const Map = struct {

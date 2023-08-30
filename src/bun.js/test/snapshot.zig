@@ -227,11 +227,11 @@ pub const Snapshots = struct {
             if (this.snapshot_dir_path == null or !strings.eqlLong(dir_path, this.snapshot_dir_path.?, true)) {
                 remain[0] = 0;
                 const snapshot_dir_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
-                switch (JSC.Node.Syscall.mkdir(snapshot_dir_path, 0o777)) {
+                switch (bun.sys.mkdir(snapshot_dir_path, 0o777)) {
                     .result => this.snapshot_dir_path = dir_path,
                     .err => |err| {
                         switch (err.getErrno()) {
-                            std.os.E.EXIST => this.snapshot_dir_path = dir_path,
+                            .EXIST => this.snapshot_dir_path = dir_path,
                             else => return JSC.Maybe(void){
                                 .err = err,
                             },
@@ -247,9 +247,9 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-            var flags: JSC.Node.Mode = std.os.O.CREAT | std.os.O.RDWR;
+            var flags: bun.Mode = std.os.O.CREAT | std.os.O.RDWR;
             if (this.update_snapshots) flags |= std.os.O.TRUNC;
-            const fd = switch (JSC.Node.Syscall.open(snapshot_file_path, flags, 0o644)) {
+            const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return JSC.Maybe(void){
                     .err = err,
@@ -258,7 +258,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = .{ .handle = fd },
+                .file = .{ .handle = bun.fdcast(fd) },
             };
 
             if (this.update_snapshots) {

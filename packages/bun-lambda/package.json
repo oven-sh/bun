@@ -1,4 +1,6 @@
 {
+  "name": "bun-lambda",
+  "private": true,
   "devDependencies": {
     "bun-types": "^0.7.0",
     "jszip": "^3.10.1",

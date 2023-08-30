@@ -112,7 +112,7 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.12.0-dev.161+6a5463951
+$ zigup 0.12.0-dev.163+6780a6bbf
 ```
 
 {% callout %}
@@ -144,35 +144,131 @@ $ make assert-deps submodule npm-install-dev node-fallbacks runtime_js fallback_
 
 Bun uses a series of make commands to rebuild parts of the codebase. The general rule for rebuilding is there is `make link` to rerun the linker, and then different make targets for different parts of the codebase. Do not pass `-j` to make as these scripts will break if run out of order, and multiple cores will be used when possible during the builds.
 
-| What changed                         | Run this command                                                                                                                                                |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Zig Code                             | `make zig`                                                                                                                                                      |
-| C++ Code                             | `make cpp`                                                                                                                                                      |
-| Zig + C++ Code                       | `make dev` (combination of the above two)                                                                                                                       |
-| JS/TS Code in `src/js`               | `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`. |
-| `*.classes.ts`                       | `make generate-classes dev`                                                                                                                                     |
-| JSSink                               | `make generate-sink cpp`                                                                                                                                        |
-| `src/node_fallbacks/*`               | `make node-fallbacks zig`                                                                                                                                       |
-| `identifier_data.zig`                | `make identifier-cache zig`                                                                                                                                     |
-| Code using `cppFn`/`JSC.markBinding` | `make headers` (TODO: explain explain what this is used for and why it's useful)                                                                                |
+{% table %}
+
+- What changed
+- Run this command
+
+---
+
+- Zig Code
+- `make zig`
+
+---
+
+- C++ Code
+- `make cpp`
+
+---
+
+- Zig + C++ Code
+- `make dev` (combination of the above two)
+
+---
+
+- JS/TS Code in `src/js`
+- `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`.
+
+---
+
+- `*.classes.ts`
+- `make generate-classes dev`
+
+---
+
+- JSSink
+- `make generate-sink cpp`
+
+---
+
+- `src/node_fallbacks/*`
+- `make node-fallbacks zig`
+
+---
+
+- `identifier_data.zig`
+- `make identifier-cache zig`
+
+---
+
+- Code using `cppFn`/`JSC.markBinding`
+- `make headers` (TODO: explain explain what this is used for and why it's useful)
+
+{% /table %}
 
 `make setup` cloned a bunch of submodules and built the subprojects. When a submodule is out of date, run `make submodule` to quickly reset/update all your submodules, then you can rebuild individual submodules with their respective command.
 
-| Dependency     | Run this command                         |
-| -------------- | ---------------------------------------- |
-| WebKit         | `bun install` (it is a prebuilt package) |
-| uWebSockets    | `make uws`                               |
-| Mimalloc       | `make mimalloc`                          |
-| PicoHTTPParser | `make picohttp`                          |
-| zlib           | `make zlib`                              |
-| BoringSSL      | `make boringssl`                         |
-| libarchive     | `make libarchive`                        |
-| lolhtml        | `make lolhtml`                           |
-| sqlite         | `make sqlite`                            |
-| TinyCC         | `make tinycc`                            |
-| c-ares         | `make c-ares`                            |
-| zstd           | `make zstd`                              |
-| Base64         | `make base64`                            |
+{% table %}
+
+- Dependency
+- Run this command
+
+---
+
+- WebKit
+- `bun install` (it is a prebuilt package)
+
+---
+
+- uWebSockets
+- `make uws`
+
+---
+
+- Mimalloc
+- `make mimalloc`
+
+---
+
+- PicoHTTPParser
+- `make picohttp`
+
+---
+
+- zlib
+- `make zlib`
+
+---
+
+- BoringSSL
+- `make boringssl`
+
+---
+
+- libarchive
+- `make libarchive`
+
+---
+
+- lolhtml
+- `make lolhtml`
+
+---
+
+- sqlite
+- `make sqlite`
+
+---
+
+- TinyCC
+- `make tinycc`
+
+---
+
+- c-ares
+- `make c-ares`
+
+---
+
+- zstd
+- `make zstd`
+
+---
+
+- Base64
+- `make base64`
+
+{% /table %}
 
 The above will probably also need Zig and/or C++ code rebuilt.
 

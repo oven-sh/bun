@@ -4,13 +4,8 @@
     {
       "label": "Build",
       "type": "shell",
-      "command": "bun run build"
-    },
-    {
-      "label": "Build (watch)",
-      "type": "shell",
-      "command": "bun run build:watch",
-      "isBackground": true
+      "command": "bun run build",
+      "problemMatcher": "$esbuild"
     }
   ]
 }

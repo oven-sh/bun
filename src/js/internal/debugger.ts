@@ -1,294 +1,350 @@
-import type * as BunType from "bun";
+import type { Server as WebSocketServer, WebSocketHandler, ServerWebSocket, SocketHandler, Socket } from "bun";
 
-// We want to avoid dealing with creating a prototype for the inspector class
-let sendFn_, disconnectFn_;
-
-var debuggerCounter = 1;
-class DebuggerWithMessageQueue {
-  debugger?: Debugger = undefined;
-  messageQueue: string[] = [];
-  count: number = debuggerCounter++;
-
-  send(msg: string) {
-    sendFn_.call(this.debugger, msg);
+export default function (
+  executionContextId: string,
+  url: string,
+  createBackend: (
+    executionContextId: string,
+    refEventLoop: boolean,
+    receive: (...messages: string[]) => void,
+  ) => unknown,
+  send: (message: string) => void,
+  close: () => void,
+): void {
+  let debug: Debugger | undefined;
+  try {
+    debug = new Debugger(executionContextId, url, createBackend, send, close);
+  } catch (error) {
+    exit("Failed to start inspector:\n", error);
   }
 
-  disconnect() {
-    disconnectFn_.call(this.debugger);
-    this.messageQueue.length = 0;
+  const { protocol, href, host, pathname } = debug.url;
+  if (!protocol.includes("unix")) {
+    console.log(dim("--------------------- Bun Inspector ---------------------"), reset());
+    console.log(`Listening:\n  ${dim(href)}`);
+    if (protocol.includes("ws")) {
+      console.log(`Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}`);
+    }
+    console.log(dim("--------------------- Bun Inspector ---------------------"), reset());
+  }
+
+  const unix = process.env["BUN_INSPECT_NOTIFY"];
+  if (unix) {
+    const { protocol, pathname } = parseUrl(unix);
+    if (protocol === "unix:") {
+      notify(pathname);
+    }
   }
 }
 
-let defaultPort = 6499;
+class Debugger {
+  #url: URL;
+  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Writer;
 
-let generatedPath: string = "";
-function generatePath() {
-  if (!generatedPath) {
-    generatedPath = "/" + Math.random().toString(36).slice(2);
+  constructor(
+    executionContextId: string,
+    url: string,
+    createBackend: (
+      executionContextId: string,
+      refEventLoop: boolean,
+      receive: (...messages: string[]) => void,
+    ) => unknown,
+    send: (message: string) => void,
+    close: () => void,
+  ) {
+    this.#url = parseUrl(url);
+    this.#createBackend = (refEventLoop, receive) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive);
+      return {
+        write: message => {
+          send.call(backend, message);
+          return true;
+        },
+        close: () => close.call(backend),
+      };
+    };
+    this.#listen();
   }
 
-  return generatedPath;
+  get url(): URL {
+    return this.#url;
+  }
+
+  #listen(): void {
+    const { protocol, hostname, port, pathname } = this.#url;
+
+    if (protocol === "ws:" || protocol === "ws+tcp:") {
+      const server = Bun.serve({
+        hostname,
+        port,
+        fetch: this.#fetch.bind(this),
+        websocket: this.#websocket,
+      });
+      this.#url.hostname = server.hostname;
+      this.#url.port = `${server.port}`;
+      return;
+    }
+
+    if (protocol === "ws+unix:") {
+      Bun.serve({
+        unix: pathname,
+        fetch: this.#fetch.bind(this),
+        websocket: this.#websocket,
+      });
+      return;
+    }
+
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'unix:')`);
+  }
+
+  get #websocket(): WebSocketHandler<Connection> {
+    return {
+      idleTimeout: 0,
+      closeOnBackpressureLimit: false,
+      open: ws => this.#open(ws, webSocketWriter(ws)),
+      message: (ws, message) => {
+        if (typeof message === "string") {
+          this.#message(ws, message);
+        } else {
+          this.#error(ws, new Error(`Unexpected binary message: ${message.toString()}`));
+        }
+      },
+      drain: ws => this.#drain(ws),
+      close: ws => this.#close(ws),
+    };
+  }
+
+  #fetch(request: Request, server: WebSocketServer): Response | undefined {
+    const { method, url, headers } = request;
+    const { pathname } = new URL(url);
+
+    if (method !== "GET") {
+      return new Response(null, {
+        status: 405, // Method Not Allowed
+      });
+    }
+
+    switch (pathname) {
+      case "/json/version":
+        return Response.json(versionInfo());
+      case "/json":
+      case "/json/list":
+      // TODO?
+    }
+
+    if (!this.#url.protocol.includes("unix") && this.#url.pathname !== pathname) {
+      return new Response(null, {
+        status: 404, // Not Found
+      });
+    }
+
+    const data: Connection = {
+      refEventLoop: headers.get("Ref-Event-Loop") === "0",
+    };
+
+    if (!server.upgrade(request, { data })) {
+      return new Response(null, {
+        status: 426, // Upgrade Required
+        headers: {
+          "Upgrade": "websocket",
+        },
+      });
+    }
+  }
+
+  get #socket(): SocketHandler<Connection> {
+    return {
+      open: socket => this.#open(socket, socketWriter(socket)),
+      data: (socket, message) => this.#message(socket, message.toString()),
+      drain: socket => this.#drain(socket),
+      close: socket => this.#close(socket),
+      error: (socket, error) => this.#error(socket, error),
+      connectError: (_, error) => exit("Failed to start inspector:\n", error),
+    };
+  }
+
+  #open(connection: ConnectionOwner, writer: Writer): void {
+    const { data } = connection;
+    const { refEventLoop } = data;
+
+    const client = bufferedWriter(writer);
+    const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
+      for (const message of messages) {
+        client.write(message);
+      }
+    });
+
+    data.client = client;
+    data.backend = backend;
+  }
+
+  #message(connection: ConnectionOwner, message: string): void {
+    const { data } = connection;
+    const { backend } = data;
+    backend?.write(message);
+  }
+
+  #drain(connection: ConnectionOwner): void {
+    const { data } = connection;
+    const { client } = data;
+    client?.drain?.();
+  }
+
+  #close(connection: ConnectionOwner): void {
+    const { data } = connection;
+    const { backend } = data;
+    backend?.close();
+  }
+
+  #error(connection: ConnectionOwner, error: Error): void {
+    const { data } = connection;
+    const { backend } = data;
+    console.error(error);
+    backend?.close();
+  }
 }
 
-function terminalLink(url) {
-  if (Bun.enableANSIColors) {
-    // bold + hyperlink + reset
-    return "\x1b[1m\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\" + "\x1b[22m";
-  }
+function versionInfo(): unknown {
+  return {
+    "Protocol-Version": "1.3",
+    "Browser": "Bun",
+    // @ts-ignore: Missing types for `navigator`
+    "User-Agent": navigator.userAgent,
+    "WebKit-Version": process.versions.webkit,
+    "Bun-Version": Bun.version,
+    "Bun-Revision": Bun.revision,
+  };
+}
 
+function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
+  return {
+    write: message => !!ws.sendText(message),
+    close: () => ws.close(),
+  };
+}
+
+function socketWriter(socket: Socket<unknown>): Writer {
+  return {
+    write: message => !!socket.write(message),
+    close: () => socket.end(),
+  };
+}
+
+function bufferedWriter(writer: Writer): Writer {
+  let draining = false;
+  let pendingMessages: string[] = [];
+
+  return {
+    write: message => {
+      if (draining || !writer.write(message)) {
+        pendingMessages.push(message);
+      }
+      return true;
+    },
+    drain: () => {
+      draining = true;
+      try {
+        for (let i = 0; i < pendingMessages.length; i++) {
+          if (!writer.write(pendingMessages[i])) {
+            pendingMessages = pendingMessages.slice(i);
+            return;
+          }
+        }
+      } finally {
+        draining = false;
+      }
+    },
+    close: () => {
+      writer.close();
+      pendingMessages.length = 0;
+    },
+  };
+}
+
+const defaultHostname = "localhost";
+const defaultPort = 6499;
+
+function parseUrl(url: string): URL {
+  try {
+    if (!url) {
+      return new URL(randomId(), `ws://${defaultHostname}:${defaultPort}/`);
+    } else if (url.startsWith("/")) {
+      return new URL(url, `ws://${defaultHostname}:${defaultPort}/`);
+    } else if (/^[a-z+]+:\/\//i.test(url)) {
+      return new URL(url);
+    } else if (/^\d+$/.test(url)) {
+      return new URL(randomId(), `ws://${defaultHostname}:${url}/`);
+    } else if (!url.includes("/") && url.includes(":")) {
+      return new URL(randomId(), `ws://${url}/`);
+    } else if (!url.includes(":")) {
+      const [hostname, pathname] = url.split("/", 2);
+      return new URL(`ws://${hostname}:${defaultPort}/${pathname}`);
+    } else {
+      return new URL(randomId(), `ws://${url}`);
+    }
+  } catch {
+    throw new TypeError(`Invalid hostname or URL: '${url}'`);
+  }
+}
+
+function randomId() {
+  return Math.random().toString(36).slice(2);
+}
+
+const { enableANSIColors } = Bun;
+
+function dim(string: string): string {
+  if (enableANSIColors) {
+    return `\x1b[2m${string}\x1b[22m`;
+  }
+  return string;
+}
+
+function link(url: string): string {
+  if (enableANSIColors) {
+    return `\x1b[1m\x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\\x1b[22m`;
+  }
   return url;
 }
 
-function dim(text) {
-  if (Bun.enableANSIColors) {
-    return "\x1b[2m" + text + "\x1b[22m";
+function reset(): string {
+  if (enableANSIColors) {
+    return "\x1b[49m";
   }
-
-  return text;
+  return "";
 }
 
-class WebSocketListener {
-  server: BunType.Server;
-  url: string = "";
-  createInspectorConnection;
-  scriptExecutionContextId: number = 0;
-  activeConnections: Set<BunType.ServerWebSocket<DebuggerWithMessageQueue>> = new Set();
-
-  constructor(scriptExecutionContextId: number = 0, url: string, createInspectorConnection) {
-    this.scriptExecutionContextId = scriptExecutionContextId;
-    this.createInspectorConnection = createInspectorConnection;
-    this.server = this.start(url);
-  }
-
-  start(url: string): BunType.Server {
-    let defaultHostname = "localhost";
-    let usingDefaultPort = false;
-    if (/^[0-9]*$/.test(url)) {
-      url = "ws://" + defaultHostname + ":" + url + generatePath();
-    } else if (!url || url.startsWith("/")) {
-      url = "ws://" + defaultHostname + ":" + defaultPort + generatePath();
-      usingDefaultPort = true;
-    } else if (url.includes(":") && !url.includes("://")) {
-      try {
-        const insertSlash = !url.includes("/");
-        url = new URL("ws://" + url).href;
-        if (insertSlash) {
-          url += generatePath().slice(1);
-        }
-      } catch (e) {
-        console.error("[Inspector]", "Failed to parse url", '"' + url + '"');
-        process.exit(1);
-      }
-    }
-
-    try {
-      var { hostname, port, pathname } = new URL(url);
-      this.url = pathname.toLowerCase();
-    } catch (e) {
-      console.error("[Inspector]", "Failed to parse url", '"' + url + '"');
-      process.exit(1);
-    }
-
-    const serveOptions: BunType.WebSocketServeOptions<DebuggerWithMessageQueue> = {
-      hostname,
-      development: false,
-
-      //  ts-ignore
-      reusePort: false,
-
-      websocket: {
-        idleTimeout: 0,
-        open: socket => {
-          var connection = new DebuggerWithMessageQueue();
-          // @ts-expect-error
-          const shouldRefEventLoop = !!socket.data?.shouldRefEventLoop;
-
-          socket.data = connection;
-          this.activeConnections.add(socket);
-          connection.debugger = this.createInspectorConnection(
-            this.scriptExecutionContextId,
-            shouldRefEventLoop,
-            (...msgs: string[]) => {
-              if (socket.readyState > 1) {
-                connection.disconnect();
-                return;
-              }
-
-              if (connection.messageQueue.length > 0) {
-                connection.messageQueue.push(...msgs);
-                return;
-              }
-
-              for (let i = 0; i < msgs.length; i++) {
-                if (!socket.sendText(msgs[i])) {
-                  if (socket.readyState < 2) {
-                    connection.messageQueue.push(...msgs.slice(i));
-                  }
-                  return;
-                }
-              }
-            },
-          );
-
-          console.log(
-            "[Inspector]",
-            "Connection #" + connection.count + " opened",
-            "(" +
-              new Intl.DateTimeFormat(undefined, {
-                "timeStyle": "long",
-                "dateStyle": "short",
-              }).format(new Date()) +
-              ")",
-          );
-        },
-        drain: socket => {
-          const queue = socket.data.messageQueue;
-          for (let i = 0; i < queue.length; i++) {
-            if (!socket.sendText(queue[i])) {
-              socket.data.messageQueue = queue.slice(i);
-              return;
-            }
-          }
-          queue.length = 0;
-        },
-        message: (socket, message) => {
-          if (typeof message !== "string") {
-            console.warn("[Inspector]", "Received non-string message");
-            return;
-          }
-          socket.data.send(message as string);
-        },
-        close: socket => {
-          socket.data.disconnect();
-          console.log(
-            "[Inspector]",
-            "Connection #" + socket.data.count + " closed",
-            "(" +
-              new Intl.DateTimeFormat(undefined, {
-                "timeStyle": "long",
-                "dateStyle": "short",
-              }).format(new Date()) +
-              ")",
-          );
-          this.activeConnections.delete(socket);
-        },
+function notify(unix: string): void {
+  Bun.connect({
+    unix,
+    socket: {
+      open: socket => {
+        socket.end("1");
       },
-      fetch: (req, server) => {
-        let { pathname } = new URL(req.url);
-        pathname = pathname.toLowerCase();
-
-        if (pathname === "/json/version") {
-          return Response.json({
-            "Browser": navigator.userAgent,
-            "WebKit-Version": process.versions.webkit,
-            "Bun-Version": Bun.version,
-            "Bun-Revision": Bun.revision,
-          });
-        }
-
-        if (pathname === this.url) {
-          const refHeader = req.headers.get("Ref-Event-Loop");
-          if (
-            server.upgrade(req, {
-              data: {
-                shouldRefEventLoop: !!refHeader && refHeader !== "0",
-              },
-            })
-          ) {
-            return new Response();
-          }
-
-          return new Response("WebSocket expected", {
-            status: 400,
-          });
-        }
-
-        return new Response("Not found", {
-          status: 404,
-        });
-      },
-    };
-
-    if (port === "") {
-      port = defaultPort + "";
-    }
-
-    let portNumber = Number(port);
-    var server, lastError;
-
-    if (usingDefaultPort) {
-      for (let tries = 0; tries < 10 && !server; tries++) {
-        try {
-          lastError = undefined;
-          server = Bun.serve<DebuggerWithMessageQueue>({
-            ...serveOptions,
-            port: portNumber++,
-          });
-        } catch (e) {
-          lastError = e;
-        }
-      }
-    } else {
-      try {
-        server = Bun.serve<DebuggerWithMessageQueue>({
-          ...serveOptions,
-          port: portNumber,
-        });
-      } catch (e) {
-        lastError = e;
-      }
-    }
-
-    if (!server) {
-      console.error("[Inspector]", "Failed to start server");
-      if (lastError) console.error(lastError);
-      process.exit(1);
-    }
-
-    let textToWrite = "";
-    function writeToConsole(text) {
-      textToWrite += text;
-    }
-    function flushToConsole() {
-      console.write(textToWrite);
-    }
-
-    // yellow foreground
-    writeToConsole(dim(`------------------ Bun Inspector ------------------` + "\n"));
-    // reset background
-    writeToConsole("\x1b[49m");
-
-    writeToConsole(
-      "Listening at:\n  " +
-        `ws://${hostname}:${server.port}${this.url}` +
-        "\n\n" +
-        "Inspect in browser:\n  " +
-        terminalLink(new URL(`https://debug.bun.sh#${server.hostname}:${server.port}${this.url}`).href) +
-        "\n",
-    );
-    writeToConsole(dim(`------------------ Bun Inspector ------------------` + "\n"));
-    flushToConsole();
-
-    return server;
-  }
+      data: () => {}, // required or it errors
+    },
+  }).finally(() => {
+    // Best-effort
+  });
 }
 
-interface Debugger {
-  send(msg: string): void;
-  disconnect(): void;
+function exit(...args: unknown[]): never {
+  console.error(...args);
+  process.exit(1);
 }
 
-var listener: WebSocketListener;
+type ConnectionOwner = {
+  data: Connection;
+};
 
-export default function start(debuggerId, hostOrPort, createInspectorConnection, sendFn, disconnectFn) {
-  try {
-    sendFn_ = sendFn;
-    disconnectFn_ = disconnectFn;
-    globalThis.listener = listener ||= new WebSocketListener(debuggerId, hostOrPort, createInspectorConnection);
-  } catch (e) {
-    console.error("Bun Inspector threw an exception\n", e);
-    process.exit(1);
-  }
+type Connection = {
+  refEventLoop: boolean;
+  client?: Writer;
+  backend?: Writer;
+};
 
-  return `http://${listener.server.hostname}:${listener.server.port}${listener.url}`;
-}
+type Writer = {
+  write: (message: string) => boolean;
+  drain?: () => void;
+  close: () => void;
+};

@@ -1,8 +1,7 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -331,7 +330,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @as(i32, @intCast(try reader.readIntNative(u32)));
+                        const fd = @as(bun.FileDescriptor, @intCast(try reader.readIntNative(bun.FileDescriptor)));
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(
@@ -1021,7 +1020,7 @@ pub const Blob = struct {
     ) JSC.JSValue {
         const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            switch (JSC.Node.Syscall.open(
+            switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
                 // we deliberately don't use O_TRUNC here
                 // it's a perf optimization
@@ -1046,11 +1045,11 @@ pub const Blob = struct {
             // we only truncate if it's a path
             // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
-                _ = JSC.Node.Syscall.system.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = bun.sys.close(fd);
             }
         }
         if (!str.isEmpty()) {
@@ -1059,7 +1058,7 @@ pub const Blob = struct {
 
             var remain = decoded.slice();
             while (remain.len > 0) {
-                const result = JSC.Node.Syscall.write(fd, remain);
+                const result = bun.sys.write(fd, remain);
                 switch (result) {
                     .result => |res| {
                         written += res;
@@ -1091,7 +1090,7 @@ pub const Blob = struct {
     ) JSC.JSValue {
         const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            switch (JSC.Node.Syscall.open(
+            switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
                 // we deliberately don't use O_TRUNC here
                 // it's a perf optimization
@@ -1112,11 +1111,11 @@ pub const Blob = struct {
         var written: usize = 0;
         defer {
             if (truncate) {
-                _ = JSC.Node.Syscall.system.ftruncate(fd, @as(i64, @intCast(written)));
+                _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = bun.sys.close(fd);
             }
         }
 
@@ -1124,7 +1123,7 @@ pub const Blob = struct {
         const end = remain.ptr + remain.len;
 
         while (remain.ptr != end) {
-            const result = JSC.Node.Syscall.write(fd, remain);
+            const result = bun.sys.write(fd, remain);
             switch (result) {
                 .result => |res| {
                     written += res;
@@ -1233,6 +1232,34 @@ pub const Blob = struct {
         return blob_;
     }
 
+    fn estimatedByteSize(this: *Blob) usize {
+        // in-memory size. not the size on disk.
+        if (this.size != Blob.max_size) {
+            return this.size;
+        }
+
+        var store = this.store orelse return 0;
+        if (store.data == .bytes) {
+            return store.data.bytes.len;
+        }
+
+        return 0;
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        var size = this.estimatedByteSize() + @sizeOf(Blob);
+
+        if (this.store) |store| {
+            size += @sizeOf(Blob.Store);
+            size += switch (store.data) {
+                .bytes => store.data.bytes.stored_name.estimatedSize(),
+                .file => store.data.file.pathlike.estimatedSize(),
+            };
+        }
+
+        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = JSDOMFile__hasInstance;
@@ -1293,16 +1320,16 @@ pub const Blob = struct {
                     };
                 },
                 .fd => {
-                    switch (path_.fd) {
-                        std.os.STDIN_FILENO => return Blob.initWithStore(
+                    switch (bun.FDTag.get(path_.fd)) {
+                        .stdin => return Blob.initWithStore(
                             vm.rareData().stdin(),
                             globalThis,
                         ),
-                        std.os.STDERR_FILENO => return Blob.initWithStore(
+                        .stderr => return Blob.initWithStore(
                             vm.rareData().stderr(),
                             globalThis,
                         ),
-                        std.os.STDOUT_FILENO => return Blob.initWithStore(
+                        .stdout => return Blob.initWithStore(
                             vm.rareData().stdout(),
                             globalThis,
                         ),
@@ -1481,7 +1508,7 @@ pub const Blob = struct {
 
                     var path = path_string.sliceZ(&buf);
 
-                    this.opened_fd = switch (JSC.Node.Syscall.open(path, open_flags_, JSC.Node.default_permission)) {
+                    this.opened_fd = switch (bun.sys.open(path, open_flags_, JSC.Node.default_permission)) {
                         .result => |fd| fd,
                         .err => |err| {
                             this.errno = AsyncIO.asError(err.errno);
@@ -1535,23 +1562,45 @@ pub const Blob = struct {
                             var path_buffer = completion.operation.open.path;
                             defer bun.default_allocator.free(bun.span(path_buffer));
                             defer bun.default_allocator.destroy(state);
-                            this.opened_fd = result catch {
-                                this.errno = AsyncIO.asError(-completion.result);
-                                // do not use path_buffer here because it is a temporary
-                                var path_string = if (@hasField(This, "file_store"))
-                                    this.file_store.pathlike.path
-                                else
-                                    this.file_blob.store.?.data.file.pathlike.path;
+                            if (comptime Environment.isPosix) {
+                                this.opened_fd = result catch {
+                                    this.errno = AsyncIO.asError(-completion.result);
+                                    // do not use path_buffer here because it is a temporary
+                                    var path_string = if (@hasField(This, "file_store"))
+                                        this.file_store.pathlike.path
+                                    else
+                                        this.file_blob.store.?.data.file.pathlike.path;
 
-                                this.system_error = (JSC.Node.Syscall.Error{
-                                    .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(-completion.result)),
-                                    .path = path_string.slice(),
-                                    .syscall = .open,
-                                }).toSystemError();
+                                    this.system_error = (bun.sys.Error{
+                                        .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
+                                        .path = path_string.slice(),
+                                        .syscall = .open,
+                                    }).toSystemError();
 
-                                callback(this, null_fd);
-                                return;
-                            };
+                                    callback(this, null_fd);
+                                    return;
+                                };
+                            } else if (comptime Environment.isWindows) {
+                                this.opened_fd = result catch |err| {
+                                    this.errno = err;
+                                    // do not use path_buffer here because it is a temporary
+                                    var path_string = if (@hasField(This, "file_store"))
+                                        this.file_store.pathlike.path
+                                    else
+                                        this.file_blob.store.?.data.file.pathlike.path;
+
+                                    this.system_error = (bun.sys.Error{
+                                        .errno = @as(bun.sys.Error.Int, @intFromEnum(bun.C.SystemErrno.fromError(err).?)),
+                                        .path = path_string.slice(),
+                                        .syscall = .open,
+                                    }).toSystemError();
+
+                                    callback(this, null_fd);
+                                    return;
+                                };
+                            } else {
+                                @compileError("Unsupported platform");
+                            }
 
                             callback(this, this.opened_fd);
                         }
@@ -1743,8 +1792,8 @@ pub const Blob = struct {
                 this.read_len = @as(SizeType, @truncate(result catch |err| {
                     if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                         this.errno = AsyncIO.asError(-completion.result);
-                        this.system_error = (JSC.Node.Syscall.Error{
-                            .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(-completion.result)),
+                        this.system_error = (bun.sys.Error{
+                            .errno = @as(bun.sys.Error.Int, @intCast(-completion.result)),
                             .syscall = .read,
                         }).toSystemError();
                     } else {
@@ -1793,7 +1842,12 @@ pub const Blob = struct {
             }
 
             fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
-                const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+                if (comptime Environment.isWindows) {
+                    bun.todo(@src(), {});
+                    return;
+                }
+
+                const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {
                         this.errno = AsyncIO.asError(err.errno);
@@ -1822,14 +1876,14 @@ pub const Blob = struct {
                     return;
                 }
 
-                if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
+                if (stat.size > 0 and bun.isRegularFile(stat.mode)) {
                     this.size = @min(
                         @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
                     // they didn't explicitly set a size and we're reading from something that's not a regular file
-                } else if (stat.size == 0 and !std.os.S.ISREG(stat.mode)) {
+                } else if (stat.size == 0 and !bun.isRegularFile(stat.mode)) {
                     this.size = if (this.max_length == Blob.max_size)
                         4096
                     else
@@ -2178,14 +2232,14 @@ pub const Blob = struct {
             pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
                 switch (which) {
                     .both => {
-                        _ = JSC.Node.Syscall.close(this.destination_fd);
-                        _ = JSC.Node.Syscall.close(this.source_fd);
+                        _ = bun.sys.close(this.destination_fd);
+                        _ = bun.sys.close(this.source_fd);
                     },
                     .destination => {
-                        _ = JSC.Node.Syscall.close(this.destination_fd);
+                        _ = bun.sys.close(this.destination_fd);
                     },
                     .source => {
-                        _ = JSC.Node.Syscall.close(this.source_fd);
+                        _ = bun.sys.close(this.source_fd);
                     },
                 }
             }
@@ -2198,7 +2252,7 @@ pub const Blob = struct {
                 // open source file first
                 // if it fails, we don't want the extra destination file hanging out
                 if (which == .both or which == .source) {
-                    this.source_fd = switch (JSC.Node.Syscall.open(
+                    this.source_fd = switch (bun.sys.open(
                         this.source_file_store.pathlike.path.sliceZAssume(),
                         open_source_flags,
                         0,
@@ -2212,7 +2266,7 @@ pub const Blob = struct {
                 }
 
                 if (which == .both or which == .destination) {
-                    this.destination_fd = switch (JSC.Node.Syscall.open(
+                    this.destination_fd = switch (bun.sys.open(
                         this.destination_file_store.pathlike.path.sliceZAssume(),
                         open_destination_flags,
                         JSC.Node.default_permission,
@@ -2220,7 +2274,7 @@ pub const Blob = struct {
                         .result => |result| result,
                         .err => |errno| {
                             if (which == .both) {
-                                _ = JSC.Node.Syscall.close(this.source_fd);
+                                _ = bun.sys.close(this.source_fd);
                                 this.source_fd = 0;
                             }
 
@@ -2236,7 +2290,7 @@ pub const Blob = struct {
                 copy_file_range,
                 splice,
 
-                pub const tag = std.EnumMap(TryWith, JSC.Node.Syscall.Tag).init(.{
+                pub const tag = std.EnumMap(TryWith, bun.sys.Tag).init(.{
                     .sendfile = .sendfile,
                     .copy_file_range = .copy_file_range,
                     .splice = .splice,
@@ -2338,15 +2392,15 @@ pub const Blob = struct {
                                 }
                             }
 
-                            this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(linux.E.INVAL))),
+                            this.system_error = (bun.sys.Error{
+                                .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(linux.E.INVAL))),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(linux.E.INVAL);
                         },
                         else => |errno| {
-                            this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(errno))),
+                            this.system_error = (bun.sys.Error{
+                                .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(errno))),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(errno);
@@ -2361,7 +2415,7 @@ pub const Blob = struct {
             }
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
-                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
+                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
 
@@ -2375,7 +2429,7 @@ pub const Blob = struct {
                 var source_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-                switch (JSC.Node.Syscall.clonefile(
+                switch (bun.sys.clonefile(
                     this.source_file_store.pathlike.path.sliceZ(&source_buf),
                     this.destination_file_store.pathlike.path.sliceZ(
                         &dest_buf,
@@ -2392,7 +2446,7 @@ pub const Blob = struct {
             pub fn runAsync(this: *CopyFile) void {
                 // defer task.onFinish();
 
-                var stat_: ?std.os.Stat = null;
+                var stat_: ?bun.Stat = null;
 
                 if (this.destination_file_store.pathlike == .fd) {
                     this.destination_fd = this.destination_file_store.pathlike.fd;
@@ -2400,6 +2454,15 @@ pub const Blob = struct {
 
                 if (this.source_file_store.pathlike == .fd) {
                     this.source_fd = this.source_file_store.pathlike.fd;
+                }
+
+                if (comptime Environment.isWindows) {
+                    this.system_error = SystemError{
+                        .code = bun.String.static("TODO"),
+                        .syscall = bun.String.static("CopyFileEx"),
+                        .message = bun.String.static("Not implemented on Windows yet"),
+                    };
+                    return;
                 }
 
                 // Do we need to open both files?
@@ -2413,7 +2476,7 @@ pub const Blob = struct {
 
                                 // stat the output file, make sure it:
                                 // 1. Exists
-                                switch (JSC.Node.Syscall.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
+                                switch (bun.sys.stat(this.source_file_store.pathlike.path.sliceZAssume())) {
                                     .result => |result| {
                                         stat_ = result;
 
@@ -2478,7 +2541,7 @@ pub const Blob = struct {
 
                 if (this.destination_file_store.pathlike == .fd) {}
 
-                const stat: std.os.Stat = stat_ orelse switch (JSC.Node.Syscall.fstat(this.source_fd)) {
+                const stat: bun.Stat = stat_ orelse switch (bun.sys.fstat(this.source_fd)) {
                     .result => |result| result,
                     .err => |err| {
                         this.doClose();
@@ -2572,7 +2635,7 @@ pub const Blob = struct {
         pathlike: JSC.Node.PathOrFileDescriptor,
         mime_type: HTTPClient.MimeType = HTTPClient.MimeType.other,
         is_atty: ?bool = null,
-        mode: JSC.Node.Mode = 0,
+        mode: bun.Mode = 0,
         seekable: ?bool = null,
         max_size: SizeType = Blob.max_size,
         // milliseconds since ECMAScript epoch
@@ -2584,7 +2647,7 @@ pub const Blob = struct {
             }
 
             if (this.mode != 0) {
-                return std.os.S.ISREG(this.mode);
+                return bun.isRegularFile(this.mode);
             }
 
             return null;
@@ -2759,9 +2822,14 @@ pub const Blob = struct {
             return JSValue.jsBoolean(true);
         }
 
+        if (comptime Environment.isWindows) {
+            this.globalThis.throwTODO("exists is not implemented on Windows");
+            return JSValue.jsUndefined();
+        }
+
         // We say regular files and pipes exist.
         // This is mostly meant for "Can we use this in new Response(file)?"
-        return JSValue.jsBoolean(std.os.S.ISREG(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
     }
 
     // This mostly means 'can it be read?'
@@ -3122,30 +3190,35 @@ pub const Blob = struct {
 
     /// resolve file stat like size, last_modified
     fn resolveFileStat(store: *Store) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         if (store.data.file.pathlike == .path) {
             var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-            switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
+            switch (bun.sys.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                 .result => |stat| {
-                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                    store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)
                         @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
-                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.
                 else => {},
             }
         } else if (store.data.file.pathlike == .fd) {
-            switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
+            switch (bun.sys.fstat(store.data.file.pathlike.fd)) {
                 .result => |stat| {
-                    store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                    store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)
                         @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
-                    store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                    store.data.file.seekable = bun.isRegularFile(stat.mode);
                     store.data.file.last_modified = toJSTime(stat.mtime().tv_sec, stat.mtime().tv_nsec);
                 },
                 // the file may not exist yet. Thats's okay.

@@ -207,7 +207,7 @@ pub const INotify = struct {
 
     pub fn stop() void {
         if (inotify_fd != 0) {
-            std.os.close(inotify_fd);
+            _ = bun.sys.close(inotify_fd);
             inotify_fd = 0;
         }
     }
@@ -239,7 +239,7 @@ const DarwinWatcher = struct {
 
     pub fn stop() void {
         if (fd != 0) {
-            std.os.close(fd);
+            _ = bun.sys.close(fd);
         }
 
         fd = 0;
@@ -384,6 +384,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
             var watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
+            if (comptime bun.Environment.isWindows) {
+                bun.todo(@src(), {});
+                return error.NotImplemented;
+            }
+
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }
@@ -420,7 +425,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {
-                        std.os.close(fd);
+                        _ = bun.sys.close(fd);
                     }
                 }
                 this.watchlist.deinit(this.allocator);
@@ -449,7 +454,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.close_descriptors) {
                 const fds = this.watchlist.items(.fd);
                 for (fds) |fd| {
-                    std.os.close(fd);
+                    _ = bun.sys.close(fd);
                 }
             }
             this.watchlist.deinit(this.allocator);
@@ -464,7 +469,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.indexOf(hash)) |index| {
                 const fds = this.watchlist.items(.fd);
                 const fd = fds[index];
-                std.os.close(fd);
+                _ = bun.sys.close(fd);
                 this.watchlist.swapRemove(index);
             }
         }
@@ -510,7 +515,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 if (item == last_item) continue;
 
                 // close the file descriptors here. this should automatically remove it from being watched too.
-                std.os.close(fds[item]);
+                _ = bun.sys.close(fds[item]);
 
                 // if (Environment.isLinux) {
                 //     INotify.unwatch(event_list_ids[item]);
@@ -794,7 +799,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 if (fd_ > 0) break :brk fd_;
 
                 const dir = try std.fs.cwd().openIterableDir(file_path, .{});
-                break :brk @as(StoredFileDescriptorType, @truncate(dir.dir.fd));
+                break :brk bun.toFD(dir.dir.fd);
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());

@@ -401,7 +401,7 @@ const Scanner = struct {
             if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
-                std.debug.assert(fd != 0);
+                std.debug.assert(fd != bun.invalid_fd);
                 while (iter.next()) |entry| {
                     this.next(entry.value_ptr.*, fd);
                 }
@@ -409,8 +409,8 @@ const Scanner = struct {
         }
 
         while (this.dirs_to_scan.readItem()) |entry| {
-            var dir = std.fs.Dir{ .fd = entry.relative_dir };
-            std.debug.assert(dir.fd != 0);
+            var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+            std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
             var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -835,7 +835,7 @@ pub const TestCommand = struct {
             vm.eventLoop().tickPossiblyForever();
 
             while (true) {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }

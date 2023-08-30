@@ -1016,8 +1016,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       // Fast path for ArrayBuffer and SharedArrayBuffer.
       // Can't do the same for DataView because it has a non-primitive
       // .buffer property that we need to recurse for.
-      const arrayType = isArrayBuffer(value) ? 'ArrayBuffer' :
-        'SharedArrayBuffer';
+      const arrayType = isArrayBuffer(value) ? 'ArrayBuffer' : 'SharedArrayBuffer';
       const prefix = getPrefix(constructor, tag, arrayType);
       if (typedArray === undefined) {
         formatter = formatArrayBuffer;
@@ -1085,7 +1084,6 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       ArrayPrototypePushApply(output, protoProps);
     }
   } catch (err) {
-    console.log('SHIT DIASY', err);
     const constructorName = StringPrototypeSlice(getCtxStyle(value, constructor, tag), 0, -1);
     return handleMaxCallStackSize(ctx, err, constructorName, indentationLvl);
   }

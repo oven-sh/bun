@@ -338,6 +338,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         }),
       ]);
     } catch (cause) {
+      if (cause === Cancel) {
+        this.emit("Adapter.response", {
+          type: "response",
+          command,
+          success: false,
+          message: "cancelled",
+          request_seq: request.seq,
+          seq: 0,
+        });
+        return;
+      }
+
       const error = unknownToError(cause);
       this.emit("Adapter.error", error);
 
@@ -1161,10 +1173,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     if (wasThrown) {
       if (context === "hover" && isSyntaxError(result)) {
-        return {
-          result: "",
-          variablesReference: 0,
-        };
+        throw Cancel;
       }
 
       throw new Error(remoteObjectToString(result));
@@ -1651,7 +1660,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addStackFrame(callFrame: JSC.Debugger.CallFrame): StackFrame {
-    const { callFrameId, functionName, location, scopeChain } = callFrame;
+    const { callFrameId, functionName, location, scopeChain, this: thisObject } = callFrame;
     const { scriptId } = location;
     const source = this.#getSourceIfPresent(scriptId);
 
@@ -2447,3 +2456,5 @@ function locationIsSame(a?: JSC.Debugger.Location, b?: JSC.Debugger.Location): b
 function stripAnsi(string: string): string {
   return string.replace(/\u001b\[\d+m/g, "");
 }
+
+const Cancel = Symbol("Cancel");

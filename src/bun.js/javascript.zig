@@ -449,6 +449,9 @@ pub const VirtualMachine = struct {
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?OpaqueCallback = null,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -479,7 +482,6 @@ pub const VirtualMachine = struct {
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
-    us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
     auto_install_dependencies: bool = false,
@@ -531,6 +533,21 @@ pub const VirtualMachine = struct {
 
     pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
         return this.rareData().mimeTypeFromString(this.allocator, str);
+    }
+
+    pub fn onAfterEventLoop(this: *VirtualMachine) void {
+        if (this.after_event_loop_callback) |cb| {
+            var ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.active_tasks > 0 or
+            vm.event_loop_handle.?.active > 0 or
+            vm.event_loop.tasks.count > 0;
     }
 
     const SourceMapHandlerGetter = struct {
@@ -732,7 +749,7 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {
-            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) : (dispatch = true) {
+            while (this.isEventLoopAlive()) : (dispatch = true) {
                 this.tick();
                 this.eventLoop().autoTickActive();
             }
@@ -741,7 +758,7 @@ pub const VirtualMachine = struct {
                 this.exit_handler.dispatchOnBeforeExit();
                 dispatch = false;
 
-                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) continue;
+                if (this.isEventLoopAlive()) continue;
             }
 
             break;
@@ -884,7 +901,7 @@ pub const VirtualMachine = struct {
             this.eventLoop().tick();
 
             while (true) {
-                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.event_loop_handle.?.active > 0) {
+                while (this.isEventLoopAlive()) {
                     this.tick();
                     this.eventLoop().autoTickActive();
                 }

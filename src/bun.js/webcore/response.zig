@@ -633,8 +633,8 @@ pub const Fetch = struct {
         scheduled_response_buffer: MutableString = undefined,
         /// response strong ref
         response: JSC.Strong = .{},
-        /// stream strong ref if any is available
-        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+        /// byte stream if any is available
+        byte_stream: ?*JSC.WebCore.ByteStream = null,
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
@@ -894,6 +894,30 @@ pub const Fetch = struct {
                                 old.resolve(&response.body.value, this.global_this);
                             }
                         }
+                    } else if (this.byte_stream) |byte_stream| {
+                        // body can be marked as used but we still need to pipe the data
+                        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                        const chunk = scheduled_response_buffer.items;
+
+                        if (this.result.has_more) {
+                            byte_stream.onData(
+                                .{
+                                    .temporary = bun.ByteList.initConst(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+
+                            // clean for reuse later
+                            this.scheduled_response_buffer.reset();
+                        } else {
+                            byte_stream.onData(
+                                .{
+                                    .temporary_and_done = bun.ByteList.initConst(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+                        }
                     }
                 }
             }
@@ -1143,9 +1167,11 @@ pub const Fetch = struct {
             return fetch_error.toErrorInstance(this.global_this);
         }
 
-        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: *JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this) catch .{};
+            if (readable.ptr == .Bytes) {
+                this.byte_stream = readable.ptr.Bytes;
+            }
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {

@@ -234,6 +234,7 @@ const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
+const Async = bun.Async;
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -1543,12 +1544,12 @@ pub const Crypto = struct {
             promise: JSC.JSPromise.Strong,
             event_loop: *JSC.EventLoop,
             global: *JSC.JSGlobalObject,
-            ref: JSC.PollRef = .{},
+            ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
             pub const Result = struct {
                 value: Value,
-                ref: JSC.PollRef = .{},
+                ref: Async.KeepAlive = .{},
 
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
@@ -1793,12 +1794,12 @@ pub const Crypto = struct {
             promise: JSC.JSPromise.Strong,
             event_loop: *JSC.EventLoop,
             global: *JSC.JSGlobalObject,
-            ref: JSC.PollRef = .{},
+            ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
             pub const Result = struct {
                 value: Value,
-                ref: JSC.PollRef = .{},
+                ref: Async.KeepAlive = .{},
 
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
@@ -3474,7 +3475,7 @@ pub const Timer = struct {
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
         did_unref_timer: bool = false,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         arguments: JSC.Strong = .{},
         has_scheduled_job: bool = false,
 

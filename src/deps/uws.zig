@@ -21,6 +21,28 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
         return anyopaque;
     }
 }
+pub const InternalLoopData = extern struct {
+    pub const us_internal_async = opaque {};
+
+    sweep_timer: ?*Timer,
+    wakeup_async: ?*us_internal_async,
+    last_write_failed: i32,
+    head: ?*SocketContext,
+    iterator: ?*SocketContext,
+    recv_buf: [*]u8,
+    ssl_data: ?*anyopaque,
+    pre_cb: ?*fn (?*Loop) callconv(.C) void,
+    post_cb: ?*fn (?*Loop) callconv(.C) void,
+    closed_head: ?*Socket,
+    low_prio_head: ?*Socket,
+    low_prio_budget: i32,
+    iteration_nr: c_longlong,
+
+    pub fn recvSlice(this: *InternalLoopData) []u8 {
+        return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
+    }
+};
+
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
         const ssl_int: i32 = @intFromBool(is_ssl);
@@ -727,7 +749,7 @@ pub const SocketContext = opaque {
         return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
     }
 };
-pub const Loop = extern struct {
+pub const PosixLoop = extern struct {
     internal_loop_data: InternalLoopData align(16),
 
     /// Number of non-fallthrough polls in the loop
@@ -758,28 +780,6 @@ pub const Loop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
-    pub const InternalLoopData = extern struct {
-        pub const us_internal_async = opaque {};
-
-        sweep_timer: ?*Timer,
-        wakeup_async: ?*us_internal_async,
-        last_write_failed: i32,
-        head: ?*SocketContext,
-        iterator: ?*SocketContext,
-        recv_buf: [*]u8,
-        ssl_data: ?*anyopaque,
-        pre_cb: ?*fn (?*Loop) callconv(.C) void,
-        post_cb: ?*fn (?*Loop) callconv(.C) void,
-        closed_head: ?*Socket,
-        low_prio_head: ?*Socket,
-        low_prio_budget: i32,
-        iteration_nr: c_longlong,
-
-        pub fn recvSlice(this: *InternalLoopData) []u8 {
-            return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
-        }
-    };
-
     pub fn ref(this: *Loop) void {
         log("ref", .{});
         this.num_polls += 1;
@@ -800,6 +800,10 @@ pub const Loop = extern struct {
         log("unref", .{});
         this.num_polls -= 1;
         this.active -|= 1;
+    }
+
+    pub fn isActive(this: *const Loop) bool {
+        return this.active > 0 or this.num_polls > 0;
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {
@@ -833,6 +837,8 @@ pub const Loop = extern struct {
     pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
         us_loop_run_bun_tick(this, timeoutMs);
     }
+
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -881,26 +887,6 @@ pub const Loop = extern struct {
     }
 
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
-
-    extern fn uws_get_loop() ?*Loop;
-    extern fn us_create_loop(
-        hint: ?*anyopaque,
-        wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
-        pre_cb: ?*const fn (*Loop) callconv(.C) void,
-        post_cb: ?*const fn (*Loop) callconv(.C) void,
-        ext_size: c_uint,
-    ) ?*Loop;
-    extern fn us_loop_free(loop: ?*Loop) void;
-    extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
-    extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
-    extern fn us_wakeup_loop(loop: ?*Loop) void;
-    extern fn us_loop_integrate(loop: ?*Loop) void;
-    extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
 
@@ -2257,3 +2243,42 @@ extern fn uws_app_listen_domain_with_options(
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
+
+pub const UVLoop = extern struct {
+    const uv = bun.windows.libuv;
+
+    internal_loop_data: InternalLoopData align(16),
+
+    uv_loop: *uv.loop,
+    is_default: c_int,
+    pre: *uv.prepare,
+    check: *uv.check,
+
+    pub fn isActive(this: *const Loop) bool {
+        return this.active > 0 or this.num_polls > 0;
+    }
+    pub fn get() ?*Loop {
+        return uws_get_loop();
+    }
+};
+
+pub const Loop = if (bun.Environment.isWindows) UVLoop else PosixLoop;
+
+extern fn uws_get_loop() ?*Loop;
+extern fn us_create_loop(
+    hint: ?*anyopaque,
+    wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
+    pre_cb: ?*const fn (*Loop) callconv(.C) void,
+    post_cb: ?*const fn (*Loop) callconv(.C) void,
+    ext_size: c_uint,
+) ?*Loop;
+extern fn us_loop_free(loop: ?*Loop) void;
+extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
+extern fn us_loop_run(loop: ?*Loop) void;
+extern fn us_wakeup_loop(loop: ?*Loop) void;
+extern fn us_loop_integrate(loop: ?*Loop) void;
+extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
+extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;

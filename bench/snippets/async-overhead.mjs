@@ -6,23 +6,30 @@ bench("await 1", async function () {
   return await 1;
 });
 
-function callnextTick(resolve) {
-  process.nextTick(resolve);
-}
+if (typeof process !== "undefined") {
+  bench("process.nextTick x 100", async function () {
+    var remaining = 100;
+    var cb, promise;
+    promise = new Promise(resolve => {
+      cb = resolve;
+    });
 
-function awaitNextTick() {
-  return new Promise(callnextTick);
-}
+    for (let i = 0; i < 100; i++) {
+      process.nextTick(() => {
+        if (--remaining === 0) cb();
+      });
+    }
 
-bench("promise.nextTick", async function () {
-  return awaitNextTick();
-});
+    return promise;
+  });
+
+  bench("await 1 x 100", async function () {
+    for (let i = 0; i < 100; i++) await 1;
+  });
+}
 
 bench("await new Promise(resolve => resolve())", async function () {
   await new Promise(resolve => resolve());
-});
-bench("Promise.all(Array.from({length: 100}, () => new Promise((resolve) => resolve())))", async function () {
-  return Promise.all(Array.from({ length: 100 }, () => Promise.resolve(1)));
 });
 
 await run();

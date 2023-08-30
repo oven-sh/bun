@@ -43,6 +43,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
+#ifdef LIBUS_USE_LIBUV
+#include "internal/eventing/libuv.h"
+#endif
+
 /* Poll type and what it polls for */
 enum {
     /* Two first bits */

@@ -23,6 +23,7 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
 const uws = @import("root").bun.uws;
+const Async = bun.Async;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
@@ -36,7 +37,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         concurrent_task: JSC.ConcurrentTask = .{},
 
         // This is a poll because we want it to enter the uSockets loop
-        ref: JSC.PollRef = .{},
+        ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
@@ -100,7 +101,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         async_task_tracker: JSC.AsyncTaskTracker,
 
         // This is a poll because we want it to enter the uSockets loop
-        ref: JSC.PollRef = .{},
+        ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
@@ -375,7 +376,7 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer_fast: bool = true,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
-        var actual = vm.event_loop_handle.?;
+        var actual = uws.Loop.get().?;
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
@@ -734,7 +735,7 @@ pub const EventLoop = struct {
             loop.unrefCount(pending_unref);
         }
 
-        if (loop.num_polls > 0 or loop.active > 0) {
+        if (loop.isActive()) {
             loop.tick();
             this.processGCTimer();
             ctx.onAfterEventLoop();
@@ -758,7 +759,7 @@ pub const EventLoop = struct {
             loop.unrefCount(pending_unref);
         }
 
-        if (loop.num_polls > 0 or loop.active > 0) {
+        if (loop.isActive()) {
             loop.tickWithTimeout(timeoutMs);
             this.processGCTimer();
             ctx.onAfterEventLoop();
@@ -776,7 +777,7 @@ pub const EventLoop = struct {
             loop.unrefCount(pending_unref);
         }
 
-        if (loop.num_polls == 0 or loop.active == 0) {
+        if (!loop.isActive()) {
             if (this.forever_timer == null) {
                 var t = uws.Timer.create(loop, this);
                 t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);

@@ -21,7 +21,7 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-
+const Async = bun.Async;
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
@@ -1188,7 +1188,7 @@ pub const FileSink = struct {
     has_adjusted_pipe_size_on_linux: bool = false,
     max_write_size: usize = std.math.maxInt(usize),
     reachable_from_js: bool = true,
-    poll_ref: ?*JSC.FilePoll = null,
+    poll_ref: ?*Async.FilePoll = null,
 
     pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
     const log = Output.scoped(.FileSink, false);
@@ -3704,7 +3704,7 @@ pub const AutoSizer = struct {
 pub const FIFO = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
-    poll_ref: ?*JSC.FilePoll = null,
+    poll_ref: ?*Async.FilePoll = null,
     fd: bun.FileDescriptor = bun.invalid_fd,
     to_read: ?u32 = null,
     close_on_empty_read: bool = false,
@@ -4066,7 +4066,7 @@ pub const File = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
 
-    poll_ref: JSC.PollRef = .{},
+    poll_ref: Async.KeepAlive = .{},
     fd: bun.FileDescriptor = bun.invalid_fd,
     concurrent: Concurrent = .{},
     loop: *JSC.EventLoop,
@@ -4771,7 +4771,7 @@ pub const FileReader = struct {
 
 pub fn NewReadyWatcher(
     comptime Context: type,
-    comptime flag_: JSC.FilePoll.Flags,
+    comptime flag_: Async.FilePoll.Flags,
     comptime onReady: anytype,
 ) type {
     return struct {
@@ -4813,9 +4813,9 @@ pub fn NewReadyWatcher(
             );
         }
 
-        pub fn pollRef(this: *Context) *JSC.FilePoll {
+        pub fn pollRef(this: *Context) *Async.FilePoll {
             return this.poll_ref orelse brk: {
-                this.poll_ref = JSC.FilePoll.init(
+                this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),
                     this.fd,
                     .{},
@@ -4836,8 +4836,8 @@ pub fn NewReadyWatcher(
 
         pub fn watch(this: *Context, fd_: anytype) void {
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
-            var poll_ref: *JSC.FilePoll = this.poll_ref orelse brk: {
-                this.poll_ref = JSC.FilePoll.init(
+            var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
+                this.poll_ref = Async.FilePoll.init(
                     JSC.VirtualMachine.get(),
                     fd,
                     .{},

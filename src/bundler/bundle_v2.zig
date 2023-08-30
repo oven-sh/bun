@@ -126,6 +126,7 @@ const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
+const Async = bun.Async;
 
 fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [*:0]const u8) bun.tracy.Ctx {
     return bun.tracy.traceNamed(src, "Bundler." ++ name);
@@ -1136,7 +1137,7 @@ pub const BundleV2 = struct {
             .jsc_event_loop = event_loop,
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .globalThis = globalThis,
-            .poll_ref = JSC.PollRef.init(),
+            .poll_ref = Async.KeepAlive.init(),
             .env = globalThis.bunVM().bundler.env,
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
@@ -1181,7 +1182,7 @@ pub const BundleV2 = struct {
         task: bun.JSC.AnyTask,
         globalThis: *JSC.JSGlobalObject,
         promise: JSC.JSPromise.Strong,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         env: *bun.DotEnv.Loader,
         log: Logger.Log,
 

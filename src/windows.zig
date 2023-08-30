@@ -2915,3 +2915,5 @@ pub const Win32Error = enum(u16) {
         return RtlNtStatusToDosError(status);
     }
 };
+
+pub const libuv = @import("./deps/libuv.zig");

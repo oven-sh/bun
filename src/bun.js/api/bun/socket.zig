@@ -17,6 +17,7 @@ const uws = @import("root").bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
+const Async = bun.Async;
 
 fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
     if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
@@ -447,7 +448,7 @@ pub const Listener = struct {
 
     handlers: Handlers,
     listener: ?*uws.ListenSocket = null,
-    poll_ref: JSC.PollRef = JSC.PollRef.init(),
+    poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     connection: UnixOrHost,
     socket_context: ?*uws.SocketContext = null,
     ssl: bool = false,
@@ -1077,7 +1078,7 @@ fn NewSocket(comptime ssl: bool) type {
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
-        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,

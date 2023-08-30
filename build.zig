@@ -46,6 +46,23 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
     };
 
     step.addModule("async_io", io);
+
+    var async_: *Module = brk: {
+        if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/async/posix_event_loop.zig"),
+            });
+        } else if (target.isWindows()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/async/windows_event_loop.zig"),
+            });
+        }
+
+        break :brk b.createModule(.{
+            .source_file = FileSource.relative("src/async/stub_event_loop.zig"),
+        });
+    };
+    step.addModule("async", async_);
 }
 
 const BunBuildOptions = struct {

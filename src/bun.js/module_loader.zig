@@ -85,7 +85,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-
+const Async = bun.Async;
 const String = bun.String;
 
 // Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
@@ -221,7 +221,7 @@ pub const RuntimeTranspilerStore = struct {
         vm: *JSC.VirtualMachine,
         globalThis: *JSC.JSGlobalObject,
         fetcher: Fetcher,
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         generation_number: u32 = 0,
         log: logger.Log,
         parse_error: ?anyerror = null,
@@ -582,7 +582,7 @@ pub const ModuleLoader = struct {
         arena: bun.ArenaAllocator,
 
         // This is the specific state for making it async
-        poll_ref: JSC.PollRef = .{},
+        poll_ref: Async.KeepAlive = .{},
         any_task: JSC.AnyTask = undefined,
 
         pub const Id = u32;

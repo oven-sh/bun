@@ -146,7 +146,7 @@ pub const TestRunner = struct {
         this.pending_test = null;
 
         // disable idling
-        JSC.VirtualMachine.get().event_loop_handle.?.wakeup();
+        JSC.VirtualMachine.get().wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {

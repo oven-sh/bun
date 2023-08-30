@@ -39,7 +39,7 @@ const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
-
+const Async = bun.Async;
 pub const FlavoredIO = struct {
     io: *AsyncIO,
 };
@@ -65,7 +65,7 @@ pub const AsyncReaddirTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Readdir),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
 
@@ -148,7 +148,7 @@ pub const AsyncStatTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Stat),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     is_lstat: bool = false,
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
@@ -242,7 +242,7 @@ pub const AsyncRealpathTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Realpath),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
 
@@ -337,7 +337,7 @@ pub const AsyncReadFileTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.ReadFile),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
 

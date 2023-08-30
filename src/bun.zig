@@ -1834,3 +1834,5 @@ pub fn fdi32(fd_: anytype) i32 {
 }
 
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+
+pub const Async = @import("async");

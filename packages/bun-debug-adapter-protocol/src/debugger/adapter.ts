@@ -1332,9 +1332,23 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    if (reason === "PauseOnNextStatement" && this.#stopped === "start" && !this.#options?.stopOnEntry) {
-      this.#stopped = undefined;
-      return;
+    if (reason === "PauseOnNextStatement") {
+      if (this.#stopped === "start" && !this.#options?.stopOnEntry) {
+        this.#stopped = undefined;
+        return;
+      }
+    }
+
+    if (reason === "DebuggerStatement") {
+      // FIXME: This is a hacky fix for the `Debugger.paused` event being fired
+      // when the debugger is started in hot mode.
+      for (const { functionName } of callFrames) {
+        // @ts-ignore
+        if (functionName === "module code" && this.#options?.watchMode === "hot") {
+          this.send("Debugger.resume");
+          return;
+        }
+      }
     }
 
     this.#stackFrames.length = 0;

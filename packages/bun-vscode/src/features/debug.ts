@@ -49,15 +49,25 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
     vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
   );
 
-  const { terminalProfile } = new TerminalDebugSession();
-  const { options } = terminalProfile;
-  const terminal = vscode.window.createTerminal(options);
-  terminal.show();
-  context.subscriptions.push(terminal);
+  const document = getActiveDocument();
+  if (isJavaScript(document?.languageId)) {
+    vscode.workspace.findFiles("bun.lockb", "node_modules", 1).then(files => {
+      const { terminalProfile } = new TerminalDebugSession();
+      const { options } = terminalProfile;
+      const terminal = vscode.window.createTerminal(options);
+
+      const focus = files.length > 0;
+      if (focus) {
+        terminal.show();
+      }
+
+      context.subscriptions.push(terminal);
+    });
+  }
 }
 
 function RunFileCommand(resource?: vscode.Uri): void {
-  const path = getCurrentPath(resource);
+  const path = getActivePath(resource);
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...runConfiguration,
@@ -68,7 +78,7 @@ function RunFileCommand(resource?: vscode.Uri): void {
 }
 
 function DebugFileCommand(resource?: vscode.Uri): void {
-  const path = getCurrentPath(resource);
+  const path = getActivePath(resource);
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...debugConfiguration,
@@ -186,11 +196,29 @@ class TerminalDebugSession extends FileDebugSession {
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
   }
+
+  dispose(): void {
+    super.dispose();
+    this.signal.close();
+  }
 }
 
-function getCurrentPath(target?: vscode.Uri): string | undefined {
-  if (!target && vscode.window.activeTextEditor) {
-    target = vscode.window.activeTextEditor.document.uri;
+function getActiveDocument(): vscode.TextDocument | undefined {
+  return vscode.window.activeTextEditor?.document;
+}
+
+function getActivePath(target?: vscode.Uri): string | undefined {
+  if (!target) {
+    target = getActiveDocument()?.uri;
   }
   return target?.fsPath;
+}
+
+function isJavaScript(languageId?: string): boolean {
+  return (
+    languageId === "javascript" ||
+    languageId === "javascriptreact" ||
+    languageId === "typescript" ||
+    languageId === "typescriptreact"
+  );
 }

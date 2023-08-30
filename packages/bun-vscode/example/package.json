@@ -10,9 +10,6 @@
   "trustedDependencies": [
     "mime"
   ],
-  "scripts": {
-    "yooo" : "bun-debug ./example.ts"
-  },
   "devDependencies": {
     "bun-types": "latest"
   },

@@ -342,6 +342,7 @@ pub const HTMLRewriter = struct {
         response: *Response,
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?JSC.JSValue = null,
+        // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;

@@ -477,8 +477,8 @@ it("process.nextTick works more than once", async () => {
 });
 
 // `enterWith` is problematic because it and `nextTick` both rely on
-// JSC's `global.onEachMicrotaskTick`, and this test is designed to cover what happens when both
-// are active
+// JSC's `global.onEachMicrotaskTick`, and this test is designed to
+// cover what happens when both are active
 it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () => {
   const AsyncLocalStorage = require("async_hooks").AsyncLocalStorage;
   const t = require("timers/promises");

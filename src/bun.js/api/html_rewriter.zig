@@ -342,7 +342,6 @@ pub const HTMLRewriter = struct {
         response: *Response,
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?JSC.JSValue = null,
-        // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -436,8 +435,6 @@ pub const HTMLRewriter = struct {
             };
             // sync error occurs
             if (sink.tmp_sync_error) |err| {
-                err.ensureStillAlive();
-                err.unprotect();
                 sink.tmp_sync_error = null;
                 return err;
             }
@@ -464,21 +461,13 @@ pub const HTMLRewriter = struct {
                 if (is_async) {
                     sink.response.body.value.toErrorInstance(err, sink.global);
                 } else {
-                    var ret_err = throwLOLHTMLError(sink.global);
-                    ret_err.ensureStillAlive();
-                    ret_err.protect();
-                    sink.tmp_sync_error = ret_err;
+                    sink.tmp_sync_error = throwLOLHTMLError(sink.global);
                 }
                 sink.rewriter.end() catch {};
                 sink.deinit();
                 return;
             }
-
-            if (sink.runOutputSink(bytes, is_async)) |ret_err| {
-                ret_err.ensureStillAlive();
-                ret_err.protect();
-                sink.tmp_sync_error = ret_err;
-            }
+            sink.tmp_sync_error = sink.runOutputSink(bytes, is_async);
         }
 
         pub fn runOutputSink(
@@ -552,13 +541,6 @@ pub const HTMLRewriter = struct {
                 var bufferer = this.bodyValueBufferer.?;
                 bufferer.deinit();
             }
-
-            if (this.tmp_sync_error) |ret_err| {
-                // this should never happens, but still we avoid future leaks
-                ret_err.unprotect();
-                this.tmp_sync_error = null;
-            }
-
             this.context.deinit(bun.default_allocator);
         }
     };

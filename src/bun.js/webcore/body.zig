@@ -1265,8 +1265,6 @@ pub fn BodyMixin(comptime Type: type) type {
 }
 
 pub const BodyValueBufferer = struct {
-    const log = bun.Output.scoped(.BodyValueBufferer, false);
-
     const ArrayBufferSink = JSC.WebCore.ArrayBufferSink;
     const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?JSC.JSValue, is_async: bool) void;
 
@@ -1275,8 +1273,6 @@ pub const BodyValueBufferer = struct {
 
     js_sink: ?*ArrayBufferSink.JSSink = null,
     byte_stream: ?*JSC.WebCore.ByteStream = null,
-    // readable stream strong ref to keep byte stream alive
-    readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
     stream_buffer: bun.MutableString,
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
@@ -1286,7 +1282,6 @@ pub const BodyValueBufferer = struct {
         if (this.byte_stream) |byte_stream| {
             byte_stream.unpipe();
         }
-        this.readable_stream_ref.deinit();
 
         if (this.js_sink) |buffer_stream| {
             buffer_stream.detach();
@@ -1322,16 +1317,13 @@ pub const BodyValueBufferer = struct {
 
         switch (value.*) {
             .Used => {
-                log("Used", .{});
                 return error.StreamAlreadyUsed;
             },
             .Empty, .Null => {
-                log("Empty", .{});
                 return sink.onFinishedBuffering(sink.ctx, "", null, false);
             },
 
             .Error => |err| {
-                log("Error", .{});
                 return sink.onFinishedBuffering(sink.ctx, "", err, false);
             },
             // .InlineBlob,
@@ -1347,9 +1339,7 @@ pub const BodyValueBufferer = struct {
                 if (is_pending) {
                     input.Blob.doReadFileInternal(*@This(), sink, onFinishedLoadingFile, sink.global);
                 } else {
-                    const bytes = input.slice();
-                    log("Blob {}", .{bytes.len});
-                    sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                    sink.onFinishedBuffering(sink.ctx, input.slice(), null, false);
                 }
                 return;
             },
@@ -1362,12 +1352,10 @@ pub const BodyValueBufferer = struct {
     fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
         switch (bytes) {
             .err => |err| {
-                log("onFinishedLoadingFile Error", .{});
                 sink.onFinishedBuffering(sink.ctx, "", err.toErrorInstance(sink.global), true);
                 return;
             },
             .result => |data| {
-                log("onFinishedLoadingFile Data {}", .{data.buf.len});
                 sink.onFinishedBuffering(sink.ctx, data.buf, null, true);
                 if (data.is_temporary) {
                     bun.default_allocator.free(bun.constStrToU8(data.buf));
@@ -1380,7 +1368,7 @@ pub const BodyValueBufferer = struct {
 
         defer {
             if (stream_needs_deinit) {
-                if (stream == .owned_and_done) {
+                if (stream.isDone()) {
                     stream.owned_and_done.listManaged(allocator).deinit();
                 } else {
                     stream.owned.listManaged(allocator).deinit();
@@ -1389,24 +1377,21 @@ pub const BodyValueBufferer = struct {
         }
 
         const chunk = stream.slice();
-        log("onStreamPipe chunk {}", .{chunk.len});
         _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
         if (stream.isDone()) {
-            const bytes = sink.stream_buffer.list.items;
-            log("onStreamPipe done {}", .{bytes.len});
-            sink.onFinishedBuffering(sink.ctx, bytes, null, true);
+            sink.onFinishedBuffering(sink.ctx, sink.stream_buffer.list.items, null, true);
             return;
         }
     }
 
-    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var args = callframe.arguments(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return JSValue.jsUndefined();
     }
 
-    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         var err = args.ptr[0];
@@ -1425,11 +1410,8 @@ pub const BodyValueBufferer = struct {
 
     fn handleResolveStream(sink: *@This(), is_async: bool) void {
         if (sink.js_sink) |wrapper| {
-            const bytes = wrapper.sink.bytes.slice();
-            log("handleResolveStream {}", .{bytes.len});
-            sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
+            sink.onFinishedBuffering(sink.ctx, wrapper.sink.bytes.slice(), null, is_async);
         } else {
-            log("handleResolveStream no sink", .{});
             sink.onFinishedBuffering(sink.ctx, "", null, is_async);
         }
     }
@@ -1468,7 +1450,7 @@ pub const BodyValueBufferer = struct {
         // assert that it was updated
         std.debug.assert(!signal.isDead());
 
-        if (assignment_result.isError()) {
+        if (assignment_result.toError() != null) {
             return error.PipeFailed;
         }
 
@@ -1513,49 +1495,37 @@ pub const BodyValueBufferer = struct {
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
+                stream.value.unprotect();
                 return error.StreamAlreadyUsed;
             }
 
             switch (stream.ptr) {
                 .Invalid => {
+                    stream.value.unprotect();
                     return error.InvalidStream;
                 },
                 // toBlobIfPossible should've caught this
                 .Blob, .File => unreachable,
                 .JavaScript, .Direct => {
-                    // this is broken right now
-                    // return sink.createJSSink(stream);
-                    return error.UnsupportedStreamType;
+                    return sink.createJSSink(stream);
                 },
                 .Bytes => |byte_stream| {
                     std.debug.assert(byte_stream.pipe.ctx == null);
                     std.debug.assert(sink.byte_stream == null);
 
-                    const bytes = byte_stream.buffer.items;
+                    stream.detach(sink.global);
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if (byte_stream.has_received_last_chunk) {
-                        log("byte stream has_received_last_chunk {}", .{bytes.len});
-                        sink.onFinishedBuffering(sink.ctx, bytes, null, false);
-                        // is safe to detach here because we're not going to receive any more data
-                        stream.detachIfPossible(sink.global);
+                        sink.onFinishedBuffering(sink.ctx, byte_stream.buffer.items, null, false);
                         return;
                     }
-                    // keep the stream alive until we're done with it
-                    sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
-                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    stream.detachIfPossible(sink.global);
-
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;
-                    log("byte stream pre-buffered {}", .{bytes.len});
-
-                    _ = sink.stream_buffer.write(bytes) catch @panic("OOM");
                     return;
                 },
             }
         }
-
         if (locked.onReceiveValue != null or locked.task != null) {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             const readable = value.toReadableStream(sink.global);
@@ -1572,38 +1542,14 @@ pub const BodyValueBufferer = struct {
         const sink = bun.cast(*@This(), ctx);
         switch (value.*) {
             .Error => {
-                log("onReceiveValue Error", .{});
                 sink.onFinishedBuffering(sink.ctx, "", value.Error, true);
                 return;
             },
             else => {
                 value.toBlobIfPossible();
                 var input = value.useAsAnyBlobAllowNonUTF8String();
-                const bytes = input.slice();
-                log("onReceiveValue {}", .{bytes.len});
-                sink.onFinishedBuffering(sink.ctx, bytes, value.Error, true);
+                sink.onFinishedBuffering(sink.ctx, input.slice(), value.Error, true);
             },
-        }
-    }
-
-    pub const shim = JSC.Shimmer("Bun", "BodyValueBufferer", @This());
-    pub const name = "Bun__BodyValueBufferer";
-    pub const include = "";
-    pub const namespace = shim.namespace;
-
-    pub const Export = shim.exportFunctions(.{
-        .onResolveStream = onResolveStream,
-        .onRejectStream = onRejectStream,
-    });
-
-    comptime {
-        if (!JSC.is_bindgen) {
-            @export(onResolveStream, .{
-                .name = Export[0].symbol_name,
-            });
-            @export(onRejectStream, .{
-                .name = Export[1].symbol_name,
-            });
         }
     }
 };

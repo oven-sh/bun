@@ -18,6 +18,8 @@ const bun = @import("root").bun;
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
+    _padding_tag: [3]u8 = .{0} ** 3,
+
     value: Value = Value{ .none = {} },
 
     pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {

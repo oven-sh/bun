@@ -24,10 +24,13 @@
 void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 // void Bun__internal_dispatch_ready_poll(void* loop, void* poll) {}
 
-void us_loop_run_bun_tick(struct us_loop_t *loop);
-
+#ifndef WIN32
 /* Cannot include this one on Windows */
 #include <unistd.h>
+#include <stdint.h>
+#endif
+
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -172,7 +175,7 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 
-void us_loop_run_bun_tick(struct us_loop_t *loop) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
     us_loop_integrate(loop);
 
     if (loop->num_polls == 0)
@@ -183,10 +186,20 @@ void us_loop_run_bun_tick(struct us_loop_t *loop) {
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
+    if (timeoutMs > 0) {
+        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
+    } else {
+        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
+    }
 #else
-    struct timespec ts = {0, 0};
-    loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+    if (timeoutMs > 0) {
+        struct timespec ts = {0, 0};
+        ts.tv_sec = timeoutMs / 1000;
+        ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
+    } else {
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+    }
 #endif
 
     /* Iterate ready polls, dispatching them by type */

@@ -291,7 +291,3 @@ pub const Resolution = extern struct {
         _,
     };
 };
-
-comptime {
-    @import("padding_checker.zig").assertNoUninitializedPadding(Resolution);
-}

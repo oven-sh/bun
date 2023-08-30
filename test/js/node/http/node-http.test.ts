@@ -11,6 +11,8 @@ import {
 } from "node:http";
 import { createTest } from "node-harness";
 import url from "node:url";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server): Promise<URL> {
@@ -818,6 +820,31 @@ describe("node:http", () => {
           expect(res.status).toBe(500);
           done();
         });
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  test("test unix socket server", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {
+      expect(req.method).toStrictEqual("GET");
+      expect(req.url).toStrictEqual("/bun?a=1");
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Connection": "close",
+      });
+      res.write("Bun\n");
+      res.end();
+    });
+
+    server.listen(socketPath, () => {
+      // TODO: unix socket is not implemented in fetch.
+      const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
+      try {
+        expect(output.stdout.toString()).toStrictEqual("Bun\n");
+        done();
       } catch (err) {
         done(err);
       }

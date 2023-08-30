@@ -130,6 +130,7 @@
 #endif
 
 #include "BunObject.h"
+#include "JSNextTickQueue.h"
 
 using namespace Bun;
 
@@ -478,6 +479,15 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfo);
 
     JSC::gcProtect(globalObject);
+
+    vm.setOnEachMicrotaskTick([globalObject](JSC::VM& vm) -> void {
+        if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
+            vm.setOnEachMicrotaskTick(nullptr);
+            Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
+            queue->drain(vm, globalObject);
+            return;
+        }
+    });
 
     vm.ref();
     return globalObject;
@@ -1115,6 +1125,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
@@ -1166,6 +1187,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
@@ -1182,6 +1214,17 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
 
     JSC::JSValue num = callFrame->argument(0);
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
 }
 
@@ -1197,6 +1240,17 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     }
 
     JSC::JSValue num = callFrame->argument(0);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
 }
@@ -3955,6 +4009,23 @@ extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* g
 #endif
 }
 
+void GlobalObject::drainMicrotasks()
+{
+    auto& vm = this->vm();
+    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
+        Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
+        queue->drain(vm, this);
+        return;
+    }
+
+    vm.drainMicrotasks();
+}
+
+extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
+{
+    globalObject->drainMicrotasks();
+}
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -4007,6 +4078,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
     visitor.append(thisObject->m_JSWebSocketSetterValue);
     visitor.append(thisObject->m_JSWorkerSetterValue);
+
+    visitor.append(thisObject->m_nextTickQueue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

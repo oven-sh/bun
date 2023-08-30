@@ -2527,7 +2527,6 @@ JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     const BunString* arg1)
 {
-    globalObject->vm().drainMicrotasks();
     auto name = Bun::toWTFString(*arg1);
     name.impl()->ref();
 
@@ -2546,9 +2545,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
                 JSC::JSInternalPromise::rejectedPromise(globalObject, callFrame->argument(0)));
         });
 
-    globalObject->vm().drainMicrotasks();
     auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
-    globalObject->vm().drainMicrotasks();
 
     // if (promise->status(globalObject->vm()) ==
     // JSC::JSPromise::Status::Fulfilled) {

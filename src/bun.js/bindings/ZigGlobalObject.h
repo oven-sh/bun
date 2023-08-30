@@ -296,6 +296,8 @@ public:
         return m_processEnvObject.getInitializedOnMainThread(this);
     }
 
+    void drainMicrotasks();
+
     void handleRejectedPromises();
     void initGeneratedLazyClasses();
 
@@ -381,6 +383,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
+    mutable WriteBarrier<Unknown> m_nextTickQueue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
     mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;

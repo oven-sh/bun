@@ -1,0 +1,91 @@
+#include "root.h"
+
+#include "JavaScriptCore/JSCJSValueInlines.h"
+#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/LazyPropertyInlines.h"
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/GetterSetter.h>
+
+#include "JSNextTickQueue.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/Structure.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+#include "ExtendedDOMClientIsoSubspaces.h"
+#include "ExtendedDOMIsoSubspaces.h"
+#include "BunClientData.h"
+
+namespace Bun {
+
+using namespace JSC;
+
+const JSC::ClassInfo JSNextTickQueue::s_info = { "JSNextTickQueue"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNextTickQueue) };
+
+template<typename, JSC::SubspaceAccess mode>
+JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSNextTickQueue.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNextTickQueue = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSNextTickQueue.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNextTickQueue = std::forward<decltype(space)>(space); });
+}
+
+JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)
+{
+    JSNextTickQueue* mod = new (NotNull, allocateCell<JSNextTickQueue>(vm)) JSNextTickQueue(vm, structure);
+    return mod;
+}
+Structure* JSNextTickQueue::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+}
+
+JSNextTickQueue::JSNextTickQueue(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+void JSNextTickQueue::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+}
+
+template<typename Visitor>
+void JSNextTickQueue::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSNextTickQueue*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSNextTickQueue);
+
+JSNextTickQueue* JSNextTickQueue::create(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto* obj = create(vm, createStructure(vm, globalObject, jsNull()));
+    obj->finishCreation(vm);
+    return obj;
+}
+
+bool JSNextTickQueue::isEmpty()
+{
+    return internalField(0).get().asNumber() == 0;
+}
+
+void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    if (isEmpty()) {
+        vm.drainMicrotasks();
+    }
+
+    if (!isEmpty()) {
+        auto* drainFn = jsCast<JSFunction*>(internalField(2).get());
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        MarkedArgumentBuffer drainArgs;
+        JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
+    }
+}
+
+}

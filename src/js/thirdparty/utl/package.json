@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "name": "node-inspect-extracted",
+  "version": "3.0.0",
+  "main": "./index.js",
+  "types": "./types/util.d.ts",
+  "homepage": "https://github.com/hildjj/node-inspect-extracted",
+  "repository": {
+    "type": "git",
+    "url": "http://github.com/hildjj/node-inspect-extracted.git"
+  },
+  "author": "Joe Hildebrand <joe-github@cursive.net>",
+  "contributors": [
+    "Noah May <noahmouse2011@gmail.com>"
+  ],
+  "license": "MIT"
+}

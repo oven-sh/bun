@@ -1,4 +1,20 @@
-import { it, expect } from "bun:test";
+"use strict";
+// Can run this either in
+// - node via `bunx jest process-nexttick.test.js`
+// - bun via  `bun test process-nexttick.test.js`
+const isBun = !!process.versions.bun;
+
+// Node.js is missing this as of writing
+if (!Promise.withResolvers) {
+  Promise.withResolvers = function () {
+    var resolve, reject;
+    var promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
 
 it("process.nextTick", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.
@@ -52,25 +68,35 @@ it("process.nextTick", async () => {
   });
 
   {
-    var passed = false;
+    let passed = false;
     try {
       queueMicrotask(1234);
     } catch (exception) {
-      passed = exception instanceof TypeError;
+      if (isBun) {
+        passed = exception instanceof TypeError;
+      } else {
+        // Node.js throws a non-TypeError TypeError
+        passed = exception instanceof Error && exception.name === "TypeError";
+      }
     }
 
-    if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is not a function");
+    if (!passed) throw new Error("1: queueMicrotask should throw a TypeError if the argument is not a function");
   }
 
   {
-    var passed = false;
+    let passed = false;
     try {
       queueMicrotask();
     } catch (exception) {
-      passed = exception instanceof TypeError;
+      if (isBun) {
+        passed = exception instanceof TypeError;
+      } else {
+        // Node.js throws a non-TypeError TypeError
+        passed = exception instanceof Error && exception.name === "TypeError";
+      }
     }
 
-    if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is empty");
+    if (!passed) throw new Error("2: queueMicrotask should throw a TypeError if the argument is empty");
   }
 });
 
@@ -99,7 +125,7 @@ it("process.nextTick 5 args", async () => {
 });
 
 it("process.nextTick runs after queueMicrotask", async () => {
-  const { promise, reject, resolve } = Promise.withResolvers();
+  const { promise, resolve } = Promise.withResolvers();
   const order = [];
   var nextTickI = 0;
   var microtaskI = 0;
@@ -220,106 +246,6 @@ it("process.nextTick runs after queueMicrotask", async () => {
     "process.nextTick 97",
     "process.nextTick 98",
     "process.nextTick 99",
-    "queueMicrotask 0",
-    "queueMicrotask 1",
-    "queueMicrotask 2",
-    "queueMicrotask 3",
-    "queueMicrotask 4",
-    "queueMicrotask 5",
-    "queueMicrotask 6",
-    "queueMicrotask 7",
-    "queueMicrotask 8",
-    "queueMicrotask 9",
-    "queueMicrotask 10",
-    "queueMicrotask 11",
-    "queueMicrotask 12",
-    "queueMicrotask 13",
-    "queueMicrotask 14",
-    "queueMicrotask 15",
-    "queueMicrotask 16",
-    "queueMicrotask 17",
-    "queueMicrotask 18",
-    "queueMicrotask 19",
-    "queueMicrotask 20",
-    "queueMicrotask 21",
-    "queueMicrotask 22",
-    "queueMicrotask 23",
-    "queueMicrotask 24",
-    "queueMicrotask 25",
-    "queueMicrotask 26",
-    "queueMicrotask 27",
-    "queueMicrotask 28",
-    "queueMicrotask 29",
-    "queueMicrotask 30",
-    "queueMicrotask 31",
-    "queueMicrotask 32",
-    "queueMicrotask 33",
-    "queueMicrotask 34",
-    "queueMicrotask 35",
-    "queueMicrotask 36",
-    "queueMicrotask 37",
-    "queueMicrotask 38",
-    "queueMicrotask 39",
-    "queueMicrotask 40",
-    "queueMicrotask 41",
-    "queueMicrotask 42",
-    "queueMicrotask 43",
-    "queueMicrotask 44",
-    "queueMicrotask 45",
-    "queueMicrotask 46",
-    "queueMicrotask 47",
-    "queueMicrotask 48",
-    "queueMicrotask 49",
-    "queueMicrotask 50",
-    "queueMicrotask 51",
-    "queueMicrotask 52",
-    "queueMicrotask 53",
-    "queueMicrotask 54",
-    "queueMicrotask 55",
-    "queueMicrotask 56",
-    "queueMicrotask 57",
-    "queueMicrotask 58",
-    "queueMicrotask 59",
-    "queueMicrotask 60",
-    "queueMicrotask 61",
-    "queueMicrotask 62",
-    "queueMicrotask 63",
-    "queueMicrotask 64",
-    "queueMicrotask 65",
-    "queueMicrotask 66",
-    "queueMicrotask 67",
-    "queueMicrotask 68",
-    "queueMicrotask 69",
-    "queueMicrotask 70",
-    "queueMicrotask 71",
-    "queueMicrotask 72",
-    "queueMicrotask 73",
-    "queueMicrotask 74",
-    "queueMicrotask 75",
-    "queueMicrotask 76",
-    "queueMicrotask 77",
-    "queueMicrotask 78",
-    "queueMicrotask 79",
-    "queueMicrotask 80",
-    "queueMicrotask 81",
-    "queueMicrotask 82",
-    "queueMicrotask 83",
-    "queueMicrotask 84",
-    "queueMicrotask 85",
-    "queueMicrotask 86",
-    "queueMicrotask 87",
-    "queueMicrotask 88",
-    "queueMicrotask 89",
-    "queueMicrotask 90",
-    "queueMicrotask 91",
-    "queueMicrotask 92",
-    "queueMicrotask 93",
-    "queueMicrotask 94",
-    "queueMicrotask 95",
-    "queueMicrotask 96",
-    "queueMicrotask 97",
-    "queueMicrotask 98",
-    "queueMicrotask 99",
   ]);
   expect(runs.map(a => a.name)).toEqual([
     "nextTick",
@@ -536,4 +462,59 @@ it("process.nextTick can be called 100,000 times", async () => {
 
   await 1;
   expect(county).toBe(100_000);
+});
+
+it("process.nextTick works more than once", async () => {
+  var county = 0;
+  function ticky() {
+    county++;
+  }
+  for (let i = 0; i < 1000; i++) {
+    process.nextTick(ticky);
+    await 1;
+  }
+  expect(county).toBe(1000);
+});
+
+// `enterWith` is problematic because it and `nextTick` both rely on
+// JSC's `global.onEachMicrotaskTick`, and this test is designed to cover what happens when both
+// are active
+it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () => {
+  const AsyncLocalStorage = require("async_hooks").AsyncLocalStorage;
+  const t = require("timers/promises");
+  const storage = new AsyncLocalStorage();
+
+  let call1 = false;
+  let call2 = false;
+
+  process.nextTick(() => (call1 = true));
+
+  const p = Promise.withResolvers();
+  const p2 = p.promise.then(() => {
+    return storage.getStore(); // should not leak "hello"
+  });
+  const promise = Promise.resolve().then(async () => {
+    storage.enterWith("hello");
+    process.nextTick(() => (call2 = true));
+
+    let didCall = false;
+    let value = null;
+    function ticky() {
+      didCall = true;
+      value = storage.getStore();
+    }
+    process.nextTick(ticky);
+    await t.setTimeout(1);
+    expect(didCall).toBe(true);
+    expect(value).toBe("hello");
+    expect(storage.getStore()).toBe("hello");
+  });
+
+  expect(storage.getStore()).toBe(undefined);
+  await promise;
+  p.resolve();
+  expect(await p2).toBe(undefined);
+
+  expect(call1).toBe(true);
+  expect(call2).toBe(true);
 });

@@ -131,35 +131,53 @@
                 "description": "The path to Bun.",
                 "default": "bun"
               },
+              "runtimeArgs": {
+                "type": "array",
+                "description": "The command-line arguments passed to Bun.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
               "program": {
                 "type": "string",
-                "description": "The file to debug.",
+                "description": "The path to a JavaScript or TypeScript file.",
                 "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "description": "The command-line arguments passed to the program.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
               },
               "cwd": {
                 "type": "string",
                 "description": "The working directory.",
                 "default": "${workspaceFolder}"
               },
-              "args": {
-                "type": "array",
-                "description": "The arguments passed to Bun.",
-                "items": {
-                  "type": "string"
-                },
-                "default": []
-              },
               "env": {
                 "type": "object",
                 "description": "The environment variables passed to Bun.",
                 "default": {}
               },
-              "inheritEnv": {
+              "strictEnv": {
                 "type": "boolean",
-                "description": "If environment variables should be inherited from the parent process.",
-                "default": true
+                "description": "If environment variables should not be inherited from the parent process.",
+                "default": false
               },
-              "watch": {
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "If a breakpoint should be set at the first line.",
+                "default": false
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "If the debugger should be disabled.",
+                "default": false
+              },
+              "watchMode": {
                 "type": ["boolean", "string"],
                 "description": "If the process should be restarted when files change.",
                 "enum": [
@@ -168,11 +186,6 @@
                   "hot"
                 ],
                 "default": false
-              },
-              "debug": {
-                "type": "boolean",
-                "description": "If the process should be started in debug mode.",
-                "default": true
               }
             }
           },
@@ -181,6 +194,16 @@
               "url": {
                 "type": "string",
                 "description": "The URL of the Bun process to attach to."
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "If the debugger should be disabled.",
+                "default": false
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "If a breakpoint should when the program is attached.",
+                "default": false
               }
             }
           }

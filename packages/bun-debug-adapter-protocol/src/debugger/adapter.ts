@@ -4,12 +4,90 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 // @ts-ignore
 import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
-import { spawn, spawnSync } from "node:child_process";
-import capabilities from "./capabilities";
+import { spawn } from "node:child_process";
 import { Location, SourceMap } from "./sourcemap";
-import { compare, parse } from "semver";
 import { EventEmitter } from "node:events";
 import { UnixSignal, randomUnixPath } from "./signal";
+
+const capabilities: DAP.Capabilities = {
+  supportsConfigurationDoneRequest: true,
+  supportsFunctionBreakpoints: true,
+  supportsConditionalBreakpoints: true,
+  supportsHitConditionalBreakpoints: true,
+  supportsEvaluateForHovers: true,
+  exceptionBreakpointFilters: [
+    {
+      filter: "all",
+      label: "All Exceptions",
+      default: false,
+      supportsCondition: true,
+      description: "Breaks on all throw errors, even if they're caught later.",
+      conditionDescription: `error.name == "CustomError"`,
+    },
+    {
+      filter: "uncaught",
+      label: "Uncaught Exceptions",
+      default: false,
+      supportsCondition: true,
+      description: "Breaks only on errors or promise rejections that are not handled.",
+      conditionDescription: `error.name == "CustomError"`,
+    },
+    {
+      filter: "debugger",
+      label: "Debugger Statements",
+      default: true,
+      supportsCondition: false,
+      description: "Breaks on `debugger` statements.",
+    },
+    {
+      filter: "assert",
+      label: "Assertion Failures",
+      default: false,
+      supportsCondition: false,
+      description: "Breaks on failed assertions.",
+    },
+    {
+      filter: "microtask",
+      label: "Microtasks",
+      default: false,
+      supportsCondition: false,
+      description: "Breaks on microtasks.",
+    },
+  ],
+  supportsStepBack: false,
+  supportsSetVariable: true,
+  supportsRestartFrame: false,
+  supportsGotoTargetsRequest: true,
+  supportsStepInTargetsRequest: false,
+  supportsCompletionsRequest: true,
+  completionTriggerCharacters: [".", "[", '"', "'"],
+  supportsModulesRequest: false,
+  additionalModuleColumns: [],
+  supportedChecksumAlgorithms: [],
+  supportsRestartRequest: false, // TODO
+  supportsExceptionOptions: false, // TODO
+  supportsValueFormattingOptions: false,
+  supportsExceptionInfoRequest: true,
+  supportTerminateDebuggee: true,
+  supportSuspendDebuggee: false,
+  supportsDelayedStackTraceLoading: true,
+  supportsLoadedSourcesRequest: true,
+  supportsLogPoints: true,
+  supportsTerminateThreadsRequest: false,
+  supportsSetExpression: true,
+  supportsTerminateRequest: true,
+  supportsDataBreakpoints: false, // TODO
+  supportsReadMemoryRequest: false,
+  supportsWriteMemoryRequest: false,
+  supportsDisassembleRequest: false,
+  supportsCancelRequest: false,
+  supportsBreakpointLocationsRequest: true,
+  supportsClipboardContext: false,
+  supportsSteppingGranularity: false,
+  supportsInstructionBreakpoints: false,
+  supportsExceptionFilterOptions: false,
+  supportsSingleThreadExecutionRequests: false,
+};
 
 type InitializeRequest = DAP.InitializeRequest & {
   supportsConfigurationDoneRequest?: boolean;
@@ -25,15 +103,16 @@ type LaunchRequest = DAP.LaunchRequest & {
   strictEnv?: boolean;
   stopOnEntry?: boolean;
   noDebug?: boolean;
-  watch?: boolean | "hot";
+  watchMode?: boolean | "hot";
 };
 
 type AttachRequest = DAP.AttachRequest & {
   url?: string;
-  hostname?: string;
-  port?: number;
-  restart?: boolean;
+  noDebug?: boolean;
+  stopOnEntry?: boolean;
 };
+
+type DebuggerOptions = (LaunchRequest & { type: "launch" }) | (AttachRequest & { type: "attach" });
 
 type Source = DAP.Source & {
   scriptId: string;
@@ -54,7 +133,11 @@ type Source = DAP.Source & {
 type Breakpoint = DAP.Breakpoint & {
   id: number;
   breakpointId: string;
-  generatedLocation: JSC.Debugger.Location;
+  generatedLocation?: JSC.Debugger.Location;
+  source?: Source;
+};
+
+type Target = (DAP.GotoTarget | DAP.StepInTarget) & {
   source: Source;
 };
 
@@ -103,8 +186,10 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Process.stderr": [string];
 };
 
+const isDebug = process.env.NODE_ENV === "development";
+const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
+
 let threadId = 1;
-let isDebug = process.env.NODE_ENV === "development";
 
 export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements IDebugAdapter {
   #threadId: number;
@@ -115,13 +200,15 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #sources: Map<string | number, Source>;
   #stackFrames: StackFrame[];
   #stopped?: DAP.StoppedEvent["reason"];
+  #exception?: Variable;
   #breakpointId: number;
-  #breakpoints: Breakpoint[];
+  #breakpoints: Map<string, Breakpoint>;
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
+  #targets: Map<number, Target>;
   #variableId: number;
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
-  #launched?: LaunchRequest;
+  #options?: DebuggerOptions;
 
   constructor(url?: string | URL) {
     super();
@@ -138,10 +225,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#pendingSources = new Map();
     this.#sources = new Map();
     this.#stackFrames = [];
-    this.#stopped = undefined;
+    this.#stopped = "start";
     this.#breakpointId = 1;
-    this.#breakpoints = [];
+    this.#breakpoints = new Map();
     this.#functionBreakpoints = new Map();
+    this.#targets = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
   }
@@ -159,7 +247,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * @returns if the inspector was able to connect
    */
   start(url?: string): Promise<boolean> {
-    return this.#inspector.start(url);
+    return this.#attach({ url });
   }
 
   /**
@@ -187,7 +275,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * @returns if the event was sent to a listener
    */
   emit<E extends keyof DebugAdapterEventMap>(event: E, ...args: DebugAdapterEventMap[E] | []): boolean {
-    if (isDebug && event !== "Adapter.event" && event !== "Inspector.event") {
+    if (isDebug && !debugSilentEvents.has(event)) {
       console.log(this.#threadId, event, ...args);
     }
 
@@ -224,12 +312,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  #reverseSend<R extends keyof DAP.RequestMap>(name: R, request: DAP.RequestMap[R]): void {
-    this.emit("Adapter.request", {
-      type: "request",
-      seq: 0,
-      command: name,
-      arguments: request,
+  #emitAfterResponse<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
+    this.once("Adapter.response", () => {
+      process.nextTick(() => {
+        this.#emit(event, body);
+      });
     });
   }
 
@@ -240,11 +327,29 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return;
     }
 
+    let timerId: number | undefined;
     let result: unknown;
     try {
-      // @ts-ignore
-      result = await this[command](args);
+      result = await Promise.race([
+        // @ts-ignore
+        this[command](args),
+        new Promise((_, reject) => {
+          timerId = +setTimeout(() => reject(new Error(`Timed out: ${command}`)), 15_000);
+        }),
+      ]);
     } catch (cause) {
+      if (cause === Cancel) {
+        this.emit("Adapter.response", {
+          type: "response",
+          command,
+          success: false,
+          message: "cancelled",
+          request_seq: request.seq,
+          seq: 0,
+        });
+        return;
+      }
+
       const error = unknownToError(cause);
       this.emit("Adapter.error", error);
 
@@ -258,6 +363,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         seq: 0,
       });
       return;
+    } finally {
+      if (timerId) {
+        clearTimeout(timerId);
+      }
     }
 
     this.emit("Adapter.response", {
@@ -276,21 +385,25 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   initialize(request: InitializeRequest): DAP.InitializeResponse {
-    const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
+    this.#initialized = request;
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
-    this.send("Debugger.enable");
+    this.send("Debugger.enable").catch(error => {
+      const { message } = unknownToError(error);
+      if (message !== "Debugger domain already enabled") {
+        throw error;
+      }
+    });
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
-    this.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
-    this.send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.send("Debugger.setBreakpointsActive", { active: true });
+    this.send("Debugger.pause");
+    this.send("Inspector.initialized");
 
-    // If the client will not send a `configurationDone` request, then we need to
-    // tell the debugger that everything is ready.
+    const { clientID, supportsConfigurationDoneRequest } = request;
     if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
-      this.send("Inspector.initialized");
+      this.configurationDone();
     }
 
     // Tell the client what capabilities this adapter supports.
@@ -300,21 +413,21 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   configurationDone(): void {
     // If the client requested that `noDebug` mode be enabled,
     // then we need to disable all breakpoints and pause on statements.
-    if (this.#launched?.noDebug) {
+    if (this.#options?.noDebug) {
       this.send("Debugger.setBreakpointsActive", { active: false });
-      this.send("Debugger.setPauseOnExceptions", { state: "none" });
-      this.send("Debugger.setPauseOnDebuggerStatements", { enabled: false });
-      this.send("Debugger.setPauseOnMicrotasks", { enabled: false });
-      this.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-      this.send("Debugger.setPauseOnAssertions", { enabled: false });
+      this.setExceptionBreakpoints({ filters: [] });
     }
 
-    // Tell the debugger that everything is ready.
-    this.send("Inspector.initialized");
+    if (this.#options?.stopOnEntry) {
+      this.send("Debugger.pause");
+    } else {
+      // TODO: Check that the current location is not on a breakpoint before resuming.
+      this.send("Debugger.resume");
+    }
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
-    this.#launched = request;
+    this.#options = { ...request, type: "launch" };
 
     try {
       await this.#launch(request);
@@ -339,9 +452,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       cwd,
       env = {},
       strictEnv = false,
-      stopOnEntry = false,
-      noDebug = false,
-      watch = false,
+      watchMode = false,
     } = request;
 
     if (!program) {
@@ -358,8 +469,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       processArgs.unshift("test");
     }
 
-    if (watch && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
-      processArgs.unshift(watch === "hot" ? "--hot" : "--watch");
+    if (watchMode && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
+      processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
     }
 
     const processEnv = strictEnv
@@ -374,10 +485,24 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const url = `ws+unix://${randomUnixPath()}`;
     const signal = new UnixSignal();
 
-    const i = stopOnEntry ? "2" : "1";
-    processEnv["BUN_INSPECT"] = `${i}${url}`;
+    signal.on("Signal.received", () => {
+      this.#attach({ url });
+    });
+
+    this.once("Adapter.terminated", () => {
+      signal.close();
+    });
+
+    // Break on entry is always set so the debugger has a chance
+    // to set breakpoints before the program starts. If `stopOnEntry`
+    // was not set, then the debugger will auto-continue after the first pause.
+    processEnv["BUN_INSPECT"] = `${url}?break=1`;
     processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
+
+    // This is probably not correct, but it's the best we can do for now.
     processEnv["FORCE_COLOR"] = "1";
+    processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+    processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
 
     const started = await this.#spawn({
       command: runtime,
@@ -390,28 +515,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     if (!started) {
       throw new Error("Program could not be started.");
     }
-
-    await new Promise<void>(resolve => {
-      signal.on("Signal.received", () => {
-        resolve();
-      });
-      setTimeout(resolve, 5000);
-    });
-
-    const attached = await this.#attach(url);
-
-    if (attached) {
-      return;
-    }
-
-    const { stdout: version } = spawnSync(runtime, ["--version"], { stdio: "pipe", encoding: "utf-8" });
-
-    const minVersion = "0.8.2";
-    if (parse(version, true) && compare(minVersion, version, true)) {
-      throw new Error(`This extension requires Bun v${minVersion} or later. Please upgrade by running: bun upgrade`);
-    }
-
-    throw new Error("Program started, but the debugger could not be attached.");
   }
 
   async #spawn(options: {
@@ -458,6 +561,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         this.#emit("exited", {
           exitCode: code ?? -1,
         });
+        this.#emit("terminated");
       }
     });
 
@@ -477,10 +581,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async attach(request: AttachRequest): Promise<void> {
-    const { url } = request;
+    this.#options = { ...request, type: "attach" };
 
     try {
-      await this.#attach(url);
+      await this.#attach(request);
     } catch (error) {
       // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
       // Instead, we want to show the error as a sidebar notification.
@@ -493,19 +597,27 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
   }
 
-  async #attach(url?: string | URL): Promise<boolean> {
-    for (let i = 0; i < 5; i++) {
+  async #attach(request: AttachRequest): Promise<boolean> {
+    const { url } = request;
+
+    for (let i = 0; i < 3; i++) {
       const ok = await this.#inspector.start(url);
       if (ok) {
         return true;
       }
       await new Promise(resolve => setTimeout(resolve, 100 * i));
     }
+
     return false;
   }
 
   terminate(): void {
-    this.#process?.kill();
+    if (!this.#process?.kill()) {
+      this.#evaluate({
+        expression: "process.exit(0)",
+      });
+    }
+
     this.#emit("terminated");
   }
 
@@ -521,7 +633,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async source(request: DAP.SourceRequest): Promise<DAP.SourceResponse> {
     const { source } = request;
-
     const { scriptId } = await this.#getSource(sourceToId(source));
     const { scriptSource } = await this.send("Debugger.getScriptSource", { scriptId });
 
@@ -570,14 +681,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const { line, endLine, column, endColumn, source: source0 } = request;
     const source = await this.#getSource(sourceToId(source0));
 
-    const [start, end] = await Promise.all([
-      this.#generatedLocation(source, line, column),
-      this.#generatedLocation(source, endLine ?? line + 1, endColumn),
-    ]);
-
     const { locations } = await this.send("Debugger.getBreakpointLocations", {
-      start,
-      end,
+      start: this.#generatedLocation(source, line, column),
+      end: this.#generatedLocation(source, endLine ?? line + 1, endColumn),
     });
 
     return {
@@ -636,7 +742,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     return {
       line: this.#lineFrom0BasedLine(oline),
-      column: this.#columnFrom0BasedColumn(ocolumn),
+      // For now, remove the column from locations because
+      // it can be inaccurate and causes weird rendering issues in VSCode.
+      column: this.#columnFrom0BasedColumn(0), // ocolumn
     };
   }
 
@@ -655,13 +763,52 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
-    const { source: source0, breakpoints: requests } = request;
-    const sourceId = sourceToId(source0);
-    const source = await this.#getSource(sourceId);
+    const { source, breakpoints } = request;
 
+    if (!breakpoints?.length) {
+      return {
+        breakpoints: [],
+      };
+    }
+
+    const { path } = source;
+    const verifiedSource = this.#getSourceIfPresent(sourceToId(source));
+
+    let results: Breakpoint[];
+    if (verifiedSource) {
+      results = await this.#setBreakpointsById(verifiedSource, breakpoints);
+    } else if (path) {
+      results = await this.#setBreakpointsByUrl(path, breakpoints);
+    } else {
+      results = [];
+    }
+
+    return {
+      breakpoints: results,
+    };
+  }
+
+  async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[]): Promise<Breakpoint[]> {
+    const source = await this.#getSourceByUrl(url);
+
+    // If there is no source, this is likely a breakpoint from an unrelated
+    // file that can be ignored. Return an unverified breakpoint for each request.
+    if (!source) {
+      return requests.map(() => {
+        const breakpointId = this.#breakpointId++;
+        return this.#addBreakpoint({
+          id: breakpointId,
+          breakpointId: `${breakpointId}`,
+          verified: false,
+        });
+      });
+    }
+
+    const sourceId = sourceToId(source);
     const oldBreakpoints = this.#getBreakpoints(sourceId);
+
     const breakpoints = await Promise.all(
-      requests!.map(async ({ line, column, ...options }) => {
+      requests.map(async ({ line, column, ...options }) => {
         const location = this.#generatedLocation(source, line, column);
 
         for (const breakpoint of oldBreakpoints) {
@@ -671,25 +818,17 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           }
         }
 
+        let result;
         try {
-          const { breakpointId, actualLocation } = await this.send("Debugger.setBreakpoint", {
-            location,
+          result = await this.send("Debugger.setBreakpointByUrl", {
+            url,
             options: breakpointOptions(options),
-          });
-
-          const originalLocation = this.#originalLocation(source, actualLocation);
-          return this.#addBreakpoint({
-            id: this.#breakpointId++,
-            breakpointId,
-            source,
-            verified: true,
-            generatedLocation: location,
-            ...originalLocation,
+            ...location,
           });
         } catch (error) {
-          const { message } = unknownToError(error);
           // If there was an error setting the breakpoint,
           // mark it as unverified and add a message.
+          const { message } = unknownToError(error);
           const breakpointId = this.#breakpointId++;
           return this.#addBreakpoint({
             id: breakpointId,
@@ -702,6 +841,29 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
             generatedLocation: location,
           });
         }
+
+        const { breakpointId, locations } = result;
+        if (!locations.length) {
+          return this.#addBreakpoint({
+            id: this.#breakpointId++,
+            breakpointId,
+            line,
+            column,
+            source,
+            verified: false,
+            generatedLocation: location,
+          });
+        }
+
+        const originalLocation = this.#originalLocation(source, locations[0]);
+        return this.#addBreakpoint({
+          id: this.#breakpointId++,
+          breakpointId,
+          source,
+          verified: true,
+          generatedLocation: location,
+          ...originalLocation,
+        });
       }),
     );
 
@@ -717,17 +879,100 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }),
     );
 
-    return {
-      breakpoints,
-    };
+    const duplicateBreakpoints = breakpoints.filter(
+      ({ message }) => message === "Breakpoint for given location already exists",
+    );
+    for (const { breakpointId } of duplicateBreakpoints) {
+      this.#removeBreakpoint(breakpointId);
+    }
+
+    return breakpoints;
   }
 
-  #getBreakpoints(sourceId: string | number): Breakpoint[] {
+  async #setBreakpointsById(source: Source, requests: DAP.SourceBreakpoint[]): Promise<Breakpoint[]> {
+    const { sourceId } = source;
+    const oldBreakpoints = this.#getBreakpoints(sourceId);
+
+    const breakpoints = await Promise.all(
+      requests!.map(async ({ line, column, ...options }) => {
+        const location = this.#generatedLocation(source, line, column);
+
+        for (const breakpoint of oldBreakpoints) {
+          const { generatedLocation } = breakpoint;
+          if (locationIsSame(generatedLocation, location)) {
+            return breakpoint;
+          }
+        }
+
+        let result;
+        try {
+          result = await this.send("Debugger.setBreakpoint", {
+            location,
+            options: breakpointOptions(options),
+          });
+        } catch (error) {
+          // If there was an error setting the breakpoint,
+          // mark it as unverified and add a message.
+          const { message } = unknownToError(error);
+          const breakpointId = this.#breakpointId++;
+          return this.#addBreakpoint({
+            id: breakpointId,
+            breakpointId: `${breakpointId}`,
+            line,
+            column,
+            source,
+            verified: false,
+            message,
+            generatedLocation: location,
+          });
+        }
+
+        const { breakpointId, actualLocation } = result;
+        const originalLocation = this.#originalLocation(source, actualLocation);
+
+        return this.#addBreakpoint({
+          id: this.#breakpointId++,
+          breakpointId,
+          source,
+          verified: true,
+          generatedLocation: location,
+          ...originalLocation,
+        });
+      }),
+    );
+
+    await Promise.all(
+      oldBreakpoints.map(async ({ breakpointId }) => {
+        const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
+        if (isRemoved) {
+          await this.send("Debugger.removeBreakpoint", {
+            breakpointId,
+          });
+          this.#removeBreakpoint(breakpointId);
+        }
+      }),
+    );
+
+    const duplicateBreakpoints = breakpoints.filter(
+      ({ message }) => message === "Breakpoint for given location already exists",
+    );
+    for (const { breakpointId } of duplicateBreakpoints) {
+      this.#removeBreakpoint(breakpointId);
+    }
+
+    return breakpoints;
+  }
+
+  #getBreakpoints(sourceId?: string | number): Breakpoint[] {
     const breakpoints: Breakpoint[] = [];
+
+    if (!sourceId) {
+      return breakpoints;
+    }
 
     for (const breakpoint of this.#breakpoints.values()) {
       const { source } = breakpoint;
-      if (sourceId === sourceToId(source)) {
+      if (source && sourceId === sourceToId(source)) {
         breakpoints.push(breakpoint);
       }
     }
@@ -736,28 +981,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
-    this.#breakpoints.push(breakpoint);
-
-    // For now, remove the column from breakpoints because
-    // it can be inaccurate and causes weird rendering issues in VSCode.
-    breakpoint.column = this.#lineFrom0BasedLine(0);
-
-    this.#emit("breakpoint", {
-      reason: "changed",
-      breakpoint,
-    });
-
+    const { breakpointId } = breakpoint;
+    this.#breakpoints.set(breakpointId, breakpoint);
     return breakpoint;
   }
 
   #removeBreakpoint(breakpointId: string): void {
-    const breakpoint = this.#breakpoints.find(({ breakpointId: id }) => id === breakpointId);
-    if (!breakpoint) {
+    const breakpoint = this.#breakpoints.get(breakpointId);
+
+    if (!breakpoint || !this.#breakpoints.delete(breakpointId)) {
       return;
     }
 
-    this.#breakpoints = this.#breakpoints.filter(({ breakpointId: id }) => id !== breakpointId);
-    this.#emit("breakpoint", {
+    this.#emitAfterResponse("breakpoint", {
       reason: "removed",
       breakpoint,
     });
@@ -831,12 +1067,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #addFunctionBreakpoint(breakpoint: FunctionBreakpoint): FunctionBreakpoint {
     const { name } = breakpoint;
     this.#functionBreakpoints.set(name, breakpoint);
-
-    this.#emit("breakpoint", {
-      reason: "changed",
-      breakpoint,
-    });
-
     return breakpoint;
   }
 
@@ -847,22 +1077,86 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return;
     }
 
-    this.#emit("breakpoint", {
+    this.#emitAfterResponse("breakpoint", {
       reason: "removed",
       breakpoint,
     });
   }
 
-  async setExceptionBreakpoints(request: DAP.SetExceptionBreakpointsRequest): Promise<void> {
-    const { filters, filterOptions } = request;
+  async setExceptionBreakpoints(
+    request: DAP.SetExceptionBreakpointsRequest,
+  ): Promise<DAP.SetExceptionBreakpointsResponse> {
+    const { filters } = request;
 
-    const filterIds = [...filters];
-    if (filterOptions) {
-      filterIds.push(...filterOptions.map(({ filterId }) => filterId));
+    let state: "all" | "uncaught" | "none";
+    if (filters.includes("all")) {
+      state = "all";
+    } else if (filters.includes("uncaught")) {
+      state = "uncaught";
+    } else {
+      state = "none";
     }
 
-    await this.send("Debugger.setPauseOnExceptions", {
-      state: exceptionFiltersToPauseOnExceptionsState(filterIds),
+    await Promise.all([
+      this.send("Debugger.setPauseOnExceptions", { state }),
+      this.send("Debugger.setPauseOnAssertions", {
+        enabled: filters.includes("assert"),
+      }),
+      this.send("Debugger.setPauseOnDebuggerStatements", {
+        enabled: filters.includes("debugger"),
+      }),
+      this.send("Debugger.setPauseOnMicrotasks", {
+        enabled: filters.includes("microtask"),
+      }),
+    ]);
+
+    return {
+      breakpoints: [],
+    };
+  }
+
+  async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
+    const { source: source0 } = request;
+    const source = await this.#getSource(sourceToId(source0));
+
+    const { breakpoints } = await this.breakpointLocations(request);
+    const targets = breakpoints.map(({ line, column }) =>
+      this.#addTarget({
+        id: this.#targets.size,
+        label: `${line}:${column}`,
+        source,
+        line,
+        column,
+      }),
+    );
+
+    return {
+      targets,
+    };
+  }
+
+  #addTarget<T extends DAP.GotoTarget | DAP.StepInTarget>(target: T & { source: Source }): T {
+    const { id } = target;
+    this.#targets.set(id, target);
+    return target;
+  }
+
+  #getTarget(targetId: number): Target | undefined {
+    return this.#targets.get(targetId);
+  }
+
+  async goto(request: DAP.GotoRequest): Promise<void> {
+    const { targetId } = request;
+    const target = this.#getTarget(targetId);
+    if (!target) {
+      throw new Error("No target found.");
+    }
+
+    const { source, line, column } = target;
+    const location = this.#generatedLocation(source, line, column);
+
+    await this.send("Debugger.continueToLocation", {
+      location,
     });
   }
 
@@ -871,14 +1165,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const callFrameId = this.#getCallFrameId(frameId);
     const objectGroup = callFrameId ? "debugger" : context;
 
-    const { result, wasThrown } = await this.#evaluate(expression, objectGroup, callFrameId);
-    const { className } = result;
+    const { result, wasThrown } = await this.#evaluate({
+      expression,
+      objectGroup,
+      callFrameId,
+    });
 
-    if (context === "hover" && wasThrown && (className === "SyntaxError" || className === "ReferenceError")) {
-      return {
-        result: "",
-        variablesReference: 0,
-      };
+    if (wasThrown) {
+      if (context === "hover" && isSyntaxError(result)) {
+        throw Cancel;
+      }
+
+      throw new Error(remoteObjectToString(result));
     }
 
     const { name, value, ...variable } = this.#addObject(result, { objectGroup });
@@ -888,11 +1186,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  async #evaluate(
-    expression: string,
-    objectGroup?: string,
-    callFrameId?: string,
-  ): Promise<JSC.Runtime.EvaluateResponse> {
+  async #evaluate(options: {
+    expression: string;
+    objectGroup?: string;
+    callFrameId?: string;
+  }): Promise<JSC.Runtime.EvaluateResponse> {
+    const { expression, objectGroup, callFrameId } = options;
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
 
     return this.send(method, {
@@ -906,14 +1205,40 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  restart(): void {
-    this.initialize(this.#initialized!);
-    this.configurationDone();
+  async completions(request: DAP.CompletionsRequest): Promise<DAP.CompletionsResponse> {
+    const { text, column, frameId } = request;
+    const callFrameId = this.#getCallFrameId(frameId);
 
-    this.#emit("output", {
-      category: "debug console",
-      output: "Debugger reloaded.\n",
+    const { expression, hint } = completionToExpression(text);
+    const { result, wasThrown } = await this.#evaluate({
+      expression: expression || "this",
+      callFrameId,
+      objectGroup: "repl",
     });
+
+    if (wasThrown) {
+      if (isSyntaxError(result)) {
+        return {
+          targets: [],
+        };
+      }
+      throw new Error(remoteObjectToString(result));
+    }
+
+    const variable = this.#addObject(result, {
+      objectGroup: "repl",
+      evaluateName: expression,
+    });
+
+    const properties = await this.#getProperties(variable);
+    const targets = properties
+      .filter(({ name }) => isIdentifier(name) && (!hint || name.includes(hint)))
+      .sort(variablesSortBy)
+      .map(variableToCompletionItem);
+
+    return {
+      targets,
+    };
   }
 
   ["Inspector.connected"](): void {
@@ -939,8 +1264,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       });
     }
 
-    this.#emit("terminated");
     this.#reset();
+
+    if (this.#process?.exitCode !== null) {
+      this.#emit("terminated");
+    }
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
@@ -986,7 +1314,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.scriptFailedToParse"](event: JSC.Debugger.ScriptFailedToParseEvent): void {
     const { url, errorMessage, errorLine } = event;
 
-    // If no url is present, the script is from a `evaluate` request.
+    // If no url is present, the script is from an `evaluate` request.
     if (!url) {
       return;
     }
@@ -1004,14 +1332,24 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    // if (reason === "PauseOnNextStatement") {
-    //   for (const { functionName } of callFrames) {
-    //     if (functionName === "module code") {
-    //       this.send("Debugger.resume");
-    //       return;
-    //     }
-    //   }
-    // }
+    if (reason === "PauseOnNextStatement") {
+      if (this.#stopped === "start" && !this.#options?.stopOnEntry) {
+        this.#stopped = undefined;
+        return;
+      }
+    }
+
+    if (reason === "DebuggerStatement") {
+      // FIXME: This is a hacky fix for the `Debugger.paused` event being fired
+      // when the debugger is started in hot mode.
+      for (const { functionName } of callFrames) {
+        // @ts-ignore
+        if (functionName === "module code" && this.#options?.watchMode === "hot") {
+          this.send("Debugger.resume");
+          return;
+        }
+      }
+    }
 
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
@@ -1030,6 +1368,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     if (data) {
       if (reason === "exception") {
         const remoteObject = data as JSC.Runtime.RemoteObject;
+        this.#exception = this.#addObject(remoteObject, { objectGroup: "debugger" });
       }
 
       if (reason === "FunctionCall") {
@@ -1059,16 +1398,16 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
+  ["Debugger.resumed"](): void {
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
-    console.log("VARIABLES BEFORE", this.#variables.size);
+    this.#exception = undefined;
     for (const { variablesReference, objectGroup } of this.#variables.values()) {
       if (objectGroup === "debugger") {
         this.#variables.delete(variablesReference);
       }
     }
-    console.log("VARIABLES AFTER", this.#variables.size);
+
     this.#emit("continued", {
       threadId: this.#threadId,
     });
@@ -1240,6 +1579,62 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
+  async #getSourceByUrl(url: string): Promise<Source | undefined> {
+    const source = this.#getSourceIfPresent(url);
+    if (source) {
+      return source;
+    }
+
+    // If the source is not present, the debugger did not send the `Debugger.scriptParsed` event.
+    // Since there is no request to retrieve a script by its url, the hacky solution is to set
+    // a no-op breakpoint by url, then immediately remove it.
+    let result;
+    try {
+      result = await this.send("Debugger.setBreakpointByUrl", {
+        url,
+        lineNumber: 0,
+        options: {
+          autoContinue: true,
+        },
+      });
+    } catch {
+      // If there was an error setting the breakpoint,
+      // the source probably does not exist.
+      return undefined;
+    }
+
+    const { breakpointId, locations } = result;
+    await this.send("Debugger.removeBreakpoint", {
+      breakpointId,
+    });
+
+    if (!locations.length) {
+      return undefined;
+    }
+
+    // It is possible that the source was loaded between the time it took
+    // to set and remove the breakpoint, so check again.
+    const [{ scriptId }] = locations;
+    const recentSource = this.#getSourceIfPresent(scriptId) || this.#getSourceIfPresent(url);
+    if (recentSource) {
+      return recentSource;
+    }
+
+    // Otherwise, retrieve the source and source map url and add the source.
+    const { scriptSource } = await this.send("Debugger.getScriptSource", {
+      scriptId,
+    });
+
+    return this.#addSource({
+      scriptId,
+      sourceId: url,
+      name: sourceName(url),
+      path: url,
+      sourceMap: SourceMap(scriptSource),
+      presentationHint: sourcePresentationHint(url),
+    });
+  }
+
   async stackTrace(request: DAP.StackTraceRequest): Promise<DAP.StackTraceResponse> {
     const { length } = this.#stackFrames;
     const { startFrame = 0, levels } = request;
@@ -1279,7 +1674,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addStackFrame(callFrame: JSC.Debugger.CallFrame): StackFrame {
-    const { callFrameId, functionName, location, scopeChain } = callFrame;
+    const { callFrameId, functionName, location, scopeChain, this: thisObject } = callFrame;
     const { scriptId } = location;
     const source = this.#getSourceIfPresent(scriptId);
 
@@ -1398,7 +1793,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async variables(request: DAP.VariablesRequest): Promise<DAP.VariablesResponse> {
     const { variablesReference, start, count } = request;
-    const variable = this.#variables.get(variablesReference);
+    const variable = this.#getVariable(variablesReference);
 
     let variables: Variable[];
     if (!variable) {
@@ -1414,68 +1809,88 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
+  async setVariable(request: DAP.SetVariableRequest): Promise<DAP.SetVariableResponse> {
+    const { variablesReference, name, value } = request;
+
+    const variable = this.#getVariable(variablesReference);
+    if (!variable) {
+      throw new Error("Variable not found.");
+    }
+
+    const { objectId, objectGroup } = variable;
+    if (!objectId) {
+      throw new Error("Variable cannot be modified.");
+    }
+
+    const { result, wasThrown } = await this.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function (name) { this[name] = ${value}; return this[name]; }`,
+      arguments: [{ value: name }],
+      doNotPauseOnExceptionsAndMuteConsole: true,
+    });
+
+    if (wasThrown) {
+      throw new Error(remoteObjectToString(result));
+    }
+
+    return this.#addObject(result, { name, objectGroup });
+  }
+
+  async setExpression(request: DAP.SetExpressionRequest): Promise<DAP.SetExpressionResponse> {
+    const { expression, value, frameId } = request;
+    const callFrameId = this.#getCallFrameId(frameId);
+    const objectGroup = callFrameId ? "debugger" : "repl";
+
+    const { result, wasThrown } = await this.#evaluate({
+      expression: `${expression} = (${value});`,
+      objectGroup: "repl",
+      callFrameId,
+    });
+
+    if (wasThrown) {
+      throw new Error(remoteObjectToString(result));
+    }
+
+    return this.#addObject(result, { objectGroup });
+  }
+
+  #getVariable(variablesReference?: number): Variable | undefined {
+    if (!variablesReference) {
+      return undefined;
+    }
+    return this.#variables.get(variablesReference);
+  }
+
   #addObject(
     remoteObject: JSC.Runtime.RemoteObject,
-    propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string },
+    propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & { objectGroup?: string; evaluateName?: string },
   ): Variable {
     const { objectId, type, subtype, size } = remoteObject;
+    const { objectGroup, evaluateName } = propertyDescriptor ?? {};
     const variablesReference = objectId ? this.#variableId++ : 0;
 
     const variable: Variable = {
       objectId,
-      objectGroup: propertyDescriptor?.objectGroup,
-      name: propertyDescriptorToName(propertyDescriptor),
+      objectGroup,
+      variablesReference,
       type: subtype || type,
       value: remoteObjectToString(remoteObject),
-      variablesReference,
-      indexedVariables: isIndexed(subtype) ? size : undefined,
-      namedVariables: isNamedIndexed(subtype) ? size : undefined,
+      name: propertyDescriptorToName(propertyDescriptor),
+      evaluateName: propertyDescriptorToEvaluateName(propertyDescriptor, evaluateName),
+      indexedVariables: isArrayLike(subtype) ? size : undefined,
+      namedVariables: isMap(subtype) ? size : undefined,
       presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
 
     if (variablesReference) {
       this.#variables.set(variablesReference, variable);
-      console.log("addObject", variablesReference, variable);
     }
 
     return variable;
   }
 
-  #addProperty(
-    propertyDescriptor:
-      | JSC.Runtime.PropertyDescriptor
-      | (JSC.Runtime.InternalPropertyDescriptor & { objectGroup?: string }),
-  ): Variable[] {
-    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
-    const variables: Variable[] = [];
-
-    if (value) {
-      variables.push(this.#addObject(value, propertyDescriptor));
-    }
-
-    if (get) {
-      const { type } = get;
-      if (type !== "undefined") {
-        variables.push(this.#addObject(get, propertyDescriptor));
-      }
-    }
-
-    if (set) {
-      const { type } = set;
-      if (type !== "undefined") {
-        variables.push(this.#addObject(set, propertyDescriptor));
-      }
-    }
-
-    if (symbol) {
-      variables.push(this.#addObject(symbol, propertyDescriptor));
-    }
-
-    return variables;
-  }
-
   async #getProperties(variable: Variable, offset?: number, count?: number): Promise<Variable[]> {
-    const { objectId, objectGroup, type, indexedVariables, namedVariables } = variable;
+    const { objectId, objectGroup, type, evaluateName, indexedVariables, namedVariables } = variable;
     const variables: Variable[] = [];
 
     if (!objectId || type === "symbol") {
@@ -1488,12 +1903,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
 
     for (const property of properties) {
-      variables.push(...this.#addProperty({ ...property, objectGroup }));
+      variables.push(...this.#addProperty(property, { objectGroup, evaluateName, parentType: type }));
     }
 
     if (internalProperties) {
       for (const property of internalProperties) {
-        variables.push(...this.#addProperty({ ...property, objectGroup, configurable: false }));
+        variables.push(
+          ...this.#addProperty(property, { objectGroup, evaluateName, parentType: type, isSynthetic: true }),
+        );
       }
     }
 
@@ -1512,29 +1929,135 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           const { value, description } = key;
           name = String(value ?? description);
         }
-        variables.push(this.#addObject(value, { name, objectGroup }));
+        variables.push(
+          ...this.#addProperty(
+            { name, value },
+            {
+              objectGroup,
+              evaluateName,
+              parentType: type,
+              isSynthetic: true,
+            },
+          ),
+        );
       }
     }
 
     return variables;
   }
 
+  #addProperty(
+    propertyDescriptor: JSC.Runtime.PropertyDescriptor | JSC.Runtime.InternalPropertyDescriptor,
+    options?: {
+      objectGroup?: string;
+      evaluateName?: string;
+      isSynthetic?: boolean;
+      parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+    },
+  ): Variable[] {
+    const { value, get, set, symbol } = propertyDescriptor as JSC.Runtime.PropertyDescriptor;
+    const descriptor = { ...propertyDescriptor, ...options };
+    const variables: Variable[] = [];
+
+    if (value) {
+      variables.push(this.#addObject(value, descriptor));
+    }
+
+    if (get) {
+      const { type } = get;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(get, descriptor));
+      }
+    }
+
+    if (set) {
+      const { type } = set;
+      if (type !== "undefined") {
+        variables.push(this.#addObject(set, descriptor));
+      }
+    }
+
+    if (symbol) {
+      variables.push(this.#addObject(symbol, descriptor));
+    }
+
+    return variables;
+  }
+
+  async exceptionInfo(): Promise<DAP.ExceptionInfoResponse> {
+    const exception = this.#exception;
+    if (!exception) {
+      throw new Error("No exception found.");
+    }
+
+    const { code, ...details } = await this.#getExceptionDetails(exception);
+    return {
+      exceptionId: code || "",
+      breakMode: "always",
+      details,
+    };
+  }
+
+  async #getExceptionDetails(variable: Variable): Promise<DAP.ExceptionDetails & { code?: string }> {
+    const properties = await this.#getProperties(variable);
+
+    let fullTypeName: string | undefined;
+    let message: string | undefined;
+    let code: string | undefined;
+    let stackTrace: string | undefined;
+    let innerException: DAP.ExceptionDetails[] | undefined;
+
+    for (const property of properties) {
+      const { name, value, type } = property;
+      if (name === "name") {
+        fullTypeName = value;
+      } else if (name === "message") {
+        message = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "stack") {
+        stackTrace = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "code") {
+        code = type === "string" ? JSON.parse(value) : value;
+      } else if (name === "cause") {
+        const cause = await this.#getExceptionDetails(property);
+        innerException = [cause];
+      } else if (name === "errors") {
+        const errors = await this.#getProperties(property);
+        innerException = await Promise.all(errors.map(error => this.#getExceptionDetails(error)));
+      }
+    }
+
+    if (!stackTrace) {
+      const { value } = variable;
+      stackTrace ||= value;
+    }
+
+    return {
+      fullTypeName,
+      message,
+      code,
+      stackTrace: stripAnsi(stackTrace),
+      innerException,
+    };
+  }
+
   close(): void {
     this.#process?.kill();
+    // this.#signal?.close();
     this.#inspector.close();
+    this.#reset();
   }
 
   #reset(): void {
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;
-    this.#stopped = undefined;
-    this.#breakpointId = 1;
-    this.#breakpoints.length = 0;
+    this.#stopped = "start";
+    this.#exception = undefined;
+    this.#breakpoints.clear();
     this.#functionBreakpoints.clear();
+    this.#targets.clear();
     this.#variables.clear();
-    this.#launched = undefined;
-    this.#initialized = undefined;
+    this.#options = undefined;
   }
 }
 
@@ -1602,31 +2125,86 @@ function scopePresentationHint(type: JSC.Debugger.Scope["type"]): DAP.Scope["pre
   }
 }
 
-function isIndexed(subtype: JSC.Runtime.RemoteObject["subtype"]): boolean {
-  return subtype === "array" || subtype === "set" || subtype === "weakset";
+function isSet(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
+  return subtype === "set" || subtype === "weakset";
 }
 
-function isNamedIndexed(subtype: JSC.Runtime.RemoteObject["subtype"]): boolean {
+function isArrayLike(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
+  return subtype === "array" || isSet(subtype);
+}
+
+function isMap(subtype: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"]): boolean {
   return subtype === "map" || subtype === "weakmap";
 }
 
-function exceptionFiltersToPauseOnExceptionsState(
-  filters?: string[],
-): JSC.Debugger.SetPauseOnExceptionsRequest["state"] {
-  if (filters?.includes("all")) {
-    return "all";
-  }
-  if (filters?.includes("uncaught")) {
-    return "uncaught";
-  }
-  return "none";
-}
-
-function breakpointOptions(breakpoint?: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {
-  const { condition } = breakpoint ?? {};
-  // TODO: hitCondition, logMessage
+function breakpointOptions(breakpoint: Partial<DAP.SourceBreakpoint>): JSC.Debugger.BreakpointOptions {
+  const { condition, hitCondition, logMessage } = breakpoint;
   return {
     condition,
+    ignoreCount: hitConditionToIgnoreCount(hitCondition),
+    autoContinue: !!logMessage,
+    actions: [
+      {
+        type: "evaluate",
+        data: logMessageToExpression(logMessage),
+        emulateUserGesture: true,
+      },
+    ],
+  };
+}
+
+function hitConditionToIgnoreCount(hitCondition?: string): number | undefined {
+  if (!hitCondition) {
+    return undefined;
+  }
+
+  if (hitCondition.includes("<")) {
+    throw new Error("Hit condition with '<' is not supported, use '>' or '>=' instead.");
+  }
+
+  const count = parseInt(hitCondition.replace(/[^\d+]/g, ""));
+  if (isNaN(count)) {
+    throw new Error("Hit condition is not a number.");
+  }
+
+  if (hitCondition.includes(">") && !hitCondition.includes("=")) {
+    return Math.max(0, count);
+  }
+  return Math.max(0, count - 1);
+}
+
+function logMessageToExpression(logMessage?: string): string | undefined {
+  if (!logMessage) {
+    return undefined;
+  }
+  // Convert expressions from "hello {name}!" to "`hello ${name}!`"
+  return `console.log(\`${logMessage.replace(/\$?{/g, "${")}\`);`;
+}
+
+function completionToExpression(completion: string): { expression: string; hint?: string } {
+  const lastDot = completion.lastIndexOf(".");
+  const last = (s0: string, s1: string) => {
+    const i0 = completion.lastIndexOf(s0);
+    const i1 = completion.lastIndexOf(s1);
+    return i1 > i0 ? i1 + 1 : i0;
+  };
+
+  const lastIdentifier = Math.max(lastDot, last("[", "]"), last("(", ")"), last("{", "}"));
+
+  let expression: string;
+  let remainder: string;
+  if (lastIdentifier > 0) {
+    expression = completion.slice(0, lastIdentifier);
+    remainder = completion.slice(lastIdentifier);
+  } else {
+    expression = "";
+    remainder = completion;
+  }
+
+  const [hint] = completion.slice(lastIdentifier).match(/[#$a-z_][0-9a-z_$]*/gi) ?? [];
+  return {
+    expression,
+    hint,
   };
 }
 
@@ -1674,10 +2252,13 @@ function sanitizeExpression(expression: string): string {
 
 function remoteObjectToVariablePresentationHint(
   remoteObject: JSC.Runtime.RemoteObject,
-  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor>,
+  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & {
+    isSynthetic?: boolean;
+    parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+  },
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
-  const { name, configurable, writable, isPrivate, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
+  const { name, enumerable, writable, isPrivate, isSynthetic, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
   const hasSymbol = symbol?.type === "symbol";
@@ -1693,13 +2274,16 @@ function remoteObjectToVariablePresentationHint(
   if (subtype === "class") {
     kind = "class";
   }
-  if (isPrivate || configurable === false || hasSymbol || name === "__proto__") {
+  if (isSynthetic || isPrivate || hasSymbol) {
+    visibility = "protected";
+  }
+  if (enumerable === false || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {
     attributes.push("rawString");
   }
-  if (writable === false || (hasGetter && !hasSetter)) {
+  if (isSynthetic || writable === false || (hasGetter && !hasSetter)) {
     attributes.push("readOnly");
   }
   if (wasThrown || hasGetter) {
@@ -1726,6 +2310,51 @@ function propertyDescriptorToName(propertyDescriptor?: Partial<JSC.Runtime.Prope
   return name ?? "";
 }
 
+function propertyDescriptorToEvaluateName(
+  propertyDescriptor?: Partial<JSC.Runtime.PropertyDescriptor> & {
+    isSynthetic?: boolean;
+    parentType?: JSC.Runtime.RemoteObject["type"] | JSC.Runtime.RemoteObject["subtype"];
+  },
+  evaluateName?: string,
+): string | undefined {
+  if (!propertyDescriptor) {
+    return evaluateName;
+  }
+  const { name: property, isSynthetic, parentType: type } = propertyDescriptor;
+  if (!property) {
+    return evaluateName;
+  }
+  if (!evaluateName) {
+    return property;
+  }
+  if (isSynthetic) {
+    if (isMap(type)) {
+      if (isNumeric(property)) {
+        return `${evaluateName}.get(${property})`;
+      }
+      return `${evaluateName}.get(${JSON.stringify(property)})`;
+    }
+    if (isSet(type)) {
+      return `[...${evaluateName}.values()][${property}]`;
+    }
+  }
+  if (isNumeric(property)) {
+    return `${evaluateName}[${property}]`;
+  }
+  if (isIdentifier(property)) {
+    return `${evaluateName}.${property}`;
+  }
+  return `${evaluateName}[${JSON.stringify(property)}]`;
+}
+
+function isNumeric(string: string): boolean {
+  return /^\d+$/.test(string);
+}
+
+function isIdentifier(string: string): boolean {
+  return /^[#$a-z_][0-9a-z_$]*$/i.test(string);
+}
+
 function unknownToError(input: unknown): Error {
   if (input instanceof Error) {
     return input;
@@ -1739,6 +2368,36 @@ function isJavaScript(path: string): boolean {
 
 function isTestJavaScript(path: string): boolean {
   return /\.(test|spec)\.(c|m)?(j|t)sx?$/.test(path);
+}
+
+function isSyntaxError(remoteObject: JSC.Runtime.RemoteObject): boolean {
+  const { className } = remoteObject;
+
+  switch (className) {
+    case "SyntaxError":
+    case "ReferenceError":
+      return true;
+  }
+
+  return false;
+}
+
+function variableToCompletionItem(variable: Variable): DAP.CompletionItem {
+  const { name, type } = variable;
+  return {
+    label: name,
+    type: variableTypeToCompletionItemType(type),
+  };
+}
+
+function variableTypeToCompletionItemType(type: Variable["type"]): DAP.CompletionItem["type"] {
+  switch (type) {
+    case "class":
+      return "class";
+    case "function":
+      return "function";
+  }
+  return "property";
 }
 
 function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
@@ -1765,6 +2424,13 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
     const index = parseInt(name);
     if (isFinite(index)) {
       return index;
+    }
+    switch (name[0]) {
+      case "_":
+      case "$":
+        return 1;
+      case "#":
+        return 2;
     }
     return 0;
   };
@@ -1797,6 +2463,12 @@ function numberIsValid(number?: number): number is number {
   return typeof number === "number" && isFinite(number) && number >= 0;
 }
 
-function locationIsSame(a: JSC.Debugger.Location, b: JSC.Debugger.Location): boolean {
-  return a.scriptId === b.scriptId && a.lineNumber === b.lineNumber && a.columnNumber === b.columnNumber;
+function locationIsSame(a?: JSC.Debugger.Location, b?: JSC.Debugger.Location): boolean {
+  return a?.scriptId === b?.scriptId && a?.lineNumber === b?.lineNumber && a?.columnNumber === b?.columnNumber;
 }
+
+function stripAnsi(string: string): string {
+  return string.replace(/\u001b\[\d+m/g, "");
+}
+
+const Cancel = Symbol("Cancel");

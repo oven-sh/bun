@@ -1,10 +1,14 @@
 export default {
   async fetch(request: Request): Promise<Response> {
     a(request);
+    const object = {
+      a: "1",
+      b: "2",
+      c: new Map([[1, 2]]),
+    };
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();
-    debugger;
-    return new Response("BAI BAI");
+    return new Response("Hello World");
   },
 };
 

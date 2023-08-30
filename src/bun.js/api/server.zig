@@ -2624,6 +2624,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         }
                     }
 
+                    if (lock.onReceiveValue != null or lock.task != null) {
+                        // someone else is waiting for the stream or waiting for `onStartStreaming`
+                        const readable = value.toReadableStream(this.server.globalThis);
+                        readable.ensureStillAlive();
+                        readable.protect();
+                        this.doRenderWithBody(value);
+                        return;
+                    }
+
                     // when there's no stream, we need to
                     lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;

@@ -1258,3 +1258,293 @@ pub fn BodyMixin(comptime Type: type) type {
         }
     };
 }
+
+pub const BodyValueBufferer = struct {
+    const ArrayBufferSink = JSC.WebCore.ArrayBufferSink;
+    const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?JSC.JSValue, is_async: bool) void;
+
+    ctx: *anyopaque,
+    onFinishedBuffering: Callback,
+
+    js_sink: ?*ArrayBufferSink.JSSink = null,
+    byte_stream: ?*JSC.WebCore.ByteStream = null,
+    stream_buffer: bun.MutableString,
+    allocator: std.mem.Allocator,
+    global: *JSGlobalObject,
+
+    pub fn deinit(this: *@This()) void {
+        this.stream_buffer.deinit();
+        if (this.byte_stream) |byte_stream| {
+            byte_stream.unpipe();
+        }
+
+        if (this.js_sink) |buffer_stream| {
+            buffer_stream.detach();
+            buffer_stream.sink.destroy();
+            this.js_sink = null;
+        }
+    }
+
+    pub fn init(
+        ctx: *anyopaque,
+        onFinish: Callback,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) @This() {
+        const this = .{
+            .ctx = ctx,
+            .onFinishedBuffering = onFinish,
+            .allocator = allocator,
+            .global = global,
+            .stream_buffer = .{
+                .allocator = allocator,
+                .list = .{
+                    .items = &.{},
+                    .capacity = 0,
+                },
+            },
+        };
+        return this;
+    }
+
+    pub fn run(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
+        value.toBlobIfPossible();
+
+        switch (value.*) {
+            .Used => {
+                return error.StreamAlreadyUsed;
+            },
+            .Empty, .Null => {
+                return sink.onFinishedBuffering(sink.ctx, "", null, false);
+            },
+
+            .Error => |err| {
+                return sink.onFinishedBuffering(sink.ctx, "", err, false);
+            },
+            // .InlineBlob,
+            .WTFStringImpl,
+            .InternalBlob,
+            .Blob,
+            => {
+                // toBlobIfPossible checks for WTFString needing a conversion.
+                var input = value.useAsAnyBlobAllowNonUTF8String();
+                const is_pending = input.needsToReadFile();
+                defer if (!is_pending) input.detach();
+
+                if (is_pending) {
+                    input.Blob.doReadFileInternal(*@This(), sink, onFinishedLoadingFile, sink.global);
+                } else {
+                    sink.onFinishedBuffering(sink.ctx, input.slice(), null, false);
+                }
+                return;
+            },
+            .Locked => {
+                try sink.bufferLockedBodyValue(value);
+            },
+        }
+    }
+
+    fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
+        switch (bytes) {
+            .err => |err| {
+                sink.onFinishedBuffering(sink.ctx, "", err.toErrorInstance(sink.global), true);
+                return;
+            },
+            .result => |data| {
+                sink.onFinishedBuffering(sink.ctx, data.buf, null, true);
+                if (data.is_temporary) {
+                    bun.default_allocator.free(bun.constStrToU8(data.buf));
+                }
+            },
+        }
+    }
+    fn onStreamPipe(sink: *@This(), stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
+        var stream_needs_deinit = stream == .owned or stream == .owned_and_done;
+
+        defer {
+            if (stream_needs_deinit) {
+                if (stream.isDone()) {
+                    stream.owned_and_done.listManaged(allocator).deinit();
+                } else {
+                    stream.owned.listManaged(allocator).deinit();
+                }
+            }
+        }
+
+        const chunk = stream.slice();
+        _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
+        if (stream.isDone()) {
+            sink.onFinishedBuffering(sink.ctx, sink.stream_buffer.list.items, null, true);
+            return;
+        }
+    }
+
+    fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        var args = callframe.arguments(2);
+        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        sink.handleResolveStream(true);
+        return JSValue.jsUndefined();
+    }
+
+    fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        var err = args.ptr[0];
+        sink.handleRejectStream(err, true);
+        return JSValue.jsUndefined();
+    }
+
+    fn handleRejectStream(sink: *@This(), err: JSValue, is_async: bool) void {
+        if (sink.js_sink) |wrapper| {
+            wrapper.detach();
+            sink.js_sink = null;
+            wrapper.sink.destroy();
+        }
+        sink.onFinishedBuffering(sink.ctx, "", err, is_async);
+    }
+
+    fn handleResolveStream(sink: *@This(), is_async: bool) void {
+        if (sink.js_sink) |wrapper| {
+            sink.onFinishedBuffering(sink.ctx, wrapper.sink.bytes.slice(), null, is_async);
+        } else {
+            sink.onFinishedBuffering(sink.ctx, "", null, is_async);
+        }
+    }
+
+    fn createJSSink(sink: *@This(), stream: JSC.WebCore.ReadableStream) !void {
+        stream.value.ensureStillAlive();
+        var allocator = sink.allocator;
+        var buffer_stream = try allocator.create(ArrayBufferSink.JSSink);
+        var globalThis = sink.global;
+        buffer_stream.* = ArrayBufferSink.JSSink{
+            .sink = ArrayBufferSink{
+                .bytes = bun.ByteList.init(&.{}),
+                .allocator = allocator,
+                .next = null,
+            },
+        };
+        var signal = &buffer_stream.sink.signal;
+        sink.js_sink = buffer_stream;
+
+        signal.* = ArrayBufferSink.JSSink.SinkSignal.init(JSValue.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        std.debug.assert(signal.isDead());
+
+        const assignment_result: JSValue = ArrayBufferSink.JSSink.assignToStream(
+            globalThis,
+            stream.value,
+            buffer_stream,
+            @as(**anyopaque, @ptrCast(&signal.ptr)),
+        );
+
+        assignment_result.ensureStillAlive();
+
+        // assert that it was updated
+        std.debug.assert(!signal.isDead());
+
+        if (assignment_result.toError() != null) {
+            return error.PipeFailed;
+        }
+
+        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+            assignment_result.ensureStillAlive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if (assignment_result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .Pending => {
+                        assignment_result.then(
+                            globalThis,
+                            sink,
+                            onResolveStream,
+                            onRejectStream,
+                        );
+                    },
+                    .Fulfilled => {
+                        defer stream.value.unprotect();
+
+                        sink.handleResolveStream(false);
+                    },
+                    .Rejected => {
+                        defer stream.value.unprotect();
+
+                        sink.handleRejectStream(promise.result(globalThis.vm()), false);
+                    },
+                }
+                return;
+            }
+        }
+
+        return error.PipeFailed;
+    }
+
+    fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
+        std.debug.assert(value.* == .Locked);
+        const locked = &value.Locked;
+        if (locked.readable) |stream_| {
+            const stream: JSC.WebCore.ReadableStream = stream_;
+            stream.value.ensureStillAlive();
+
+            value.* = .{ .Used = {} };
+
+            if (stream.isLocked(sink.global)) {
+                stream.value.unprotect();
+                return error.StreamAlreadyUsed;
+            }
+
+            switch (stream.ptr) {
+                .Invalid => {
+                    stream.value.unprotect();
+                    return error.InvalidStream;
+                },
+                // toBlobIfPossible should've caught this
+                .Blob, .File => unreachable,
+                .JavaScript, .Direct => {
+                    return sink.createJSSink(stream);
+                },
+                .Bytes => |byte_stream| {
+                    std.debug.assert(byte_stream.pipe.ctx == null);
+                    std.debug.assert(sink.byte_stream == null);
+
+                    stream.detach(sink.global);
+                    // If we've received the complete body by the time this function is called
+                    // we can avoid streaming it and just send it all at once.
+                    if (byte_stream.has_received_last_chunk) {
+                        sink.onFinishedBuffering(sink.ctx, byte_stream.buffer.items, null, false);
+                        return;
+                    }
+                    byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
+                    sink.byte_stream = byte_stream;
+                    return;
+                },
+            }
+        }
+        if (locked.onReceiveValue != null or locked.task != null) {
+            // someone else is waiting for the stream or waiting for `onStartStreaming`
+            const readable = value.toReadableStream(sink.global);
+            readable.ensureStillAlive();
+            readable.protect();
+            return try sink.bufferLockedBodyValue(value);
+        }
+        // is safe to wait it buffer
+        locked.task = @ptrCast(sink);
+        locked.onReceiveValue = @This().onReceiveValue;
+    }
+
+    fn onReceiveValue(ctx: *anyopaque, value: *JSC.WebCore.Body.Value) void {
+        const sink = bun.cast(*@This(), ctx);
+        switch (value.*) {
+            .Error => {
+                sink.onFinishedBuffering(sink.ctx, "", value.Error, true);
+                return;
+            },
+            else => {
+                value.toBlobIfPossible();
+                var input = value.useAsAnyBlobAllowNonUTF8String();
+                sink.onFinishedBuffering(sink.ctx, input.slice(), value.Error, true);
+            },
+        }
+    }
+};

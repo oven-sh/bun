@@ -1888,7 +1888,10 @@ pub const ArrayBufferSink = struct {
         this.signal.close(err);
         return .{ .result = {} };
     }
-
+    pub fn destroy(this: *ArrayBufferSink) void {
+        this.bytes.deinitWithAllocator(this.allocator);
+        this.allocator.destroy(this);
+    }
     pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
         if (this.streaming) {
             const value: JSValue = switch (as_uint8array) {

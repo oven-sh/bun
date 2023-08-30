@@ -344,7 +344,9 @@ pub const HTMLRewriter = struct {
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
         response: *Response,
-        input: JSC.WebCore.AnyBlob = undefined,
+        bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
+        tmp_sync_error: ?JSC.JSValue = null,
+
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -409,59 +411,75 @@ pub const HTMLRewriter = struct {
 
             result.url = original.url.clone();
             result.status_text = original.status_text.clone();
-
-            var input = original.body.value.useAsAnyBlob();
-            sink.input = input;
-
-            const is_pending = input.needsToReadFile();
-            defer if (!is_pending) input.detach();
-
-            if (is_pending) {
-                sink.input.Blob.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
-            } else if (sink.runOutputSink(input.slice(), false, false)) |error_value| {
-                return error_value;
+            var value = original.getBodyValue();
+            sink.bodyValueBufferer = JSC.WebCore.BodyValueBufferer.init(sink, onFinishedBuffering, sink.global, bun.default_allocator);
+            sink.bodyValueBufferer.?.run(value) catch |buffering_error| {
+                return switch (buffering_error) {
+                    error.StreamAlreadyUsed => {
+                        var err = JSC.SystemError{
+                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                            .message = bun.String.static("Stream already used, please create a new one"),
+                        };
+                        return err.toErrorInstance(sink.global);
+                    },
+                    error.InvalidStream => {
+                        var err = JSC.SystemError{
+                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                            .message = bun.String.static("Invalid stream"),
+                        };
+                        return err.toErrorInstance(sink.global);
+                    },
+                    else => {
+                        var err = JSC.SystemError{
+                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                            .message = bun.String.static("Failed to pipe stream"),
+                        };
+                        return err.toErrorInstance(sink.global);
+                    },
+                };
+            };
+            // sync error occurs
+            if (sink.tmp_sync_error) |err| {
+                sink.tmp_sync_error = null;
+                return err;
             }
 
             // Hold off on cloning until we're actually done.
             return sink.response.toJS(sink.global);
         }
 
-        pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
-            switch (bytes) {
-                .err => |err| {
-                    if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                        sink.response.body.value.Locked.promise == null)
-                    {
-                        sink.response.body.value = .{ .Empty = {} };
-                        // is there a pending promise?
-                        // we will need to reject it
-                    } else if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                        sink.response.body.value.Locked.promise != null)
-                    {
-                        sink.response.body.value.Locked.onReceiveValue = null;
-                        sink.response.body.value.Locked.task = null;
-                    }
-
-                    sink.response.body.value.toErrorInstance(err.toErrorInstance(sink.global), sink.global);
-                    sink.rewriter.end() catch {};
-                    sink.deinit();
-                    return;
-                },
-                .result => |data| {
-                    _ = sink.runOutputSink(data.buf, true, data.is_temporary);
-                },
+        pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.JSValue, is_async: bool) void {
+            const sink = bun.cast(*BufferOutputSink, ctx);
+            if (js_err) |err| {
+                if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
+                    sink.response.body.value.Locked.promise == null)
+                {
+                    sink.response.body.value = .{ .Empty = {} };
+                    // is there a pending promise?
+                    // we will need to reject it
+                } else if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
+                    sink.response.body.value.Locked.promise != null)
+                {
+                    sink.response.body.value.Locked.onReceiveValue = null;
+                    sink.response.body.value.Locked.task = null;
+                }
+                if (is_async) {
+                    sink.response.body.value.toErrorInstance(err, sink.global);
+                } else {
+                    sink.tmp_sync_error = throwLOLHTMLError(sink.global);
+                }
+                sink.rewriter.end() catch {};
+                sink.deinit();
+                return;
             }
+            sink.tmp_sync_error = sink.runOutputSink(bytes, is_async);
         }
 
         pub fn runOutputSink(
             sink: *BufferOutputSink,
             bytes: []const u8,
             is_async: bool,
-            free_bytes_on_end: bool,
         ) ?JSValue {
-            defer if (free_bytes_on_end)
-                bun.default_allocator.free(bun.constStrToU8(bytes));
-
             sink.bytes.growBy(bytes.len) catch unreachable;
             var global = sink.global;
             var response = sink.response;
@@ -518,7 +536,10 @@ pub const HTMLRewriter = struct {
 
         pub fn deinit(this: *BufferOutputSink) void {
             this.bytes.deinit();
-
+            if (this.bodyValueBufferer != null) {
+                var bufferer = this.bodyValueBufferer.?;
+                bufferer.deinit();
+            }
             this.context.deinit(bun.default_allocator);
         }
     };

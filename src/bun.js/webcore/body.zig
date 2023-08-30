@@ -1506,7 +1506,7 @@ pub const BodyValueBufferer = struct {
         if (locked.readable) |stream_| {
             const stream: JSC.WebCore.ReadableStream = stream_;
             stream.value.ensureStillAlive();
-
+            stream.value.protect();
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
@@ -1535,6 +1535,7 @@ pub const BodyValueBufferer = struct {
                     if (byte_stream.has_received_last_chunk) {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                        byte_stream.parent().deinit();
                         return;
                     }
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);

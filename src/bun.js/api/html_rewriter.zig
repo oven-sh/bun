@@ -342,7 +342,7 @@ pub const HTMLRewriter = struct {
         response: *Response,
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?JSC.JSValue = null,
-
+        // const log = bun.Output.scoped(.BufferOutputSink, false);
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -513,13 +513,19 @@ pub const HTMLRewriter = struct {
 
         pub fn done(this: *BufferOutputSink) void {
             var prev_value = this.response.body.value;
-            var bytes = this.bytes.toOwnedSliceLeaky();
-            this.response.body.value = JSC.WebCore.Body.Value.createBlobValue(
-                bytes,
-                bun.default_allocator,
+            this.response.body.value = JSC.WebCore.Body.Value{
+                .InternalBlob = .{
+                    .bytes = this.bytes.list.toManaged(bun.default_allocator),
+                },
+            };
 
-                true,
-            );
+            this.bytes = .{
+                .allocator = bun.default_allocator,
+                .list = .{
+                    .items = &.{},
+                    .capacity = 0,
+                },
+            };
             prev_value.resolve(
                 &this.response.body.value,
                 this.global,

@@ -9,7 +9,8 @@ const debugConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Debug Bun",
   program: "${file}",
-  watch: false,
+  stopOnEntry: false,
+  watchMode: false,
 };
 
 const runConfiguration: vscode.DebugConfiguration = {
@@ -17,8 +18,8 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
-  debug: false,
-  watch: false,
+  noDebug: true,
+  watchMode: false,
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {

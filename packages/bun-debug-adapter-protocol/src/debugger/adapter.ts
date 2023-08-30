@@ -103,7 +103,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   strictEnv?: boolean;
   stopOnEntry?: boolean;
   noDebug?: boolean;
-  watch?: boolean | "hot";
+  watchMode?: boolean | "hot";
 };
 
 type AttachRequest = DAP.AttachRequest & {
@@ -406,9 +406,12 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       this.setExceptionBreakpoints({ filters: [] });
     }
 
-    // if (!this.#options?.stopOnEntry) {
-    //   this.send("Debugger.resume");
-    // }
+    if (this.#options?.stopOnEntry) {
+      this.send("Debugger.pause");
+    } else {
+      // TODO: Check that the current location is not on a breakpoint before resuming.
+      this.send("Debugger.resume");
+    }
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
@@ -437,7 +440,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       cwd,
       env = {},
       strictEnv = false,
-      watch = false,
+      watchMode = false,
     } = request;
 
     if (!program) {
@@ -454,8 +457,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       processArgs.unshift("test");
     }
 
-    if (watch && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
-      processArgs.unshift(watch === "hot" ? "--hot" : "--watch");
+    if (watchMode && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
+      processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
     }
 
     const processEnv = strictEnv
@@ -760,9 +763,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     let results: Breakpoint[];
     if (verifiedSource) {
-      results = await this.#setBreakpointsById(verifiedSource, breakpoints!);
+      results = await this.#setBreakpointsById(verifiedSource, breakpoints);
     } else if (path) {
-      results = await this.#setBreakpointsByUrl(path, breakpoints!);
+      results = await this.#setBreakpointsByUrl(path, breakpoints);
     } else {
       results = [];
     }
@@ -956,7 +959,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     for (const breakpoint of this.#breakpoints.values()) {
       const { source } = breakpoint;
-      if (sourceId === sourceToId(source)) {
+      if (source && sourceId === sourceToId(source)) {
         breakpoints.push(breakpoint);
       }
     }
@@ -1319,10 +1322,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    // if (reason === "PauseOnNextStatement" && this.#stopped === "start" && !this.#options?.stopOnEntry) {
-    //   this.#stopped = undefined;
-    //   return;
-    // }
+    if (reason === "PauseOnNextStatement" && this.#stopped === "start" && !this.#options?.stopOnEntry) {
+      this.#stopped = undefined;
+      return;
+    }
 
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
@@ -2008,7 +2011,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       fullTypeName,
       message,
       code,
-      stackTrace,
+      stackTrace: stripAnsi(stackTrace),
       innerException,
     };
   }
@@ -2438,4 +2441,8 @@ function numberIsValid(number?: number): number is number {
 
 function locationIsSame(a?: JSC.Debugger.Location, b?: JSC.Debugger.Location): boolean {
   return a?.scriptId === b?.scriptId && a?.lineNumber === b?.lineNumber && a?.columnNumber === b?.columnNumber;
+}
+
+function stripAnsi(string: string): string {
+  return string.replace(/\u001b\[\d+m/g, "");
 }

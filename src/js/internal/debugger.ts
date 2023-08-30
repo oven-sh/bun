@@ -139,7 +139,7 @@ class Debugger {
     }
 
     const data: Connection = {
-      refEventLoop: headers.get("Ref-Event-Loop") === "1",
+      refEventLoop: headers.get("Ref-Event-Loop") !== "0",
     };
 
     if (!server.upgrade(request, { data })) {

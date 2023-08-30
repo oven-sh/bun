@@ -109,7 +109,7 @@ public:
                 globalObject->setInspectable(true);
                 auto& inspector = globalObject->inspectorDebuggable();
                 inspector.setInspectable(true);
-                globalObject->inspectorController().connectFrontend(*connection, true, waitingForConnection);
+                globalObject->inspectorController().connectFrontend(*connection, true, false); // waitingForConnection
 
                 Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
                 if (debugger) {

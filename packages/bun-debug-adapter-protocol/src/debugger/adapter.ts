@@ -4,9 +4,8 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 // @ts-ignore
 import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
 import type { ChildProcess } from "node:child_process";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { Location, SourceMap } from "./sourcemap";
-import { compare, parse } from "semver";
 import { EventEmitter } from "node:events";
 import { UnixSignal, randomUnixPath } from "./signal";
 
@@ -109,8 +108,11 @@ type LaunchRequest = DAP.LaunchRequest & {
 
 type AttachRequest = DAP.AttachRequest & {
   url?: string;
-  signalUrl?: string;
+  noDebug?: boolean;
+  stopOnEntry?: boolean;
 };
+
+type DebuggerOptions = (LaunchRequest & { type: "launch" }) | (AttachRequest & { type: "attach" });
 
 type Source = DAP.Source & {
   scriptId: string;
@@ -193,7 +195,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #threadId: number;
   #inspector: WebSocketInspector;
   #process?: ChildProcess;
-  #signal?: UnixSignal;
   #sourceId: number;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string | number, Source>;
@@ -201,13 +202,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #stopped?: DAP.StoppedEvent["reason"];
   #exception?: Variable;
   #breakpointId: number;
-  #breakpoints: Breakpoint[];
+  #breakpoints: Map<string, Breakpoint>;
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #targets: Map<number, Target>;
   #variableId: number;
   #variables: Map<number, Variable>;
   #initialized?: InitializeRequest;
-  #launched?: LaunchRequest;
+  #options?: DebuggerOptions;
 
   constructor(url?: string | URL) {
     super();
@@ -224,15 +225,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#pendingSources = new Map();
     this.#sources = new Map();
     this.#stackFrames = [];
-    this.#stopped = undefined;
+    this.#stopped = "start";
     this.#breakpointId = 1;
-    this.#breakpoints = [];
+    this.#breakpoints = new Map();
     this.#functionBreakpoints = new Map();
     this.#targets = new Map();
     this.#variableId = 1;
     this.#variables = new Map();
-    // @ts-ignore
-    globalThis.jsc = (...args) => this.send(...args);
   }
 
   /**
@@ -248,7 +247,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
    * @returns if the inspector was able to connect
    */
   start(url?: string): Promise<boolean> {
-    return this.#attach(url);
+    return this.#attach({ url });
   }
 
   /**
@@ -313,6 +312,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
+  #emitAfterResponse<E extends keyof DAP.EventMap>(event: E, body?: DAP.EventMap[E]): void {
+    this.once("Adapter.response", () => {
+      process.nextTick(() => {
+        this.#emit(event, body);
+      });
+    });
+  }
+
   async ["Adapter.request"](request: DAP.Request): Promise<void> {
     const { command, arguments: args } = request;
 
@@ -366,21 +373,26 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   initialize(request: InitializeRequest): DAP.InitializeResponse {
-    const { clientID, supportsConfigurationDoneRequest } = (this.#initialized = request);
+    this.#initialized = request;
 
     this.send("Inspector.enable");
     this.send("Runtime.enable");
     this.send("Console.enable");
     this.send("Debugger.enable").catch(error => {
       const { message } = unknownToError(error);
-      if (message !== "Debugger domain is already enabled") {
+      if (message !== "Debugger domain already enabled") {
         throw error;
       }
     });
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
-    this.send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.send("Debugger.setBreakpointsActive", { active: true });
+    this.send("Debugger.pause");
     this.send("Inspector.initialized");
+
+    const { clientID, supportsConfigurationDoneRequest } = request;
+    if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
+      this.configurationDone();
+    }
 
     // Tell the client what capabilities this adapter supports.
     return capabilities;
@@ -389,14 +401,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   configurationDone(): void {
     // If the client requested that `noDebug` mode be enabled,
     // then we need to disable all breakpoints and pause on statements.
-    if (this.#launched?.noDebug) {
+    if (this.#options?.noDebug) {
       this.send("Debugger.setBreakpointsActive", { active: false });
       this.setExceptionBreakpoints({ filters: [] });
+    }
+
+    if (!this.#options?.stopOnEntry) {
+      this.send("Debugger.resume");
     }
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
-    this.#launched = request;
+    this.#options = { ...request, type: "launch" };
 
     try {
       await this.#launch(request);
@@ -455,7 +471,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     const signal = new UnixSignal();
 
     signal.on("Signal.received", () => {
-      this.#attach(url);
+      this.#attach({ url });
     });
 
     this.once("Adapter.terminated", () => {
@@ -470,6 +486,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     // This is probably not correct, but it's the best we can do for now.
     processEnv["FORCE_COLOR"] = "1";
+    processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+    processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
 
     const started = await this.#spawn({
       command: runtime,
@@ -532,11 +550,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
 
     subprocess.stdout?.on("data", data => {
-      // this.emit("Process.stdout", data.toString());
+      this.emit("Process.stdout", data.toString());
     });
 
     subprocess.stderr?.on("data", data => {
-      // this.emit("Process.stderr", data.toString());
+      this.emit("Process.stderr", data.toString());
     });
 
     return new Promise(resolve => {
@@ -547,10 +565,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async attach(request: AttachRequest): Promise<void> {
-    const { url } = request;
+    this.#options = { ...request, type: "attach" };
 
     try {
-      await this.#attach(url);
+      await this.#attach(request);
     } catch (error) {
       // Some clients, like VSCode, will show a system-level popup when a `launch` request fails.
       // Instead, we want to show the error as a sidebar notification.
@@ -563,7 +581,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     }
   }
 
-  async #attach(url?: string | URL): Promise<boolean> {
+  async #attach(request: AttachRequest): Promise<boolean> {
+    const { url } = request;
+
     for (let i = 0; i < 3; i++) {
       const ok = await this.#inspector.start(url);
       if (ok) {
@@ -706,7 +726,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     return {
       line: this.#lineFrom0BasedLine(oline),
-      column: this.#columnFrom0BasedColumn(ocolumn),
+      // For now, remove the column from locations because
+      // it can be inaccurate and causes weird rendering issues in VSCode.
+      column: this.#columnFrom0BasedColumn(0), // ocolumn
     };
   }
 
@@ -741,25 +763,16 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           }
         }
 
+        let result;
         try {
-          const { breakpointId, actualLocation } = await this.send("Debugger.setBreakpoint", {
+          result = await this.send("Debugger.setBreakpoint", {
             location,
             options: breakpointOptions(options),
           });
-
-          const originalLocation = this.#originalLocation(source, actualLocation);
-          return this.#addBreakpoint({
-            id: this.#breakpointId++,
-            breakpointId,
-            source,
-            verified: true,
-            generatedLocation: location,
-            ...originalLocation,
-          });
         } catch (error) {
-          const { message } = unknownToError(error);
           // If there was an error setting the breakpoint,
           // mark it as unverified and add a message.
+          const { message } = unknownToError(error);
           const breakpointId = this.#breakpointId++;
           return this.#addBreakpoint({
             id: breakpointId,
@@ -772,6 +785,18 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
             generatedLocation: location,
           });
         }
+
+        const { breakpointId, actualLocation } = result;
+        const originalLocation = this.#originalLocation(source, actualLocation);
+
+        return this.#addBreakpoint({
+          id: this.#breakpointId++,
+          breakpointId,
+          source,
+          verified: true,
+          generatedLocation: location,
+          ...originalLocation,
+        });
       }),
     );
 
@@ -786,6 +811,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         }
       }),
     );
+
+    const duplicateBreakpoints = breakpoints.filter(
+      ({ message }) => message === "Breakpoint for given location already exists",
+    );
+    for (const { breakpointId } of duplicateBreakpoints) {
+      this.#removeBreakpoint(breakpointId);
+    }
 
     return {
       breakpoints,
@@ -806,28 +838,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
-    this.#breakpoints.push(breakpoint);
-
-    // For now, remove the column from breakpoints because
-    // it can be inaccurate and causes weird rendering issues in VSCode.
-    breakpoint.column = this.#lineFrom0BasedLine(0);
-
-    this.#emit("breakpoint", {
-      reason: "changed",
-      breakpoint,
-    });
-
+    const { breakpointId } = breakpoint;
+    this.#breakpoints.set(breakpointId, breakpoint);
     return breakpoint;
   }
 
   #removeBreakpoint(breakpointId: string): void {
-    const breakpoint = this.#breakpoints.find(({ breakpointId: id }) => id === breakpointId);
-    if (!breakpoint) {
+    const breakpoint = this.#breakpoints.get(breakpointId);
+
+    if (!breakpoint || !this.#breakpoints.delete(breakpointId)) {
       return;
     }
 
-    this.#breakpoints = this.#breakpoints.filter(({ breakpointId: id }) => id !== breakpointId);
-    this.#emit("breakpoint", {
+    this.#emitAfterResponse("breakpoint", {
       reason: "removed",
       breakpoint,
     });
@@ -901,12 +924,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #addFunctionBreakpoint(breakpoint: FunctionBreakpoint): FunctionBreakpoint {
     const { name } = breakpoint;
     this.#functionBreakpoints.set(name, breakpoint);
-
-    this.#emit("breakpoint", {
-      reason: "changed",
-      breakpoint,
-    });
-
     return breakpoint;
   }
 
@@ -917,7 +934,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       return;
     }
 
-    this.#emit("breakpoint", {
+    this.#emitAfterResponse("breakpoint", {
       reason: "removed",
       breakpoint,
     });
@@ -978,11 +995,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #addTarget<T extends DAP.GotoTarget | DAP.StepInTarget>(target: T & { source: Source }): T {
     const { id } = target;
     this.#targets.set(id, target);
-
-    // For now, remove the column from targets because
-    // it can be inaccurate and causes weird rendering issues in VSCode.
-    target.column = this.#lineFrom0BasedLine(0);
-
     return target;
   }
 
@@ -1089,16 +1101,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     };
   }
 
-  restart(): void {
-    this.initialize(this.#initialized!);
-    this.configurationDone();
-
-    this.#emit("output", {
-      category: "debug console",
-      output: "Debugger reloaded.\n",
-    });
-  }
-
   ["Inspector.connected"](): void {
     this.#emit("output", {
       category: "debug console",
@@ -1172,7 +1174,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.scriptFailedToParse"](event: JSC.Debugger.ScriptFailedToParseEvent): void {
     const { url, errorMessage, errorLine } = event;
 
-    // If no url is present, the script is from a `evaluate` request.
+    // If no url is present, the script is from an `evaluate` request.
     if (!url) {
       return;
     }
@@ -1190,14 +1192,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
 
-    // if (reason === "PauseOnNextStatement") {
-    //   for (const { functionName } of callFrames) {
-    //     if (functionName === "module code") {
-    //       this.#stopped = "initial";
-    //       return;
-    //     }
-    //   }
-    // }
+    if (reason === "PauseOnNextStatement" && this.#stopped === "start" && !this.#options?.stopOnEntry) {
+      this.#stopped = undefined;
+      return;
+    }
 
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
@@ -1246,7 +1244,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
+  ["Debugger.resumed"](): void {
     this.#stackFrames.length = 0;
     this.#stopped = undefined;
     this.#exception = undefined;
@@ -1261,19 +1259,19 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  // ["Process.stdout"](output: string): void {
-  //   this.#emit("output", {
-  //     category: "debug console",
-  //     output,
-  //   });
-  // }
+  ["Process.stdout"](output: string): void {
+    this.#emit("output", {
+      category: "debug console",
+      output,
+    });
+  }
 
-  // ["Process.stderr"](output: string): void {
-  //   this.#emit("output", {
-  //     category: "debug console",
-  //     output,
-  //   });
-  // }
+  ["Process.stderr"](output: string): void {
+    this.#emit("output", {
+      category: "debug console",
+      output,
+    });
+  }
 
   ["Console.messageAdded"](event: JSC.Console.MessageAddedEvent): void {
     // const { message } = event;
@@ -1424,6 +1422,48 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     return new Promise(resolve => {
       resolves!.push(resolve);
+    });
+  }
+
+  async #getSourceByUrl(url: string): Promise<Source | undefined> {
+    const source = this.#getSourceIfPresent(url);
+    if (source) {
+      return source;
+    }
+
+    // If the source is not present, the debugger did not send the `Debugger.scriptParsed` event.
+    // Since there is no request to retreive a script by its url, the hacky solution is to set
+    // a no-op breakpoint by url, then immediately remove it.
+    const { breakpointId, locations } = await this.send("Debugger.setBreakpointByUrl", {
+      url,
+      lineNumber: 0,
+      columnNumber: 0,
+      options: {
+        autoContinue: true,
+      },
+    });
+
+    await this.send("Debugger.removeBreakpoint", {
+      breakpointId,
+    });
+
+    if (!locations.length) {
+      return undefined;
+    }
+
+    // Using the scriptId, retreive the source and source map url.
+    const [{ scriptId }] = locations;
+    const { scriptSource } = await this.send("Debugger.getScriptSource", {
+      scriptId,
+    });
+
+    return this.#addSource({
+      scriptId,
+      sourceId: url,
+      name: sourceName(url),
+      path: url,
+      sourceMap: SourceMap(scriptSource),
+      presentationHint: sourcePresentationHint(url),
     });
   }
 
@@ -1735,7 +1775,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     }
 
-    console.log("getProperties", { objectId, evaluateName, properties, variables });
     return variables;
   }
 
@@ -1844,14 +1883,13 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;
-    this.#stopped = undefined;
+    this.#stopped = "start";
     this.#exception = undefined;
-    this.#breakpointId = 1;
-    this.#breakpoints.length = 0;
+    this.#breakpoints.clear();
     this.#functionBreakpoints.clear();
     this.#targets.clear();
     this.#variables.clear();
-    this.#launched = undefined;
+    this.#options = undefined;
   }
 }
 

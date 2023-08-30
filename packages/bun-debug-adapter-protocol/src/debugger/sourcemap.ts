@@ -80,7 +80,7 @@ class ActualSourceMap implements SourceMap {
 
     const { line: gline, column: gcolumn } = lineRange;
     return {
-      line: lineToLine(gline),
+      line: lineTo0BasedLine(gline),
       column: columnToColumn(gcolumn),
       verified: true,
     };

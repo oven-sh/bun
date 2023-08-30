@@ -52,10 +52,10 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
       // @ts-expect-error: Support both Bun and Node.js version of `headers`.
       webSocket = new WebSocket(url, {
         headers: {
-          "Ref-Event-Loop": "1",
+          "Ref-Event-Loop": "0",
         },
         finishRequest: (request: import("http").ClientRequest) => {
-          request.setHeader("Ref-Event-Loop", "1");
+          request.setHeader("Ref-Event-Loop", "0");
           request.end();
         },
       });

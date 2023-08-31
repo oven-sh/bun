@@ -7524,13 +7524,6 @@ pub const PackageManager = struct {
                         package_json_source,
                         Features.main,
                     );
-                    if (!root.scripts.filled) {
-                        maybe_root.scripts.enqueue(
-                            manager.lockfile,
-                            lockfile.buffers.string_bytes.items,
-                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
-                        );
-                    }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     @memset(mapping, invalid_package_id);
 
@@ -7565,6 +7558,8 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
+                        maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                         const len = @as(u32, @truncate(new_dependencies.len));
                         var packages = manager.lockfile.packages.slice();
@@ -7598,6 +7593,12 @@ pub const PackageManager = struct {
                             }
                         }
 
+                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
+                            lockfile.buffers.string_bytes.items,
+                            *Lockfile.StringBuilder,
+                            builder,
+                        );
+
                         builder.clamp();
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers
@@ -7619,6 +7620,16 @@ pub const PackageManager = struct {
                                 }
                             }
                         }
+
+                        if (manager.summary.update > 0) root.scripts = .{};
+                    }
+
+                    if (!root.scripts.filled) {
+                        maybe_root.scripts.enqueue(
+                            manager.lockfile,
+                            lockfile.buffers.string_bytes.items,
+                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                        );
                     }
                 }
             },

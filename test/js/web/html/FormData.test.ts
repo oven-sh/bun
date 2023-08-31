@@ -47,6 +47,25 @@ describe("FormData", () => {
     expect(formData.get("foo2").name).toBe("foo.txt");
   });
 
+  it("should use the correct filenames", async () => {
+    const blob = new Blob(["bar"]) as any;
+    const form = new FormData();
+    form.append("foo", blob);
+    expect(blob.name).toBeUndefined();
+
+    let b1 = form.get("foo") as any;
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBeUndefined();
+
+    form.set("foo", b1, "foo.txt");
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBeUndefined();
+
+    b1 = form.get("foo") as Blob;
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBe("foo.txt");
+  });
+
   const multipartFormDataFixturesRawBody = [
     {
       name: "simple",

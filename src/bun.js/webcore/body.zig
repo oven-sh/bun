@@ -1286,6 +1286,10 @@ pub const BodyValueBufferer = struct {
         if (this.byte_stream) |byte_stream| {
             byte_stream.unpipe();
         }
+        if (this.readable_stream_ref.get()) |stream| {
+            // we already consumed the stream, so we can detach it if we are the last reference
+            stream.detachIfPossible(this.global);
+        }
         this.readable_stream_ref.deinit();
 
         if (this.js_sink) |buffer_stream| {
@@ -1511,7 +1515,6 @@ pub const BodyValueBufferer = struct {
             stream.value.ensureStillAlive();
             // keep the stream alive until we're done with it
             sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
-            stream.value.unprotect();
 
             value.* = .{ .Used = {} };
 
@@ -1538,6 +1541,8 @@ pub const BodyValueBufferer = struct {
                     if (byte_stream.has_received_last_chunk) {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                        // is safe to detach here because we're not going to receive any more data
+                        stream.detachIfPossible(sink.global);
                         return;
                     }
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);

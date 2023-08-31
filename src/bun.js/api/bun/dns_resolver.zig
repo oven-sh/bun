@@ -2320,7 +2320,7 @@ pub const DNSResolver = struct {
             },
         };
 
-        var servers: [*c]c_ares.struct_ares_addr_port_node = undefined;
+        var servers: [*c]c_ares.struct_ares_addr_port_node = std.mem.zeroes([*c]c_ares.struct_ares_addr_port_node);
         const r = c_ares.ares_get_servers_ports(channel, &servers);
         if (r != c_ares.ARES_SUCCESS) {
             const err = c_ares.Error.get(r).?;

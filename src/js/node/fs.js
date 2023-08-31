@@ -6,6 +6,9 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const { isArrayBufferView } = require("node:util/types");
 
+const constants = $processBindingConstants.fs;
+const { COPYFILE_EXCL } = constants;
+
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
   #watcher;
@@ -80,7 +83,13 @@ var access = function access(...args) {
     callbackify(fs.rmdirSync, args);
   },
   copyFile = function copyFile(...args) {
-    callbackify(fs.copyFileSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.copyFile(...args).then(result => callback(null, result), callback);
   },
   exists = function exists(...args) {
     callbackify(fs.existsSync, args);
@@ -345,7 +354,7 @@ var kIoDone = Symbol.for("kIoDone");
 
 var defaultReadStreamOptions = {
   file: undefined,
-  fd: undefined,
+  fd: null,
   flags: "r",
   encoding: undefined,
   mode: 0o666,
@@ -408,6 +417,7 @@ ReadStream = (function (InternalReadStream) {
         autoDestroy = defaultReadStreamOptions.autoClose,
         fs = defaultReadStreamOptions.fs,
         highWaterMark = defaultReadStreamOptions.highWaterMark,
+        fd = defaultReadStreamOptions.fd,
       } = options;
 
       if (pathOrFd?.constructor?.name === "URL") {
@@ -416,7 +426,13 @@ ReadStream = (function (InternalReadStream) {
 
       // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
       var tempThis = {};
-      if (typeof pathOrFd === "string") {
+      if (fd != null) {
+        if (typeof fd !== "number") {
+          throw new TypeError("Expected options.fd to be a number");
+        }
+        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
+        tempThis.autoClose = false;
+      } else if (typeof pathOrFd === "string") {
         if (pathOrFd.startsWith("file://")) {
           pathOrFd = Bun.fileURLToPath(pathOrFd);
         }
@@ -437,7 +453,7 @@ ReadStream = (function (InternalReadStream) {
       }
 
       // If fd not open for this file, open it
-      if (!tempThis.fd) {
+      if (tempThis.fd === undefined) {
         // NOTE: this fs is local to constructor, from options
         tempThis.fd = fs.openSync(pathOrFd, flags, mode);
       }
@@ -540,7 +556,7 @@ ReadStream = (function (InternalReadStream) {
     }
 
     close(cb) {
-      if (typeof cb === "function") eos_()(this, cb);
+      if (typeof cb === "function") Stream.eos(this, cb);
       this.destroy();
     }
 
@@ -756,7 +772,13 @@ WriteStream = (function (InternalWriteStream) {
       } = options;
 
       var tempThis = {};
-      if (typeof path === "string") {
+      if (fd != null) {
+        if (typeof fd !== "number") {
+          throw new Error("Expected options.fd to be a number");
+        }
+        tempThis.fd = fd;
+        tempThis[writeStreamPathFastPathSymbol] = false;
+      } else if (typeof path === "string") {
         if (path.length === 0) {
           throw new TypeError("Expected a non-empty path");
         }
@@ -772,12 +794,9 @@ WriteStream = (function (InternalWriteStream) {
           (start === undefined || start === 0) &&
           fs.write === defaultWriteStreamOptions.fs.write &&
           fs.close === defaultWriteStreamOptions.fs.close;
-      } else {
-        tempThis.fd = fd;
-        tempThis[writeStreamPathFastPathSymbol] = false;
       }
 
-      if (!tempThis.fd) {
+      if (tempThis.fd == null) {
         tempThis.fd = fs.openSync(path, flags, mode);
       }
 
@@ -960,30 +979,20 @@ WriteStream = (function (InternalWriteStream) {
 
       // TODO: Replace this when something like lseek is available
       var native = this.pos === undefined;
+      const callback = native
+        ? (err, bytes) => {
+            this[kIoDone] = false;
+            this.#handleWrite(err, bytes);
+            this.emit(kIoDone);
+            if (cb) !err ? cb() : cb(err);
+          }
+        : () => {};
       this[kIoDone] = true;
-      return super.write(
-        chunk,
-        encoding,
-        native
-          ? (err, bytes) => {
-              this[kIoDone] = false;
-              this.#handleWrite(err, bytes);
-              this.emit(kIoDone);
-              if (cb) !err ? cb() : cb(err);
-            }
-          : () => {},
-        native,
-      );
-    }
-
-    #internalWriteSlow(chunk, encoding, cb) {
-      this.#fs.write(this.fd, chunk, 0, chunk.length, this.pos, (err, bytes) => {
-        this[kIoDone] = false;
-        this.#handleWrite(err, bytes);
-        this.emit(kIoDone);
-
-        !err ? cb() : cb(err);
-      });
+      if (this._write) {
+        return this._write(chunk, encoding, callback);
+      } else {
+        return super.write(chunk, encoding, callback, native);
+      }
     }
 
     end(chunk, encoding, cb) {
@@ -991,7 +1000,7 @@ WriteStream = (function (InternalWriteStream) {
       return super.end(chunk, encoding, cb, native);
     }
 
-    _write = this.#internalWriteSlow;
+    _write = undefined;
     _writev = undefined;
 
     get pending() {
@@ -1065,10 +1074,58 @@ Object.defineProperties(fs, {
 });
 
 // lol
+// @ts-ignore
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
+let lazy_cpSync = null;
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
+function cpSync(src, dest, options) {
+  if (!options) return fs.cpSync(src, dest);
+  if (typeof options !== "object") {
+    throw new TypeError("options must be an object");
+  }
+  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+    if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
+    return lazy_cpSync(src, dest, options);
+  }
+  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+}
+
+function cp(src, dest, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  promises.cp(src, dest, options).then(() => callback(), callback);
+}
+
+function _toUnixTimestamp(time, name = "time") {
+  if (typeof time === "string" && +time == time) {
+    return +time;
+  }
+  if (NumberIsFinite(time)) {
+    if (time < 0) {
+      return DateNow() / 1000;
+    }
+    return time;
+  }
+  if (isDate(time)) {
+    // Convert to 123.456 UNIX timestamp
+    return DatePrototypeGetTime(time) / 1000;
+  }
+  throw new TypeError(`Expected ${name} to be a number or Date`);
+}
+
 export default {
+  Dirent,
+  FSWatcher,
+  ReadStream,
+  Stats,
+  WriteStream,
+  _toUnixTimestamp,
   access,
   accessSync,
   appendFile,
@@ -1079,12 +1136,13 @@ export default {
   chownSync,
   close,
   closeSync,
-  constants: promises.constants,
+  constants,
   copyFile,
   copyFileSync,
+  cp,
+  cpSync,
   createReadStream,
   createWriteStream,
-  Dirent,
   exists,
   existsSync,
   fchmod,
@@ -1124,6 +1182,8 @@ export default {
   readdirSync,
   readlink,
   readlinkSync,
+  readv,
+  readvSync,
   realpath,
   realpathSync,
   rename,
@@ -1134,7 +1194,6 @@ export default {
   rmdirSync,
   stat,
   statSync,
-  Stats,
   symlink,
   symlinkSync,
   truncate,
@@ -1143,18 +1202,13 @@ export default {
   unlinkSync,
   utimes,
   utimesSync,
+  watch,
   write,
   writeFile,
   writeFileSync,
   writeSync,
-  WriteStream,
-  ReadStream,
-  watch,
-  FSWatcher,
   writev,
   writevSync,
-  readv,
-  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

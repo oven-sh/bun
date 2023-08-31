@@ -447,6 +447,10 @@ class Server extends EventEmitter {
 
   listen(port, host, backlog, onListen) {
     const server = this;
+    let socketPath;
+    if (typeof port == "string") {
+      socketPath = port;
+    }
     if (typeof host === "function") {
       onListen = host;
       host = undefined;
@@ -481,6 +485,7 @@ class Server extends EventEmitter {
         tls,
         port,
         hostname: host,
+        unix: socketPath,
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {
@@ -1275,6 +1280,7 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     try {
+      //@ts-ignore
       this.#fetchRequest = fetch(url, {
         method,
         headers: this.getHeaders(),
@@ -1286,6 +1292,8 @@ class ClientRequest extends OutgoingMessage {
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
       })
         .then(response => {
           var res = (this.#res = new IncomingMessage(response, {

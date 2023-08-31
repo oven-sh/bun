@@ -1640,7 +1640,7 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.uws_event_loop.?.unref();
+        vm.event_loop_handle.?.unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -1648,7 +1648,7 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.uws_event_loop.?.unrefConcurrently();
+        vm.event_loop_handle.?.unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -1672,7 +1672,7 @@ pub const PollRef = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.uws_event_loop.?.ref();
+        vm.event_loop_handle.?.ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -1680,7 +1680,7 @@ pub const PollRef = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.uws_event_loop.?.refConcurrently();
+        vm.event_loop_handle.?.refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
@@ -1706,6 +1706,7 @@ pub const FilePoll = struct {
     /// on macOS kevent64 has an extra pointer field so we use it for that
     /// linux doesn't have a field like that
     generation_number: KQueueGenerationNumber = 0,
+    next_to_free: ?*FilePoll = null,
 
     const FileReader = JSC.WebCore.FileReader;
     const FileSink = JSC.WebCore.FileSink;
@@ -1789,20 +1790,21 @@ pub const FilePoll = struct {
         this.deinitWithVM(vm);
     }
 
-    pub fn deinitWithoutVM(this: *FilePoll, loop: *uws.Loop, polls: *JSC.FilePoll.HiveArray) void {
+    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *uws.Loop, polls: *JSC.FilePoll.Store) void {
         if (this.isRegistered()) {
             _ = this.unregister(loop);
         }
 
         this.owner = Deactivated.owner;
+        const was_ever_registered = this.flags.contains(.was_ever_registered);
         this.flags = Flags.Set{};
         this.fd = invalid_fd;
-        polls.put(this);
+        polls.put(this, vm, was_ever_registered);
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        var loop = vm.uws_event_loop.?;
-        this.deinitWithoutVM(loop, vm.rareData().filePolls(vm));
+        var loop = vm.event_loop_handle.?;
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
@@ -1888,6 +1890,9 @@ pub const FilePoll = struct {
 
         nonblocking,
 
+        was_ever_registered,
+        ignore_updates,
+
         pub fn poll(this: Flags) Flags {
             return switch (this) {
                 .readable => .poll_readable,
@@ -1949,7 +1954,64 @@ pub const FilePoll = struct {
         }
     };
 
-    pub const HiveArray = bun.HiveArray(FilePoll, 128).Fallback;
+    const HiveArray = bun.HiveArray(FilePoll, 128).Fallback;
+
+    // We defer freeing FilePoll until the end of the next event loop iteration
+    // This ensures that we don't free a FilePoll before the next callback is called
+    pub const Store = struct {
+        hive: HiveArray,
+        pending_free_head: ?*FilePoll = null,
+        pending_free_tail: ?*FilePoll = null,
+
+        const log = Output.scoped(.FilePoll, false);
+
+        pub fn init(allocator: std.mem.Allocator) Store {
+            return .{
+                .hive = HiveArray.init(allocator),
+            };
+        }
+
+        pub fn get(this: *Store) *FilePoll {
+            return this.hive.get();
+        }
+
+        pub fn processDeferredFrees(this: *Store) void {
+            var next = this.pending_free_head;
+            while (next) |current| {
+                next = current.next_to_free;
+                current.next_to_free = null;
+                this.hive.put(current);
+            }
+            this.pending_free_head = null;
+            this.pending_free_tail = null;
+        }
+
+        pub fn put(this: *Store, poll: *FilePoll, vm: *JSC.VirtualMachine, ever_registered: bool) void {
+            if (!ever_registered) {
+                this.hive.put(poll);
+                return;
+            }
+
+            std.debug.assert(poll.next_to_free == null);
+
+            if (this.pending_free_tail) |tail| {
+                std.debug.assert(this.pending_free_head != null);
+                std.debug.assert(tail.next_to_free == null);
+                tail.next_to_free = poll;
+            }
+
+            if (this.pending_free_head == null) {
+                this.pending_free_head = poll;
+                std.debug.assert(this.pending_free_tail == null);
+            }
+
+            poll.flags.insert(.ignore_updates);
+            this.pending_free_tail = poll;
+            std.debug.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
+            vm.after_event_loop_callback_ctx = this;
+        }
+    };
 
     const log = Output.scoped(.FilePoll, false);
 
@@ -1971,7 +2033,7 @@ pub const FilePoll = struct {
             return;
         this.flags.insert(.disable);
 
-        vm.uws_event_loop.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        vm.event_loop_handle.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
@@ -1979,7 +2041,7 @@ pub const FilePoll = struct {
             return;
         this.flags.remove(.disable);
 
-        vm.uws_event_loop.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        vm.event_loop_handle.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn canActivate(this: *const FilePoll) bool {
@@ -1999,7 +2061,6 @@ pub const FilePoll = struct {
     pub fn activate(this: *FilePoll, loop: *uws.Loop) void {
         loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
         loop.active += @as(u32, @intFromBool(!this.flags.contains(.disable) and !this.flags.contains(.has_incremented_poll_count)));
-
         this.flags.insert(.has_incremented_poll_count);
     }
 
@@ -2012,6 +2073,8 @@ pub const FilePoll = struct {
         poll.fd = @intCast(fd);
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
+        poll.next_to_free = null;
+
         if (KQueueGenerationNumber != u0) {
             max_generation_number +%= 1;
             poll.generation_number = max_generation_number;
@@ -2035,7 +2098,7 @@ pub const FilePoll = struct {
         if (!this.canUnref())
             return;
         log("unref", .{});
-        this.deactivate(vm.uws_event_loop.?);
+        this.deactivate(vm.event_loop_handle.?);
     }
 
     /// Allow a poll to keep the process alive.
@@ -2043,7 +2106,7 @@ pub const FilePoll = struct {
         if (this.canRef())
             return;
         log("ref", .{});
-        this.activate(vm.uws_event_loop.?);
+        this.activate(vm.event_loop_handle.?);
     }
 
     pub fn onTick(loop: *uws.Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
@@ -2052,7 +2115,11 @@ pub const FilePoll = struct {
         if (tag.tag() != @field(Pollable.Tag, "FilePoll"))
             return;
 
-        var file_poll = tag.as(FilePoll);
+        var file_poll: *FilePoll = tag.as(FilePoll);
+        if (file_poll.flags.contains(.ignore_updates)) {
+            return;
+        }
+
         if (comptime Environment.isMac)
             onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))])
         else if (comptime Environment.isLinux)
@@ -2107,7 +2174,7 @@ pub const FilePoll = struct {
                 @as(std.os.fd_t, @intCast(fd)),
                 &event,
             );
-
+            this.flags.insert(.was_ever_registered);
             if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
@@ -2179,6 +2246,8 @@ pub const FilePoll = struct {
                     break :rc rc;
                 }
             };
+
+            this.flags.insert(.was_ever_registered);
 
             // If an error occurs while
             // processing an element of the changelist and there is enough room
@@ -2349,7 +2418,6 @@ pub const FilePoll = struct {
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);
         this.flags.remove(.poll_machport);
-
         if (this.isActive())
             this.deactivate(loop);
 

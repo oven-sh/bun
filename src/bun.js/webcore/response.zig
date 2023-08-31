@@ -1163,6 +1163,7 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
+            fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
             // we wanna to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
@@ -1198,6 +1199,7 @@ pub const Fetch = struct {
             timeout: usize,
             disable_timeout: bool,
             disable_keepalive: bool,
+            disable_decompression: bool,
             url: ZigURL,
             verbose: bool = false,
             redirect_type: FetchRedirect = FetchRedirect.follow,
@@ -1353,6 +1355,7 @@ pub const Fetch = struct {
         };
         var disable_timeout = false;
         var disable_keepalive = false;
+        var disable_decompression = false;
         var verbose = script_ctx.log.level.atLeast(.debug);
         var proxy: ?ZigURL = null;
         var redirect_type: FetchRedirect = FetchRedirect.follow;
@@ -1490,13 +1493,23 @@ pub const Fetch = struct {
                                 disable_keepalive = keepalive_value.to(i32) == 0;
                             }
                         }
+
                         if (options.get(globalThis, "verbose")) |verb| {
                             verbose = verb.toBoolean();
                         }
+
                         if (options.get(globalThis, "signal")) |signal_arg| {
                             if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                                 _ = signal_.ref();
                                 signal = signal_;
+                            }
+                        }
+
+                        if (options.get(ctx, "decompress")) |decompress| {
+                            if (decompress.isBoolean()) {
+                                disable_decompression = !decompress.asBoolean();
+                            } else if (decompress.isNumber()) {
+                                disable_keepalive = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1659,10 +1672,19 @@ pub const Fetch = struct {
                         if (options.get(globalThis, "verbose")) |verb| {
                             verbose = verb.toBoolean();
                         }
+
                         if (options.get(globalThis, "signal")) |signal_arg| {
                             if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                                 _ = signal_.ref();
                                 signal = signal_;
+                            }
+                        }
+
+                        if (options.get(ctx, "decompress")) |decompress| {
+                            if (decompress.isBoolean()) {
+                                disable_decompression = !decompress.asBoolean();
+                            } else if (decompress.isNumber()) {
+                                disable_keepalive = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1919,6 +1941,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
+                .disable_decompression = disable_decompression,
                 .redirect_type = redirect_type,
                 .verbose = verbose,
                 .proxy = proxy,

@@ -123,8 +123,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsRegExp, (JSC::JSGlobalObject * globalObject
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(JSValue::strictEqual(globalObject, JSValue(globalObject->asyncFunctionPrototype()), cell->getObject()->getPrototype(cell->getObject(), globalObject))));
+    GET_FIRST_VALUE
+
+    auto* function = jsDynamicCast<JSFunction*>(value);
+    if (!function)
+        return JSValue::encode(jsBoolean(false));
+
+    auto *executable = function->jsExecutable();
+    if (!executable)
+        return JSValue::encode(jsBoolean(false));
+
+    if (executable->isAsyncGenerator()) {
+        return JSValue::encode(jsBoolean(true));
+    }
+
+    auto& vm = globalObject->vm();
+    auto proto = function->getPrototype(vm, globalObject);
+    if (!proto.isCell()) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    auto *protoCell = proto.asCell();
+    return JSValue::encode(jsBoolean(protoCell->inherits<AsyncFunctionPrototype>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -137,13 +157,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction, (JSC::JSGlobalObject * g
     if (!executable)
         return JSValue::encode(jsBoolean(false));
 
-    return JSValue::encode(jsBoolean(executable->isGenerator()));
+    return JSValue::encode(jsBoolean(executable->isGenerator() || executable->isAsyncGenerator()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
 
-    return JSValue::encode(jsBoolean(cell->type() == JSGeneratorType));
+    return JSValue::encode(jsBoolean(cell->type() == JSGeneratorType || cell->type() == JSAsyncGeneratorType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

@@ -1070,6 +1070,7 @@ pub const Subprocess = struct {
         var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
         var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
         var cmd_value = JSValue.zero;
+        var detached: bool = false;
         var args = args_;
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1243,6 +1244,12 @@ pub const Subprocess = struct {
                         }
                     }
                 }
+
+                if (args.get(globalThis, "detached")) |detached_val| {
+                    if (detached_val.isBoolean()) {
+                        detached = detached_val.toBoolean();
+                    }
+                }
             }
         }
 
@@ -1251,17 +1258,29 @@ pub const Subprocess = struct {
             return .zero;
         };
 
+        var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+
+        if (comptime Environment.isMac) {
+            flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+        }
+
+        if (detached) {
+            flags |= bun.C.POSIX_SPAWN_SETSID;
+        }
+
         defer attr.deinit();
         var actions = PosixSpawn.Actions.init() catch |err| return globalThis.handleError(err, "in posix_spawn");
         if (comptime Environment.isMac) {
-            attr.set(
-                bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT | bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK,
-            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            attr.set(@intCast(flags)) catch |err| return globalThis.handleError(err, "in posix_spawn");
         } else if (comptime Environment.isLinux) {
-            attr.set(
-                bun.C.linux.POSIX_SPAWN.SETSIGDEF | bun.C.linux.POSIX_SPAWN.SETSIGMASK,
-            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            attr.set(@intCast(flags)) catch |err| return globalThis.handleError(err, "in posix_spawn");
         }
+
+        attr.resetSignals() catch {
+            globalThis.throw("Failed to reset signals in posix_spawn", .{});
+            return .zero;
+        };
+
         defer actions.deinit();
 
         if (!override_env and env_array.items.len == 0) {
@@ -1344,14 +1363,14 @@ pub const Subprocess = struct {
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 
             // pidfd_nonblock only supported in 5.10+
-            const flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+            const pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
                 std.os.O.NONBLOCK
             else
                 0;
 
             const fd = std.os.linux.pidfd_open(
                 pid,
-                flags,
+                pidfd_flags,
             );
 
             switch (std.os.linux.getErrno(fd)) {
@@ -1404,7 +1423,7 @@ pub const Subprocess = struct {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
-                jsc_vm.uws_event_loop.?,
+                jsc_vm.event_loop_handle.?,
                 .process,
                 true,
             )) {
@@ -1467,7 +1486,7 @@ pub const Subprocess = struct {
             var poll = JSC.FilePoll.init(jsc_vm, watchfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
             switch (subprocess.poll_ref.?.register(
-                jsc_vm.uws_event_loop.?,
+                jsc_vm.event_loop_handle.?,
                 .process,
                 true,
             )) {
@@ -1530,7 +1549,7 @@ pub const Subprocess = struct {
     pub fn watch(this: *Subprocess) void {
         if (this.poll_ref) |poll| {
             _ = poll.register(
-                this.globalThis.bunVM().uws_event_loop.?,
+                this.globalThis.bunVM().event_loop_handle.?,
                 .process,
                 true,
             );

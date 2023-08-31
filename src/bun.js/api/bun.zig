@@ -3325,7 +3325,7 @@ pub const Timer = struct {
 
                             if (val.did_unref_timer) {
                                 val.did_unref_timer = false;
-                                vm.uws_event_loop.?.num_polls += 1;
+                                vm.event_loop_handle.?.num_polls += 1;
                             }
                         }
                     }
@@ -3398,7 +3398,7 @@ pub const Timer = struct {
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
                     .timer = uws.Timer.create(
-                        vm.uws_event_loop.?,
+                        vm.event_loop_handle.?,
                         id,
                     ),
                 };
@@ -3444,7 +3444,7 @@ pub const Timer = struct {
 
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.uws_event_loop.?.num_polls -= 1;
+                                vm.event_loop_handle.?.num_polls -= 1;
                             }
                         }
                     }
@@ -3597,7 +3597,7 @@ pub const Timer = struct {
             this.timer.deinit();
 
             // balance double unreffing in doUnref
-            vm.uws_event_loop.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+            vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -3653,7 +3653,7 @@ pub const Timer = struct {
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
             .timer = uws.Timer.create(
-                vm.uws_event_loop.?,
+                vm.event_loop_handle.?,
                 Timeout.ID{
                     .id = id,
                     .kind = kind,

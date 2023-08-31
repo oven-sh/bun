@@ -541,6 +541,7 @@ pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
 pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+pub const POSIX_SPAWN_SETSID = @as(c_int, 0x80);
 
 const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;

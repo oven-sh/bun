@@ -2,8 +2,8 @@
 
 #include "wtf/StackTrace.h"
 #include "wtf/dtoa.h"
-#include "wtf/Lock.h"
-#include "termios.h"
+#include <termios.h>
+#include <stdatomic.h>
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
@@ -17,7 +17,8 @@ extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* 
 
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
-static WTF::Lock orig_termios_lock;
+static _Atomic int orig_termios_spinlock;
+static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;
 static struct termios orig_tty_termios;
@@ -34,6 +35,26 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
         return errno;
 
     return 0;
+}
+
+extern "C" int uv_tty_reset_mode(void)
+{
+    int saved_errno;
+    int err;
+
+    saved_errno = errno;
+
+    if (atomic_exchange(&orig_termios_spinlock, 1))
+        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+
+    err = 0;
+    if (orig_termios_fd != -1)
+        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+
+    atomic_store(&orig_termios_spinlock, 0);
+    errno = saved_errno;
+
+    return err;
 }
 
 static void uv__tty_make_raw(struct termios* tio)
@@ -91,15 +112,17 @@ Bun__ttySetMode(int fd, int mode)
         if (rc == -1)
             return errno;
 
-        {
-            /* This is used for uv_tty_reset_mode() */
-            LockHolder locker(orig_termios_lock);
+        /* This is used for uv_tty_reset_mode() */
+        do {
+            expected = 0;
+        } while (!atomic_compare_exchange_strong(&orig_termios_spinlock, &expected, 1));
 
-            if (orig_termios_fd == -1) {
-                orig_termios = orig_termios;
-                orig_termios_fd = fd;
-            }
+        if (orig_termios_fd == -1) {
+            orig_termios = orig_tty_termios;
+            orig_termios_fd = fd;
         }
+
+        atomic_store(&orig_termios_spinlock, 0);
     }
 
     tmp = orig_tty_termios;
@@ -113,9 +136,21 @@ Bun__ttySetMode(int fd, int mode)
         tmp.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
         tmp.c_cc[VMIN] = 1;
         tmp.c_cc[VTIME] = 0;
+
+        std::call_once(reset_once_flag, [] {
+            atexit([] {
+                uv_tty_reset_mode();
+            });
+        });
         break;
     case 2: // io
         uv__tty_make_raw(&tmp);
+
+        std::call_once(reset_once_flag, [] {
+            atexit([] {
+                uv_tty_reset_mode();
+            });
+        });
         break;
     }
 
@@ -125,26 +160,6 @@ Bun__ttySetMode(int fd, int mode)
         current_tty_mode = mode;
 
     return rc;
-}
-
-int uv_tty_reset_mode(void)
-{
-    int saved_errno;
-    int err;
-
-    saved_errno = errno;
-
-    if (orig_termios_lock.tryLock())
-        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
-
-    err = 0;
-    if (orig_termios_fd != -1)
-        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
-
-    orig_termios_lock.unlock();
-    errno = saved_errno;
-
-    return err;
 }
 
 extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);

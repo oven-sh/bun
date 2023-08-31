@@ -4809,7 +4809,7 @@ pub fn NewReadyWatcher(
             const fd = @as(c_int, @intCast(fd_));
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
-                this.poll_ref.?.unregister(JSC.VirtualMachine.get().uws_event_loop.?) == .result,
+                this.poll_ref.?.unregister(JSC.VirtualMachine.get().event_loop_handle.?) == .result,
             );
         }
 
@@ -4848,7 +4848,7 @@ pub fn NewReadyWatcher(
             };
             std.debug.assert(poll_ref.fd == fd);
             std.debug.assert(!this.isWatching());
-            switch (poll_ref.register(JSC.VirtualMachine.get().uws_event_loop.?, flag, true)) {
+            switch (poll_ref.register(JSC.VirtualMachine.get().event_loop_handle.?, flag, true)) {
                 .err => |err| {
                     bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
                 },

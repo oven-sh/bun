@@ -346,7 +346,7 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
         }
     };
@@ -361,7 +361,7 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
         }
     };
@@ -411,7 +411,7 @@ pub const analytics = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
         }
     };

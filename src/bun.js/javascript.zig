@@ -401,7 +401,7 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     timer: Bun.Timer = Bun.Timer{},
-    uws_event_loop: ?*uws.Loop = null,
+    event_loop_handle: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
@@ -449,6 +449,9 @@ pub const VirtualMachine = struct {
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?OpaqueCallback = null,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -479,7 +482,6 @@ pub const VirtualMachine = struct {
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
-    us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
     auto_install_dependencies: bool = false,
@@ -500,6 +502,7 @@ pub const VirtualMachine = struct {
     worker: ?*JSC.WebWorker = null,
 
     debugger: ?Debugger = null,
+    has_started_debugger: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -531,6 +534,21 @@ pub const VirtualMachine = struct {
 
     pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
         return this.rareData().mimeTypeFromString(this.allocator, str);
+    }
+
+    pub fn onAfterEventLoop(this: *VirtualMachine) void {
+        if (this.after_event_loop_callback) |cb| {
+            var ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.active_tasks > 0 or
+            vm.event_loop_handle.?.active > 0 or
+            vm.event_loop.tasks.count > 0;
     }
 
     const SourceMapHandlerGetter = struct {
@@ -724,7 +742,7 @@ pub const VirtualMachine = struct {
     pub fn prepareLoop(_: *VirtualMachine) void {}
 
     pub fn enterUWSLoop(this: *VirtualMachine) void {
-        var loop = this.uws_event_loop.?;
+        var loop = this.event_loop_handle.?;
         loop.run();
     }
 
@@ -732,7 +750,7 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {
-            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) : (dispatch = true) {
+            while (this.isEventLoopAlive()) : (dispatch = true) {
                 this.tick();
                 this.eventLoop().autoTickActive();
             }
@@ -741,7 +759,7 @@ pub const VirtualMachine = struct {
                 this.exit_handler.dispatchOnBeforeExit();
                 dispatch = false;
 
-                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) continue;
+                if (this.isEventLoopAlive()) continue;
             }
 
             break;
@@ -777,7 +795,8 @@ pub const VirtualMachine = struct {
     pub var has_created_debugger: bool = false;
 
     pub const Debugger = struct {
-        path_or_port: []const u8 = "",
+        path_or_port: ?[]const u8 = null,
+        unix: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
@@ -788,8 +807,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) bun.String;
-        var has_started_debugger_thread: bool = false;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
         var futex_atomic: std.atomic.Atomic(u32) = undefined;
 
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
@@ -799,8 +817,8 @@ pub const VirtualMachine = struct {
             has_created_debugger = true;
             var debugger = &this.debugger.?;
             debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
-            if (!has_started_debugger_thread) {
-                has_started_debugger_thread = true;
+            if (!this.has_started_debugger) {
+                this.has_started_debugger = true;
                 futex_atomic = std.atomic.Atomic(u32).init(0);
                 var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
                 thread.detach();
@@ -848,8 +866,6 @@ pub const VirtualMachine = struct {
             vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
         }
 
-        pub export var Bun__debugger_server_url: bun.String = undefined;
-
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
             std.debug.assert(this.debugger.?.wait_for_connection);
@@ -861,9 +877,17 @@ pub const VirtualMachine = struct {
             JSC.markBinding(@src());
 
             var this = VirtualMachine.get();
-            var str = bun.String.create(other_vm.debugger.?.path_or_port);
-            Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
-            Bun__debugger_server_url.toThreadSafe();
+            var debugger = other_vm.debugger.?;
+
+            if (debugger.unix.len > 0) {
+                var url = bun.String.create(debugger.unix);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
+
+            if (debugger.path_or_port) |path_or_port| {
+                var url = bun.String.create(path_or_port);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
 
             this.global.handleRejectedPromises();
 
@@ -884,7 +908,7 @@ pub const VirtualMachine = struct {
             this.eventLoop().tick();
 
             while (true) {
-                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) {
+                while (this.isEventLoopAlive()) {
                     this.tick();
                     this.eventLoop().autoTickActive();
                 }
@@ -1172,13 +1196,27 @@ pub const VirtualMachine = struct {
     }
 
     fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+        var unix = bun.getenvZ("BUN_INSPECT") orelse "";
+        var set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
+        var wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+
         switch (debugger) {
-            .unspecified => {},
+            .unspecified => {
+                if (unix.len > 0) {
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .unix = unix,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                    };
+                }
+            },
             .enable => {
                 this.debugger = Debugger{
                     .path_or_port = debugger.enable.path_or_port,
-                    .wait_for_connection = debugger.enable.wait_for_connection,
-                    .set_breakpoint_on_first_line = debugger.enable.set_breakpoint_on_first_line,
+                    .unix = unix,
+                    .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
+                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
                 };
             },
         }

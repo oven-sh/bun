@@ -9,7 +9,8 @@ const debugConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Debug Bun",
   program: "${file}",
-  watch: false,
+  stopOnEntry: false,
+  watchMode: false,
 };
 
 const runConfiguration: vscode.DebugConfiguration = {
@@ -17,8 +18,8 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
-  debug: false,
-  watch: false,
+  noDebug: true,
+  watchMode: false,
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {
@@ -47,16 +48,10 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
     vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
   );
-
-  const { terminalProfile } = new TerminalDebugSession();
-  const { options } = terminalProfile;
-  const terminal = vscode.window.createTerminal(options);
-  terminal.show();
-  context.subscriptions.push(terminal);
 }
 
 function RunFileCommand(resource?: vscode.Uri): void {
-  const path = getCurrentPath(resource);
+  const path = getActivePath(resource);
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...runConfiguration,
@@ -67,7 +62,7 @@ function RunFileCommand(resource?: vscode.Uri): void {
 }
 
 function DebugFileCommand(resource?: vscode.Uri): void {
-  const path = getCurrentPath(resource);
+  const path = getActivePath(resource);
   if (path) {
     vscode.debug.startDebugging(undefined, {
       ...debugConfiguration,
@@ -178,7 +173,7 @@ class TerminalDebugSession extends FileDebugSession {
     return new vscode.TerminalProfile({
       name: "Bun Terminal",
       env: {
-        "BUN_INSPECT": `1${this.adapter.url}`,
+        "BUN_INSPECT": `${this.adapter.url}?wait=1`,
         "BUN_INSPECT_NOTIFY": `${this.signal.url}`,
       },
       isTransient: true,
@@ -187,9 +182,22 @@ class TerminalDebugSession extends FileDebugSession {
   }
 }
 
-function getCurrentPath(target?: vscode.Uri): string | undefined {
-  if (!target && vscode.window.activeTextEditor) {
-    target = vscode.window.activeTextEditor.document.uri;
+function getActiveDocument(): vscode.TextDocument | undefined {
+  return vscode.window.activeTextEditor?.document;
+}
+
+function getActivePath(target?: vscode.Uri): string | undefined {
+  if (!target) {
+    target = getActiveDocument()?.uri;
   }
   return target?.fsPath;
+}
+
+function isJavaScript(languageId?: string): boolean {
+  return (
+    languageId === "javascript" ||
+    languageId === "javascriptreact" ||
+    languageId === "typescript" ||
+    languageId === "typescriptreact"
+  );
 }

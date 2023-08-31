@@ -857,7 +857,141 @@ it("should handle life-cycle scripts during re-installation", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should use updated life-cycle scripts during re-installation", async () => {
+it("should use updated life-cycle scripts in root during re-installation", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      scripts: {
+        install: [bunExe(), "foo.js"].join(" "),
+      },
+      workspaces: ["bar"],
+    }),
+  );
+  await writeFile(join(package_dir, "foo.js"), 'console.log("[scripts:run] Foo");');
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      scripts: {
+        preinstall: [bunExe(), "bar.js"].join(" "),
+      },
+    }),
+  );
+  await writeFile(join(package_dir, "bar", "bar.js"), 'console.log("[scripts:run] Bar");');
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` with outdated lockfile
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      scripts: {
+        install: [bunExe(), "moo.js"].join(" "),
+        postinstall: [bunExe(), "foo.js"].join(" "),
+      },
+      workspaces: ["bar"],
+    }),
+  );
+  await writeFile(join(package_dir, "moo.js"), 'console.log("[scripts:run] Moo");');
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Moo",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install --production` with lockfile from before
+  const bun_lockb = await file(join(package_dir, "bun.lockb")).arrayBuffer();
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Moo",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
+});
+
+it("should use updated life-cycle scripts in dependency during re-installation", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -954,6 +1088,40 @@ it("should use updated life-cycle scripts during re-installation", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install --production` with lockfile from before
+  const bun_lockb = await file(join(package_dir, "bun.lockb")).arrayBuffer();
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Baz",
+    " + Bar@workspace:bar",
+    "[scripts:run] Foo",
+    "[scripts:run] Bar",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
 });
 
 it("should ignore workspaces within workspaces", async () => {
@@ -1445,6 +1613,50 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-b_4+cafe_b0ba",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle caret range in dependencies when the registry has prereleased packages, issue#4398", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "6.3.0": { as: "0.0.2" }, "7.0.0-rc2": { as: "0.0.3" } }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "^6.3.0",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@6.3.0",
     "",
     " 1 packages installed",
   ]);

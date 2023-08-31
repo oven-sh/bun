@@ -1097,12 +1097,24 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   if (ctx.circular !== undefined) {
     const index = ctx.circular.get(value);
     if (index !== undefined) {
-      const reference = ctx.stylize(`<ref *${index}>`, 'special');
-      // Add reference always to the very beginning of the output.
-      if (ctx.compact !== true) {
-        base = base === '' ? reference : `${reference} ${base}`;
+      ctx.seenRefs ??= new Set();
+      const SEEN = ctx.seenRefs.has(index);
+      if (!SEEN) {
+        ctx.seenRefs.add(index);
+        const reference = ctx.stylize(`<ref *${index}>`, 'special');
+        // Add reference always to the very beginning of the output.
+        if (ctx.compact !== true) {
+          base = base === '' ? reference : `${reference} ${base}`;
+        } else {
+          braces[0] = `${reference} ${braces[0]}`;
+        }
       } else {
-        braces[0] = `${reference} ${braces[0]}`;
+        //! this is a non-standard behavior compared to Node's implementation
+        //! it optimizes the output by also collapsing indirect circular references
+        //! this is not known to cause any issues so far but this note is left here just in case
+        const reference = ctx.stylize(`[Circular *${index}]`, 'special');
+        //ctx.seen.pop(); //? uncommenting this line would allow more accurate display semantics but causes a ~2x slowdown
+        return reference;
       }
     }
   }

@@ -2589,8 +2589,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(byte_stream.pipe.ctx == null);
                                 std.debug.assert(this.byte_stream == null);
 
-                                stream.detach(this.server.globalThis);
-
                                 if (this.resp == null) {
                                     byte_stream.parent().decrementCount();
                                     return;

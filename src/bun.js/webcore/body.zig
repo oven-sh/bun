@@ -527,12 +527,12 @@ pub const Body = struct {
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toJS(globalThis),
                     };
+                    locked.readable.?.value.protect();
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
                         onReadableStreamAvailable(locked.task.?, locked.readable.?);
                     }
 
-                    locked.readable.?.value.protect();
                     return locked.readable.?.value;
                 },
                 .Error => {
@@ -1532,7 +1532,6 @@ pub const BodyValueBufferer = struct {
                     std.debug.assert(byte_stream.pipe.ctx == null);
                     std.debug.assert(sink.byte_stream == null);
 
-                    stream.detach(sink.global);
                     const bytes = byte_stream.buffer.items;
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.

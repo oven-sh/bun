@@ -1286,10 +1286,6 @@ pub const BodyValueBufferer = struct {
         if (this.byte_stream) |byte_stream| {
             byte_stream.unpipe();
         }
-        if (this.readable_stream_ref.get()) |stream| {
-            // we already consumed the stream, so we can detach it if we are the last reference
-            stream.detachIfPossible(this.global);
-        }
         this.readable_stream_ref.deinit();
 
         if (this.js_sink) |buffer_stream| {
@@ -1403,14 +1399,14 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var args = callframe.arguments(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return JSValue.jsUndefined();
     }
 
-    fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         var err = args.ptr[0];
@@ -1535,14 +1531,15 @@ pub const BodyValueBufferer = struct {
                     std.debug.assert(byte_stream.pipe.ctx == null);
                     std.debug.assert(sink.byte_stream == null);
 
+                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                    defer stream.detachIfPossible(sink.global);
                     const bytes = byte_stream.buffer.items;
+
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if (byte_stream.has_received_last_chunk) {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
-                        // is safe to detach here because we're not going to receive any more data
-                        stream.detachIfPossible(sink.global);
                         return;
                     }
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
@@ -1582,6 +1579,27 @@ pub const BodyValueBufferer = struct {
                 log("onReceiveValue {}", .{bytes.len});
                 sink.onFinishedBuffering(sink.ctx, bytes, value.Error, true);
             },
+        }
+    }
+
+    pub const shim = JSC.Shimmer("Bun", "BodyValueBufferer", @This());
+    pub const name = "Bun__BodyValueBufferer";
+    pub const include = "";
+    pub const namespace = shim.namespace;
+
+    pub const Export = shim.exportFunctions(.{
+        .onResolveStream = onResolveStream,
+        .onRejectStream = onRejectStream,
+    });
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(onResolveStream, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(onRejectStream, .{
+                .name = Export[1].symbol_name,
+            });
         }
     }
 };

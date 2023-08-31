@@ -553,12 +553,12 @@ pub const HTMLRewriter = struct {
                 bufferer.deinit();
             }
 
-            if(this.tmp_sync_error)|ret_err|{
+            if (this.tmp_sync_error) |ret_err| {
                 // this should never happens, but still we avoid future leaks
                 ret_err.unprotect();
                 this.tmp_sync_error = null;
             }
-            
+
             this.context.deinit(bun.default_allocator);
         }
     };

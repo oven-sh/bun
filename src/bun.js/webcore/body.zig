@@ -209,7 +209,7 @@ pub const Body = struct {
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
-        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, readable: *JSC.WebCore.ReadableStream) void = null,
+        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void = null,
         size_hint: Blob.SizeType = 0,
 
         deinit: bool = false,
@@ -529,7 +529,7 @@ pub const Body = struct {
                     };
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                        onReadableStreamAvailable(locked.task.?, &locked.readable.?);
+                        onReadableStreamAvailable(locked.task.?, locked.readable.?);
                     }
 
                     locked.readable.?.value.protect();
@@ -1280,6 +1280,8 @@ pub const BodyValueBufferer = struct {
 
     js_sink: ?*ArrayBufferSink.JSSink = null,
     byte_stream: ?*JSC.WebCore.ByteStream = null,
+    // readable stream strong ref to keep byte stream alive
+    readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
     stream_buffer: bun.MutableString,
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
@@ -1289,6 +1291,7 @@ pub const BodyValueBufferer = struct {
         if (this.byte_stream) |byte_stream| {
             byte_stream.unpipe();
         }
+        this.readable_stream_ref.deinit();
 
         if (this.js_sink) |buffer_stream| {
             buffer_stream.detach();
@@ -1511,17 +1514,18 @@ pub const BodyValueBufferer = struct {
         if (locked.readable) |stream_| {
             const stream: JSC.WebCore.ReadableStream = stream_;
             stream.value.ensureStillAlive();
-            stream.value.protect();
+            // keep the stream alive until we're done with it
+            sink.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
+            stream.value.unprotect();
+
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
-                stream.value.unprotect();
                 return error.StreamAlreadyUsed;
             }
 
             switch (stream.ptr) {
                 .Invalid => {
-                    stream.value.unprotect();
                     return error.InvalidStream;
                 },
                 // toBlobIfPossible should've caught this

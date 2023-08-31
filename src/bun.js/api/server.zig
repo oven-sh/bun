@@ -1667,6 +1667,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.byte_stream = null;
                 stream.unpipe();
             }
+            this.readable_stream_ref.deinit();
 
             this.readable_stream_ref.deinit();
 
@@ -2615,14 +2616,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
-                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis) catch {
-                                    // Invalid Stream
-                                    this.renderMissing();
-                                    return;
-                                };
-                                // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                                stream.detachIfPossible(this.server.globalThis);
-
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 

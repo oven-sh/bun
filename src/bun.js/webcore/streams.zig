@@ -54,43 +54,54 @@ pub const ReadableStream = struct {
 
     pub const Strong = struct {
         held: JSC.Strong = .{},
-        globalThis: ?*JSGlobalObject = null,
+        self: ?ReadableStream = null,
 
-        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) !Strong {
+        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().ref_count += 1;
                 },
                 .File => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().ref_count += 1;
                 },
                 .Bytes => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().ref_count += 1;
                 },
                 else => {},
             }
             return .{
-                .globalThis = globalThis,
+                .self = this,
                 .held = JSC.Strong.create(this.value, globalThis),
             };
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.globalThis) |globalThis| {
-                if (this.held.get()) |value| {
-                    return ReadableStream.fromJS(value, globalThis);
-                }
+            if (this.held.has()) {
+                return this.self;
             }
-            return null;
+            return this.self;
         }
 
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
-                // decrement the ref count and if it's zero we auto detach
-                readable.detachIfPossible(this.globalThis.?);
-                this.globalThis = null;
+                switch (readable.ptr) {
+                    .Blob => |stream| {
+                        stream.parent().ref_count -= 1;
+                        stream.parent().deinit();
+                    },
+                    .File => |stream| {
+                        stream.parent().ref_count -= 1;
+                        stream.parent().deinit();
+                    },
+                    .Bytes => |stream| {
+                        stream.parent().ref_count -= 1;
+                        stream.parent().deinit();
+                    },
+                    else => {},
+                }
+                this.held.deinit();
+                this.self = null;
             }
-            this.held.deinit();
         }
     };
 
@@ -3056,7 +3067,7 @@ pub fn ReadableStreamSource(
         context: Context,
         cancelled: bool = false,
         deinited: bool = false,
-        ref_count: u32 = 1,
+        ref_count: u32 = 0,
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
@@ -3122,26 +3133,17 @@ pub fn ReadableStreamSource(
             }
         }
 
-        pub fn incrementCount(this: *This) !void {
+        pub fn deinit(this: *This) void {
+            if (this.ref_count > 0) {
+                return;
+            }
+
             if (this.deinited) {
                 return error.InvalidStream;
             }
-            this.ref_count += 1;
-        }
 
-        pub fn decrementCount(this: *This) u32 {
-            if (this.ref_count == 0 or this.deinited) {
-                return 0;
-            }
-
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
-                this.deinited = true;
-                deinit_fn(&this.context);
-                return 0;
-            }
-
-            return this.ref_count;
+            this.deinited = true;
+            deinit_fn(&this.context);
         }
 
         pub fn getError(this: *This) ?Syscall.Error {

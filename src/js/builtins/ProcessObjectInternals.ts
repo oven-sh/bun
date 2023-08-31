@@ -341,6 +341,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
         while ((tock = queue.shift()) !== null) {
           var callback = tock.callback;
           var args = tock.args;
+          var frame = tock.frame;
+          var restore = $getInternalField($asyncContext, 0);
+          $putInternalField($asyncContext, 0, frame);
           try {
             if (args === undefined) {
               callback();
@@ -365,6 +368,8 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
             }
           } catch (e) {
             reportUncaughtException(e);
+          } finally {
+            $putInternalField($asyncContext, 0, restore);
           }
         }
 
@@ -386,7 +391,11 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     }
     if (process._exiting) return;
 
-    queue.push({ callback: cb, args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined });
+    queue.push({
+      callback: cb,
+      args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
+      frame: $getInternalField($asyncContext, 0),
+    });
     $putInternalField(nextTickQueue, 0, 1);
   }
 

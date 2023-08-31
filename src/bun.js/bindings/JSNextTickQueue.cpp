@@ -76,11 +76,16 @@ bool JSNextTickQueue::isEmpty()
 
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
+    bool mustResetContext = false;
     if (isEmpty()) {
         vm.drainMicrotasks();
+        mustResetContext = true;
     }
 
     if (!isEmpty()) {
+        if (mustResetContext) {
+            globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+        }
         auto* drainFn = internalField(2).get().getObject();
 
         auto throwScope = DECLARE_THROW_SCOPE(vm);

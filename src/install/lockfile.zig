@@ -4240,7 +4240,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         for (scripts.items) |script| {
             if (script.script.len > 0) {
                 string_builder.fmtCount("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
-                has_scripts = has_scripts or true;
+                has_scripts = true;
             }
         }
     }

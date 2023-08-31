@@ -5826,10 +5826,7 @@ describe("Registry URLs", () => {
     const fails = entry[1];
 
     it(`should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`, async () => {
-      await writeFile(
-        join(package_dir, "bunfig.toml"), 
-        `[install]\ncache = false\nregistry = "${regURL}"`
-      );
+      await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
       await writeFile(
         join(package_dir, "package.json"),
@@ -5870,10 +5867,7 @@ describe("Registry URLs", () => {
   it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
     const regURL = "asdfghjklqwertyuiop";
 
-    await writeFile(
-      join(package_dir, "bunfig.toml"), 
-      `[install]\ncache = false\nregistry = "${regURL}"`
-    );
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
     await writeFile(
       join(package_dir, "package.json"),
@@ -5905,18 +5899,18 @@ describe("Registry URLs", () => {
 
     expect(await exited).toBe(0);
   });
-  
-  // TODO: This test should fail if the param `warn_on_error` is true in 
-  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that 
+
+  // TODO: This test should fail if the param `warn_on_error` is true in
+  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
   // code never gets run for peer dependencies unless you do some package
-  // manifest magic. I doubt it'd ever fail, but having a dedicated 
+  // manifest magic. I doubt it'd ever fail, but having a dedicated
   // test would be nice.
-  
+
   // it("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
   //   const regURL = "asdfghjklqwertyuiop";
 
   //   await writeFile(
-  //     join(package_dir, "bunfig.toml"), 
+  //     join(package_dir, "bunfig.toml"),
   //     `[install]\ncache = false\nregistry = "${regURL}"`
   //   );
 
@@ -5944,12 +5938,10 @@ describe("Registry URLs", () => {
 
   //   expect(stderr).toBeDefined();
   //   const err = await new Response(stderr).text();
-  
+
   //   expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
   //   expect(err.includes("warn: InvalidURL")).toBeTrue();
 
   //   expect(await exited).toBe(0);
   // });
 });
-    
-    

@@ -1667,6 +1667,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.byte_stream = null;
                 stream.unpipe();
             }
+
+            if (this.readable_stream_ref.get()) |stream| {
+                // we already consumed the stream, so we can detach it if we are the last reference
+                stream.detachIfPossible(this.server.globalThis);
+            }
+
             this.readable_stream_ref.deinit();
 
             if (!this.pathname.isEmpty()) {
@@ -2590,7 +2596,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(this.byte_stream == null);
 
                                 if (this.resp == null) {
-                                    byte_stream.parent().decrementCount();
+                                    // we don't have a response, so we can discard the stream
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
                                 const resp = this.resp.?;
@@ -2598,8 +2605,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
-                                    byte_stream.parent().decrementCount();
                                     this.doRenderBlob();
+                                    // is safe to detach here because we're not going to receive any more data
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
 

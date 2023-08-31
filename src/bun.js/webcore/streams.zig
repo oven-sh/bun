@@ -86,18 +86,8 @@ pub const ReadableStream = struct {
 
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
-                switch (readable.ptr) {
-                    .Blob => |stream| {
-                        stream.parent().decrementCount();
-                    },
-                    .File => |stream| {
-                        stream.parent().decrementCount();
-                    },
-                    .Bytes => |stream| {
-                        stream.parent().decrementCount();
-                    },
-                    else => {},
-                }
+                // decrement the ref count and if it's zero we auto detach
+                readable.detachIfPossible(this.globalThis.?);
                 this.held.deinit();
                 this.globalThis = null;
             }
@@ -118,8 +108,7 @@ pub const ReadableStream = struct {
                 blob.offset = blobby.offset;
                 blob.size = blobby.remain;
                 blob.store.?.ref();
-                stream.detach(globalThis);
-                stream.done();
+                stream.detachIfPossible(globalThis);
                 blobby.deinit();
 
                 return AnyBlob{ .Blob = blob };
@@ -128,13 +117,10 @@ pub const ReadableStream = struct {
                 if (blobby.lazy_readable == .blob) {
                     var blob = JSC.WebCore.Blob.initWithStore(blobby.lazy_readable.blob, globalThis);
                     blob.store.?.ref();
-
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
-
-                    stream.detach(globalThis);
+                    stream.detachIfPossible(globalThis);
                     blobby.deinit();
-                    stream.done();
                     return AnyBlob{ .Blob = blob };
                 }
             },
@@ -143,10 +129,9 @@ pub const ReadableStream = struct {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if (bytes.has_received_last_chunk) {
-                    stream.detach(globalThis);
                     var blob: JSC.WebCore.AnyBlob = undefined;
                     blob.from(bytes.buffer);
-                    bytes.parent().decrementCount();
+                    stream.detachIfPossible(globalThis);
                     return blob;
                 }
 
@@ -174,10 +159,23 @@ pub const ReadableStream = struct {
         ReadableStream__cancel(this.value, globalThis);
     }
 
-    pub fn detach(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+    /// Decrement Source ref count and detach the underlying stream if ref count is zero
+    /// be careful, this can invalidate the stream do not call this multiple times
+    /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
+    pub fn detachIfPossible(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
-        ReadableStream__detach(this.value, globalThis);
+
+        const ref_count = switch (this.ptr) {
+            .Blob => |blob| blob.parent().decrementCount(),
+            .File => |file| file.parent().decrementCount(),
+            .Bytes => |bytes| bytes.parent().decrementCount(),
+            else => 0,
+        };
+
+        if (ref_count == 0) {
+            this.value.unprotect();
+            ReadableStream__detach(this.value, globalThis);
+        }
     }
 
     pub const Tag = enum(i32) {
@@ -3131,9 +3129,9 @@ pub fn ReadableStreamSource(
             this.ref_count += 1;
         }
 
-        pub fn decrementCount(this: *This) void {
+        pub fn decrementCount(this: *This) u32 {
             if (this.ref_count == 0 or this.deinited) {
-                return;
+                return 0;
             }
 
             this.ref_count -= 1;
@@ -3141,6 +3139,7 @@ pub fn ReadableStreamSource(
                 this.deinited = true;
                 deinit_fn(&this.context);
             }
+            return this.ref_count;
         }
 
         pub fn getError(this: *This) ?Syscall.Error {
@@ -3254,7 +3253,7 @@ pub fn ReadableStreamSource(
             pub fn deinit(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
-                this.decrementCount();
+                _ = this.decrementCount();
                 return JSValue.jsUndefined();
             }
 

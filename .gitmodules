@@ -6,7 +6,7 @@ depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/javascript/jsc/WebKit"]
-path = src/bun.js/WebKit
+path = WebKit
 url = https://github.com/oven-sh/WebKit.git
 ignore = dirty
 depth = 1

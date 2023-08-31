@@ -35,4 +35,13 @@ describe("got", () => {
 
     server.stop();
   });
+
+  test("https gzip", async () => {
+    const stream = await got("https://bun.sh/", {
+      headers: {
+        "Accept-Encoding": "gzip",
+      },
+    });
+    expect(stream.statusCode).toBe(200);
+  });
 });

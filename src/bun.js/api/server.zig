@@ -2600,8 +2600,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(this.byte_stream == null);
 
                                 if (this.resp == null) {
-                                    // we don't have a response, so we can discard the stream
-                                    stream.detachIfPossible(this.server.globalThis);
+                                    byte_stream.parent().decrementCount();
                                     return;
                                 }
                                 const resp = this.resp.?;
@@ -2609,6 +2608,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
+                                    byte_stream.parent().decrementCount();
                                     this.doRenderBlob();
                                     // is safe to detach here because we're not going to receive any more data
                                     stream.detachIfPossible(this.server.globalThis);
@@ -2616,7 +2616,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
-                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis) catch {
+                                    // Invalid Stream
+                                    this.renderMissing();
+                                    return;
+                                };
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 

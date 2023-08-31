@@ -436,6 +436,8 @@ pub const HTMLRewriter = struct {
             };
             // sync error occurs
             if (sink.tmp_sync_error) |err| {
+                err.ensureStillAlive();
+                err.unprotect();
                 sink.tmp_sync_error = null;
                 return err;
             }
@@ -462,13 +464,21 @@ pub const HTMLRewriter = struct {
                 if (is_async) {
                     sink.response.body.value.toErrorInstance(err, sink.global);
                 } else {
-                    sink.tmp_sync_error = throwLOLHTMLError(sink.global);
+                    var ret_err = throwLOLHTMLError(sink.global);
+                    ret_err.ensureStillAlive();
+                    ret_err.protect();
+                    sink.tmp_sync_error = ret_err;
                 }
                 sink.rewriter.end() catch {};
                 sink.deinit();
                 return;
             }
-            sink.tmp_sync_error = sink.runOutputSink(bytes, is_async);
+
+            if (sink.runOutputSink(bytes, is_async)) |ret_err| {
+                ret_err.ensureStillAlive();
+                ret_err.protect();
+                sink.tmp_sync_error = ret_err;
+            }
         }
 
         pub fn runOutputSink(
@@ -542,6 +552,13 @@ pub const HTMLRewriter = struct {
                 var bufferer = this.bodyValueBufferer.?;
                 bufferer.deinit();
             }
+
+            if(this.tmp_sync_error)|ret_err|{
+                // this should never happens, but still we avoid future leaks
+                ret_err.unprotect();
+                this.tmp_sync_error = null;
+            }
+            
             this.context.deinit(bun.default_allocator);
         }
     };

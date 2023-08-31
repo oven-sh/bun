@@ -1,5 +1,12 @@
 const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
+// primordials
+const StringPrototypeSplit = Function.prototype.call.bind(String.prototype.split);
+const RegExpPrototypeExec = Function.prototype.call.bind(RegExp.prototype.exec);
+const StringPrototypeToLowerCase = Function.prototype.call.bind(String.prototype.toLowerCase);
+const ArrayPrototypeSome = Function.prototype.call.bind(Array.prototype.some);
+const NumberIsInteger = Number.isInteger;
+
 function ReadStream(fd) {
   if (!(this instanceof ReadStream)) return new ReadStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
@@ -286,7 +293,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!Number.isInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
   if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 };
 

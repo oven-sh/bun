@@ -653,7 +653,7 @@ pub const HTTPThread = struct {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
-        var loop = uws.Loop.create(struct {
+        var loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
             }
@@ -719,7 +719,8 @@ pub const HTTPThread = struct {
     }
 
     fn processEvents_(this: *@This()) void {
-        this.loop.num_polls = @max(2, this.loop.num_polls);
+        if (comptime Environment.isPosix)
+            this.loop.num_polls = @max(2, this.loop.num_polls);
 
         while (true) {
             this.drainEvents();

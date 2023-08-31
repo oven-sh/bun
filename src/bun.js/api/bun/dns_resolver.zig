@@ -1632,6 +1632,11 @@ pub const DNSResolver = struct {
         readable: bool,
         writable: bool,
     ) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var vm = this.vm;
 
         if (!readable and !writable) {

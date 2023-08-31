@@ -221,12 +221,12 @@ pub const UV_IF_NAMESIZE = @as(c_int, 16) + @as(c_int, 1);
 pub const uv__queue = struct_uv__queue;
 
 pub const uv_req_s = struct_uv_req_s;
-pub const uv_handle_s = struct_uv_handle_s;
+pub const uv_handle_s = Handle;
 pub const uv_prepare_s = struct_uv_prepare_s;
 pub const uv_check_s = struct_uv_check_s;
 pub const uv_idle_s = struct_uv_idle_s;
 pub const uv_async_s = struct_uv_async_s;
-pub const uv_loop_s = struct_uv_loop_s;
+pub const uv_loop_s = Loop;
 pub const uv__work = struct_uv__work;
 pub const uv_once_s = struct_uv_once_s;
 pub const uv__dirent_s = struct_uv__dirent_s;
@@ -308,23 +308,44 @@ pub const struct_uv_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_req_t = struct_uv_req_s;
-pub const uv_loop_t = struct_uv_loop_s;
-pub const uv_close_cb = ?*const fn ([*c]uv_handle_t) callconv(.C) void;
+pub const uv_loop_t = Loop;
+pub const uv_close_cb = ?*const fn (*anyopaque) callconv(.C) void;
 const union_unnamed_374 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const struct_uv_handle_s = extern struct {
+pub const Handle = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
     type: uv_handle_type,
     close_cb: uv_close_cb,
     handle_queue: struct_uv__queue,
     u: union_unnamed_374,
-    endgame_next: [*c]uv_handle_t,
+    endgame_next: ?*uv_handle_t = null,
     flags: c_uint,
+
+    pub const Type = enum(c_uint) {
+        unknown = 0,
+        @"async" = 1,
+        check = 2,
+        fs_event = 3,
+        fs_poll = 4,
+        handle = 5,
+        idle = 6,
+        named_pipe = 7,
+        poll = 8,
+        prepare = 9,
+        process = 10,
+        stream = 11,
+        tcp = 12,
+        timer = 13,
+        tty = 14,
+        udp = 15,
+        signal = 16,
+        file = 17,
+    };
 };
-pub const uv_handle_t = struct_uv_handle_s;
+pub const uv_handle_t = Handle;
 const union_unnamed_375 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
@@ -402,8 +423,8 @@ pub const struct_uv_async_s = extern struct {
     async_sent: u8,
 };
 pub const uv_async_t = struct_uv_async_s;
-pub const struct_uv_loop_s = extern struct {
-    data: ?*anyopaque,
+pub const Loop = extern struct {
+    data: ?*anyopaque = null,
     active_handles: c_uint,
     handle_queue: struct_uv__queue,
     active_reqs: union_unnamed_370,
@@ -411,9 +432,9 @@ pub const struct_uv_loop_s = extern struct {
     stop_flag: c_uint,
     iocp: HANDLE,
     time: u64,
-    pending_reqs_tail: [*c]uv_req_t,
-    endgame_handles: [*c]uv_handle_t,
-    timer_heap: ?*anyopaque,
+    pending_reqs_tail: ?[*]uv_req_t = null,
+    endgame_handles: ?[*]uv_handle_t = null,
+    timer_heap: ?*anyopaque = null,
     prepare_handles: *uv_prepare_t,
     check_handles: *uv_check_t,
     idle_handles: [*c]uv_idle_t,
@@ -427,11 +448,71 @@ pub const struct_uv_loop_s = extern struct {
     wq: struct_uv__queue,
     wq_mutex: uv_mutex_t,
     wq_async: uv_async_t,
+
+    pub fn inc(this: *Loop) void {
+        this.active_handles += 1;
+    }
+
+    pub fn dec(this: *Loop) void {
+        this.active_handles -= 1;
+    }
+
+    pub fn init() *Loop {
+        var this = get();
+        uv_replace_allocator(
+            this,
+            @ptrCast(&bun.Mimalloc.mi_malloc),
+            @ptrCast(&bun.Mimalloc.mi_realloc),
+            @ptrCast(&bun.Mimalloc.mi_calloc),
+            @ptrCast(&bun.Mimalloc.mi_free),
+        );
+    }
+
+    pub fn isActive(this: *const Loop) bool {
+        return uv_loop_alive(this) != 0;
+    }
+
+    pub fn get() *Loop {
+        return uv_default_loop();
+    }
+
+    pub fn tick(this: *Loop) void {
+        _ = uv_run(this, RunMode.default);
+    }
+
+    pub fn run(this: *Loop) void {
+        _ = uv_run(this, RunMode.default);
+    }
+
+    pub fn tickWithTimeout(this: *Loop, _: i64) void {
+        _ = uv_run(this, RunMode.nowait);
+    }
+
+    pub fn wakeup(this: *Loop) void {
+        _ = this;
+        bun.uws.Loop.get().wakeup();
+    }
+
+    pub fn refConcurrently(this: *Loop) void {
+        bun.todo(@src(), {});
+        _ = this;
+        bun.uws.Loop.get().wakeup();
+    }
+
+    pub fn unrefConcurrently(this: *Loop) void {
+        bun.todo(@src(), {});
+        _ = this;
+        bun.uws.Loop.get().wakeup();
+    }
+
+    pub fn unrefCount(this: *Loop, count: i32) void {
+        this.active_handles -= @intCast(count);
+    }
 };
 pub const struct_uv__work = extern struct {
     work: ?*const fn ([*c]struct_uv__work) callconv(.C) void,
     done: ?*const fn ([*c]struct_uv__work, c_int) callconv(.C) void,
-    loop: [*c]struct_uv_loop_s,
+    loop: [*c]Loop,
     wq: struct_uv__queue,
 };
 pub const LPFN_WSARECV = ?*const anyopaque;
@@ -611,7 +692,7 @@ pub const UV_UDP: c_int = 15;
 pub const UV_SIGNAL: c_int = 16;
 pub const UV_FILE: c_int = 17;
 pub const UV_HANDLE_TYPE_MAX: c_int = 18;
-pub const uv_handle_type = c_uint;
+pub const uv_handle_type = Handle.Type;
 pub const UV_UNKNOWN_REQ: c_int = 0;
 pub const UV_REQ: c_int = 1;
 pub const UV_CONNECT: c_int = 2;
@@ -1503,8 +1584,13 @@ pub const UV_RUN_DEFAULT: c_int = 0;
 pub const UV_RUN_ONCE: c_int = 1;
 pub const UV_RUN_NOWAIT: c_int = 2;
 pub const uv_run_mode = c_uint;
+pub const RunMode = enum(c_uint) {
+    default = 0,
+    once = 1,
+    nowait = 2,
+};
 pub extern fn uv_version() c_uint;
-pub extern fn uv_version_string() [*]const u8;
+pub extern fn uv_version_string() [*:0]const u8;
 pub const uv_malloc_func = ?*const fn (usize) callconv(.C) ?*anyopaque;
 pub const uv_realloc_func = ?*const fn (?*anyopaque, usize) callconv(.C) ?*anyopaque;
 pub const uv_calloc_func = ?*const fn (usize, usize) callconv(.C) ?*anyopaque;
@@ -1517,10 +1603,10 @@ pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
 pub extern fn uv_loop_new() *uv_loop_t;
 pub extern fn uv_loop_delete(*uv_loop_t) void;
 pub extern fn uv_loop_size() usize;
-pub extern fn uv_loop_alive(loop: [*c]const uv_loop_t) c_int;
+pub extern fn uv_loop_alive(loop: *const uv_loop_t) c_int;
 pub extern fn uv_loop_configure(loop: *uv_loop_t, option: uv_loop_option, ...) c_int;
 pub extern fn uv_loop_fork(loop: *uv_loop_t) c_int;
-pub extern fn uv_run(*uv_loop_t, mode: uv_run_mode) c_int;
+pub extern fn uv_run(*uv_loop_t, mode: RunMode) c_int;
 pub extern fn uv_stop(*uv_loop_t) void;
 pub extern fn uv_ref([*c]uv_handle_t) void;
 pub extern fn uv_unref([*c]uv_handle_t) void;
@@ -1588,7 +1674,7 @@ pub extern fn uv_req_get_data(req: [*c]const uv_req_t) ?*anyopaque;
 pub extern fn uv_req_set_data(req: [*c]uv_req_t, data: ?*anyopaque) void;
 pub extern fn uv_req_get_type(req: [*c]const uv_req_t) uv_req_type;
 pub extern fn uv_req_type_name(@"type": uv_req_type) [*]const u8;
-pub extern fn uv_is_active(handle: [*c]const uv_handle_t) c_int;
+pub extern fn uv_is_active(handle: *const uv_handle_t) c_int;
 pub extern fn uv_walk(loop: *uv_loop_t, walk_cb: uv_walk_cb, arg: ?*anyopaque) void;
 pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
 pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: [*c]FILE) void;

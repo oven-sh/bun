@@ -721,12 +721,10 @@ pub const SocketContext = opaque {
     pub fn deinit(this: *SocketContext, ssl: bool) void {
         this.close(ssl);
         //always deinit in next iteration
-        if (Loop.get()) |loop| {
-            if (ssl) {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit_ssl);
-            } else {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit);
-            }
+        if (ssl) {
+            Loop.get().nextTick(*SocketContext, this, SocketContext._deinit_ssl);
+        } else {
+            Loop.get().nextTick(*SocketContext, this, SocketContext._deinit);
         }
     }
 
@@ -780,23 +778,31 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
-    pub fn ref(this: *Loop) void {
+    pub fn inc(this: *PosixLoop) void {
+        this.num_polls += 1;
+    }
+
+    pub fn dec(this: *PosixLoop) void {
+        this.num_polls -= 1;
+    }
+
+    pub fn ref(this: *PosixLoop) void {
         log("ref", .{});
         this.num_polls += 1;
         this.active += 1;
     }
-    pub fn refConcurrently(this: *Loop) void {
+    pub fn refConcurrently(this: *PosixLoop) void {
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
         log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
-    pub fn unrefConcurrently(this: *Loop) void {
+    pub fn unrefConcurrently(this: *PosixLoop) void {
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
         log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
 
-    pub fn unref(this: *Loop) void {
+    pub fn unref(this: *PosixLoop) void {
         log("unref", .{});
         this.num_polls -= 1;
         this.active -|= 1;
@@ -806,13 +812,13 @@ pub const PosixLoop = extern struct {
         return this.active > 0 or this.num_polls > 0;
     }
 
-    pub fn unrefCount(this: *Loop, count: i32) void {
+    pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
         this.num_polls -|= count;
         this.active -|= @as(u32, @intCast(count));
     }
 
-    pub fn get() ?*Loop {
+    pub fn get() *Loop {
         return uws_get_loop();
     }
 
@@ -826,21 +832,21 @@ pub const PosixLoop = extern struct {
         ).?;
     }
 
-    pub fn wakeup(this: *Loop) void {
+    pub fn wakeup(this: *PosixLoop) void {
         return us_wakeup_loop(this);
     }
 
-    pub fn tick(this: *Loop) void {
+    pub fn tick(this: *PosixLoop) void {
         us_loop_run_bun_tick(this, 0);
     }
 
-    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
+    pub fn tickWithTimeout(this: *PosixLoop, timeoutMs: i64) void {
         us_loop_run_bun_tick(this, timeoutMs);
     }
 
     extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
 
-    pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
+    pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.C) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
@@ -864,7 +870,7 @@ pub const PosixLoop = extern struct {
         };
     }
 
-    pub fn addPostHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+    pub fn addPostHandler(this: *PosixLoop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
         const Handler = NewHandler(UserType, callback);
 
         uws_loop_addPostHandler(this, ctx, Handler.callback);
@@ -873,7 +879,7 @@ pub const PosixLoop = extern struct {
         };
     }
 
-    pub fn addPreHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+    pub fn addPreHandler(this: *PosixLoop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
         const Handler = NewHandler(UserType, callback);
 
         uws_loop_addPreHandler(this, ctx, Handler.callback);
@@ -882,13 +888,12 @@ pub const PosixLoop = extern struct {
         };
     }
 
-    pub fn run(this: *Loop) void {
+    pub fn run(this: *PosixLoop) void {
         us_loop_run(this);
     }
-
-    extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
+extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
@@ -2249,22 +2254,73 @@ pub const UVLoop = extern struct {
 
     internal_loop_data: InternalLoopData align(16),
 
-    uv_loop: *uv.loop,
+    uv_loop: *uv.Loop,
     is_default: c_int,
-    pre: *uv.prepare,
-    check: *uv.check,
+    pre: *uv.uv_prepare_t,
+    check: *uv.uv_check_t,
 
-    pub fn isActive(this: *const Loop) bool {
-        return this.active > 0 or this.num_polls > 0;
+    pub fn isActive(this: *const UVLoop) bool {
+        return this.uv_loop.isActive();
     }
-    pub fn get() ?*Loop {
-        return uws_get_loop();
+    pub fn get() *UVLoop {
+        return @ptrCast(uws_get_loop());
+    }
+
+    pub fn wakeup(this: *UVLoop) void {
+        us_wakeup_loop(this);
+    }
+
+    pub fn create(comptime Handler: anytype) *UVLoop {
+        return us_create_loop(
+            null,
+            Handler.wakeup,
+            if (@hasDecl(Handler, "pre")) Handler.pre else null,
+            if (@hasDecl(Handler, "post")) Handler.post else null,
+            0,
+        ).?;
+    }
+
+    pub fn run(this: *UVLoop) void {
+        us_loop_run(this);
+    }
+    pub const tick = run;
+
+    pub fn inc(this: *UVLoop) void {
+        this.uv_loop.inc();
+    }
+
+    pub fn dec(this: *UVLoop) void {
+        this.uv_loop.dec();
+    }
+
+    pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
+        const Handler = struct {
+            pub fn callback(data: *anyopaque) callconv(.C) void {
+                deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
+            }
+        };
+        uws_loop_defer(this, user_data, Handler.callback);
+    }
+
+    fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {
+        return struct {
+            loop: *Loop,
+            pub fn removePost(handler: @This()) void {
+                return uws_loop_removePostHandler(handler.loop, callback);
+            }
+            pub fn removePre(handler: @This()) void {
+                return uws_loop_removePostHandler(handler.loop, callback);
+            }
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+                callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
+            }
+        };
     }
 };
 
 pub const Loop = if (bun.Environment.isWindows) UVLoop else PosixLoop;
 
-extern fn uws_get_loop() ?*Loop;
+extern fn uws_get_loop() *Loop;
 extern fn us_create_loop(
     hint: ?*anyopaque,
     wakeup_cb: ?*const fn (*Loop) callconv(.C) void,

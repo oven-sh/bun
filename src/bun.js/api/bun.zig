@@ -3326,7 +3326,8 @@ pub const Timer = struct {
 
                             if (val.did_unref_timer) {
                                 val.did_unref_timer = false;
-                                vm.event_loop_handle.?.num_polls += 1;
+                                if (comptime Environment.isPosix)
+                                    vm.event_loop_handle.?.num_polls += 1;
                             }
                         }
                     }
@@ -3399,7 +3400,7 @@ pub const Timer = struct {
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
                     .timer = uws.Timer.create(
-                        vm.event_loop_handle.?,
+                        vm.uwsLoop(),
                         id,
                     ),
                 };
@@ -3445,7 +3446,8 @@ pub const Timer = struct {
 
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.event_loop_handle.?.num_polls -= 1;
+                                if (comptime Environment.isPosix)
+                                    vm.event_loop_handle.?.num_polls -= 1;
                             }
                         }
                     }
@@ -3597,8 +3599,9 @@ pub const Timer = struct {
 
             this.timer.deinit();
 
-            // balance double unreffing in doUnref
-            vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+            if (comptime Environment.isPosix)
+                // balance double unreffing in doUnref
+                vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -3654,7 +3657,7 @@ pub const Timer = struct {
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
             .timer = uws.Timer.create(
-                vm.event_loop_handle.?,
+                vm.uwsLoop(),
                 Timeout.ID{
                     .id = id,
                     .kind = kind,

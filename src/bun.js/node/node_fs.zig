@@ -425,7 +425,7 @@ pub const AsyncCopyFileTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.CopyFile),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
 
@@ -514,7 +514,7 @@ pub const AsyncCpTask = struct {
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     result: JSC.Maybe(Return.Cp),
-    ref: JSC.PollRef = .{},
+    ref: Async.KeepAlive = .{},
     arena: bun.ArenaAllocator,
     tracker: JSC.AsyncTaskTracker,
     has_result: std.atomic.Atomic(bool),
@@ -529,6 +529,11 @@ pub const AsyncCpTask = struct {
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
     ) JSC.JSValue {
+        if (comptime Environment.isWindows) {
+            globalObject.throwTODO("fs.promises.cp is not implemented on Windows yet");
+            return .zero;
+        }
+
         var task = bun.default_allocator.create(AsyncCpTask) catch @panic("out of memory");
         task.* = AsyncCpTask{
             .promise = JSC.JSPromise.Strong.init(globalObject),
@@ -652,7 +657,7 @@ pub const AsyncCpSingleFileTask = struct {
         brk: {
             switch (result) {
                 .err => |err| {
-                    if (err.errno == @intFromEnum(os.E.EXIST) and !args.flags.errorOnExist) {
+                    if (err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                         break :brk;
                     }
                     this.cp_task.finishConcurrently(result);
@@ -3691,6 +3696,8 @@ pub const NodeFS = struct {
 
             return ret.success;
         }
+
+        return Maybe(Return.CopyFile).todo;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -4864,7 +4871,7 @@ pub const NodeFS = struct {
 
                         while (true) {
                             if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                                switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+                                switch (@as(E, @enumFromInt(errno.err.errno))) {
                                     .AGAIN, .INTR => continue,
                                     .NOENT => return Maybe(Return.Rmdir).success,
                                     .MLINK => {
@@ -4893,7 +4900,7 @@ pub const NodeFS = struct {
                 } else if (comptime Environment.isLinux) {
                     if (args.recursive) {
                         std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                            const errno: std.os.E = switch (err) {
+                            const errno: E = switch (err) {
                                 error.InvalidHandle => .BADF,
                                 error.AccessDenied => .PERM,
                                 error.FileTooBig => .FBIG,
@@ -4951,7 +4958,7 @@ pub const NodeFS = struct {
                         }
 
                         if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                            switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+                            switch (@as(E, @enumFromInt(errno.err.errno))) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {
                                     if (args.force) {
@@ -5333,6 +5340,10 @@ pub const NodeFS = struct {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(this: *NodeFS, args: Arguments.Cp, comptime flavor: Flavor) Maybe(Return.Cp) {
+        if (comptime Environment.isWindows) {
+            return Maybe(Return.Cp).todo;
+        }
+
         comptime std.debug.assert(flavor == .sync);
 
         var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -5369,7 +5380,7 @@ pub const NodeFS = struct {
                 @enumFromInt((if (args.errorOnExist or !args.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
-            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+            if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
                 return Maybe(Return.Cp).success;
             }
             return r;
@@ -5379,7 +5390,7 @@ pub const NodeFS = struct {
             @memcpy(this.sync_error_buf[0..src.len], src);
             return .{
                 .err = .{
-                    .errno = @intFromEnum(std.os.E.ISDIR),
+                    .errno = @intFromEnum(E.ISDIR),
                     .syscall = .copyfile,
                     .path = this.sync_error_buf[0..src.len],
                 },
@@ -5469,7 +5480,7 @@ pub const NodeFS = struct {
                     );
                     switch (r) {
                         .err => {
-                            if (r.err.errno == @intFromEnum(os.E.EXIST) and !args.errorOnExist) {
+                            if (r.err.errno == @intFromEnum(E.EXIST) and !args.errorOnExist) {
                                 continue;
                             }
                             return r;
@@ -5748,7 +5759,7 @@ pub const NodeFS = struct {
                 @enumFromInt((if (args.flags.errorOnExist or !args.flags.force) Constants.COPYFILE_EXCL else @as(u8, 0))),
                 stat_,
             );
-            if (r == .err and r.err.errno == @intFromEnum(os.E.EXIST) and !args.flags.errorOnExist) {
+            if (r == .err and r.err.errno == @intFromEnum(E.EXIST) and !args.flags.errorOnExist) {
                 task.finishConcurrently(Maybe(Return.Cp).success);
                 return;
             }
@@ -5759,7 +5770,7 @@ pub const NodeFS = struct {
         if (!args.flags.recursive) {
             @memcpy(this.sync_error_buf[0..src.len], src);
             task.finishConcurrently(.{ .err = .{
-                .errno = @intFromEnum(std.os.E.ISDIR),
+                .errno = @intFromEnum(E.ISDIR),
                 .syscall = .copyfile,
                 .path = this.sync_error_buf[0..src.len],
             } });

@@ -10,6 +10,7 @@ pub const LPCVOID = windows.LPCVOID;
 pub const LPWSTR = windows.LPWSTR;
 pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
+pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;

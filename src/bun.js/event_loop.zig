@@ -376,7 +376,7 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer_fast: bool = true,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
-        var actual = uws.Loop.get().?;
+        var actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
@@ -778,10 +778,14 @@ pub const EventLoop = struct {
         }
 
         if (!loop.isActive()) {
-            if (this.forever_timer == null) {
-                var t = uws.Timer.create(loop, this);
-                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
-                this.forever_timer = t;
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+            } else {
+                if (this.forever_timer == null) {
+                    var t = uws.Timer.create(loop, this);
+                    t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
+                    this.forever_timer = t;
+                }
             }
         }
 
@@ -807,7 +811,7 @@ pub const EventLoop = struct {
             loop.unrefCount(pending_unref);
         }
 
-        if (loop.active > 0) {
+        if (loop.isActive()) {
             loop.tick();
             this.processGCTimer();
             ctx.onAfterEventLoop();
@@ -892,6 +896,11 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         // TODO: make this more efficient!
         var loop = this.virtual_machine.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
         var timer = uws.Timer.createFallthrough(loop, task.ptr());
@@ -908,8 +917,7 @@ pub const EventLoop = struct {
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
-            var actual = uws.Loop.get().?;
-            this.virtual_machine.event_loop_handle = actual;
+            this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
@@ -950,7 +958,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = uws.Loop.get().?,
+            .loop = uws.Loop.get(),
         };
     }
 
@@ -990,9 +998,9 @@ pub const MiniEventLoop = struct {
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
-                this.loop.num_polls += 1;
+                this.loop.inc();
                 this.loop.tick();
-                this.loop.num_polls -= 1;
+                this.loop.dec();
             }
 
             while (this.tasks.readItem()) |task| {

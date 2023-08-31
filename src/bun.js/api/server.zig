@@ -5400,7 +5400,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = uws.Loop.get();
+            this.vm.event_loop_handle = Async.Loop.get();
         }
 
         pub fn ref(this: *ThisServer) void {

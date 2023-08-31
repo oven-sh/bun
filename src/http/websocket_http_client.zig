@@ -194,7 +194,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
+            var loop: *bun.Async.Loop = @alignCast(@ptrCast(loop_));
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (vm.event_loop_handle) |other| {
@@ -881,11 +881,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
-            if (vm.event_loop_handle) |other| {
-                std.debug.assert(other == loop);
+            if (comptime Environment.isPosix) {
+                if (vm.event_loop_handle) |other| {
+                    std.debug.assert(other == loop);
+                }
             }
-
-            vm.event_loop_handle = loop;
 
             Socket.configure(
                 ctx,

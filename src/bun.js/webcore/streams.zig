@@ -3976,6 +3976,12 @@ pub const FIFO = struct {
         /// provided via kqueue(), only on macOS
         kqueue_read_amt: ?u32,
     ) ReadResult {
+        if (comptime Environment.isWindows) {
+            return ReadResult{
+                .err = Syscall.Error.todo,
+            };
+        }
+
         const available_to_read = this.getAvailableToRead(
             if (kqueue_read_amt != null)
                 @as(i64, @intCast(kqueue_read_amt.?))
@@ -4806,6 +4812,11 @@ pub fn NewReadyWatcher(
         }
 
         pub fn unwatch(this: *Context, fd_: anytype) void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+                return;
+            }
+
             const fd = @as(c_int, @intCast(fd_));
             std.debug.assert(@as(c_int, @intCast(this.poll_ref.?.fd)) == fd);
             std.debug.assert(
@@ -4835,6 +4846,9 @@ pub fn NewReadyWatcher(
         }
 
         pub fn watch(this: *Context, fd_: anytype) void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             const fd = @as(bun.FileDescriptor, @intCast(fd_));
             var poll_ref: *Async.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = Async.FilePoll.init(

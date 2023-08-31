@@ -380,7 +380,7 @@ pub const ExitHandler = struct {
 
 pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else @import("uv").Loop;
+const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -511,6 +511,14 @@ pub const VirtualMachine = struct {
 
     pub const OnException = fn (*ZigException) void;
 
+    pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
+        if (comptime Environment.isPosix) {
+            return this.event_loop_handle.?;
+        }
+
+        return uws.Loop.get();
+    }
+
     pub fn isMainThread(this: *const VirtualMachine) bool {
         return this.worker == null;
     }
@@ -550,7 +558,7 @@ pub const VirtualMachine = struct {
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
         return vm.active_tasks > 0 or
-            vm.event_loop_handle.?.active > 0 or
+            vm.event_loop_handle.?.isActive() or
             vm.event_loop.tasks.count > 0;
     }
 

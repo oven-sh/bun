@@ -1,5 +1,5 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
@@ -5795,49 +5795,76 @@ it("should handle `workspace:*` on both root & child", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should fail on invalid registry URLS", async () => {
-  var urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+describe("Registry URLs", () => {
+  // Some of the non failing URLs are invalid, but bun's URL parser ignores
+  // the validation error and returns a valid serialized URL anyway.
+  const registryURLs: [url: string, fails: boolean][] = [
+    ["asdfghjklqwertyuiop", true],
+    ["                ", true],
+    ["::::::::::::::::", true],
+    ["https://ex ample.org/", true],
+    ["example", true],
+    ["https://example.com:demo", true],
+    ["http://[www.example.com]/", true],
+    ["c:", true],
+    ["c:a", true],
+    ["https://registry.npmjs.org/", false],
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
+    ["", false],
+    ["https:example.org", false],
+    ["https://////example.com///", false],
+    ["https://example.com/https:example.org", false],
+    ["https://example.com/[]?[]#[]", false],
+    ["https://example/%?%#%", false],
+    ["c:/", false],
+    ["https://點看",  false], // gets converted to punycode
+    ["https://xn--c1yn36f/", false],
+  ];
+  
+  for(const entry of registryURLs) {
+    const regURL = entry[0];
+    const fails = entry[1];
+    
+    it(`should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`, async () => {
+      await writeFile(
+        join(package_dir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = "${regURL}"`,
+      );
+    
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            notapackage: "0.0.2",
+          },
+        }),
+      );
+    
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--verbose"],
+        cwd: package_dir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      expect(stdout).toBeDefined();
+      expect(await new Response(stdout).text()).toBeEmpty();
+      
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
 
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `
-[install]
-cache = false
-registry = "::::::::::::::::"
-`,
-  );
-
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "0.0.2",
-      },
-    }),
-  );
-
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stdout).toBeDefined();
-  expect(await new Response(stdout).text()).toBeEmpty();
-  // console.log("stdout: ", await new Response(stdout).text());
-
-  expect(stderr).toBeDefined();
-  // console.log("stderr: ", await new Response(stderr).text());
-  const err = await new Response(stderr).text();
-  const registryURL = "::::::::::::::::";
-  expect(err.includes(`Failed to join registry \"${registryURL}\" and package \"bar\" URLs`)).toBeTrue();
-  expect(err.includes("error: InvalidURL")).toBeTrue();
-  // console.log(err);
-
-  expect(await exited).toBe(1);
+      if(fails) {
+        expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+        expect(err.includes("error: InvalidURL")).toBeTrue();
+      } else {
+        expect(err.includes("error: notapackage@0.0.2 failed to resolve")).toBeTrue();
+      }
+      // fails either way, since notapackage is, well, not a real package.
+      expect(await exited).not.toBe(0);
+    });
+  }
 });
+

@@ -267,7 +267,7 @@ const NetworkTask = struct {
                 ) catch unreachable;
                 return error.InvalidURL;
             }
-            // This actually duplicates the string! So we defer deref above.
+            // This actually duplicates the string! So we defer deref the WTF managed one above.
             break :blk try tmp.toOwnedSlice(allocator);
         };
 

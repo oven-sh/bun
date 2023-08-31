@@ -6112,7 +6112,6 @@ describe("Registry URLs", () => {
     expect(await exited).toBe(0);
   });
 
-  
   // TODO: This test should fail if the param `warn_on_error` is true in
   // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
   // code never gets run for peer dependencies unless you do some package
@@ -6121,10 +6120,7 @@ describe("Registry URLs", () => {
   test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
     const regURL = "asdfghjklqwertyuiop";
 
-    await writeFile(
-      join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nregistry = "${regURL}"`
-    );
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
     await writeFile(
       join(package_dir, "package.json"),

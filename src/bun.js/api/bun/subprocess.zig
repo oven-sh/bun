@@ -201,7 +201,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+                .blob, .fd, .ipc => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => Readable{
                     .pipe = .{
                         .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
@@ -887,6 +887,9 @@ pub const Subprocess = struct {
                 .fd => {
                     return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
                 },
+                .ipc => {
+                    return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
+                },
                 .inherit => {
                     return Writable{ .inherit = {} };
                 },
@@ -1055,10 +1058,11 @@ pub const Subprocess = struct {
 
         var cwd = jsc_vm.bundler.fs.top_level_dir;
 
-        var stdio = [3]Stdio{
+        var stdio = [4]Stdio{
             .{ .ignore = {} },
             .{ .pipe = null },
             .{ .inherit = {} },
+            .{ .ignore = {} },
         };
 
         if (comptime is_sync) {
@@ -1072,6 +1076,8 @@ pub const Subprocess = struct {
         var cmd_value = JSValue.zero;
         var detached: bool = false;
         var args = args_;
+        var has_ipc = false;
+
         {
             if (args.isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
@@ -1168,6 +1174,38 @@ pub const Subprocess = struct {
                     }
                 }
 
+                if (args.get(globalThis, "stdio")) |stdio_val| {
+                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
+                        if (stdio_val.jsType().isArray()) {
+                            var stdio_iter = stdio_val.arrayIterator(globalThis);
+                            stdio_iter.len = @min(stdio_iter.len, 4);
+                            var i: u32 = 0;
+                            while (stdio_iter.next()) |value| : (i += 1) {
+                                if (!extractStdio(globalThis, i, value, &stdio, &has_ipc))
+                                    return JSC.JSValue.jsUndefined();
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("stdio must be an array", .{});
+                            return .zero;
+                        }
+                    }
+                } else {
+                    if (args.get(globalThis, "stdin")) |value| {
+                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+
+                    if (args.get(globalThis, "stderr")) |value| {
+                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+
+                    if (args.get(globalThis, "stdout")) |value| {
+                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+                }
+
                 if (args.get(globalThis, "env")) |object| {
                     if (!object.isEmptyOrUndefinedOrNull()) {
                         if (!object.isObject()) {
@@ -1202,38 +1240,6 @@ pub const Subprocess = struct {
                                 return .zero;
                             };
                         }
-                    }
-                }
-
-                if (args.get(globalThis, "stdio")) |stdio_val| {
-                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
-                        if (stdio_val.jsType().isArray()) {
-                            var stdio_iter = stdio_val.arrayIterator(globalThis);
-                            stdio_iter.len = @min(stdio_iter.len, 3);
-                            var i: u32 = 0;
-                            while (stdio_iter.next()) |value| : (i += 1) {
-                                if (!extractStdio(globalThis, i, value, &stdio))
-                                    return JSC.JSValue.jsUndefined();
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("stdio must be an array", .{});
-                            return .zero;
-                        }
-                    }
-                } else {
-                    if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio))
-                            return .zero;
-                    }
-
-                    if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio))
-                            return .zero;
-                    }
-
-                    if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio))
-                            return .zero;
                     }
                 }
 
@@ -1288,6 +1294,18 @@ pub const Subprocess = struct {
             env_array.capacity = env_array.items.len;
         }
 
+        if (has_ipc) {
+            if (comptime is_sync) {
+                globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
+                return .zero;
+            }
+
+            // TODO: correct fd
+            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
+            env_array.appendAssumeCapacity("NODE_CHANNEL_SERIALIZATION_MODE=json");
+        }
+
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
@@ -1300,6 +1318,11 @@ pub const Subprocess = struct {
 
         const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
+            return .zero;
+        } else undefined;
+
+        const fd3_pipe = if (stdio[3].isPiped()) os.pipe2(0) catch |err| {
+            globalThis.throw("failed to create fd3 pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
@@ -1320,6 +1343,14 @@ pub const Subprocess = struct {
             stderr_pipe,
             bun.STDERR_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
+
+        stdio[3].setUpChildIoPosixSpawn(
+            &actions,
+            fd3_pipe,
+            3,
+        ) catch |err| return globalThis.handleError(err, "in configuring child file descriptor 3");
+
+        std.debug.print("created fd3 is {d} and {d}\n", .{ fd3_pipe[0], fd3_pipe[1] });
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
 
@@ -1679,10 +1710,11 @@ pub const Subprocess = struct {
         blob: JSC.WebCore.AnyBlob,
         pipe: ?JSC.WebCore.ReadableStream,
         array_buffer: JSC.ArrayBuffer.Strong,
+        ipc: bun.FileDescriptor,
 
         pub fn isPiped(self: Stdio) bool {
             return switch (self) {
-                .array_buffer, .blob, .pipe => true,
+                .array_buffer, .blob, .pipe, .ipc => true,
                 else => false,
             };
         }
@@ -1715,7 +1747,9 @@ pub const Subprocess = struct {
                         try actions.dup2(std_fileno, std_fileno);
                     }
                 },
-
+                .ipc => |fd| {
+                    try actions.dup2(fd, std_fileno);
+                },
                 .ignore => {
                     const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
@@ -1775,6 +1809,7 @@ pub const Subprocess = struct {
         i: u32,
         value: JSValue,
         stdio_array: []Stdio,
+        has_ipc: *bool,
     ) bool {
         if (value.isEmptyOrUndefinedOrNull()) {
             return true;
@@ -1788,6 +1823,15 @@ pub const Subprocess = struct {
                 stdio_array[i] = Stdio{ .ignore = {} };
             } else if (str.eqlComptime("pipe")) {
                 stdio_array[i] = Stdio{ .pipe = null };
+            } else if (str.eqlComptime("ipc")) {
+                if (i < 3) {
+                    // I think node.js does let you do this
+                    globalThis.throwInvalidArguments("\"ipc\" cannot be used for stdin, stdout, or stderr", .{});
+                    return false;
+                }
+
+                stdio_array[i] = Stdio{ .ipc = 0 };
+                has_ipc.* = true;
             } else {
                 globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;

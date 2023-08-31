@@ -48,22 +48,6 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
     vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
   );
-
-  const document = getActiveDocument();
-  if (isJavaScript(document?.languageId)) {
-    vscode.workspace.findFiles("bun.lockb", "node_modules", 1).then(files => {
-      const { terminalProfile } = new TerminalDebugSession();
-      const { options } = terminalProfile;
-      const terminal = vscode.window.createTerminal(options);
-
-      const focus = files.length > 0;
-      if (focus) {
-        terminal.show();
-      }
-
-      context.subscriptions.push(terminal);
-    });
-  }
 }
 
 function RunFileCommand(resource?: vscode.Uri): void {
@@ -195,11 +179,6 @@ class TerminalDebugSession extends FileDebugSession {
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
-  }
-
-  dispose(): void {
-    super.dispose();
-    this.signal.close();
   }
 }
 

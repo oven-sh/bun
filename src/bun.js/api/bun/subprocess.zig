@@ -14,6 +14,7 @@ const JSC = @import("root").bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
+const uws = @import("../../../deps/uws.zig");
 
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
@@ -61,7 +62,14 @@ pub const Subprocess = struct {
     is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
 
+    serialization: IPCSerialization,
+
     pub const SignalCode = bun.SignalCode;
+
+    pub const IPCSerialization = enum {
+        json,
+        advanced,
+    };
 
     pub fn hasExited(this: *const Subprocess) bool {
         return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
@@ -1074,9 +1082,11 @@ pub const Subprocess = struct {
         var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
         var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
         var cmd_value = JSValue.zero;
-        var detached: bool = false;
+        var detached = false;
         var args = args_;
         var has_ipc = false;
+        var serialization = IPCSerialization.json;
+        _ = serialization;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1174,38 +1184,6 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.get(globalThis, "stdio")) |stdio_val| {
-                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
-                        if (stdio_val.jsType().isArray()) {
-                            var stdio_iter = stdio_val.arrayIterator(globalThis);
-                            stdio_iter.len = @min(stdio_iter.len, 4);
-                            var i: u32 = 0;
-                            while (stdio_iter.next()) |value| : (i += 1) {
-                                if (!extractStdio(globalThis, i, value, &stdio, &has_ipc))
-                                    return JSC.JSValue.jsUndefined();
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("stdio must be an array", .{});
-                            return .zero;
-                        }
-                    }
-                } else {
-                    if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio, &has_ipc))
-                            return .zero;
-                    }
-
-                    if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio, &has_ipc))
-                            return .zero;
-                    }
-
-                    if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio, &has_ipc))
-                            return .zero;
-                    }
-                }
-
                 if (args.get(globalThis, "env")) |object| {
                     if (!object.isEmptyOrUndefinedOrNull()) {
                         if (!object.isObject()) {
@@ -1243,6 +1221,38 @@ pub const Subprocess = struct {
                     }
                 }
 
+                if (args.get(globalThis, "stdio")) |stdio_val| {
+                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
+                        if (stdio_val.jsType().isArray()) {
+                            var stdio_iter = stdio_val.arrayIterator(globalThis);
+                            stdio_iter.len = @min(stdio_iter.len, 4);
+                            var i: u32 = 0;
+                            while (stdio_iter.next()) |value| : (i += 1) {
+                                if (!extractStdio(globalThis, i, value, &stdio))
+                                    return JSC.JSValue.jsUndefined();
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("stdio must be an array", .{});
+                            return .zero;
+                        }
+                    }
+                } else {
+                    if (args.get(globalThis, "stdin")) |value| {
+                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+
+                    if (args.get(globalThis, "stderr")) |value| {
+                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+
+                    if (args.get(globalThis, "stdout")) |value| {
+                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio, &has_ipc))
+                            return .zero;
+                    }
+                }
+
                 if (comptime !is_sync) {
                     if (args.get(globalThis, "lazy")) |lazy_val| {
                         if (lazy_val.isBoolean()) {
@@ -1254,6 +1264,13 @@ pub const Subprocess = struct {
                 if (args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
                         detached = detached_val.toBoolean();
+                    }
+                }
+
+                // TODO: do we want this to be the flag used?
+                if (args.get(globalThis, "ipc")) |ipc_val| {
+                    if (ipc_val.isBoolean()) {
+                        has_ipc = ipc_val.toBoolean();
                     }
                 }
             }
@@ -1294,13 +1311,18 @@ pub const Subprocess = struct {
             env_array.capacity = env_array.items.len;
         }
 
+        // IPC is currently implemented in a very limited way.
+        // Node lets you pass as many fds as you want, and they can all be sockets; IPC is just a special
+        // runtime-controlled version of "pipe" (in which pipe is a misleading name since they're bidirectional).
+        //
+        // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional.
+        // And then fd 3 is only for IPC.
         if (has_ipc) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
                 return .zero;
             }
 
-            // TODO: correct fd
             env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
             env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
             env_array.appendAssumeCapacity("NODE_CHANNEL_SERIALIZATION_MODE=json");
@@ -1318,11 +1340,6 @@ pub const Subprocess = struct {
 
         const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
-            return .zero;
-        } else undefined;
-
-        const fd3_pipe = if (stdio[3].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create fd3 pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
@@ -1344,13 +1361,14 @@ pub const Subprocess = struct {
             bun.STDERR_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
 
-        stdio[3].setUpChildIoPosixSpawn(
-            &actions,
-            fd3_pipe,
-            3,
-        ) catch |err| return globalThis.handleError(err, "in configuring child file descriptor 3");
-
-        std.debug.print("created fd3 is {d} and {d}\n", .{ fd3_pipe[0], fd3_pipe[1] });
+        if (has_ipc) {
+            var fds: uws.LIBUS_SOCKET_DESCRIPTOR[2] = undefined;
+            const socket = uws.newSocketFromPair(ctx, &fds) orelse {
+                globalThis.throw("failed to create socket pair");
+                return .zero;
+            };
+            _ = socket;
+        }
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
 
@@ -1809,7 +1827,6 @@ pub const Subprocess = struct {
         i: u32,
         value: JSValue,
         stdio_array: []Stdio,
-        has_ipc: *bool,
     ) bool {
         if (value.isEmptyOrUndefinedOrNull()) {
             return true;
@@ -1823,15 +1840,6 @@ pub const Subprocess = struct {
                 stdio_array[i] = Stdio{ .ignore = {} };
             } else if (str.eqlComptime("pipe")) {
                 stdio_array[i] = Stdio{ .pipe = null };
-            } else if (str.eqlComptime("ipc")) {
-                if (i < 3) {
-                    // I think node.js does let you do this
-                    globalThis.throwInvalidArguments("\"ipc\" cannot be used for stdin, stdout, or stderr", .{});
-                    return false;
-                }
-
-                stdio_array[i] = Stdio{ .ipc = 0 };
-                has_ipc.* = true;
             } else {
                 globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;
@@ -1917,4 +1925,20 @@ pub const Subprocess = struct {
         globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
         return false;
     }
+
+    pub const IPCSocket = uws.NewSocketHandler(false);
+
+    pub const Handler = struct {
+        pub fn onData(
+            ptr: *anyopaque,
+            socket: Subprocess,
+            buf: []const u8,
+        ) void {
+            _ = socket;
+            _ = ptr;
+            uws.us_create_socket_context(0, null, 0, .{});
+
+            std.debug.print("yooo[{s}]\n", .{buf});
+        }
+    };
 };

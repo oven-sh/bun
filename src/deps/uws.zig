@@ -2266,3 +2266,16 @@ extern fn uws_app_listen_domain_with_options(
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
+
+extern fn us_socket_pair(
+    ssl: c_int,
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+pub fn newSocketFromPair(ctx: *SocketContext, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_pair(0, ctx, 0, fds) orelse return null,
+    };
+}

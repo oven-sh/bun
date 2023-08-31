@@ -82,6 +82,37 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
+struct us_socket_t *us_socket_pair(int ssl, struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds[2]) {
+#ifdef LIBUS_USE_LIBUV
+    return 0;
+#endif 
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == -1) {
+        return 0;
+    }
+
+    struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+    us_poll_init(p1, fds[0], POLL_TYPE_SOCKET);
+    us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+
+    struct us_socket_t *s1 = (struct us_socket_t *) p1;
+    s1->context = ctx;
+    s1->timeout = 0;
+    s1->long_timeout = 0;
+    s1->low_prio_state = 0;
+
+    /* We always use nodelay */
+    bsd_socket_nodelay(fds[0], 1);
+
+    us_internal_socket_context_link(ctx, s1);
+
+    if (ctx->on_open) {
+        ctx->on_open(s1, 0, 0, 0);
+    }
+
+    return s1;
+}
+
 /* Exactly the same as us_socket_close but does not emit on_close event */
 struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s) {
     if (!us_socket_is_closed(0, s)) {

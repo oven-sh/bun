@@ -1170,6 +1170,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
+        // reference to the readable stream / byte_stream alive
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
 
         /// Used in errors
         pathname: bun.String = bun.String.empty,
@@ -1665,6 +1667,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.byte_stream = null;
                 stream.unpipe();
             }
+            this.readable_stream_ref.deinit();
 
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
@@ -2593,7 +2596,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     return;
                                 }
                                 const resp = this.resp.?;
-
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
@@ -2604,6 +2606,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 

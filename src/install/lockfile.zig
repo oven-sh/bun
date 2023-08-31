@@ -4231,6 +4231,25 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         }
     }
 
+    const scripts_begin = "\n-- BEGIN SCRIPTS --\n";
+    const scripts_end = "\n-- END SCRIPTS --\n";
+    var has_scripts = false;
+
+    inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+        var scripts = @field(this.scripts, field_name);
+        for (scripts.items) |script| {
+            if (script.script.len > 0) {
+                string_builder.fmtCount("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
+                has_scripts = has_scripts or true;
+            }
+        }
+    }
+
+    if (has_scripts) {
+        string_builder.count(scripts_begin);
+        string_builder.count(scripts_end);
+    }
+
     std.sort.block(
         PackageID,
         alphabetized_names,
@@ -4248,6 +4267,19 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
 
     for (alphabetized_names) |i| {
         _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes) });
+    }
+
+    if (has_scripts) {
+        _ = string_builder.append(scripts_begin);
+        inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+            var scripts = @field(this.scripts, field_name);
+            for (scripts.items) |script| {
+                if (script.script.len > 0) {
+                    _ = string_builder.fmt("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
+                }
+            }
+        }
+        _ = string_builder.append(scripts_end);
     }
 
     string_builder.ptr.?[string_builder.len..string_builder.cap][0..hash_suffix.len].* = hash_suffix.*;

@@ -2592,7 +2592,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 stream.detach(this.server.globalThis);
 
                                 if (this.resp == null) {
-                                    byte_stream.parent().deinit();
+                                    byte_stream.parent().decrementCount();
                                     return;
                                 }
                                 const resp = this.resp.?;
@@ -2600,13 +2600,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
-                                    byte_stream.parent().deinit();
+                                    byte_stream.parent().decrementCount();
                                     this.doRenderBlob();
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
-                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis) catch {
+                                    // Invalid Stream
+                                    this.renderMissing();
+                                    return;
+                                };
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 

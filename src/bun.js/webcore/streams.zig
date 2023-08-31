@@ -54,53 +54,52 @@ pub const ReadableStream = struct {
 
     pub const Strong = struct {
         held: JSC.Strong = .{},
-        self: ?ReadableStream = null,
+        globalThis: ?*JSGlobalObject = null,
 
-        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) Strong {
+        pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) !Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
-                    stream.parent().ref_count += 1;
+                    try stream.parent().incrementCount();
                 },
                 .File => |stream| {
-                    stream.parent().ref_count += 1;
+                    try stream.parent().incrementCount();
                 },
                 .Bytes => |stream| {
-                    stream.parent().ref_count += 1;
+                    try stream.parent().incrementCount();
                 },
                 else => {},
             }
             return .{
-                .self = this,
+                .globalThis = globalThis,
                 .held = JSC.Strong.create(this.value, globalThis),
             };
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.held.has()) {
-                return this.self;
+            if (this.globalThis) |globalThis| {
+                if (this.held.get()) |value| {
+                    return ReadableStream.fromJS(value, globalThis);
+                }
             }
-            return this.self;
+            return null;
         }
 
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
                 switch (readable.ptr) {
                     .Blob => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
+                        stream.parent().decrementCount();
                     },
                     .File => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
+                        stream.parent().decrementCount();
                     },
                     .Bytes => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
+                        stream.parent().decrementCount();
                     },
                     else => {},
                 }
                 this.held.deinit();
-                this.self = null;
+                this.globalThis = null;
             }
         }
     };
@@ -147,7 +146,7 @@ pub const ReadableStream = struct {
                     stream.detach(globalThis);
                     var blob: JSC.WebCore.AnyBlob = undefined;
                     blob.from(bytes.buffer);
-                    bytes.parent().deinit();
+                    bytes.parent().decrementCount();
                     return blob;
                 }
 
@@ -3059,7 +3058,7 @@ pub fn ReadableStreamSource(
         context: Context,
         cancelled: bool = false,
         deinited: bool = false,
-        ref_count: u32 = 0,
+        ref_count: u32 = 1,
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
@@ -3125,17 +3124,23 @@ pub fn ReadableStreamSource(
             }
         }
 
-        pub fn deinit(this: *This) void {
-            if (this.ref_count > 0) {
-                return;
-            }
-
+        pub fn incrementCount(this: *This) !void {
             if (this.deinited) {
+                return error.InvalidStream;
+            }
+            this.ref_count += 1;
+        }
+
+        pub fn decrementCount(this: *This) void {
+            if (this.ref_count == 0 or this.deinited) {
                 return;
             }
 
-            this.deinited = true;
-            deinit_fn(&this.context);
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                this.deinited = true;
+                deinit_fn(&this.context);
+            }
         }
 
         pub fn getError(this: *This) ?Syscall.Error {
@@ -3249,7 +3254,7 @@ pub fn ReadableStreamSource(
             pub fn deinit(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
-                this.deinit();
+                this.decrementCount();
                 return JSValue.jsUndefined();
             }
 

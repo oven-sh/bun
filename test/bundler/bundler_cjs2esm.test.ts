@@ -286,4 +286,73 @@ describe("bundler", () => {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
     },
   });
+  for (const bundling of [true, false]) {
+    itBundled("cjs2esm/NonEnumerableModuleExports", {
+      files: {
+        "/entry.js": /* js */ `
+          import { foo } from "./foo.cjs";
+          import { bar } from "./bar.cjs";
+          console.log(foo, bar);
+        `,
+        "/foo.cjs": /* js */ `
+          Object.defineProperty(exports, "foo", {
+            enumerable: false,
+            value: 1,
+          });
+        `,
+        "/bar.cjs": /* js */ `
+          Object.defineProperty(exports, "__esModule", {
+            value: true,
+          });
+          Object.defineProperty(exports, "bar", {
+            enumerable: false,
+            value: 1
+          })
+        `,
+      },
+      bundling,
+      run: {
+        stdout: "1 1",
+      },
+    });
+  }
+  itBundled("cjs2esm/NonEnumerableModuleExportsAccessors", {
+    files: {
+      "/entry.js": /* js */ `
+          import { foo } from "./foo.cjs";
+          console.log(foo);
+        `,
+      "/foo.cjs": /* js */ `
+          Object.defineProperty(exports, "foo", {
+            enumerable: false,
+            get: () => 1,
+          });
+        `,
+    },
+    bundling: false,
+    run: {
+      error: "SyntaxError: Import named 'foo' not found in module",
+    },
+  });
+  itBundled("cjs2esm/NonEnumerableModuleExportsAccessors2", {
+    files: {
+      "/entry.js": /* js */ `
+          import { foo } from "./foo.cjs";
+          console.log(foo);
+        `,
+      "/foo.cjs": /* js */ `
+          Object.defineProperty(exports, "__esModule", {
+            value: true,
+          });
+          Object.defineProperty(exports, "foo", {
+            enumerable: false,
+            get: () => 1,
+          });
+        `,
+    },
+    bundling: false,
+    run: {
+      error: "SyntaxError: Import named 'foo' not found in module",
+    },
+  });
 });

@@ -556,7 +556,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == esModuleMarker)
+                    if (key->isSymbol() || entry.attributes() & PropertyAttribute::Accessor || entry.attributes() & PropertyAttribute::CustomAccessor || key == esModuleMarker)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
@@ -568,7 +568,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
                 });
             } else {
                 JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
                 if (catchScope.exception()) {
                     catchScope.clearExceptionExceptTermination();
                     return;
@@ -584,6 +584,9 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                     if (!exports->getPropertySlot(globalObject, property, slot))
+                        continue;
+
+                    if (slot.isAccessor() || slot.isUnset())
                         continue;
 
                     exportNames.append(property);
@@ -606,7 +609,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || entry.attributes() & PropertyAttribute::DontEnum || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword || entry.attributes() & PropertyAttribute::Accessor || entry.attributes() & PropertyAttribute::CustomAccessor)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -617,7 +620,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
             });
         } else {
             JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (catchScope.exception()) {
                 catchScope.clearExceptionExceptTermination();
                 return;
@@ -633,6 +636,9 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
                 if (!exports->getPropertySlot(globalObject, property, slot))
+                    continue;
+
+                if (slot.isAccessor() || slot.isUnset())
                     continue;
 
                 exportNames.append(property);

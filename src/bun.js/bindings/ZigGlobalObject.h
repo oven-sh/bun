@@ -365,6 +365,8 @@ public:
         return func;
     }
 
+    bool asyncHooksNeedsCleanup = false;
+
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
      *

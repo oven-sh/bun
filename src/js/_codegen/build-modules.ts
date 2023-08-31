@@ -168,7 +168,7 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
   ({
     entrypoints: bundledEntryPoints,
     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
-    minify: { syntax: true, whitespace: false },
+    minify: { syntax: !debug, whitespace: false },
     root: TMP,
     target: "bun",
     external: builtinModules,

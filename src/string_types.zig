@@ -55,7 +55,7 @@ pub const PathString = packed struct {
     pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 
-        return @This(){
+        return .{
             .ptr = @as(PointerIntType, @truncate(@intFromPtr(str.ptr))),
             .len = @as(PathInt, @truncate(str.len)),
         };

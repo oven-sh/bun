@@ -5,6 +5,7 @@
     "module": "ESNext",
     "isolatedModules": true,
     "noEmit": true,
+    "emitDeclarationOnly": false,
     "paths": {
       "$shared": ["./internal/shared.ts"], //deprecated
       "internal/*": ["./internal/*"] //deprecated

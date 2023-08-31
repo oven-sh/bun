@@ -3984,6 +3984,10 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.copyFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFile)));
         if (@TypeOf(NodeJSFS.copyFileSync) != CallbackType)
             @compileLog("Expected NodeJSFS.copyFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFileSync)));
+        if (@TypeOf(NodeJSFS.cp) != CallbackType)
+            @compileLog("Expected NodeJSFS.cp to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cp)));
+        if (@TypeOf(NodeJSFS.cpSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.cpSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cpSync)));
         if (@TypeOf(NodeJSFS.getDirent) != GetterType)
             @compileLog("Expected NodeJSFS.getDirent to be a getter");
 
@@ -4142,6 +4146,8 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.constructor, .{ .name = "NodeJSFSClass__construct" });
             @export(NodeJSFS.copyFile, .{ .name = "NodeJSFSPrototype__copyFile" });
             @export(NodeJSFS.copyFileSync, .{ .name = "NodeJSFSPrototype__copyFileSync" });
+            @export(NodeJSFS.cp, .{ .name = "NodeJSFSPrototype__cp" });
+            @export(NodeJSFS.cpSync, .{ .name = "NodeJSFSPrototype__cpSync" });
             @export(NodeJSFS.exists, .{ .name = "NodeJSFSPrototype__exists" });
             @export(NodeJSFS.existsSync, .{ .name = "NodeJSFSPrototype__existsSync" });
             @export(NodeJSFS.fchmod, .{ .name = "NodeJSFSPrototype__fchmod" });

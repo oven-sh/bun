@@ -1307,7 +1307,8 @@ describe("fs.WriteStream", () => {
   });
 
   it("should use fd if provided", () => {
-    const path = join(tmpdir(), "/not-used.txt");
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
     // @ts-ignore-next-line
     const ws = new WriteStream_(path, {
       fd: 2,
@@ -1419,7 +1420,8 @@ describe("fs.ReadStream", () => {
   });
 
   it("should use fd if provided", () => {
-    const path = join(tmpdir(), "not-used.txt");
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
     // @ts-ignore-next-line
     const ws = new ReadStream_(path, {
       fd: 0,

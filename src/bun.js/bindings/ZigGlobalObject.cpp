@@ -460,19 +460,14 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
 
 static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    if (globalObject->m_nextTickQueue) {
-        if (globalObject->asyncHooksNeedsCleanup) {
-            vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
-        }
-
-        vm.setOnEachMicrotaskTick(nullptr);
-        return;
-    }
-
     if (globalObject->asyncHooksNeedsCleanup) {
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+        if (globalObject->m_nextTickQueue) {
+            vm.setOnEachMicrotaskTick(nullptr);
+        } else {
+            vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+        }
     }
 }
 

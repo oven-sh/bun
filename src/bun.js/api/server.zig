@@ -1668,11 +1668,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 stream.unpipe();
             }
 
-            if (this.readable_stream_ref.get()) |stream| {
-                // we already consumed the stream, so we can detach it if we are the last reference
-                stream.detachIfPossible(this.server.globalThis);
-            }
-
             this.readable_stream_ref.deinit();
 
             if (!this.pathname.isEmpty()) {
@@ -2617,6 +2612,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     this.renderMissing();
                                     return;
                                 };
+                                // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                                stream.detachIfPossible(this.server.globalThis);
+
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 

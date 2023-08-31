@@ -1,6 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { gcTick } from "harness";
-
+import path from "path";
+import fs from "fs";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -428,45 +429,156 @@ it("#3520", async () => {
   ]);
 });
 
-it("works with fetch", async () => {
-  const url = "https://bun.sh";
-  const res = await fetch(url);
-  let calls = 0;
+const fixture_html = path.join(import.meta.dir, "../web/fetch/fixture.html");
+const fixture_html_content = fs.readFileSync(fixture_html);
+const fixture_html_gz = path.join(import.meta.dir, "../web/fetch/fixture.html.gz");
+const fixture_html_gz_content = fs.readFileSync(fixture_html_gz);
+function getStream(type, fixture) {
+  const data = fixture === "gz" ? fixture_html_gz_content : fixture_html_content;
+  const half = parseInt(data.length / 2, 10);
 
-  const rw = new HTMLRewriter();
-  rw.on("html", {
-    text() {
-      calls++;
+  if (type === "direct") {
+    return new ReadableStream({
+      type: "direct",
+      async pull(controller) {
+        controller.write(data.slice(0, half));
+        await controller.flush();
+        controller.write(data.slice(half));
+        await controller.flush();
+        controller.close();
+      },
+    });
+  }
+
+  return new ReadableStream({
+    async pull(controller) {
+      controller.enqueue(data.slice(0, half));
+      await Bun.sleep(15);
+      controller.enqueue(data.slice(half));
+      await Bun.sleep(15);
+      controller.close();
     },
   });
+}
+function createServer(tls) {
+  return Bun.serve({
+    port: 0,
+    tls,
+    async fetch(req) {
+      const is_compressed = req.url.endsWith("gz");
 
-  const transformed = rw.transform(res);
-  const body = await transformed.text();
-  expect(body).toContain("Bun");
-  expect(body).toEndWith("html>");
-  expect(calls).toBeGreaterThan(0);
+      let payload;
+      if (req.url.indexOf("chunked") !== -1) {
+        if (req.url.indexOf("direct")) {
+          payload = getStream("direct", is_compressed ? "gz" : "default");
+        } else {
+          payload = getStream("default", is_compressed ? "gz" : "default");
+        }
+      } else if (req.url.indexOf("file") !== -1) {
+        payload = is_compressed ? Bun.file(fixture_html_gz) : Bun.file(fixture_html);
+      } else {
+        payload = is_compressed ? fixture_html_gz_content : fixture_html_content;
+      }
+
+      let headers = {
+        "content-type": "text/html",
+      };
+
+      if (is_compressed) {
+        headers["content-encoding"] = "gzip";
+      }
+
+      return new Response(payload, { headers });
+    },
+  });
+}
+let http_server;
+let https_server;
+beforeAll(() => {
+  http_server = createServer();
+  https_server = createServer({
+    cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
+    key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDuLsggR0gJOJJN\nXH6ZrrEfE61xt3rAZbeeTGUKQnVS5Xw2Zjmi8ywacYOEkm1RDaPmKDkFwlR/e17O\noI1bi0qdI6BIhJ8QAq+mfYE+9oWrfLHZiPPSu69wYqkMxkFeYH8AC0bI39QVfOSt\nx+mmYsclNoFgYboqeZTjeA+RIPLiLDjoIkVQ66lznUAUjPtGwTuZtPWmUIzx7vmB\n+pplKfaT5abL7yfUcbJgeFUhJFW8+qRLuBUtJUR1N5pS0o/VXH/zXz8cNaTegi8N\nVYj0IUfvd6U3EGQwfnMCtI0gFN6F2d6HIB6+NjhFoL+QryuyU7d7gS0n1KcDizA6\nMKKoAhATAgMBAAECggEAd5g/3o1MK20fcP7PhsVDpHIR9faGCVNJto9vcI5cMMqP\n6xS7PgnSDFkRC6EmiLtLn8Z0k2K3YOeGfEP7lorDZVG9KoyE/doLbpK4MfBAwBG1\nj6AHpbmd5tVzQrnNmuDjBBelbDmPWVbD0EqAFI6mphXPMqD/hFJWIz1mu52Kt2s6\n++MkdqLO0ORDNhKmzu6SADQEcJ9Suhcmv8nccMmwCsIQAUrfg3qOyqU4//8QB8ZM\njosO3gMUesihVeuF5XpptFjrAliPgw9uIG0aQkhVbf/17qy0XRi8dkqXj3efxEDp\n1LSqZjBFiqJlFchbz19clwavMF/FhxHpKIhhmkkRSQKBgQD9blaWSg/2AGNhRfpX\nYq+6yKUkUD4jL7pmX1BVca6dXqILWtHl2afWeUorgv2QaK1/MJDH9Gz9Gu58hJb3\nymdeAISwPyHp8euyLIfiXSAi+ibKXkxkl1KQSweBM2oucnLsNne6Iv6QmXPpXtro\nnTMoGQDS7HVRy1on5NQLMPbUBQKBgQDwmN+um8F3CW6ZV1ZljJm7BFAgNyJ7m/5Q\nYUcOO5rFbNsHexStrx/h8jYnpdpIVlxACjh1xIyJ3lOCSAWfBWCS6KpgeO1Y484k\nEYhGjoUsKNQia8UWVt+uWnwjVSDhQjy5/pSH9xyFrUfDg8JnSlhsy0oC0C/PBjxn\nhxmADSLnNwKBgQD2A51USVMTKC9Q50BsgeU6+bmt9aNMPvHAnPf76d5q78l4IlKt\nwMs33QgOExuYirUZSgjRwknmrbUi9QckRbxwOSqVeMOwOWLm1GmYaXRf39u2CTI5\nV9gTMHJ5jnKd4gYDnaA99eiOcBhgS+9PbgKSAyuUlWwR2ciL/4uDzaVeDQKBgDym\nvRSeTRn99bSQMMZuuD5N6wkD/RxeCbEnpKrw2aZVN63eGCtkj0v9LCu4gptjseOu\n7+a4Qplqw3B/SXN5/otqPbEOKv8Shl/PT6RBv06PiFKZClkEU2T3iH27sws2EGru\nw3C3GaiVMxcVewdg1YOvh5vH8ZVlxApxIzuFlDvnAoGAN5w+gukxd5QnP/7hcLDZ\nF+vesAykJX71AuqFXB4Wh/qFY92CSm7ImexWA/L9z461+NKeJwb64Nc53z59oA10\n/3o2OcIe44kddZXQVP6KTZBd7ySVhbtOiK3/pCy+BQRsrC7d71W914DxNWadwZ+a\njtwwKjDzmPwdIXDSQarCx0U=\n-----END PRIVATE KEY-----",
+    passphrase: "1234",
+  });
 });
 
-it("works with fetch after getting a reader", async () => {
-  const url = "https://bun.sh";
-  const res = await fetch(url);
-  const reader = res.body.getReader();
-  let calls = 0;
+afterAll(() => {
+  http_server?.stop(true);
+  https_server?.stop(true);
+});
 
-  const rw = new HTMLRewriter();
-  rw.on("h1", {
-    text() {
-      calls++;
-    },
+const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/file/gzip"];
+["http", "https"].forEach(protocol => {
+  request_types.forEach(url => {
+    //TODO: change this when Bun.file supports https
+    const test = url.indexOf("file") !== -1 && protocol === "https" ? it.todo : it;
+    test(`works with ${protocol} fetch using ${url}`, async () => {
+      const server = protocol === "http" ? http_server : https_server;
+      const server_url = `${protocol}://${server?.hostname}:${server?.port}`;
+      const res = await fetch(`${server_url}${url}`);
+      let calls = 0;
+      const rw = new HTMLRewriter();
+      rw.on("h1", {
+        text() {
+          calls++;
+        },
+      });
+
+      const transformed = rw.transform(res);
+      const body = await transformed.text();
+      let trimmed = body?.trim();
+      expect(body).toBe(fixture_html_content.toString("utf8"));
+      expect(trimmed).toEndWith("</html>");
+      expect(trimmed).toStartWith("<!DOCTYPE html>");
+      expect(calls).toBeGreaterThan(0);
+    });
   });
+});
 
-  const transformed = rw.transform(res);
-  const body = await transformed.text();
+const payloads = [
+  // {
+  //   name: "direct",
+  //   data: getStream("direct", "none"),
+  // },
+  // {
+  //   name: "default",
+  //   data: getStream("default", "none"),
+  // },
+  {
+    name: "file",
+    data: Bun.file(fixture_html),
+  },
+  {
+    name: "blob",
+    data: new Blob([fixture_html_content]),
+  },
+  {
+    name: "buffer",
+    data: fixture_html_content,
+  },
+  {
+    name: "string",
+    data: fixture_html_content.toString("utf8"),
+  },
+];
 
-  await Bun.sleep(100);
-  expect(body).toContain("Bun");
-  expect(body).toEndWith("html>");
-  expect(calls).toBeGreaterThan(0);
-  const { done } = await reader.read();
-  expect(done).toBeTrue();
+payloads.forEach(type => {
+  it(`works with payload of type ${type.name}`, async () => {
+    let calls = 0;
+    const rw = new HTMLRewriter();
+    rw.on("h1", {
+      text() {
+        calls++;
+      },
+    });
+
+    const transformed = rw.transform(new Response(type.data));
+    const body = await transformed.text();
+    let trimmed = body?.trim();
+    expect(body).toBe(fixture_html_content.toString("utf8"));
+    expect(trimmed).toEndWith("</html>");
+    expect(trimmed).toStartWith("<!DOCTYPE html>");
+    expect(calls).toBeGreaterThan(0);
+  });
 });

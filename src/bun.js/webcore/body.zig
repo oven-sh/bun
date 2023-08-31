@@ -1525,7 +1525,9 @@ pub const BodyValueBufferer = struct {
                 // toBlobIfPossible should've caught this
                 .Blob, .File => unreachable,
                 .JavaScript, .Direct => {
-                    return sink.createJSSink(stream);
+                    // this is broken right now
+                    // return sink.createJSSink(stream);
+                    return error.UnsupportedStreamType;
                 },
                 .Bytes => |byte_stream| {
                     std.debug.assert(byte_stream.pipe.ctx == null);

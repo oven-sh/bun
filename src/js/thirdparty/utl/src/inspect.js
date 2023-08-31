@@ -112,10 +112,6 @@ const {
 const customInspectSymbol = Symbol.for('nodejs.util.inspect.custom');
 
 const {
-  isStackOverflowError,
-} = require('./internal/errors');
-
-const {
   isAsyncFunction,
   isGeneratorFunction,
   isAnyArrayBuffer,
@@ -158,6 +154,10 @@ const builtInObjects = new SafeSet(
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = (v) => typeof v === 'undefined' && v !== undefined;
+
+// This is used for detecting stack overflows during inspection.
+// It will probably never need to be changed, but it's here just in case JSC does change the message.
+const ERROR_STACK_OVERFLOW_MSG = 'Maximum call stack size exceeded.';
 
 // These options must stay in sync with `getUserOptions`. So if any option will
 // be added or removed, `getUserOptions` must also be updated accordingly.
@@ -836,12 +836,9 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
         getUserOptions(ctx, isCrossContext),
         inspect,
       );
-      // If the custom inspection method returned `this`, don't go into
-      // infinite recursion.
+      // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
-        if (typeof ret !== 'string') {
-          return formatValue(ctx, ret, recurseTimes);
-        }
+        if (typeof ret !== 'string') return formatValue(ctx, ret, recurseTimes);
         return StringPrototypeReplaceAll(ret, '\n', `\n${StringPrototypeRepeat(' ', ctx.indentationLvl)}`);
       }
     }
@@ -1073,6 +1070,8 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   let output;
   const indentationLvl = ctx.indentationLvl;
   try {
+    // JSC stack is too powerful it must be stopped manually
+    if (ctx.currentDepth > 1000) throw new RangeError(ERROR_STACK_OVERFLOW_MSG);
     output = formatter(ctx, value, recurseTimes);
     for (i = 0; i < keys.length; i++) {
       ArrayPrototypePush(
@@ -1084,8 +1083,16 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       ArrayPrototypePushApply(output, protoProps);
     }
   } catch (err) {
-    const constructorName = StringPrototypeSlice(getCtxStyle(value, constructor, tag), 0, -1);
-    return handleMaxCallStackSize(ctx, err, constructorName, indentationLvl);
+    if (err instanceof RangeError && err.message === ERROR_STACK_OVERFLOW_MSG) {
+      const constructorName = StringPrototypeSlice(getCtxStyle(value, constructor, tag), 0, -1);
+      ctx.seen.pop();
+      ctx.indentationLvl = indentationLvl;
+      return ctx.stylize(
+        `[${constructorName}: Inspection interrupted prematurely. Maximum call stack size exceeded.]`,
+        'special',
+      );
+    }
+    assert.fail('handleMaxCallStackSize assertion failed:' + String(err));
   }
   if (ctx.circular !== undefined) {
     const index = ctx.circular.get(value);
@@ -1571,19 +1578,6 @@ function groupArrayElements(ctx, output, value) {
   return output;
 }
 
-function handleMaxCallStackSize(ctx, err, constructorName, indentationLvl) {
-  if (isStackOverflowError(err)) {
-    ctx.seen.pop();
-    ctx.indentationLvl = indentationLvl;
-    return ctx.stylize(
-      `[${constructorName}: Inspection interrupted ` +
-        'prematurely. Maximum call stack size exceeded.]',
-      'special',
-    );
-  }
-  assert.fail('handleMaxCallStackSize failed:' + String(err.stack));
-}
-
 function addNumericSeparator(integerString) {
   let result = '';
   let i = integerString.length;
@@ -1685,8 +1679,7 @@ function formatNamespaceObject(keys, ctx, value, recurseTimes) {
   const output = new Array(keys.length);
   for (let i = 0; i < keys.length; i++) {
     try {
-      output[i] = formatProperty(ctx, value, recurseTimes, keys[i],
-                                 kObjectType);
+      output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType);
     } catch (err) {
       assert(isNativeError(err) && err.name === 'ReferenceError');
       // Use the existing functionality. This makes sure the indentation and
@@ -1967,12 +1960,10 @@ function formatPromise(ctx, value, recurseTimes) {
   return output;
 }
 
-function formatProperty(ctx, value, recurseTimes, key, type, desc,
-                        original = value) {
+function formatProperty(ctx, value, recurseTimes, key, type, desc, original = value) {
   let name, str;
   let extra = ' ';
-  desc = desc || ObjectGetOwnPropertyDescriptor(value, key) ||
-    { value: value[key], enumerable: true };
+  desc ||= ObjectGetOwnPropertyDescriptor(value, key) || { value: value[key], enumerable: true };
   if (desc.value !== undefined) {
     const diff = (ctx.compact !== true || type !== kObjectType) ? 2 : 3;
     ctx.indentationLvl += diff;
@@ -2012,9 +2003,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc,
   } else {
     str = ctx.stylize('undefined', 'undefined');
   }
-  if (type === kArrayType) {
-    return str;
-  }
+  if (type === kArrayType) return str;
   if (typeof key === 'symbol') {
     const tmp = RegExpPrototypeSymbolReplace(
       strEscapeSequencesReplacer,

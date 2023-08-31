@@ -236,46 +236,48 @@ test('no assertion failures', () => {
       'ArrayBuffer { [Uint8Contents]' +
       ': <00 ... 2 more bytes>, byteLength: 3 }');
   }
+});
 
   // Now do the same checks but from a different context.
-  test.skip('inspect from a different context', () => { //! semi-incosistently segfaulting
-    const showHidden = false;
-    const ab = vm.runInNewContext('new ArrayBuffer(4)');
-    const dv = vm.runInNewContext('new DataView(ab, 1, 2)', { ab });
-    assert.strictEqual(
-      util.inspect(ab, showHidden),
-      'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
-    );
-    assert.strictEqual(util.inspect(new DataView(ab, 1, 2), showHidden),
-      'DataView {\n' +
-      '  byteLength: 2,\n' +
-      '  byteOffset: 1,\n' +
-      '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-      ' byteLength: 4 }\n}');
-    assert.strictEqual(
-      util.inspect(ab, showHidden),
-      'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
-    );
-    assert.strictEqual(util.inspect(dv, showHidden),
-      'DataView {\n' +
-      '  byteLength: 2,\n' +
-      '  byteOffset: 1,\n' +
-      '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-      ' byteLength: 4 }\n}');
-    ab.x = 42;
-    dv.y = 1337;
-    assert.strictEqual(util.inspect(ab, showHidden),
-      'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, ' +
-      'byteLength: 4, x: 42 }');
-    assert.strictEqual(util.inspect(dv, showHidden),
-      'DataView {\n' +
-      '  byteLength: 2,\n' +
-      '  byteOffset: 1,\n' +
-      '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-      ' byteLength: 4, x: 42 },\n' +
-      '  y: 1337\n}');
-  });
+test.skip('inspect from a different context', () => { //! semi-incosistently segfaulting
+  const showHidden = false;
+  const ab = vm.runInNewContext('new ArrayBuffer(4)');
+  const dv = vm.runInNewContext('new DataView(ab, 1, 2)', { ab });
+  assert.strictEqual(
+    util.inspect(ab, showHidden),
+    'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
+  );
+  assert.strictEqual(util.inspect(new DataView(ab, 1, 2), showHidden),
+    'DataView {\n' +
+    '  byteLength: 2,\n' +
+    '  byteOffset: 1,\n' +
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
+    ' byteLength: 4 }\n}');
+  assert.strictEqual(
+    util.inspect(ab, showHidden),
+    'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
+  );
+  assert.strictEqual(util.inspect(dv, showHidden),
+    'DataView {\n' +
+    '  byteLength: 2,\n' +
+    '  byteOffset: 1,\n' +
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
+    ' byteLength: 4 }\n}');
+  ab.x = 42;
+  dv.y = 1337;
+  assert.strictEqual(util.inspect(ab, showHidden),
+    'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, ' +
+    'byteLength: 4, x: 42 }');
+  assert.strictEqual(util.inspect(dv, showHidden),
+    'DataView {\n' +
+    '  byteLength: 2,\n' +
+    '  byteOffset: 1,\n' +
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
+    ' byteLength: 4, x: 42 },\n' +
+    '  y: 1337\n}');
+});
 
+test('no assertion failures 2', () => {
   [Float32Array,
     Float64Array,
     Int16Array,
@@ -650,25 +652,23 @@ test('no assertion failures', () => {
   }
 
   // Exceptions should print the error message, not '{}'.
-  { //! flaky test due to originalLine and originalColumn properties in bun errors
-    test.skip('util.inspect should print the error message, not {}', () => {
-      [
-        new Error(),
-        new Error('FAIL'),
-        new TypeError('FAIL'),
-        new SyntaxError('FAIL'),
-      ].forEach((err) => {
-        assert.strictEqual(util.inspect(err), err.stack);
-      });
-
-      assert.throws(
-        () => undef(),
-        (e) => {
-          assert.strictEqual(util.inspect(e), e.stack);
-          return true;
-        }
-      );
+  {
+    [
+      new Error(),
+      new Error('FAIL'),
+      new TypeError('FAIL'),
+      new SyntaxError('FAIL'),
+    ].forEach((err) => {
+      assert(util.inspect(err).startsWith(err.stack), `Expected "${util.inspect(err)}" to start with "${err.stack}"`);
     });
+
+    assert.throws(
+      () => undef(),
+      (e) => {
+        assert(util.inspect(e).startsWith(e.stack), `Expected "${util.inspect(e)}" to start with "${e.stack}"`);
+        return true;
+      }
+    );
 
     const ex = util.inspect(new Error('FAIL'), true);
     assert(ex.includes('Error: FAIL'));
@@ -676,8 +676,7 @@ test('no assertion failures', () => {
     assert(ex.includes('[message]'));
   }
 
-  //! flaky test due to originalLine and originalColumn properties in bun errors
-  test.skip('util.inspect should print falsy error causes', () => {
+  {
     const falsyCause1 = new Error('', { cause: false });
     delete falsyCause1.stack;
     const falsyCause2 = new Error(undefined, { cause: null });
@@ -685,13 +684,10 @@ test('no assertion failures', () => {
     const undefinedCause = new Error('', { cause: undefined });
     undefinedCause.stack = '';
 
-    assert.strictEqual(util.inspect(falsyCause1), '[Error] { [cause]: false }');
-    assert.strictEqual(util.inspect(falsyCause2), '[Error] { [cause]: null }');
-    assert.strictEqual(
-      util.inspect(undefinedCause),
-      '[Error] { [cause]: undefined }'
-    );
-  });
+    assert.match(util.inspect(falsyCause1), /^\[Error\] \{ .*\[cause\]: false.* \}$/);
+    assert.match(util.inspect(falsyCause2), /^\[Error\] \{ .*\[cause\]: null.* \}$/);
+    assert.match(util.inspect(undefinedCause), /^\[Error\] \{ .*\[cause\]: undefined.* \}$/);
+  };
 
   {
     const tmp = Error.stackTraceLimit;
@@ -835,14 +831,14 @@ test('no assertion failures', () => {
     util.inspect(r);
   }
 
-  //! broken
-  test.skip('See https://github.com/nodejs/node-v0.x-archive/issues/2225', () => {
+  // Ref: https://github.com/nodejs/node-v0.x-archive/issues/2225
+  {
     const x = { [util.inspect.custom]: util.inspect };
     assert(
       util.inspect(x).includes('[Symbol(nodejs.util.inspect.custom)]: [Function: inspect] {\n'),
       `Expected '${util.inspect(x)}' to include '[Symbol(nodejs.util.inspect.custom)]: [Function: inspect] {\n'`
     );
-  });
+  }
 
   // `util.inspect` should display the escaped value of a key.
   {
@@ -2058,24 +2054,30 @@ test('no assertion failures', () => {
     const args = (function () { return arguments; })('a');
     assert.strictEqual(util.inspect(args), "[Arguments] { '0': 'a' }");
   }
+});
 
-  test.skip('util.inspect() should not hang on large linked list', () => {
-    // Test that a long linked list can be inspected without throwing an error.
-    const list = {};
-    let head = list;
-    // A linked list of length 100k should be inspectable in some way, even though
-    // the real cutoff value is much lower than 100k.
-    for (let i = 0; i < 100000; i++) head = head.next = {};
-    assert.strictEqual(
-      util.inspect(list),
-      '{ next: { next: { next: [Object] } } }'
-    );
-    const longList = util.inspect(list, { depth: Infinity });
-    const match = longList.match(/next/g);
-    assert(match.length > 500 && match.length < 10000);
-    assert(longList.includes('[Object: Inspection interrupted prematurely. Maximum call stack size exceeded.]'));
-  })
+test('util.inspect stack overflow handling', () => {
+  // Test that a long linked list can be inspected without throwing an error.
+  const list = {};
+  let head = list;
+  // A linked list of length 100k should be inspectable in some way, even though
+  // the real cutoff value is much lower than 100k.
+  for (let i = 0; i < 10000; i++) head = head.next = {};
+  assert.strictEqual(
+    util.inspect(list),
+    '{ next: { next: { next: [Object] } } }'
+  );
+  const longList = util.inspect(list, { depth: Infinity });
+  const match = longList.match(/next/g);
+  //? The current limit is set to a fixed 1000, as higher values cause
+  //? the creation of unmanageably large strings which can crash or hang.
+  //? For comparison, despite their test checking for up to 10000,
+  //? Node will generally cutoff with a stack overflow at around 900.
+  assert(match.length > 500 && match.length < 10000);
+  assert(longList.includes('[Object: Inspection interrupted prematurely. Maximum call stack size exceeded.]'));
+});
 
+test('no assertion failures 3', () => {
   // Do not escape single quotes if no double quote or backtick is present.
   assert.strictEqual(util.inspect("'"), '"\'"');
   assert.strictEqual(util.inspect('"\''), '`"\'`');
@@ -3474,73 +3476,73 @@ test('no assertion failures', () => {
       }
     }), '{ [Symbol(Symbol.iterator)]: [Getter] }');
   }
-
-  // Utility functions
-  function runCallChecks(exitCode) {
-    if (exitCode !== 0) return;
-
-    const failed = mustCallChecks.filter(function (context) {
-      if ('minimum' in context) {
-        context.messageSegment = `at least ${context.minimum}`;
-        return context.actual < context.minimum;
-      }
-      context.messageSegment = `exactly ${context.exact}`;
-      return context.actual !== context.exact;
-    });
-
-    failed.forEach(function (context) {
-      console.log('Mismatched %s function calls. Expected %s, actual %d.',
-        context.name,
-        context.messageSegment,
-        context.actual);
-      console.log(context.stack.split('\n').slice(2).join('\n'));
-    });
-
-    if (failed.length) process.exit(1);
-  }
-
-  function mustCall(fn, criteria = 1) {
-    if (process._exiting) throw new Error('Cannot use mustCall() in process exit handler');
-    if (typeof fn === 'number') {
-      criteria = fn;
-      fn = noop;
-    } else if (fn === undefined) fn = noop;
-
-    const field = 'exact';
-    if (typeof criteria !== 'number') throw new TypeError(`Invalid ${field} value: ${criteria}`);
-
-    const context = {
-      [field]: criteria,
-      actual: 0,
-      stack: util.inspect(new Error()),
-      name: fn.name || '<anonymous>',
-    };
-
-    // Add the exit listener only once to avoid listener leak warnings
-    if (mustCallChecks.length === 0) process.on('exit', runCallChecks);
-    mustCallChecks.push(context);
-
-    const _return = function () {
-      context.actual++;
-      return fn.apply(this, arguments);
-    };
-    // Function instances have own properties that may be relevant.
-    // Let's replicate those properties to the returned function.
-    // Refs: https://tc39.es/ecma262/#sec-function-instances
-    Object.defineProperties(_return, {
-      name: {
-        value: fn.name,
-        writable: false,
-        enumerable: false,
-        configurable: true,
-      },
-      length: {
-        value: fn.length,
-        writable: false,
-        enumerable: false,
-        configurable: true,
-      },
-    });
-    return _return;
-  }
 });
+
+// Utility functions
+function runCallChecks(exitCode) {
+  if (exitCode !== 0) return;
+
+  const failed = mustCallChecks.filter(function (context) {
+    if ('minimum' in context) {
+      context.messageSegment = `at least ${context.minimum}`;
+      return context.actual < context.minimum;
+    }
+    context.messageSegment = `exactly ${context.exact}`;
+    return context.actual !== context.exact;
+  });
+
+  failed.forEach(function (context) {
+    console.log('Mismatched %s function calls. Expected %s, actual %d.',
+      context.name,
+      context.messageSegment,
+      context.actual);
+    console.log(context.stack.split('\n').slice(2).join('\n'));
+  });
+
+  if (failed.length) process.exit(1);
+}
+
+function mustCall(fn, criteria = 1) {
+  if (process._exiting) throw new Error('Cannot use mustCall() in process exit handler');
+  if (typeof fn === 'number') {
+    criteria = fn;
+    fn = noop;
+  } else if (fn === undefined) fn = noop;
+
+  const field = 'exact';
+  if (typeof criteria !== 'number') throw new TypeError(`Invalid ${field} value: ${criteria}`);
+
+  const context = {
+    [field]: criteria,
+    actual: 0,
+    stack: util.inspect(new Error()),
+    name: fn.name || '<anonymous>',
+  };
+
+  // Add the exit listener only once to avoid listener leak warnings
+  if (mustCallChecks.length === 0) process.on('exit', runCallChecks);
+  mustCallChecks.push(context);
+
+  const _return = function () {
+    context.actual++;
+    return fn.apply(this, arguments);
+  };
+  // Function instances have own properties that may be relevant.
+  // Let's replicate those properties to the returned function.
+  // Refs: https://tc39.es/ecma262/#sec-function-instances
+  Object.defineProperties(_return, {
+    name: {
+      value: fn.name,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    },
+    length: {
+      value: fn.length,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    },
+  });
+  return _return;
+}

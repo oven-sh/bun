@@ -135,36 +135,12 @@ const captureLargerStackTrace = hideStackFrames(
     Error.stackTraceLimit = userStackTraceLimit;
 
     return err;
-  });
-
-let maxStack_ErrorName;
-let maxStack_ErrorMessage;
-/**
- * Returns true if `err.name` and `err.message` are equal to engine-specific
- * values indicating max call stack size has been exceeded.
- * "Maximum call stack size exceeded" in V8.
- * @param {Error} err
- * @returns {boolean}
- */
-function isStackOverflowError(err) {
-  if (maxStack_ErrorMessage === undefined) {
-    try {
-      function overflowStack() { overflowStack(); }
-      overflowStack();
-    } catch (err) {
-      maxStack_ErrorMessage = err.message;
-      maxStack_ErrorName = err.name;
-    }
   }
-
-  return err && err.name === maxStack_ErrorName &&
-         err.message === maxStack_ErrorMessage;
-}
+);
 
 export default {
   codes,
   hideStackFrames,
-  isStackOverflowError,
 };
 
 E('ERR_INVALID_ARG_TYPE',

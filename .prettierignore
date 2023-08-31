@@ -1,5 +1,5 @@
 src/fallback.html
-src/bun.js/WebKit
+WebKit
 src/js/out
 src/*.out.js
 src/*out.*.js

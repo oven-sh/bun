@@ -395,7 +395,7 @@ On branch my-branch
 Changes not staged for commit:
   (use "git add <file>..." to update what will be committed)
   (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
+	modified:   WebKit (new commits)
 ```
 
 For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
@@ -411,7 +411,7 @@ $ make cpp
 
 <!--
 ```bash
-$ cd src/bun.js/WebKit
+$ cd WebKit
 $ git fetch
 $ git checkout <hash>
 ``` -->

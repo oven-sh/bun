@@ -68,7 +68,7 @@ BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
 ESBUILD = $(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
-WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
+WEBKIT_DIR ?= $(realpath WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
@@ -682,8 +682,8 @@ assert-deps:
 # the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
 # unless you explicity clone it yourself (a huge download)
 SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
-ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
-	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
+ifeq ("$(wildcard WebKit/.git)", "")
+	SUBMODULE_NAMES := $(filter-out WebKit, $(SUBMODULE_NAMES))
 endif
 
 .PHONY: init-submodules
@@ -784,7 +784,7 @@ cls:
 	@echo -e "\n\n---\n\n"
 
 jsc-check:
-	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
+	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/WebKit -f $(shell pwd)/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
 
@@ -932,7 +932,7 @@ jsc-bindings: headers bindings
 
 .PHONY: clone-submodules
 clone-submodules:
-	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+	git -c submodule."WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 
 .PHONY: headers
@@ -1286,7 +1286,7 @@ jsc-build-linux-compile-config:
 			$(WEBKIT_RELEASE_DIR)
 
 # If you get "Error: could not load cache"
-# run  rm -rf src/bun.js/WebKit/CMakeCache.txt
+# run  rm -rf WebKit/CMakeCache.txt
 .PHONY: jsc-build-linux-compile-build
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
@@ -1306,7 +1306,7 @@ jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
-	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
+	cd WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf WebKit/WebKitBuild
 clean-bindings:
 	rm -rf $(OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/webcore/*.o $(DEBUG_BINDINGS_OBJ) $(OBJ_DIR)/webcore/*.o $(BINDINGS_OBJ) $(OBJ_DIR)/*.d $(DEBUG_OBJ_DIR)/*.d
 

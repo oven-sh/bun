@@ -1,6 +1,6 @@
 node_modules
 **/node_modules
-src/bun.js/WebKit/LayoutTests
+WebKit/LayoutTests
 zig-out
 zig-build
 **/*.o
@@ -10,7 +10,7 @@ examples
 
 **/.next
 .git
-src/bun.js/WebKit
+WebKit
 **/CMakeCache.txt
 packages/**/bun
 packages/**/bun-profile

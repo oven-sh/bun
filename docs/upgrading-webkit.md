@@ -10,7 +10,7 @@ It's important to periodically update WebKit for many reasons:
 To upgrade, first find the commit in **Bun's WebKit fork** (not Bun!) between when we last upgraded and now.
 
 ```bash
-$ cd src/bun.js/WebKit # In the WebKit directory! not bun
+$ cd WebKit # In the WebKit directory! not bun
 $ git checkout $COMMIT
 ```
 
@@ -36,7 +36,7 @@ Make sure that JSC's CLI is able to load successfully. This verifies that the bu
 You know this worked when it printed help options. If it complains about symbols, crashes, or anything else that looks wrong, something is wrong.
 
 ```bash
-src/bun.js/WebKit/WebKitBuild/Release/bin/jsc --help
+WebKit/WebKitBuild/Release/bin/jsc --help
 ```
 
 Then, clear out our bindings and regenerate the C++<>Zig headers:

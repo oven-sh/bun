@@ -3405,10 +3405,9 @@ pub const PackageManager = struct {
                 resolution,
             ) catch |err| {
                 const note = .{
-                    .fmt = "error occured while resolving {s}@{}",
+                    .fmt = "error occured while resolving {s}",
                     .args = .{
-                        lockfile.str(&dependency.name),
-                        strings.QuotedFormatter{ .text = lockfile.str(&dependency.version.literal) },
+                        lockfile.str(&dependency.realname()),
                     },
                 };
 

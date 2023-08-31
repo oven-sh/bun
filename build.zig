@@ -167,7 +167,9 @@ pub fn build_(b: *Build) !void {
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    var target = b.standardTargetOptions(.{});
+    var target = b.standardTargetOptions(.{ .default_target = .{
+        .os_tag = .windows,
+    } });
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});

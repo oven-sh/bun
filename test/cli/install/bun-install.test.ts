@@ -5817,20 +5817,20 @@ describe("Registry URLs", () => {
     ["https://example.com/[]?[]#[]", false],
     ["https://example/%?%#%", false],
     ["c:/", false],
-    ["https://點看",  false], // gets converted to punycode
+    ["https://點看", false], // gets converted to punycode
     ["https://xn--c1yn36f/", false],
   ];
-  
-  for(const entry of registryURLs) {
+
+  for (const entry of registryURLs) {
     const regURL = entry[0];
     const fails = entry[1];
-    
+
     it(`should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`, async () => {
       await writeFile(
-        join(package_dir, "bunfig.toml"),
-        `[install]\ncache = false\nregistry = "${regURL}"`,
+        join(package_dir, "bunfig.toml"), 
+        `[install]\ncache = false\nregistry = "${regURL}"`
       );
-    
+
       await writeFile(
         join(package_dir, "package.json"),
         JSON.stringify({
@@ -5841,9 +5841,9 @@ describe("Registry URLs", () => {
           },
         }),
       );
-    
+
       const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install", "--verbose"],
+        cmd: [bunExe(), "install"],
         cwd: package_dir,
         stdout: null,
         stdin: "pipe",
@@ -5852,11 +5852,11 @@ describe("Registry URLs", () => {
       });
       expect(stdout).toBeDefined();
       expect(await new Response(stdout).text()).toBeEmpty();
-      
+
       expect(stderr).toBeDefined();
       const err = await new Response(stderr).text();
 
-      if(fails) {
+      if (fails) {
         expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
         expect(err.includes("error: InvalidURL")).toBeTrue();
       } else {
@@ -5866,5 +5866,90 @@ describe("Registry URLs", () => {
       expect(await exited).not.toBe(0);
     });
   }
-});
 
+  it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
+
+    await writeFile(
+      join(package_dir, "bunfig.toml"), 
+      `[install]\ncache = false\nregistry = "${regURL}"`
+    );
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).not.toBeEmpty();
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+
+    expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+    expect(err.includes("warn: InvalidURL")).toBeTrue();
+
+    expect(await exited).toBe(0);
+  });
+  
+  // TODO: This test should fail if the param `warn_on_error` is true in 
+  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that 
+  // code never gets run for peer dependencies unless you do some package
+  // manifest magic. I doubt it'd ever fail, but having a dedicated 
+  // test would be nice.
+  
+  // it("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
+  //   const regURL = "asdfghjklqwertyuiop";
+
+  //   await writeFile(
+  //     join(package_dir, "bunfig.toml"), 
+  //     `[install]\ncache = false\nregistry = "${regURL}"`
+  //   );
+
+  //   await writeFile(
+  //     join(package_dir, "package.json"),
+  //     JSON.stringify({
+  //       name: "foo",
+  //       version: "0.0.1",
+  //       peerDependencies: {
+  //         notapackage: "0.0.2",
+  //       },
+  //     }),
+  //   );
+
+  //   const { stdout, stderr, exited } = spawn({
+  //     cmd: [bunExe(), "install"],
+  //     cwd: package_dir,
+  //     stdout: null,
+  //     stdin: "pipe",
+  //     stderr: "pipe",
+  //     env,
+  //   });
+  //   expect(stdout).toBeDefined();
+  //   expect(await new Response(stdout).text()).not.toBeEmpty();
+
+  //   expect(stderr).toBeDefined();
+  //   const err = await new Response(stderr).text();
+  
+  //   expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+  //   expect(err.includes("warn: InvalidURL")).toBeTrue();
+
+  //   expect(await exited).toBe(0);
+  // });
+});
+    
+    

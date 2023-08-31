@@ -249,6 +249,7 @@ const NetworkTask = struct {
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
+        warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
             const tmp = bun.JSC.URL.join(
@@ -258,13 +259,16 @@ const NetworkTask = struct {
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
-                this.package_manager.log.addErrorFmt(
-                    null,
-                    .{},
-                    allocator,
-                    "Failed to join registry \"{s}\" and package \"{s}\" URLs",
-                    .{ scope.url.href, name },
-                ) catch unreachable;
+                const msg = .{
+                    .fmt = "Failed to join registry \"{s}\" and package \"{s}\" URLs",
+                    .args = .{ scope.url.href, name },
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
                 return error.InvalidURL;
             }
             // This actually duplicates the string! So we defer deref the WTF managed one above.
@@ -3041,6 +3045,7 @@ pub const PackageManager = struct {
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
                                         loaded_manifest,
+                                        dependency.behavior.isOptional() or dependency.behavior.isPeer(),
                                     );
                                     this.enqueueNetworkTask(network_task);
                                 }
@@ -3399,15 +3404,19 @@ pub const PackageManager = struct {
                 &dependency,
                 resolution,
             ) catch |err| {
-                this.log.addZigErrorWithNote(
-                    this.allocator,
-                    err,
-                    "error occured while resolving {s}@{}",
-                    .{
+                const note = .{
+                    .fmt = "error occured while resolving {s}@{}",
+                    .args = .{
                         lockfile.str(&dependency.name),
                         strings.QuotedFormatter{ .text = lockfile.str(&dependency.version.literal) },
                     },
-                ) catch unreachable;
+                };
+
+                if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
+                    this.log.addWarningWithNote(null, .{}, this.allocator, @errorName(err), note.fmt, note.args) catch unreachable
+                else
+                    this.log.addZigErrorWithNote(this.allocator, err, note.fmt, note.args) catch unreachable;
+
                 continue;
             };
         }

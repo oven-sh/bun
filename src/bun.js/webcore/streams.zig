@@ -57,18 +57,6 @@ pub const ReadableStream = struct {
         self: ?ReadableStream = null,
 
         pub fn init(this: ReadableStream, globalThis: *JSGlobalObject) Strong {
-            switch (this.ptr) {
-                .Blob => |stream| {
-                    stream.parent().ref_count += 1;
-                },
-                .File => |stream| {
-                    stream.parent().ref_count += 1;
-                },
-                .Bytes => |stream| {
-                    stream.parent().ref_count += 1;
-                },
-                else => {},
-            }
             return .{
                 .self = this,
                 .held = JSC.Strong.create(this.value, globalThis),
@@ -84,21 +72,6 @@ pub const ReadableStream = struct {
 
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
-                switch (readable.ptr) {
-                    .Blob => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
-                    },
-                    .File => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
-                    },
-                    .Bytes => |stream| {
-                        stream.parent().ref_count -= 1;
-                        stream.parent().deinit();
-                    },
-                    else => {},
-                }
                 this.held.deinit();
                 this.self = null;
             }
@@ -3059,7 +3032,6 @@ pub fn ReadableStreamSource(
         context: Context,
         cancelled: bool = false,
         deinited: bool = false,
-        ref_count: u32 = 0,
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
@@ -3126,10 +3098,6 @@ pub fn ReadableStreamSource(
         }
 
         pub fn deinit(this: *This) void {
-            if (this.ref_count > 0) {
-                return;
-            }
-
             if (this.deinited) {
                 return;
             }

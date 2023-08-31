@@ -494,15 +494,11 @@ pub const Loop = extern struct {
     }
 
     pub fn refConcurrently(this: *Loop) void {
-        bun.todo(@src(), {});
-        _ = this;
-        bun.uws.Loop.get().wakeup();
+        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
     }
 
     pub fn unrefConcurrently(this: *Loop) void {
-        bun.todo(@src(), {});
-        _ = this;
-        bun.uws.Loop.get().wakeup();
+        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {

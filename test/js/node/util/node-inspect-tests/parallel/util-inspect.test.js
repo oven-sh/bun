@@ -238,8 +238,8 @@ test('no assertion failures', () => {
   }
 });
 
-  // Now do the same checks but from a different context.
-test.skip('inspect from a different context', () => { //! semi-incosistently segfaulting
+// Now do the same checks but from a different context.
+test('inspect from a different context', () => {
   const showHidden = false;
   const ab = vm.runInNewContext('new ArrayBuffer(4)');
   const dv = vm.runInNewContext('new DataView(ab, 1, 2)', { ab });
@@ -247,34 +247,40 @@ test.skip('inspect from a different context', () => { //! semi-incosistently seg
     util.inspect(ab, showHidden),
     'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
   );
-  assert.strictEqual(util.inspect(new DataView(ab, 1, 2), showHidden),
+  assert.strictEqual(
+    util.inspect(new DataView(ab, 1, 2), showHidden),
     'DataView {\n' +
     '  byteLength: 2,\n' +
     '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-    ' byteLength: 4 }\n}');
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}'
+  );
   assert.strictEqual(
     util.inspect(ab, showHidden),
     'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }'
   );
-  assert.strictEqual(util.inspect(dv, showHidden),
+  //! segfaults
+  /*assert.strictEqual(
+    util.inspect(dv, showHidden),
     'DataView {\n' +
     '  byteLength: 2,\n' +
     '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-    ' byteLength: 4 }\n}');
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}'
+  );*/
   ab.x = 42;
   dv.y = 1337;
-  assert.strictEqual(util.inspect(ab, showHidden),
-    'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, ' +
-    'byteLength: 4, x: 42 }');
-  assert.strictEqual(util.inspect(dv, showHidden),
+  assert.strictEqual(
+    util.inspect(ab, showHidden),
+    'ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 }'
+  );
+  //! segfaults
+  /*assert.strictEqual(
+    util.inspect(dv, showHidden),
     'DataView {\n' +
     '  byteLength: 2,\n' +
     '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>,' +
-    ' byteLength: 4, x: 42 },\n' +
-    '  y: 1337\n}');
+    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 },\n' +
+    '  y: 1337\n}'
+  );*/
 });
 
 test('no assertion failures 2', () => {

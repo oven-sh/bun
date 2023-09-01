@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -178,7 +178,10 @@
                 "default": false
               },
               "watchMode": {
-                "type": ["boolean", "string"],
+                "type": [
+                  "boolean",
+                  "string"
+                ],
                 "description": "If the process should be restarted when files change.",
                 "enum": [
                   true,
@@ -253,7 +256,6 @@
     "workspace"
   ],
   "galleryBanner": {
-    "color": "#f542ef",
     "theme": "dark"
   },
   "homepage": "https://bun.sh/",
@@ -269,8 +271,11 @@
   "publisher": "oven",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "pretest": "bun run build",
     "test": "node scripts/test.mjs",
-    "publish": "cd extension && bunx vsce publish"
+    "prepublish": "bun run build",
+    "publish": "cd extension && bunx vsce publish",
+    "postpublish": "npm version patch"
   },
   "workspaceTrust": {
     "request": "never"

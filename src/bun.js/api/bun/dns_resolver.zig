@@ -1497,8 +1497,10 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresReverse = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
+        //  The callback need not and should not attempt to free the memory
+        //  pointed to by hostent; the ares library will free it when the
+        //  callback returns.
         var array = addr.toJSReponse(this.vm.allocator, prev_global, "");
-        defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);

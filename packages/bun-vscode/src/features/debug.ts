@@ -9,6 +9,7 @@ const debugConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Debug Bun",
   program: "${file}",
+  cwd: "${workspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
 };
@@ -18,6 +19,7 @@ const runConfiguration: vscode.DebugConfiguration = {
   request: "launch",
   name: "Run Bun",
   program: "${file}",
+  cwd: "${workspaceFolder}",
   noDebug: true,
   watchMode: false,
 };

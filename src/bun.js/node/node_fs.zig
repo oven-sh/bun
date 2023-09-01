@@ -564,6 +564,11 @@ pub const AsyncCpTask = struct {
         }
 
         this.result = result;
+
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
@@ -3584,7 +3589,7 @@ pub const NodeFS = struct {
 
                     const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
                         .result => |result| result,
-                        .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
                         _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
@@ -5392,11 +5397,10 @@ pub const NodeFS = struct {
                     .ACCES,
                     .NAMETOOLONG,
                     .ROFS,
-                    .NOENT,
                     .PERM,
                     .INVAL,
                     => {
-                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        @memcpy(this.sync_error_buf[0..src.len], src);
                         return .{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) };
                     },
                     // Other errors may be due to clonefile() not being supported
@@ -5792,11 +5796,10 @@ pub const NodeFS = struct {
                     .ACCES,
                     .NAMETOOLONG,
                     .ROFS,
-                    .NOENT,
                     .PERM,
                     .INVAL,
                     => {
-                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        @memcpy(this.sync_error_buf[0..src.len], src);
                         task.finishConcurrently(.{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) });
                         return false;
                     },

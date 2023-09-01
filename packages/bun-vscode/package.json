@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -8,7 +8,7 @@
   },
   "main": "dist/extension.js",
   "devDependencies": {
-    "@types/vscode": "^1.81.0",
+    "@types/vscode": "^1.60.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
     "@vscode/vsce": "^2.20.1",
@@ -250,7 +250,7 @@
   "description": "The Visual Studio Code extension for Bun.",
   "displayName": "Bun for Visual Studio Code",
   "engines": {
-    "vscode": "^1.81.0"
+    "vscode": "^1.60.0"
   },
   "extensionKind": [
     "workspace"
@@ -273,9 +273,8 @@
     "build": "node scripts/build.mjs",
     "pretest": "bun run build",
     "test": "node scripts/test.mjs",
-    "prepublish": "bun run build",
-    "publish": "cd extension && bunx vsce publish",
-    "postpublish": "npm version patch"
+    "prepublish": "bun run build && npm version patch",
+    "publish": "cd extension && bunx vsce publish"
   },
   "workspaceTrust": {
     "request": "never"

@@ -1321,7 +1321,7 @@ pub fn StatType(comptime Big: bool) type {
         }
     };
 
-    return struct {
+    return extern struct {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
@@ -1332,10 +1332,11 @@ pub fn StatType(comptime Big: bool) type {
         uid: Int,
         gid: Int,
         rdev: Int,
-        // Always store size as a 64-bit integer
-        size: i64,
         blksize: Int,
         blocks: Int,
+
+        // Always store size as a 64-bit integer
+        size: i64,
 
         // _ms is either a float if Small, or a 64-bit integer if Big
         atime_ms: Float,

@@ -704,10 +704,6 @@ pub const VirtualMachine = struct {
             Output.enableBuffering();
         }
 
-        if (this.debugger) |*debugger| {
-            debugger.set_breakpoint_on_first_line = false;
-        }
-
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }

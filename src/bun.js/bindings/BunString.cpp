@@ -381,6 +381,17 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
+extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString *relativeStr)
+{
+    auto base = Bun::toWTFString(*baseStr);
+    auto relative = Bun::toWTFString(*relativeStr);
+    auto url = WTF::URL(WTF::URL(base), relative);
+    if (!url.isValid() || url.isEmpty())
+        return { BunStringTag::Dead };
+
+    return Bun::toStringRef(url.string());
+}
+
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
     auto&& str = Bun::toWTFString(*input);

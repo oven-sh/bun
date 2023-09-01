@@ -12115,7 +12115,7 @@ fn NewParser_(
                 try p.lexer.next();
             }
 
-            if (args.items.len == 3 and need_to_check_for_enumerable and args.items[2].data == .e_object) {
+            if (need_to_check_for_enumerable and args.items.len == 3 and args.items[2].data == .e_object) {
                 var obj: *E.Object = args.items[2].data.e_object;
                 var prop_list = obj.properties.listManaged(p.allocator);
 
@@ -12136,6 +12136,7 @@ fn NewParser_(
                 }
 
                 if (!has_enumerable) {
+                    // Needs to be last. If there's a duplicate from a spread, it can be overwritten
                     try prop_list.append(Property{
                         .value = p.newExpr(E.Boolean{ .value = true }, logger.Loc.Empty),
                         .key = p.newExpr(E.String{ .data = "enumerable" }, logger.Loc.Empty),

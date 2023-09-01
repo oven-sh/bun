@@ -1,8 +1,8 @@
 # Bun for Visual Studio Code
 
-![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/oven.vscode-bun)
-![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/oven.vscode-bun)
-![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/oven.vscode-bun)
+![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/oven.bun-vscode)
+![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/oven.bun-vscode)
+![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/oven.bun-vscode)
 
 <img align="right" src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" height="150px" style="float: right; padding: 30px;">
 

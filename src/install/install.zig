@@ -249,61 +249,31 @@ const NetworkTask = struct {
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
+        warn_on_error: bool,
     ) !void {
-        const pathname: string = if (!strings.eqlComptime(scope.url.pathname, "/"))
-            scope.url.pathname
-        else
-            @as(string, "");
+        this.url_buf = blk: {
+            const tmp = bun.JSC.URL.join(
+                bun.String.fromUTF8(scope.url.href),
+                bun.String.fromUTF8(name),
+            );
+            defer tmp.deref();
 
-        if (pathname.len > 0) {
-            if (scope.url.getPort()) |port_number| {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}:{d}/{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        port_number,
-                        strings.withoutTrailingSlash(pathname),
-                        name,
-                    },
-                );
-            } else {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}/{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        strings.withoutTrailingSlash(pathname),
-                        name,
-                    },
-                );
+            if (tmp.tag == .Dead) {
+                const msg = .{
+                    .fmt = "Failed to join registry \"{s}\" and package \"{s}\" URLs",
+                    .args = .{ scope.url.href, name },
+                };
+
+                if (warn_on_error)
+                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
+                else
+                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
+
+                return error.InvalidURL;
             }
-        } else {
-            if (scope.url.getPort()) |port_number| {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}:{d}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        port_number,
-                        name,
-                    },
-                );
-            } else {
-                this.url_buf = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}://{s}/{s}",
-                    .{
-                        scope.url.displayProtocol(),
-                        scope.url.displayHostname(),
-                        name,
-                    },
-                );
-            }
-        }
+            // This actually duplicates the string! So we defer deref the WTF managed one above.
+            break :blk try tmp.toOwnedSlice(allocator);
+        };
 
         var last_modified: string = "";
         var etag: string = "";
@@ -3075,6 +3045,7 @@ pub const PackageManager = struct {
                                         this.allocator,
                                         this.scopeForPackageName(name_str),
                                         loaded_manifest,
+                                        dependency.behavior.isOptional() or dependency.behavior.isPeer(),
                                     );
                                     this.enqueueNetworkTask(network_task);
                                 }
@@ -3432,7 +3403,21 @@ pub const PackageManager = struct {
                 i,
                 &dependency,
                 resolution,
-            ) catch {};
+            ) catch |err| {
+                const note = .{
+                    .fmt = "error occured while resolving {s}",
+                    .args = .{
+                        lockfile.str(&dependency.realname()),
+                    },
+                };
+
+                if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
+                    this.log.addWarningWithNote(null, .{}, this.allocator, @errorName(err), note.fmt, note.args) catch unreachable
+                else
+                    this.log.addZigErrorWithNote(this.allocator, err, note.fmt, note.args) catch unreachable;
+
+                continue;
+            };
         }
 
         this.drainDependencyList();

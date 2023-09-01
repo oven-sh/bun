@@ -46,7 +46,7 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
+    vscode.window.onDidOpenTerminal(InjectDebugTerminal),
   );
 }
 
@@ -69,6 +69,37 @@ function DebugFileCommand(resource?: vscode.Uri): void {
       program: path,
     });
   }
+}
+
+function InjectDebugTerminal(terminal: vscode.Terminal): void {
+  const { name, creationOptions } = terminal;
+  if (name !== "JavaScript Debug Terminal") {
+    return;
+  }
+
+  const { env } = creationOptions as vscode.TerminalOptions;
+  if (env["BUN_INSPECT"]) {
+    return;
+  }
+
+  const { adapter, signal } = new TerminalDebugSession();
+  const debug = vscode.window.createTerminal({
+    ...creationOptions,
+    name: "JavaScript Debug Terminal",
+    env: {
+      ...env,
+      "BUN_INSPECT": `${adapter.url}?wait=1`,
+      "BUN_INSPECT_NOTIFY": `${signal.url}`,
+    },
+  });
+
+  debug.show();
+
+  // If the terminal is disposed too early, it will show a
+  // "Terminal has already been disposed" error prompt in the UI.
+  // Until a proper fix is found, we can just wait a bit before
+  // disposing the terminal.
+  setTimeout(() => terminal.dispose(), 100);
 }
 
 class TerminalProfileProvider implements vscode.TerminalProfileProvider {

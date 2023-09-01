@@ -3,7 +3,7 @@ import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
 const impls = [
-  // ["cpSync", fs.cpSync],
+  ["cpSync", fs.cpSync],
   ["cp", fs.promises.cp],
 ] as const;
 
@@ -40,7 +40,9 @@ for (const [name, copy] of impls) {
         "from/a.txt": "a",
       });
 
-      await copyShouldThrow(basename + "/from", basename + "/result");
+      const e = await copyShouldThrow(basename + "/from", basename + "/result");
+      expect(e.code).toBe("EISDIR");
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -129,7 +131,12 @@ for (const [name, copy] of impls) {
         "result/a.txt": "win",
       });
 
-      await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", { force: false, errorOnExist: true });
+      const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", {
+        force: false,
+        errorOnExist: true,
+      });
+      expect(e.code).toBe("EEXIST");
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });
@@ -250,6 +257,32 @@ for (const [name, copy] of impls) {
         [basename + "/from/a.txt", basename + "/result/a.txt"],
         [basename + "/from/b.txt", basename + "/result/b.txt"],
       ]);
+    });
+
+    test("trailing slash", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      await copy(basename + "/from/", basename + "/result/", { recursive: true });
+
+      assertContent(basename + "/result/a.txt", "a");
+      assertContent(basename + "/result/b.txt", "b");
+    });
+
+    test("copy directory will ensure directory exists", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      fs.mkdirSync(basename + "/result/");
+
+      await copy(basename + "/from/", basename + "/hello/world/", { recursive: true });
+
+      assertContent(basename + "/hello/world/a.txt", "a");
+      assertContent(basename + "/hello/world/b.txt", "b");
     });
   });
 }

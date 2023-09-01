@@ -5400,7 +5400,7 @@ pub const NodeFS = struct {
                     .PERM,
                     .INVAL,
                     => {
-                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        @memcpy(this.sync_error_buf[0..src.len], src);
                         return .{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) };
                     },
                     // Other errors may be due to clonefile() not being supported

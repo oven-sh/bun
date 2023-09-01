@@ -3557,7 +3557,7 @@ pub const NodeFS = struct {
                 };
 
                 if (!os.S.ISREG(stat_.mode)) {
-                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .path = src } };
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it

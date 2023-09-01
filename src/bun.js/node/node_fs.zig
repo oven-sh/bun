@@ -523,9 +523,6 @@ pub const AsyncCpTask = struct {
     /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
     subtask_count: std.atomic.Atomic(usize),
 
-    /// This contains the error buffer, maybe a better approach is to only allocate this when the error happens
-    node_fs: NodeFS,
-
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
         cp_args: Arguments.Cp,
@@ -542,7 +539,6 @@ pub const AsyncCpTask = struct {
             .tracker = JSC.AsyncTaskTracker.init(vm),
             .arena = arena,
             .subtask_count = .{ .value = 1 },
-            .node_fs = NodeFS{},
         };
         task.ref.ref(vm);
         task.args.src.toThreadSafe();
@@ -557,7 +553,8 @@ pub const AsyncCpTask = struct {
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
 
-        this.node_fs.cpAsync(this);
+        var node_fs = NodeFS{};
+        node_fs.cpAsync(this);
     }
 
     /// May be called from any thread (the subtasks)
@@ -567,6 +564,11 @@ pub const AsyncCpTask = struct {
         }
 
         this.result = result;
+
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 

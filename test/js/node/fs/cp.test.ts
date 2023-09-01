@@ -40,7 +40,9 @@ for (const [name, copy] of impls) {
         "from/a.txt": "a",
       });
 
-      await copyShouldThrow(basename + "/from", basename + "/result");
+      const e = await copyShouldThrow(basename + "/from", basename + "/result");
+      expect(e.code).toBe("EISDIR");
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -129,7 +131,12 @@ for (const [name, copy] of impls) {
         "result/a.txt": "win",
       });
 
-      await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", { force: false, errorOnExist: true });
+      const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/result/a.txt", {
+        force: false,
+        errorOnExist: true,
+      });
+      expect(e.code).toBe("EEXIST");
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });

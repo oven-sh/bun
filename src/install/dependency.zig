@@ -472,6 +472,7 @@ pub const Version = struct {
                 // hello/world
                 // hello.tar.gz
                 // https://github.com/user/repo
+                // https://oauth2:github_pat_token@github.com/user/repo
                 'h' => {
                     if (strings.hasPrefixComptime(dependency, "http")) {
                         var url = dependency["http".len..];
@@ -488,6 +489,15 @@ pub const Version = struct {
                                     }
                                 },
                                 else => {},
+                            }
+                            if (strings.hasPrefixComptime(url, "oauth2:github_pat")) {
+                                url = url["oauth2:github_pat".len..];
+                                for (url, 0..) |c, i| {
+                                    if (c == '@' and i < url.len - 1) {
+                                        url = url[i + 1 ..];
+                                        break;
+                                    }
+                                }
                             }
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 if (isGitHubRepoPath(url["github.com/".len..])) return .github;
@@ -783,6 +793,15 @@ pub fn parseWithTag(
                                 }
                             },
                             else => {},
+                        }
+                        if (strings.hasPrefixComptime(url, "oauth2:github_pat")) {
+                            url = url["oauth2:github_pat".len..];
+                            for (url, 0..) |c, i| {
+                                if (c == '@' and i < url.len - 1) {
+                                    url = url[i + 1 ..];
+                                    break;
+                                }
+                            }
                         }
                         if (strings.hasPrefixComptime(url, "github.com/")) {
                             input = url["github.com/".len..];

@@ -1380,7 +1380,7 @@ pub const BodyValueBufferer = struct {
 
         defer {
             if (stream_needs_deinit) {
-                if (stream.isDone()) {
+                if (stream == .owned_and_done) {
                     stream.owned_and_done.listManaged(allocator).deinit();
                 } else {
                     stream.owned.listManaged(allocator).deinit();
@@ -1468,7 +1468,7 @@ pub const BodyValueBufferer = struct {
         // assert that it was updated
         std.debug.assert(!signal.isDead());
 
-        if (assignment_result.toError() != null) {
+        if (assignment_result.isError()) {
             return error.PipeFailed;
         }
 
@@ -1509,8 +1509,6 @@ pub const BodyValueBufferer = struct {
         if (locked.readable) |stream_| {
             const stream: JSC.WebCore.ReadableStream = stream_;
             stream.value.ensureStillAlive();
-            // keep the stream alive until we're done with it
-            sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
 
             value.* = .{ .Used = {} };
 
@@ -1533,17 +1531,21 @@ pub const BodyValueBufferer = struct {
                     std.debug.assert(byte_stream.pipe.ctx == null);
                     std.debug.assert(sink.byte_stream == null);
 
-                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    defer stream.detachIfPossible(sink.global);
                     const bytes = byte_stream.buffer.items;
-
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if (byte_stream.has_received_last_chunk) {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                        // is safe to detach here because we're not going to receive any more data
+                        stream.detachIfPossible(sink.global);
                         return;
                     }
+                    // keep the stream alive until we're done with it
+                    sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
+                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                    stream.detachIfPossible(sink.global);
+
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});

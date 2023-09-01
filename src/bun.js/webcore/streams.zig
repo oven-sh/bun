@@ -88,9 +88,9 @@ pub const ReadableStream = struct {
             if (this.get()) |readable| {
                 // decrement the ref count and if it's zero we auto detach
                 readable.detachIfPossible(this.globalThis.?);
-                this.held.deinit();
                 this.globalThis = null;
             }
+            this.held.deinit();
         }
     };
 
@@ -3138,7 +3138,9 @@ pub fn ReadableStreamSource(
             if (this.ref_count == 0) {
                 this.deinited = true;
                 deinit_fn(&this.context);
+                return 0;
             }
+
             return this.ref_count;
         }
 

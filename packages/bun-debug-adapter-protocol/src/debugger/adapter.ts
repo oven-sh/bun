@@ -133,8 +133,13 @@ type Source = DAP.Source & {
 type Breakpoint = DAP.Breakpoint & {
   id: number;
   breakpointId: string;
-  generatedLocation?: JSC.Debugger.Location;
+  request?: DAP.SourceBreakpoint;
   source?: Source;
+};
+
+type FutureBreakpoint = {
+  url: string;
+  breakpoint: DAP.SourceBreakpoint;
 };
 
 type Target = (DAP.GotoTarget | DAP.StepInTarget) & {
@@ -201,8 +206,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   #stackFrames: StackFrame[];
   #stopped?: DAP.StoppedEvent["reason"];
   #exception?: Variable;
-  #breakpointId: number;
-  #breakpoints: Map<string, Breakpoint>;
+  #breakpoints: Map<string, Breakpoint[]>;
+  #futureBreakpoints: Map<string, FutureBreakpoint[]>;
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #targets: Map<number, Target>;
   #variableId: number;
@@ -225,9 +230,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#pendingSources = new Map();
     this.#sources = new Map();
     this.#stackFrames = [];
-    this.#stopped = "start";
-    this.#breakpointId = 1;
+    this.#stopped = undefined;
     this.#breakpoints = new Map();
+    this.#futureBreakpoints = new Map();
     this.#functionBreakpoints = new Map();
     this.#targets = new Map();
     this.#variableId = 1;
@@ -397,9 +402,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
     });
     this.send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
-    this.send("Debugger.setBreakpointsActive", { active: true });
-    this.send("Debugger.pause");
-    this.send("Inspector.initialized");
 
     const { clientID, supportsConfigurationDoneRequest } = request;
     if (!supportsConfigurationDoneRequest && clientID !== "vscode") {
@@ -413,17 +415,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   configurationDone(): void {
     // If the client requested that `noDebug` mode be enabled,
     // then we need to disable all breakpoints and pause on statements.
-    if (this.#options?.noDebug) {
-      this.send("Debugger.setBreakpointsActive", { active: false });
-      this.setExceptionBreakpoints({ filters: [] });
-    }
+    const active = !this.#options?.noDebug;
+    this.send("Debugger.setBreakpointsActive", { active });
 
-    if (this.#options?.stopOnEntry) {
-      this.send("Debugger.pause");
-    } else {
-      // TODO: Check that the current location is not on a breakpoint before resuming.
-      this.send("Debugger.resume");
-    }
+    // Tell the debugger that its ready to start execution.
+    this.send("Inspector.initialized");
   }
 
   async launch(request: DAP.LaunchRequest): Promise<void> {
@@ -763,146 +759,130 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
-    const { source, breakpoints } = request;
+    const { source, breakpoints: requests = [] } = request;
+    const { path, sourceReference } = source;
 
-    if (!breakpoints?.length) {
-      return {
-        breakpoints: [],
-      };
-    }
-
-    const { path } = source;
-    const verifiedSource = this.#getSourceIfPresent(sourceToId(source));
-
-    let results: Breakpoint[];
-    if (verifiedSource) {
-      results = await this.#setBreakpointsById(verifiedSource, breakpoints);
-    } else if (path) {
-      results = await this.#setBreakpointsByUrl(path, breakpoints);
-    } else {
-      results = [];
+    let breakpoints: Breakpoint[] | undefined;
+    if (path) {
+      breakpoints = await this.#setBreakpointsByUrl(path, requests, true);
+    } else if (sourceReference) {
+      const source = this.#getSourceIfPresent(sourceReference);
+      if (source) {
+        const { scriptId } = source;
+        breakpoints = await this.#setBreakpointsById(scriptId, requests, true);
+      }
     }
 
     return {
-      breakpoints: results,
+      breakpoints: breakpoints ?? [],
     };
   }
 
-  async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[]): Promise<Breakpoint[]> {
-    const source = await this.#getSourceByUrl(url);
+  async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[], unsetOld?: boolean): Promise<Breakpoint[]> {
+    const source = this.#getSourceIfPresent(url);
 
-    // If there is no source, this is likely a breakpoint from an unrelated
-    // file that can be ignored. Return an unverified breakpoint for each request.
+    // If the source is not loaded, set a placeholder breakpoint at the start of the file.
+    // If the breakpoint is resolved in the future, a `Debugger.breakpointResolved` event
+    // will be emitted and each of these breakpoint requests can be retried.
     if (!source) {
-      return requests.map(() => {
-        const breakpointId = this.#breakpointId++;
-        return this.#addBreakpoint({
-          id: breakpointId,
-          breakpointId: `${breakpointId}`,
-          verified: false,
+      let result;
+      try {
+        result = await this.send("Debugger.setBreakpointByUrl", {
+          url,
+          lineNumber: 0,
         });
-      });
+      } catch (error) {
+        return requests.map(() => invalidBreakpoint(error));
+      }
+
+      const { breakpointId, locations } = result;
+      if (locations.length) {
+        // TODO: Source was loaded while the breakpoint was being set?
+      }
+
+      return requests.map(request =>
+        this.#addFutureBreakpoint({
+          breakpointId,
+          url,
+          breakpoint: request,
+        }),
+      );
     }
 
-    const sourceId = sourceToId(source);
-    const oldBreakpoints = this.#getBreakpoints(sourceId);
-
+    const oldBreakpoints = this.#getBreakpoints(sourceToId(source));
     const breakpoints = await Promise.all(
-      requests.map(async ({ line, column, ...options }) => {
-        const location = this.#generatedLocation(source, line, column);
-
-        for (const breakpoint of oldBreakpoints) {
-          const { generatedLocation } = breakpoint;
-          if (locationIsSame(generatedLocation, location)) {
-            return breakpoint;
-          }
+      requests.map(async request => {
+        const oldBreakpoint = this.#getBreakpointByLocation(source, request);
+        if (oldBreakpoint) {
+          return oldBreakpoint;
         }
+
+        const { line, column, ...options } = request;
+        const location = this.#generatedLocation(source, line, column);
 
         let result;
         try {
           result = await this.send("Debugger.setBreakpointByUrl", {
             url,
-            options: breakpointOptions(options),
             ...location,
+            options: breakpointOptions(options),
           });
         } catch (error) {
-          // If there was an error setting the breakpoint,
-          // mark it as unverified and add a message.
-          const { message } = unknownToError(error);
-          const breakpointId = this.#breakpointId++;
-          return this.#addBreakpoint({
-            id: breakpointId,
-            breakpointId: `${breakpointId}`,
-            line,
-            column,
-            source,
-            verified: false,
-            message,
-            generatedLocation: location,
-          });
+          return invalidBreakpoint(error);
         }
 
         const { breakpointId, locations } = result;
-        if (!locations.length) {
-          return this.#addBreakpoint({
-            id: this.#breakpointId++,
+
+        const breakpoints = locations.map((location, i) =>
+          this.#addBreakpoint({
             breakpointId,
-            line,
-            column,
+            location,
             source,
-            verified: false,
-            generatedLocation: location,
-          });
-        }
+            request,
+            // It is theoretically possible for a breakpoint to resolve to multiple locations.
+            // In that case, send a seperate `breakpoint` event for each one, excluding the first.
+            notify: i > 0,
+          }),
+        );
 
-        const originalLocation = this.#originalLocation(source, locations[0]);
-        return this.#addBreakpoint({
-          id: this.#breakpointId++,
-          breakpointId,
-          source,
-          verified: true,
-          generatedLocation: location,
-          ...originalLocation,
-        });
+        // Each breakpoint request can only be mapped to one breakpoint.
+        return breakpoints[0];
       }),
     );
 
-    await Promise.all(
-      oldBreakpoints.map(async ({ breakpointId }) => {
-        const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
-        if (isRemoved) {
-          await this.send("Debugger.removeBreakpoint", {
-            breakpointId,
-          });
-          this.#removeBreakpoint(breakpointId);
-        }
-      }),
-    );
-
-    const duplicateBreakpoints = breakpoints.filter(
-      ({ message }) => message === "Breakpoint for given location already exists",
-    );
-    for (const { breakpointId } of duplicateBreakpoints) {
-      this.#removeBreakpoint(breakpointId);
+    if (unsetOld) {
+      await Promise.all(
+        oldBreakpoints.map(({ breakpointId }) => {
+          if (!breakpoints.some(({ breakpointId: id }) => breakpointId === id)) {
+            return this.#unsetBreakpoint(breakpointId);
+          }
+        }),
+      );
     }
 
     return breakpoints;
   }
 
-  async #setBreakpointsById(source: Source, requests: DAP.SourceBreakpoint[]): Promise<Breakpoint[]> {
-    const { sourceId } = source;
-    const oldBreakpoints = this.#getBreakpoints(sourceId);
+  async #setBreakpointsById(
+    scriptId: string,
+    requests: DAP.SourceBreakpoint[],
+    unsetOld?: boolean,
+  ): Promise<Breakpoint[]> {
+    const source = await this.#getSourceById(scriptId);
+    if (!source) {
+      return requests.map(() => invalidBreakpoint());
+    }
 
+    const oldBreakpoints = this.#getBreakpoints(sourceToId(source));
     const breakpoints = await Promise.all(
-      requests!.map(async ({ line, column, ...options }) => {
-        const location = this.#generatedLocation(source, line, column);
-
-        for (const breakpoint of oldBreakpoints) {
-          const { generatedLocation } = breakpoint;
-          if (locationIsSame(generatedLocation, location)) {
-            return breakpoint;
-          }
+      requests.map(async request => {
+        const oldBreakpoint = this.#getBreakpointByLocation(source, request);
+        if (oldBreakpoint) {
+          return oldBreakpoint;
         }
+
+        const { line, column, ...options } = request;
+        const location = this.#generatedLocation(source, line, column);
 
         let result;
         try {
@@ -911,92 +891,147 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
             options: breakpointOptions(options),
           });
         } catch (error) {
-          // If there was an error setting the breakpoint,
-          // mark it as unverified and add a message.
-          const { message } = unknownToError(error);
-          const breakpointId = this.#breakpointId++;
-          return this.#addBreakpoint({
-            id: breakpointId,
-            breakpointId: `${breakpointId}`,
-            line,
-            column,
-            source,
-            verified: false,
-            message,
-            generatedLocation: location,
-          });
+          return invalidBreakpoint(error);
         }
 
         const { breakpointId, actualLocation } = result;
-        const originalLocation = this.#originalLocation(source, actualLocation);
-
         return this.#addBreakpoint({
-          id: this.#breakpointId++,
           breakpointId,
+          location: actualLocation,
+          request,
           source,
-          verified: true,
-          generatedLocation: location,
-          ...originalLocation,
         });
       }),
     );
 
-    await Promise.all(
-      oldBreakpoints.map(async ({ breakpointId }) => {
-        const isRemoved = !breakpoints.filter(({ breakpointId: id }) => breakpointId === id).length;
-        if (isRemoved) {
-          await this.send("Debugger.removeBreakpoint", {
-            breakpointId,
-          });
-          this.#removeBreakpoint(breakpointId);
-        }
-      }),
-    );
-
-    const duplicateBreakpoints = breakpoints.filter(
-      ({ message }) => message === "Breakpoint for given location already exists",
-    );
-    for (const { breakpointId } of duplicateBreakpoints) {
-      this.#removeBreakpoint(breakpointId);
+    if (unsetOld) {
+      await Promise.all(
+        oldBreakpoints.map(({ breakpointId }) => {
+          if (!breakpoints.some(({ breakpointId: id }) => breakpointId === id)) {
+            return this.#unsetBreakpoint(breakpointId);
+          }
+        }),
+      );
     }
 
     return breakpoints;
   }
 
-  #getBreakpoints(sourceId?: string | number): Breakpoint[] {
-    const breakpoints: Breakpoint[] = [];
-
-    if (!sourceId) {
-      return breakpoints;
+  async #unsetBreakpoint(breakpointId: string): Promise<void> {
+    try {
+      await this.send("Debugger.removeBreakpoint", { breakpointId });
+    } catch {
+      // Ignore any errors.
     }
 
-    for (const breakpoint of this.#breakpoints.values()) {
-      const { source } = breakpoint;
-      if (source && sourceId === sourceToId(source)) {
-        breakpoints.push(breakpoint);
-      }
-    }
-
-    return breakpoints;
+    this.#removeBreakpoint(breakpointId);
+    this.#removeFutureBreakpoint(breakpointId);
   }
 
-  #addBreakpoint(breakpoint: Breakpoint): Breakpoint {
-    const { breakpointId } = breakpoint;
-    this.#breakpoints.set(breakpointId, breakpoint);
+  #addBreakpoint(options: {
+    breakpointId: string;
+    location?: JSC.Debugger.Location;
+    request?: DAP.SourceBreakpoint;
+    source?: Source;
+    notify?: boolean;
+  }): Breakpoint {
+    const { breakpointId, location, source, request, notify } = options;
+
+    let originalLocation;
+    if (source) {
+      originalLocation = this.#originalLocation(source, location);
+    } else {
+      originalLocation = {};
+    }
+
+    const breakpoints = this.#getBreakpointsById(breakpointId);
+    const breakpoint: Breakpoint = {
+      id: nextId(),
+      breakpointId,
+      source,
+      request,
+      ...originalLocation,
+      verified: !!source,
+    };
+
+    breakpoints.push(breakpoint);
     return breakpoint;
   }
 
-  #removeBreakpoint(breakpointId: string): void {
-    const breakpoint = this.#breakpoints.get(breakpointId);
+  #addFutureBreakpoint(options: { breakpointId: string; url: string; breakpoint: DAP.SourceBreakpoint }): Breakpoint {
+    const { breakpointId, url, breakpoint } = options;
 
-    if (!breakpoint || !this.#breakpoints.delete(breakpointId)) {
+    const breakpoints = this.#getFutureBreakpoints(breakpointId);
+    breakpoints.push({
+      url,
+      breakpoint,
+    });
+
+    return this.#addBreakpoint({
+      breakpointId,
+      request: breakpoint,
+    });
+  }
+
+  #removeBreakpoint(breakpointId: string, notify?: boolean): void {
+    const breakpoints = this.#breakpoints.get(breakpointId);
+
+    if (!breakpoints || !this.#breakpoints.delete(breakpointId) || !notify) {
       return;
     }
 
-    this.#emitAfterResponse("breakpoint", {
-      reason: "removed",
-      breakpoint,
+    for (const breakpoint of breakpoints) {
+      this.#emit("breakpoint", {
+        reason: "removed",
+        breakpoint,
+      });
+    }
+  }
+
+  #removeFutureBreakpoint(breakpointId: string, notify?: boolean): void {
+    const breakpoint = this.#futureBreakpoints.get(breakpointId);
+
+    if (!breakpoint || !this.#futureBreakpoints.delete(breakpointId)) {
+      return;
+    }
+
+    this.#removeBreakpoint(breakpointId, notify);
+  }
+
+  #getBreakpointsById(breakpointId: string): Breakpoint[] {
+    let breakpoints = this.#breakpoints.get(breakpointId);
+    if (!breakpoints) {
+      this.#breakpoints.set(breakpointId, (breakpoints = []));
+    }
+    return breakpoints;
+  }
+
+  #getBreakpointByLocation(source: Source, location: DAP.SourceBreakpoint): Breakpoint | undefined {
+    console.log("getBreakpointByLocation", {
+      source: sourceToId(source),
+      location,
+      ids: this.#getBreakpoints(sourceToId(source)).map(({ id }) => id),
+      breakpointIds: this.#getBreakpoints(sourceToId(source)).map(({ breakpointId }) => breakpointId),
+      lines: this.#getBreakpoints(sourceToId(source)).map(({ line }) => line),
+      columns: this.#getBreakpoints(sourceToId(source)).map(({ column }) => column),
     });
+    const sourceId = sourceToId(source);
+    const [breakpoint] = this.#getBreakpoints(sourceId).filter(
+      ({ source, request }) => source && sourceToId(source) === sourceId && request?.line === location.line,
+    );
+    return breakpoint;
+  }
+
+  #getBreakpoints(sourceId: string | number): Breakpoint[] {
+    return [...this.#breakpoints.values()].flat().filter(({ source }) => source && sourceToId(source) === sourceId);
+  }
+
+  #getFutureBreakpoints(breakpointId: string): FutureBreakpoint[] {
+    let breakpoints = this.#futureBreakpoints.get(breakpointId);
+    if (!breakpoints) {
+      this.#futureBreakpoints.set(breakpointId, (breakpoints = []));
+    }
+    return breakpoints;
   }
 
   async setFunctionBreakpoints(
@@ -1022,7 +1057,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         } catch (error) {
           const { message } = unknownToError(error);
           return this.#addFunctionBreakpoint({
-            id: this.#breakpointId++,
+            id: nextId(),
             name,
             verified: false,
             message,
@@ -1030,7 +1065,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
         }
 
         return this.#addFunctionBreakpoint({
-          id: this.#breakpointId++,
+          id: nextId(),
           name,
           verified: true,
         });
@@ -1329,27 +1364,61 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
+  async ["Debugger.breakpointResolved"](event: JSC.Debugger.BreakpointResolvedEvent): Promise<void> {
+    const { breakpointId, location } = event;
+
+    const futureBreakpoints = this.#getFutureBreakpoints(breakpointId);
+
+    // If the breakpoint resolves to a placeholder breakpoint, go through
+    // each breakpoint request and attempt to set them again.
+    if (futureBreakpoints?.length) {
+      const [{ url }] = futureBreakpoints;
+      const requests = futureBreakpoints.map(({ breakpoint }) => breakpoint);
+
+      const oldBreakpoints = this.#getBreakpointsById(breakpointId);
+      const breakpoints = await this.#setBreakpointsByUrl(url, requests);
+
+      for (let i = 0; i < breakpoints.length; i++) {
+        const breakpoint = breakpoints[i];
+        const oldBreakpoint = oldBreakpoints[i];
+
+        this.#emit("breakpoint", {
+          reason: "changed",
+          breakpoint: {
+            ...breakpoint,
+            id: oldBreakpoint.id,
+          },
+        });
+      }
+
+      // Finally, remove the placeholder breakpoint.
+      await this.#unsetBreakpoint(breakpointId);
+      return;
+    }
+
+    const breakpoints = this.#getBreakpointsById(breakpointId);
+
+    // This is a new breakpoint, which was likely created by another client
+    // connected to the same debugger.
+    if (!breakpoints.length) {
+      const { scriptId } = location;
+      const [url] = breakpointId.split(":");
+      const source = await this.#getSourceById(scriptId, url);
+
+      this.#addBreakpoint({
+        breakpointId,
+        location,
+        source,
+        notify: true,
+      });
+      return;
+    }
+
+    // TODO: update breakpoints?
+  }
+
   ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace, data } = event;
-
-    if (reason === "PauseOnNextStatement") {
-      if (this.#stopped === "start" && !this.#options?.stopOnEntry) {
-        this.#stopped = undefined;
-        return;
-      }
-    }
-
-    if (reason === "DebuggerStatement") {
-      // FIXME: This is a hacky fix for the `Debugger.paused` event being fired
-      // when the debugger is started in hot mode.
-      for (const { functionName } of callFrames) {
-        // @ts-ignore
-        if (functionName === "module code" && this.#options?.watchMode === "hot") {
-          this.send("Debugger.resume");
-          return;
-        }
-      }
-    }
 
     this.#stackFrames.length = 0;
     this.#stopped ||= stoppedReason(reason);
@@ -1381,12 +1450,17 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       }
 
       if (reason === "Breakpoint") {
-        const { breakpointId: hitBreakpointId } = data as { breakpointId: string };
-        for (const { id, breakpointId } of this.#breakpoints.values()) {
-          if (breakpointId === hitBreakpointId) {
-            hitBreakpointIds = [id];
-            break;
-          }
+        const { breakpointId } = data as JSC.Debugger.BreakpointPauseReason;
+
+        const futureBreakpoints = this.#getFutureBreakpoints(breakpointId);
+        if (futureBreakpoints.length) {
+          this.send("Debugger.resume");
+          return;
+        }
+
+        const breakpoints = this.#getBreakpointsById(breakpointId);
+        if (breakpoints.length) {
+          hitBreakpointIds = breakpoints.map(({ id }) => id);
         }
       }
     }
@@ -1579,59 +1653,41 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     });
   }
 
-  async #getSourceByUrl(url: string): Promise<Source | undefined> {
-    const source = this.#getSourceIfPresent(url);
+  async #getSourceById(scriptId: string, url?: string): Promise<Source | undefined> {
+    const source = this.#getSourceIfPresent(scriptId);
     if (source) {
       return source;
     }
 
-    // If the source is not present, the debugger did not send the `Debugger.scriptParsed` event.
-    // Since there is no request to retrieve a script by its url, the hacky solution is to set
-    // a no-op breakpoint by url, then immediately remove it.
     let result;
     try {
-      result = await this.send("Debugger.setBreakpointByUrl", {
-        url,
-        lineNumber: 0,
-        options: {
-          autoContinue: true,
-        },
-      });
+      result = await this.send("Debugger.getScriptSource", { scriptId });
     } catch {
-      // If there was an error setting the breakpoint,
-      // the source probably does not exist.
       return undefined;
     }
 
-    const { breakpointId, locations } = result;
-    await this.send("Debugger.removeBreakpoint", {
-      breakpointId,
-    });
+    const { scriptSource } = result;
+    const sourceMap = SourceMap(scriptSource);
+    const presentationHint = sourcePresentationHint(url);
 
-    if (!locations.length) {
-      return undefined;
+    if (url) {
+      return this.#addSource({
+        scriptId,
+        sourceId: url,
+        name: sourceName(url),
+        path: url,
+        sourceMap,
+        presentationHint,
+      });
     }
 
-    // It is possible that the source was loaded between the time it took
-    // to set and remove the breakpoint, so check again.
-    const [{ scriptId }] = locations;
-    const recentSource = this.#getSourceIfPresent(scriptId) || this.#getSourceIfPresent(url);
-    if (recentSource) {
-      return recentSource;
-    }
-
-    // Otherwise, retrieve the source and source map url and add the source.
-    const { scriptSource } = await this.send("Debugger.getScriptSource", {
-      scriptId,
-    });
-
+    const sourceReference = this.#sourceId++;
     return this.#addSource({
       scriptId,
-      sourceId: url,
-      name: sourceName(url),
-      path: url,
-      sourceMap: SourceMap(scriptSource),
-      presentationHint: sourcePresentationHint(url),
+      sourceId: sourceReference,
+      sourceReference,
+      sourceMap,
+      presentationHint,
     });
   }
 
@@ -2051,9 +2107,10 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     this.#pendingSources.clear();
     this.#sources.clear();
     this.#stackFrames.length = 0;
-    this.#stopped = "start";
+    this.#stopped = undefined;
     this.#exception = undefined;
     this.#breakpoints.clear();
+    this.#futureBreakpoints.clear();
     this.#functionBreakpoints.clear();
     this.#targets.clear();
     this.#variables.clear();
@@ -2227,6 +2284,19 @@ function sourceToId(source?: DAP.Source): string | number {
   }
   if (sourceReference) {
     return sourceReference;
+  }
+  throw new Error("No source found.");
+}
+
+function sourceToPath(source?: DAP.Source | string): string {
+  if (typeof source === "string") {
+    return source;
+  }
+  if (source) {
+    const { path } = source;
+    if (path) {
+      return path;
+    }
   }
   throw new Error("No source found.");
 }
@@ -2471,4 +2541,20 @@ function stripAnsi(string: string): string {
   return string.replace(/\u001b\[\d+m/g, "");
 }
 
+function invalidBreakpoint(error?: unknown): Breakpoint {
+  const { message } = error ? unknownToError(error) : { message: undefined };
+  return {
+    id: nextId(),
+    breakpointId: "",
+    verified: false,
+    message,
+  };
+}
+
 const Cancel = Symbol("Cancel");
+
+let sequence = 1;
+
+function nextId(): number {
+  return sequence++;
+}

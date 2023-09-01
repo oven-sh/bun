@@ -12045,6 +12045,111 @@ fn NewParser_(
             return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
         }
 
+        /// In Node, this export will work:
+        ///
+        /// ```
+        /// Object.defineProperty(exports, "foo", {
+        ///     value: 10,
+        /// });
+        /// ```
+        ///
+        /// And this export will be a syntax error:
+        ///
+        /// ```
+        /// Object.defineProperty(exports, "foo", {
+        ///    enumerable: false,
+        ///    value: 10,
+        /// });
+        /// ```
+        ///
+        /// The enumerable property normally defaults to false, but Node's `cjs-module-lexer` defaults to true,
+        /// so we need to add the enumerable property if it isn't explicitly set on the object.
+        ///
+        pub fn parseCallArgsForObjectDefineProperty(p: *P) anyerror!ExprListLoc {
+            const old_allow_in = p.allow_in;
+            p.allow_in = true;
+            defer p.allow_in = old_allow_in;
+
+            var args = ListManaged(Expr).init(p.allocator);
+            try p.lexer.expect(.t_open_paren);
+
+            var first = true;
+            var need_to_check_for_enumerable = false;
+            while (p.lexer.token != .t_close_paren) {
+                const loc = p.lexer.loc();
+                const is_spread = p.lexer.token == .t_dot_dot_dot;
+                if (is_spread) {
+                    // p.mark_syntax_feature(compat.rest_argument, p.lexer.range());
+                    try p.lexer.next();
+                }
+
+                var arg = try p.parseExpr(.comma);
+
+                if (first) {
+                    first = false;
+                    switch (arg.data) {
+                        .e_identifier => |ident| {
+                            if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "exports")) {
+                                need_to_check_for_enumerable = true;
+                            }
+                        },
+                        .e_dot => |dot| {
+                            if (dot.target.data == .e_identifier) {
+                                const ident = dot.target.data.e_identifier;
+                                if (strings.eqlComptime(dot.name, "exports") and strings.eqlComptime(p.loadNameFromRef(ident.ref), "module")) {
+                                    need_to_check_for_enumerable = true;
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                if (is_spread) {
+                    arg = p.newExpr(E.Spread{ .value = arg }, loc);
+                }
+                args.append(arg) catch unreachable;
+                if (p.lexer.token != .t_comma) {
+                    break;
+                }
+                try p.lexer.next();
+            }
+
+            if (args.items.len == 3 and need_to_check_for_enumerable and args.items[2].data == .e_object) {
+                var obj: *E.Object = args.items[2].data.e_object;
+                var prop_list = obj.properties.listManaged(p.allocator);
+
+                var has_enumerable = false;
+
+                for (prop_list.items) |prop| {
+                    if (prop.key) |key| {
+                        switch (key.data) {
+                            .e_string => |prop_name| {
+                                if (prop_name.isUTF8() and prop_name.end == null and prop_name.next == null and strings.eqlComptime(prop_name.data, "enumerable")) {
+                                    has_enumerable = true;
+                                    break;
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
+
+                if (!has_enumerable) {
+                    try prop_list.append(Property{
+                        .value = p.newExpr(E.Boolean{ .value = true }, logger.Loc.Empty),
+                        .key = p.newExpr(E.String{ .data = "enumerable" }, logger.Loc.Empty),
+                    });
+
+                    obj.properties = Property.List.fromList(prop_list);
+                }
+            }
+
+            const close_paren_loc = p.lexer.loc();
+            try p.lexer.expect(.t_close_paren);
+            return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
+        }
+
         pub fn parseSuffix(p: *P, _left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             var left = _left;
             var optional_chain: ?js_ast.OptionalChain = null;
@@ -12299,7 +12404,17 @@ fn NewParser_(
                             return left;
                         }
 
-                        const list_loc = try p.parseCallArgs();
+                        const list_loc: ExprListLoc = brk: {
+                            if (left.data == .e_dot and left.data.e_dot.target.data == .e_identifier) {
+                                const left_left_name = p.loadNameFromRef(left.data.e_dot.target.data.e_identifier.ref);
+                                if (strings.eqlComptime(left_left_name, "Object") and strings.eqlComptime(left.data.e_dot.name, "defineProperty")) {
+                                    break :brk try p.parseCallArgsForObjectDefineProperty();
+                                }
+                            }
+
+                            break :brk try p.parseCallArgs();
+                        };
+
                         left = p.newExpr(
                             E.Call{
                                 .target = left,

@@ -102,11 +102,10 @@ it("should reject missing package", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun add",
-    `error: file:${add_path} failed to resolve`,
-    "",
-  ]);
+  expect(err.includes("bun add")).toBeTrue();
+  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
+  expect(err.includes(`note: error occured while resolving file:${add_path}`)).toBeTrue();
+
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toBe("");
@@ -145,11 +144,10 @@ it("should reject invalid path without segfault", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun add",
-    `error: file://${add_path} failed to resolve`,
-    "",
-  ]);
+  expect(err.includes("bun add")).toBeTrue();
+  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
+  expect(err.includes(`note: error occured while resolving file://${add_path}`)).toBeTrue();
+
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toBe("");

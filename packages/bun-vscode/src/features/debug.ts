@@ -46,7 +46,6 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
     vscode.window.onDidOpenTerminal(InjectDebugTerminal),
   );
 }

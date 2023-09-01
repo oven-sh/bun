@@ -242,18 +242,10 @@
         ],
         "priority": "default"
       }
-    ],
-    "terminal": {
-      "profiles": [
-        {
-          "title": "Bun Terminal",
-          "id": "bun"
-        }
-      ]
-    }
+    ]
   },
   "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun",
+  "displayName": "Bun for Visual Studio Code",
   "engines": {
     "vscode": "^1.81.0"
   },
@@ -284,7 +276,6 @@
   },
   "workspaces": [
     "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol",
-    "../bun-wasm"
+    "../bun-inspector-protocol"
   ]
 }

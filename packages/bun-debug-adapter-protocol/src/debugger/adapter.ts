@@ -449,6 +449,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       env = {},
       strictEnv = false,
       watchMode = false,
+      stopOnEntry = false,
     } = request;
 
     if (!program) {
@@ -489,10 +490,8 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       signal.close();
     });
 
-    // Break on entry is always set so the debugger has a chance
-    // to set breakpoints before the program starts. If `stopOnEntry`
-    // was not set, then the debugger will auto-continue after the first pause.
-    processEnv["BUN_INSPECT"] = `${url}?break=1`;
+    const query = stopOnEntry ? "break=1" : "wait=1";
+    processEnv["BUN_INSPECT"] = `${url}?${query}`;
     processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
 
     // This is probably not correct, but it's the best we can do for now.

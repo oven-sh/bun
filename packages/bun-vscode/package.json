@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -256,6 +256,7 @@
     "workspace"
   ],
   "galleryBanner": {
+    "color": "#3B3738",
     "theme": "dark"
   },
   "homepage": "https://bun.sh/",
@@ -273,7 +274,7 @@
     "build": "node scripts/build.mjs",
     "pretest": "bun run build",
     "test": "node scripts/test.mjs",
-    "prepublish": "bun run build && npm version patch",
+    "prepublish": "npm version patch && bun run build",
     "publish": "cd extension && bunx vsce publish"
   },
   "workspaceTrust": {

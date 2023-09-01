@@ -2365,7 +2365,7 @@ pub const DNSResolver = struct {
                 port = IANA_DNS_PORT;
             }
 
-            const size = bun.len(bun.cast([*:0]u8, &buf));
+            const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
                 values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
             } else {

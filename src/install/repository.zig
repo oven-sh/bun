@@ -26,6 +26,8 @@ pub const Repository = extern struct {
     committish: GitSHA = .{},
     resolved: GitSHA = .{},
     package_name: String = .{},
+    /// Used for GitHub package URLs with an oauth2 token
+    oauth2_token: String = .{},
 
     pub fn verify(this: *const Repository) void {
         this.owner.assertDefined();

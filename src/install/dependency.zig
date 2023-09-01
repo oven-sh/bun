@@ -490,8 +490,8 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
-                            if (strings.hasPrefixComptime(url, "oauth2:github_pat")) {
-                                url = url["oauth2:github_pat".len..];
+                            if (strings.hasPrefixComptime(url, "oauth2:github_pat_")) {
+                                url = url["oauth2:github_pat_".len..];
                                 for (url, 0..) |c, i| {
                                     if (c == '@' and i < url.len - 1) {
                                         url = url[i + 1 ..];
@@ -769,6 +769,7 @@ pub fn parseWithTag(
         .github => {
             var from_url = false;
             var input = dependency;
+            var oauth2: ?[]const u8 = null;
             if (strings.hasPrefixComptime(input, "github:")) {
                 input = input["github:".len..];
             } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
@@ -794,10 +795,11 @@ pub fn parseWithTag(
                             },
                             else => {},
                         }
-                        if (strings.hasPrefixComptime(url, "oauth2:github_pat")) {
-                            url = url["oauth2:github_pat".len..];
+                        if (strings.hasPrefixComptime(url, "oauth2:github_pat_")) {
+                            url = url["oauth2:".len..];
                             for (url, 0..) |c, i| {
                                 if (c == '@' and i < url.len - 1) {
+                                    oauth2 = url[0..i];
                                     url = url[i + 1 ..];
                                     break;
                                 }
@@ -840,6 +842,7 @@ pub fn parseWithTag(
                         .owner = sliced.sub(input[0..slash_index]).value(),
                         .repo = sliced.sub(repo).value(),
                         .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+                        .oauth2_token = if (oauth2) |token| sliced.sub(token).value() else .{},
                     },
                 },
                 .tag = .github,

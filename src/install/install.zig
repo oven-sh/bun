@@ -421,17 +421,37 @@ const NetworkTask = struct {
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
 
-        var header_builder = HeaderBuilder{};
+        var hb = HeaderBuilder{};
+        var header_buf: []const u8 = "";
 
-        countAuth(&header_builder, scope);
+        // Workaround for https://github.com///oven-sh/bun/issues/3555.
+        // We should refactor HTTP header gen for dependencies to be
+        // more flexible and data driven.
+        if (tarball.resolution.tag == .github and !tarball.resolution.value.github.oauth2_token.isEmpty()) {
+            // build github oauth2 headers
+            const token = this.package_manager.lockfile.str(&tarball.resolution.value.github.oauth2_token);
+            const gh_api = .{ .name = "X-GitHub-Api-Version", .value = "2022-11-28" };
 
-        var header_buf: string = "";
-        if (header_builder.header_count > 0) {
-            try header_builder.allocate(allocator);
+            hb.count("Authorization", "Bearer ");
+            hb.content.cap += token.len;
+            hb.count(gh_api.name, gh_api.value);
 
-            appendAuth(&header_builder, scope);
+            try hb.allocate(allocator);
+            hb.appendFmt("Authorization", "Bearer {s}", .{token});
+            hb.append(gh_api.name, gh_api.value);
 
-            header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
+            header_buf = hb.content.ptr.?[0..hb.content.len];
+        } else {
+            // build headers from scope
+            countAuth(&hb, scope);
+
+            if (hb.header_count > 0) {
+                try hb.allocate(allocator);
+
+                appendAuth(&hb, scope);
+
+                header_buf = hb.content.ptr.?[0..hb.content.len];
+            }
         }
 
         const url = URL.parse(this.url_buf);
@@ -440,7 +460,7 @@ const NetworkTask = struct {
             allocator,
             .GET,
             url,
-            header_builder.entries,
+            hb.entries,
             header_buf,
             &this.response_buffer,
             "",

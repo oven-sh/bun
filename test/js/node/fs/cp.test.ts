@@ -251,5 +251,31 @@ for (const [name, copy] of impls) {
         [basename + "/from/b.txt", basename + "/result/b.txt"],
       ]);
     });
+
+    test("trailing slash", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      await copy(basename + "/from/", basename + "/result/", { recursive: true });
+
+      assertContent(basename + "/result/a.txt", "a");
+      assertContent(basename + "/result/b.txt", "b");
+    });
+
+    test("copy directory will ensure directory exists", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+      });
+
+      fs.mkdirSync(basename + "/result/");
+
+      await copy(basename + "/from/", basename + "/hello/world/", { recursive: true });
+
+      assertContent(basename + "/hello/world/a.txt", "a");
+      assertContent(basename + "/hello/world/b.txt", "b");
+    });
   });
 }

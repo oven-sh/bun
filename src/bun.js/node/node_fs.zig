@@ -523,6 +523,9 @@ pub const AsyncCpTask = struct {
     /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
     subtask_count: std.atomic.Atomic(usize),
 
+    /// This contains the error buffer, maybe a better approach is to only allocate this when the error happens
+    node_fs: NodeFS,
+
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
         cp_args: Arguments.Cp,
@@ -539,6 +542,7 @@ pub const AsyncCpTask = struct {
             .tracker = JSC.AsyncTaskTracker.init(vm),
             .arena = arena,
             .subtask_count = .{ .value = 1 },
+            .node_fs = NodeFS{},
         };
         task.ref.ref(vm);
         task.args.src.toThreadSafe();
@@ -553,8 +557,7 @@ pub const AsyncCpTask = struct {
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *AsyncCpTask = @fieldParentPtr(AsyncCpTask, "task", task);
 
-        var node_fs = NodeFS{};
-        node_fs.cpAsync(this);
+        this.node_fs.cpAsync(this);
     }
 
     /// May be called from any thread (the subtasks)
@@ -3552,7 +3555,7 @@ pub const NodeFS = struct {
                 };
 
                 if (!os.S.ISREG(stat_.mode)) {
-                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .path = src } };
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -3584,7 +3587,7 @@ pub const NodeFS = struct {
 
                     const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
                         .result => |result| result,
-                        .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
                         _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
@@ -5392,7 +5395,6 @@ pub const NodeFS = struct {
                     .ACCES,
                     .NAMETOOLONG,
                     .ROFS,
-                    .NOENT,
                     .PERM,
                     .INVAL,
                     => {
@@ -5792,11 +5794,10 @@ pub const NodeFS = struct {
                     .ACCES,
                     .NAMETOOLONG,
                     .ROFS,
-                    .NOENT,
                     .PERM,
                     .INVAL,
                     => {
-                        @memcpy(this.sync_error_buf[0..src.len], dest);
+                        @memcpy(this.sync_error_buf[0..src.len], src);
                         task.finishConcurrently(.{ .err = err.err.withPath(this.sync_error_buf[0..src.len]) });
                         return false;
                     },

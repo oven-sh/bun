@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 const debugConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "launch",
-  name: "Debug Bun",
+  name: "Debug File",
   program: "${file}",
   cwd: "${workspaceFolder}",
   stopOnEntry: false,
@@ -18,7 +18,7 @@ const debugConfiguration: vscode.DebugConfiguration = {
 const runConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "launch",
-  name: "Run Bun",
+  name: "Run File",
   program: "${file}",
   cwd: "${workspaceFolder}",
   noDebug: true,

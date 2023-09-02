@@ -9,3 +9,5 @@ const wss = new WebSocketServer({
   perMessageDeflate: false,
 });
 wss;
+
+debugger;

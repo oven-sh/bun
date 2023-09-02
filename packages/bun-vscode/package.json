@@ -67,7 +67,7 @@
     "commands": [
       {
         "command": "extension.bun.runFile",
-        "title": "Run Bun",
+        "title": "Run File",
         "shortTitle": "Run",
         "category": "Bun",
         "enablement": "!inDebugMode",
@@ -75,7 +75,7 @@
       },
       {
         "command": "extension.bun.debugFile",
-        "title": "Debug Bun",
+        "title": "Debug File",
         "shortTitle": "Debug",
         "category": "Bun",
         "enablement": "!inDebugMode",

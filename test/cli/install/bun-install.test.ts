@@ -2851,7 +2851,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
 });
 
 test.skipIf(process.env.GITHUB_TOKEN === undefined)(
-  "should handle GitHub OAuth2 URL in dependencies (https://oauth2:github_pat_TOKEN@github.com/user/repo)",
+  "should handle GitHub OAuth2 URL in dependencies (https://oauth2:TOKEN@github.com/user/repo)",
   async () => {
     const token = process.env.GITHUB_TOKEN;
     await writeFile(

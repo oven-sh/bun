@@ -472,7 +472,7 @@ pub const Version = struct {
                 // hello/world
                 // hello.tar.gz
                 // https://github.com/user/repo
-                // https://oauth2:github_pat_token@github.com/user/repo
+                // https://oauth2:TOKEN@github.com/user/repo
                 'h' => {
                     if (strings.hasPrefixComptime(dependency, "http")) {
                         var url = dependency["http".len..];
@@ -490,8 +490,8 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
-                            if (strings.hasPrefixComptime(url, "oauth2:github_pat_")) {
-                                url = url["oauth2:github_pat_".len..];
+                            if (strings.hasPrefixComptime(url, "oauth2:")) {
+                                url = url["oauth2:".len..];
                                 for (url, 0..) |c, i| {
                                     if (c == '@' and i < url.len - 1) {
                                         url = url[i + 1 ..];
@@ -795,7 +795,7 @@ pub fn parseWithTag(
                             },
                             else => {},
                         }
-                        if (strings.hasPrefixComptime(url, "oauth2:github_pat_")) {
+                        if (strings.hasPrefixComptime(url, "oauth2:")) {
                             url = url["oauth2:".len..];
                             for (url, 0..) |c, i| {
                                 if (c == '@' and i < url.len - 1) {

@@ -2850,6 +2850,60 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   await access(join(package_dir, "bun.lockb"));
 });
 
+test.skipIf(process.env.GITHUB_TOKEN !== undefined)(
+  "should handle GitHub OAuth2 URL in dependencies (https://oauth2:github_pat_TOKEN@github.com/user/repo)",
+  async () => {
+    const token = process.env.GITHUB_TOKEN;
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "Foo",
+        version: "0.0.1",
+        dependencies: {
+          "bun-install-test-github-oauth": `https://oauth2:${token}@github.com/oven-sh/bun-install-oauth-test.git#main`,
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stdout).toBeDefined();
+    expect(stderr).toBeDefined();
+
+    let out = await new Response(stdout).text();
+    // console.log("stdout:\n", out);
+    const err = await new Response(stderr).text();
+    // console.log("stderr:\n", err);
+
+    out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1"); // remove commit hash
+    out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, ""); // remove timings
+    expect(out.split(/\r?\n/)).toEqual([
+      " + bun-install-test-github-oauth@github:oven-sh/bun-install-oauth-test",
+      "",
+      " 1 packages installed",
+    ]);
+
+    expect(err).toContain("Resolving dependencies");
+    expect(err).toContain("Resolved, downloaded and extracted");
+    expect(err).toContain("Saved lockfile");
+
+    expect(await exited).toBe(0);
+
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bun-install-test-github-oauth"]);
+    expect(await readdirSorted(join(package_dir, "node_modules", "bun-install-test-github-oauth"))).toEqual([
+      ".bun-tag",
+      "index.js",
+      "package.json",
+    ]);
+  },
+);
 it("should handle GitHub URL with existing lockfile", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

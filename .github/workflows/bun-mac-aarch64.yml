@@ -431,6 +431,7 @@ jobs:
       - id: test
         name: Test (node runner)
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}

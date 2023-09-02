@@ -22,7 +22,7 @@ bun install v0.8.1 (16b4bf34)
 
 ---
 
-To start the dev server, run `bun run dev` from the project root. This will execute the `nuxt dev` command (as defined in the `"dev"` script in `package.json`).
+To start the dev server, run `bun run dev --bun` from the project root. This will execute the `nuxt dev` command (as defined in the `"dev"` script in `package.json`).
 
 {% callout %}
 The `nuxt` CLI uses Node.js by default; passing the `--bun` flag forces the dev server to use the Bun runtime instead.
@@ -30,7 +30,7 @@ The `nuxt` CLI uses Node.js by default; passing the `--bun` flag forces the dev 
 
 ```
 $ cd my-nuxt-app
-$ bun --bun run dev
+$ bun run dev --bun
  $ nuxt dev
 Nuxi 3.6.5
 Nuxt 3.6.5 with Nitro 2.5.2

@@ -7,7 +7,6 @@ const Stream = require("node:stream");
 const { isArrayBufferView } = require("node:util/types");
 
 const constants = $processBindingConstants.fs;
-const { COPYFILE_EXCL } = constants;
 
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
@@ -64,6 +63,58 @@ class FSWatcher extends EventEmitter {
 
   unref() {
     this.#watcher?.unref();
+  }
+
+  // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
+  start() {}
+}
+
+/** Implemented in `node_fs_stat_watcher.zig` */
+// interface StatWatcherHandle {
+//   ref();
+//   unref();
+//   close();
+// }
+
+class StatWatcher extends EventEmitter {
+  // _handle: StatWatcherHandle;
+  #listener;
+
+  constructor(path, options, listener) {
+    super();
+
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    }
+
+    if (!$isCallable(listener)) {
+      throw new TypeError("listener must be a function");
+    }
+
+    this.#listener = listener;
+    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
+  }
+
+  #onChange(curr, prev) {
+    this.emit("change", curr, prev);
+    this.#listener(curr, prev);
+  }
+
+  // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
+  start() {}
+
+  stop() {
+    this._handle?.close();
+    this._handle = null;
+  }
+
+  ref() {
+    this._handle?.ref();
+  }
+
+  unref() {
+    this._handle?.unref();
   }
 }
 
@@ -314,6 +365,9 @@ var access = function access(...args) {
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
+  },
+  watchFile = function watchFile(filename, options, listener) {
+    return new StatWatcher(filename, options, listener);
   };
 
 function callbackify(fsFunction, args) {
@@ -1203,6 +1257,7 @@ export default {
   utimes,
   utimesSync,
   watch,
+  watchFile,
   write,
   writeFile,
   writeFileSync,

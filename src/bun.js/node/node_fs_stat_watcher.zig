@@ -32,7 +32,114 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
     }
 }
 
+/// This is a singleton struct that contains the timer used to schedule restat calls.
+pub const StatWatcherScheduler = struct {
+    timer: ?*uws.Timer = null,
+
+    // !? a better queue structure is needed
+    head: ?*StatWatcher = null,
+    tail: ?*StatWatcher = null,
+
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+
+    mutex: Mutex = Mutex.init(),
+
+    pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
+        var this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
+        this.* = .{};
+        return this;
+    }
+
+    pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
+        std.debug.assert(watcher.closed == false);
+        std.debug.assert(watcher.next == null);
+
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        if (this.head == null) {
+            this.head = watcher;
+            this.tail = watcher;
+
+            watcher.last_check = std.time.Instant.now() catch unreachable;
+
+            const vm = watcher.globalThis.bunVM();
+            this.timer = uws.Timer.create(
+                vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
+                this,
+            );
+
+            // !? what's bad is new watches with less delay will take longer to hit
+            this.timer.?.set(this, timerCallback, watcher.interval, 0);
+            log("I will wait {d} milli initially", .{watcher.interval});
+        } else {
+            this.tail.?.next = watcher;
+            this.tail = watcher;
+        }
+    }
+
+    pub fn timerCallback(timer: *uws.Timer) callconv(.C) void {
+        var this = timer.ext(StatWatcherScheduler).?;
+        JSC.WorkPool.schedule(&this.task);
+    }
+
+    // !? we need to move this to a dedicated thread
+    pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        // !? mutex??? if we do .lock than this would block the main thread trying to schedule add
+
+        var this: *StatWatcherScheduler = @fieldParentPtr(StatWatcherScheduler, "task", task);
+        // Instant.now will not fail on our target platforms.
+        const now = std.time.Instant.now() catch unreachable;
+
+        var prev: *StatWatcher = this.head.?;
+        while (prev.closed) {
+            log("[1] removing closed watcher for '{s}'", .{prev.path});
+            if (prev.next) |next| {
+                prev = next;
+            } else {
+                this.head = null;
+                this.tail = null;
+                this.timer.?.deinit();
+                this.timer = null;
+                // !? deinit entire scheduler?
+                return;
+            }
+        }
+
+        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1000000 - 500)) {
+            prev.last_check = now;
+            prev.restat();
+        }
+        var min_interval = prev.interval;
+
+        var curr: ?*StatWatcher = prev.next;
+        while (curr) |c| : (curr = c.next) {
+            if (c.closed) {
+                log("[2] removing closed watcher for '{s}'", .{c.path});
+                prev.next = c.next;
+                curr = c.next;
+                continue;
+            }
+            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1000000 - 500)) {
+                c.last_check = now;
+                c.restat();
+            }
+            min_interval = @min(min_interval, c.interval);
+            prev = c;
+            curr = c.next;
+        }
+        this.tail = prev;
+
+        log("I will wait {d} milli", .{min_interval});
+
+        // !? what's bad is new watches can delay longer
+        this.timer.?.set(this, timerCallback, min_interval, 0);
+    }
+};
+
 pub const StatWatcher = struct {
+    next: ?*StatWatcher = null,
+
     ctx: *VirtualMachine,
     closed: bool,
 
@@ -40,13 +147,12 @@ pub const StatWatcher = struct {
     persistent: bool,
     bigint: bool,
     interval: i32,
+    last_check: std.time.Instant,
 
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
 
     poll_ref: JSC.PollRef = .{},
-
-    timer: *uws.Timer,
 
     last_stat: bun.Stat,
     last_jsvalue: JSC.Strong,
@@ -175,25 +281,6 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn initJS(this: *StatWatcher, listener: JSC.JSValue) void {
-        if (this.persistent) {
-            this.poll_ref.ref(this.ctx);
-        }
-
-        const js_this = StatWatcher.toJS(this, this.globalThis);
-        this.js_this = js_this;
-        StatWatcher.listenerSetCached(js_this, this.globalThis, listener);
-    }
-
-    /// https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L132-L137
-    /// To maximize backward-compatibility for the end user,
-    /// a no-op stub method has been added instead of
-    /// totally removing StatWatcher.prototype.start.
-    /// This should not be documented.
-    pub fn noopStart(_: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsUndefined();
-    }
-
     pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
@@ -210,30 +297,10 @@ pub const StatWatcher = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    // this can be called from Watcher Thread or JS Context Thread
-    // pub fn refTask(this: *StatWatcher) bool {
-    //     this.mutex.lock();
-    //     defer this.mutex.unlock();
-    //     // stop new references
-    //     if (this.closed) return false;
-    //     this.task_count += 1;
-    //     return true;
-    // }
-
-    // !? this is wrong
+    // !? this is wrong. what is this do/mean?
     pub fn hasPendingActivity(this: *StatWatcher) callconv(.C) bool {
         return !this.closed;
     }
-
-    // unref is always called on main JS Context Thread
-    // pub fn unrefTask(this: *StatWatcher) void {
-    //     this.mutex.lock();
-    //     defer this.mutex.unlock();
-    //     this.task_count -= 1;
-    //     if (this.closed and this.task_count == 0) {
-    //         this.updateHasPendingActivity();
-    //     }
-    // }
 
     pub fn close(
         this: *StatWatcher,
@@ -244,7 +311,6 @@ pub const StatWatcher = struct {
         }
         this.closed = true;
         this.last_jsvalue.clear();
-        this.timer.deinit();
     }
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -253,39 +319,89 @@ pub const StatWatcher = struct {
     }
 
     pub fn finalize(this: *StatWatcher) callconv(.C) void {
-        // !? this never gets called?
-        this.deinit();
+        _ = this;
+        // !? TODO: figure out how this works and when to deinit
+        // this.deinit();
     }
 
-    pub fn initialStat(this: *StatWatcher) void {
-        const stat = bun.sys.stat(this.path);
-        switch (stat) {
-            .result => |res| {
-                // we store the stat and do not emit immediatly
-                this.last_stat = res;
-                const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
-                this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
-            },
-            .err => {
-                // on enoent, eperm, we call cb with two zeroed stat objects
-                // and store previous stat as a zeroed stat object
-                this.last_stat = std.mem.zeroes(bun.Stat);
-                const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
-                this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
-                _ = StatWatcher.listenerGetCached(this.js_this).?.call(
-                    this.globalThis,
-                    &[2]JSC.JSValue{
-                        jsvalue,
-                        jsvalue,
-                    },
-                );
-                // !? what if this throws?
-            },
+    pub const InitialStatTask = struct {
+        watcher: *StatWatcher,
+        task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+
+        pub fn createAndSchedule(
+            watcher: *StatWatcher,
+        ) void {
+            var task = bun.default_allocator.create(InitialStatTask) catch @panic("out of memory");
+            task.* = .{ .watcher = watcher };
+            JSC.WorkPool.schedule(&task.task);
         }
 
-        this.timer.set(this, onTimerInterval, this.interval, 1);
+        fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+            var initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
+            defer bun.default_allocator.destroy(initial_stat_task);
+            const this = initial_stat_task.watcher;
+
+            if (this.closed) {
+                // !? do i need to free the watcher itself here?
+                // this.deinit();
+                return;
+            }
+
+            const stat = bun.sys.stat(this.path);
+            switch (stat) {
+                .result => |res| {
+                    // we store the stat, but do not call the callback
+                    this.last_stat = res;
+                    this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, initialStatSuccessOnMainThread));
+                },
+                .err => {
+                    // on enoent, eperm, we call cb with two zeroed stat objects
+                    // and store previous stat as a zeroed stat object, and then call the callback.
+                    this.last_stat = std.mem.zeroes(bun.Stat);
+                    this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, initialStatErrorOnMainThread));
+                },
+            }
+        }
+    };
+
+    pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
+        if (this.closed) {
+            // !? do i need to free the watcher itself here?
+            // this.deinit();
+            return;
+        }
+
+        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+
+        const vm = this.globalThis.bunVM();
+        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
+    pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
+        if (this.closed) {
+            // !? do i need to free the watcher itself here?
+            // this.deinit();
+            return;
+        }
+
+        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
+            this.globalThis,
+            &[2]JSC.JSValue{
+                jsvalue,
+                jsvalue,
+            },
+        );
+        // !? what if this throws?
+
+        const vm = this.globalThis.bunVM();
+        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
+    }
+
+    /// Called from any thread
     pub fn restat(this: *StatWatcher) void {
         log("recalling stat", .{});
         const stat = bun.sys.stat(this.path);
@@ -299,14 +415,20 @@ pub const StatWatcher = struct {
         log("calling into js", .{});
 
         this.last_stat = res;
+
+        this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
+    }
+
+    /// After a restat found the file changed, this calls the listener function.
+    pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
-        this.last_jsvalue.set(this.globalThis, jsvalue);
+        const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
+        this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             &[2]JSC.JSValue{
-                jsvalue,
+                current_jsvalue,
                 prev_jsvalue,
             },
         );
@@ -325,9 +447,7 @@ pub const StatWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
-        var parts = [_]string{
-            slice,
-        };
+        var parts = [_]string{slice};
         var file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
             &buf,
@@ -339,9 +459,9 @@ pub const StatWatcher = struct {
         errdefer bun.default_allocator.free(alloc_file_path);
         @memcpy(alloc_file_path, file_path);
 
-        var ctx = try bun.default_allocator.create(StatWatcher);
+        var this = try bun.default_allocator.create(StatWatcher);
         const vm = args.global_this.bunVM();
-        ctx.* = .{
+        this.* = .{
             .ctx = vm,
             .persistent = args.persistent,
             .bigint = args.bigint,
@@ -349,24 +469,24 @@ pub const StatWatcher = struct {
             .globalThis = args.global_this,
             .js_this = .zero,
             .closed = false,
-            .timer = uws.Timer.create(
-                args.global_this.bunVM().event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
-                ctx,
-            ),
             .path = alloc_file_path,
+            .last_check = std.time.Instant.now() catch unreachable,
 
-            // initialStat is responsible for setting these two
+            // InitStatTask is responsible for setting this
             .last_stat = undefined,
-            .last_jsvalue = undefined,
+            .last_jsvalue = JSC.Strong.init(),
         };
-        errdefer ctx.deinit();
+        errdefer this.deinit();
 
-        ctx.initJS(args.listener);
+        if (this.persistent) {
+            this.poll_ref.ref(this.ctx);
+        }
 
-        // !? this should happen at *least* a microtick later
-        // !? maybe also run it on another thread?
-        ctx.initialStat();
+        const js_this = StatWatcher.toJS(this, this.globalThis);
+        this.js_this = js_this;
+        StatWatcher.listenerSetCached(js_this, this.globalThis, args.listener);
+        InitialStatTask.createAndSchedule(this);
 
-        return ctx;
+        return this;
     }
 };

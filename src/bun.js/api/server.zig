@@ -2026,12 +2026,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.doRenderBlob();
             } else {
                 const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
-                const original_size = this.blob.Blob.size;
 
-                this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
-                    stat_size
-                else
-                    @min(original_size, stat_size);
+                if (this.blob == .Blob) {
+                    const original_size = this.blob.Blob.size;
+
+                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                        stat_size
+                    else
+                        @min(original_size, stat_size);
+                }
 
                 if (!this.flags.has_written_status)
                     this.flags.needs_content_range = true;
@@ -2040,7 +2043,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile = .{
                     .fd = bun.invalid_fd,
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                    .offset = this.blob.Blob.offset,
+                    .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
                     .auto_close = false,
                     .socket_fd = -999,
                 };
@@ -5585,7 +5588,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }
@@ -5655,7 +5658,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }

@@ -452,6 +452,21 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     }
 }
 
+extern "C" void BunDebugger__willHotReload() {
+    if (debuggerScriptExecutionContext == nullptr) {
+        return;
+    }
+
+    debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext &context){
+        WTF::LockHolder locker(inspectorConnectionsLock);
+        for (auto& connections : *inspectorConnections) {
+            for (auto* connection : connections.value) {
+                connection->sendMessageToFrontend("{\"method\":\"Bun.canReload\"}"_s);
+            }
+        }
+    });
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* debuggerGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);

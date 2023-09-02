@@ -8,7 +8,7 @@ export default {
     };
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();
-    return new Response("Hello World??");
+    return new Response("Hello World!!");
   },
 };
 

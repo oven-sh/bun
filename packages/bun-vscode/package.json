@@ -44,11 +44,23 @@
     "configuration": {
       "title": "Bun",
       "properties": {
-        "bun.path": {
+        "bun.runtime": {
           "type": "string",
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
           "scope": "window",
           "default": null
+        },
+        "bun.debugTerminal.enabled": {
+          "type": "boolean",
+          "description": "If Bun should be added to the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.debugTerminal.stopOnEntry": {
+          "type": "boolean",
+          "description": "If Bun should stop on entry when used in the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": false
         }
       }
     },

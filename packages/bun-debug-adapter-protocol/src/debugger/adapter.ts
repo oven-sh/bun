@@ -183,6 +183,7 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Adapter.response": [DAP.Response];
   "Adapter.event": [DAP.Event];
   "Adapter.error": [Error];
+  "Adapter.reverseRequest": [DAP.Request];
 } & {
   "Process.requested": [unknown];
   "Process.spawned": [ChildProcess];
@@ -322,6 +323,15 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
       process.nextTick(() => {
         this.#emit(event, body);
       });
+    });
+  }
+
+  #reverseRequest<T extends keyof DAP.RequestMap>(command: T, args?: DAP.RequestMap[T]): void {
+    this.emit("Adapter.reverseRequest", {
+      type: "request",
+      seq: 0,
+      command,
+      arguments: args,
     });
   }
 

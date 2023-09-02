@@ -29,6 +29,7 @@ const attachConfiguration: vscode.DebugConfiguration = {
   request: "attach",
   name: "Attach Bun",
   url: "ws://localhost:6499/",
+  stopOnEntry: false,
 };
 
 const adapters = new Map<string, FileDebugSession>();
@@ -59,6 +60,7 @@ function RunFileCommand(resource?: vscode.Uri): void {
       ...runConfiguration,
       noDebug: true,
       program: path,
+      runtime: getRuntime(resource),
     });
   }
 }
@@ -69,11 +71,17 @@ function DebugFileCommand(resource?: vscode.Uri): void {
     vscode.debug.startDebugging(undefined, {
       ...debugConfiguration,
       program: path,
+      runtime: getRuntime(resource),
     });
   }
 }
 
 function InjectDebugTerminal(terminal: vscode.Terminal): void {
+  const enabled = getConfig("debugTerminal.enabled");
+  if (enabled === false) {
+    return;
+  }
+
   const { name, creationOptions } = terminal;
   if (name !== "JavaScript Debug Terminal") {
     return;
@@ -84,13 +92,16 @@ function InjectDebugTerminal(terminal: vscode.Terminal): void {
     return;
   }
 
+  const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
+  const query = stopOnEntry ? "break=1" : "wait=1";
+
   const { adapter, signal } = new TerminalDebugSession();
   const debug = vscode.window.createTerminal({
     ...creationOptions,
     name: "JavaScript Debug Terminal",
     env: {
       ...env,
-      "BUN_INSPECT": `${adapter.url}?wait=1`,
+      "BUN_INSPECT": `${adapter.url}?${query}`,
       "BUN_INSPECT_NOTIFY": `${signal.url}`,
     },
   });
@@ -130,10 +141,16 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
       target = debugConfiguration;
     }
 
+    // If the configuration is missing a default property, copy it from the template.
     for (const [key, value] of Object.entries(target)) {
       if (config[key] === undefined) {
         config[key] = value;
       }
+    }
+
+    // If no runtime is specified, get the path from the configuration.
+    if (request === "launch" && !config["runtime"]) {
+      config["runtime"] = getRuntime(folder);
     }
 
     return config;
@@ -169,6 +186,9 @@ class FileDebugSession extends DebugSession {
     this.adapter = new DebugAdapter(url);
     this.adapter.on("Adapter.response", response => this.sendResponse(response));
     this.adapter.on("Adapter.event", event => this.sendEvent(event));
+    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
+      this.sendRequest(command, args, 5000, () => {}),
+    );
 
     adapters.set(url, this);
   }
@@ -233,4 +253,16 @@ function isJavaScript(languageId?: string): boolean {
     languageId === "typescript" ||
     languageId === "typescriptreact"
   );
+}
+
+function getRuntime(scope?: vscode.ConfigurationScope): string {
+  const value = getConfig("runtime", scope);
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return "bun";
+}
+
+function getConfig<T>(path: string, scope?: vscode.ConfigurationScope): unknown {
+  return vscode.workspace.getConfiguration("bun", scope).get(path);
 }

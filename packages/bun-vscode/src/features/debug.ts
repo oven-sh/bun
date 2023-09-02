@@ -12,6 +12,7 @@ const debugConfiguration: vscode.DebugConfiguration = {
   cwd: "${workspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const runConfiguration: vscode.DebugConfiguration = {
@@ -22,6 +23,7 @@ const runConfiguration: vscode.DebugConfiguration = {
   cwd: "${workspaceFolder}",
   noDebug: true,
   watchMode: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {
@@ -30,6 +32,7 @@ const attachConfiguration: vscode.DebugConfiguration = {
   name: "Attach Bun",
   url: "ws://localhost:6499/",
   stopOnEntry: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const adapters = new Map<string, FileDebugSession>();

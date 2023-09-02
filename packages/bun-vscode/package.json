@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -243,7 +243,7 @@
     "jsonValidation": [
       {
         "fileMatch": "package.json",
-        "url": "assets/package.json"
+        "url": "./assets/package.json"
       }
     ],
     "customEditors": [

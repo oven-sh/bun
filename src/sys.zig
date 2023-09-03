@@ -257,8 +257,8 @@ pub fn getErrno(rc: anytype) bun.C.E {
     const Type = @TypeOf(rc);
 
     return switch (Type) {
-        comptime_int, usize => return std.os.linux.getErrno(@as(usize, rc)),
-        i32, c_int, isize => return std.os.errno(rc),
+        comptime_int, usize => std.os.linux.getErrno(@as(usize, rc)),
+        i32, c_int, isize => std.os.errno(rc),
         else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
     };
 }

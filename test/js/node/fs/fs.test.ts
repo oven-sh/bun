@@ -2026,4 +2026,5 @@ it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => unlinkSync(path)).toThrow("No such file or directory");
   expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
+  expect(() => openSync(path)).toThrow("No such file or directory");
 });

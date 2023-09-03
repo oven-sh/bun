@@ -11,6 +11,11 @@ fn moduleSource(comptime out: []const u8) FileSource {
     }
 }
 
+fn exists(path: []const u8) bool {
+    _ = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
+    return true;
+}
+
 const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "black", "30m" },
     &.{ "blue", "34m" },
@@ -243,6 +248,21 @@ pub fn build_(b: *Build) !void {
         .optimize = optimize,
         .main_pkg_path = .{ .cwd_relative = b.pathFromRoot(".") },
     });
+
+    if (!exists(b.pathFromRoot(try std.fs.path.join(b.allocator, &.{
+        "src",
+        "js_lexer",
+        "id_continue_bitset.blob",
+    })))) {
+        const identifier_data = b.pathFromRoot(try std.fs.path.join(b.allocator, &.{ "src", "js_lexer", "identifier_data.zig" }));
+        var run_step = b.addSystemCommand(&.{
+            b.zig_exe,
+            "run",
+            identifier_data,
+        });
+        run_step.has_side_effects = true;
+        obj.step.dependOn(&run_step.step);
+    }
 
     b.reference_trace = 16;
 

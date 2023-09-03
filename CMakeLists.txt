@@ -7,6 +7,35 @@ if(APPLE)
     set(DEFAULT_USE_STATIC_SQLITE OFF)
 endif()
 
+set(DEFAULT_ZIG_EXECUTABLE "zig")
+if (DEFINED ENV{ZIG})
+    set(DEFAULT_ZIG_EXECUTABLE $ENV{ZIG})
+endif()
+
+set(DEFAULT_BUN_EXECUTABLE "bun")
+if (DEFINED ENV{BUN})
+    set(DEFAULT_BUN_EXECUTABLE $ENV{BUN})
+endif()
+
+set(DEFAULT_CPU_TARGET "native")
+
+if (ARCH STREQUAL "x86_64")
+    if (NOT MSVC)
+        if (USE_BASELINE_BUILD)
+            set(DEFAULT_CPU_TARGET "nehalem")
+        else ()
+            set(DEFAULT_CPU_TARGET "haswell")
+        endif()
+    endif()
+endif()
+
+# Check for environment variable
+if (DEFINED ENV{CPU_TARGET})
+    set(DEFAULT_CPU_TARGET $ENV{CPU_TARGET})
+endif()
+
+
+
 option(USE_STATIC_SQLITE "Statically link SQLite?" DEFAULT_USE_STATIC_SQLITE)
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
@@ -20,7 +49,11 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_BASELINE_BUILD "Build Bun for older CPUs" OFF)
 
+set(ZIG_EXECUTABLE "${DEFAULT_ZIG_EXECUTABLE}" CACHE STRING "Path to zig executable")
+set(BUN_EXECUTABLE "${DEFAULT_BUN_EXECUTABLE}" CACHE STRING "Path to bun executable")
+
 set(WEBKIT_LIB_DIR "${CMAKE_SOURCE_DIR}/bun-webkit/lib" CACHE STRING "WebKit lib folder")
+set(WEBKIT_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/bun-webkit/include" CACHE STRING "WebKit include folder")
 set(BUN_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps" CACHE STRING "Directory holding submodules" )
 set(BUN_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps" CACHE STRING "Directory holding static libraries" )
 
@@ -46,7 +79,7 @@ include_directories(src/bun.js/bindings/WebCore)
 include_directories(src/bun.js/bindings/webcrypto)
 include_directories(src/bun.js/bindings/sqlite)
 include_directories(src/bun.js/modules)
-include_directories(bun-webkit/include)
+include_directories(${WEBKIT_INCLUDE_DIR})
 include_directories(src/js/out)
 include_directories(src/js/out/modules)
 include_directories(src/js/builtins)
@@ -91,10 +124,6 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "ASSERT_ENABLED=0"
 )
-
-
-
-
 
 # If arm64
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
@@ -143,34 +172,39 @@ if (APPLE)
     string(APPEND CMAKE_C_FLAGS " -mmacosx-version-min=11")
 endif()
 
-if (ARCH STREQUAL "x86_64")
-    if (NOT MSVC)
-        if (USE_BASELINE_BUILD)
-            # Set CPU to nehalem
-            string(APPEND CMAKE_CXX_FLAGS " -march=nehalem -mtune=nehalem ")
-            string(APPEND CMAKE_C_FLAGS " -march=nehalem -mtune=nehalem ")
-        else ()
-            # Set CPU to haswell
-            string(APPEND CMAKE_CXX_FLAGS " -march=haswell -mtune=haswell ")
-            string(APPEND CMAKE_C_FLAGS " -march=haswell -mtune=haswell ")
-        endif()
-    endif()
+SET(CPU_TARGET "${DEFAULT_CPU_TARGET}" CACHE STRING "CPU target")
+
+if (NOT MSVC)
+    string(APPEND CMAKE_CXX_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET} ")
+    string(APPEND CMAKE_C_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET} ")
+else()
+    string(APPEND CMAKE_CXX_FLAGS " /arch:${CPU_TARGET} ")
+    string(APPEND CMAKE_C_FLAGS " /arch:${CPU_TARGET} ")
 endif()
 
 file(GLOB ZIG_FILES 
     "src/*.zig"
     "src/*/*.zig"
     "src/*/*/*.zig"
-    "src/*/*/*/*.zig")
+    "src/*/*/*/*.zig"
+    "src/*/*/*/*/*.zig")
 
-add_custom_target(
-    BunZig
-    COMMAND zig build obj $<$<CONFIG:Release>:-DOptimize=Release> -Doutput-dir=${CMAKE_CURRENT_SOURCE_DIR}/zig-out/lib
-    DEPENDS build.zig ${ZIG_FILES}
+set(IDENTIFIER_CACHE_FILES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/js_lexer/id_continue_bitset.blob" 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/js_lexer/id_continue_bitset.meta.blob" 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/js_lexer/id_start_bitset.blob"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/js_lexer/id_start_bitset.meta.blob")
+
+
+add_custom_command(
+    OUTPUT ${BUN_OBJECT_FILE}
+    COMMAND "${ZIG_EXECUTABLE}" build obj -Doptimize=${CMAKE_BUILD_TYPE} -Doutput-dir=${CMAKE_CURRENT_SOURCE_DIR}/zig-out/lib -Dcpu=${CPU_TARGET}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build.zig ${ZIG_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Building zig code"
-    OUTPUT ${BUN_OBJECT_FILE}
+    VERBATIM
 )
+
 
 # add_custom_command(
 #     TARGET BunCpp
@@ -196,9 +230,8 @@ add_compile_definitions(
 )
 
 add_executable(bun ${BUN_OBJECT_FILE})
-
-
 target_link_libraries(bun PRIVATE BunCpp)
+set(CMAKE_COLOR_DIAGNOSTICS ON)
 
 if (APPLE)
     target_link_libraries(bun PRIVATE "${HOMEBREW_PREFIX}/opt/libiconv/lib/libiconv.a")

@@ -45,7 +45,7 @@ void *sni_find(void *sni, const char *hostname);
 
 #include "./root_certs.h"
 #include <stdatomic.h>
-static const root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
+static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 static X509* root_cert_instances[root_certs_size]  = {NULL};
 static atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
 static atomic_bool root_cert_instances_initialized = 0;
@@ -87,7 +87,7 @@ struct us_internal_ssl_socket_context_t {
     void *sni;
 
     int pending_handshake;
-    void (*on_handshake)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
+    us_internal_on_handshake_t on_handshake;
     void* handshake_data;
 };
 
@@ -194,13 +194,13 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 }
 
 
-void us_internal_on_ssl_handshake(struct us_internal_ssl_socket_context_t * context, void (*on_handshake)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
+void us_internal_on_ssl_handshake(struct us_internal_ssl_socket_context_t * context, us_internal_on_handshake_t on_handshake, void* custom_data) {
     context->pending_handshake = 1;
     context->on_handshake = on_handshake;
     context->handshake_data = custom_data;
 }
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, void (*on_handshake)(struct us_internal_ssl_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
+void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, us_internal_on_handshake_t on_handshake, void* custom_data) {
     struct us_internal_ssl_socket_context_t *context = (struct us_internal_ssl_socket_context_t *) us_socket_context(0, &s->s);
     
     // will start on_open, on_writable or on_data
@@ -300,7 +300,7 @@ struct us_internal_ssl_socket_t *ssl_on_close(struct us_internal_ssl_socket_t *s
 }
 
 struct us_internal_ssl_socket_t *ssl_on_end(struct us_internal_ssl_socket_t *s) {
-    if(&s->s) {
+    if(s != NULL) {
         struct us_internal_ssl_socket_context_t *context = (struct us_internal_ssl_socket_context_t *) us_socket_context(0, &s->s);
         if (context && context->pending_handshake) {
             context->pending_handshake = 0;
@@ -631,13 +631,10 @@ void us_internal_init_root_certs() {
 
     while(atomic_flag_test_and_set_explicit(&root_cert_instances_lock, memory_order_acquire));
 
-    // if some thread already created it after we acquired the lock we skip and release the lock
-    if(atomic_load(&root_cert_instances_initialized) == 0) {
+    if(!atomic_exchange(&root_cert_instances_initialized, 1)) {
         for (size_t i = 0; i < root_certs_size; i++) {
             root_cert_instances[i] = us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
-        }
-        
-        atomic_store(&root_cert_instances_initialized, 1);
+        }        
     }
 
     atomic_flag_clear_explicit(&root_cert_instances_lock, memory_order_release);

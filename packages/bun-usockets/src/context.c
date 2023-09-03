@@ -565,10 +565,10 @@ void *us_socket_context_ext(int ssl, struct us_socket_context_t *context) {
 }
 
 
-void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_context_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
+void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        us_internal_on_ssl_handshake((struct us_internal_ssl_socket_context_t *) context, on_handshake, custom_data);
+        us_internal_on_ssl_handshake((struct us_internal_ssl_socket_context_t *) context, (us_internal_on_handshake_t)on_handshake, custom_data);
         return;
     }
 #endif

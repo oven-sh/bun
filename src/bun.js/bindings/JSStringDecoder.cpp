@@ -409,7 +409,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
+JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSValue stringDecoderValue = JSValue::decode(jsStringDecoderCast(globalObject, callFrame->thisValue()));
@@ -419,7 +419,7 @@ static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
     JSStringDecoder* castedThis = jsCast<JSStringDecoder*>(stringDecoderValue);
     return jsStringDecoderPrototypeFunction_writeBody(globalObject, callFrame, castedThis);
 }
-static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
+JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSValue stringDecoderValue = JSValue::decode(jsStringDecoderCast(globalObject, callFrame->thisValue()));
@@ -429,7 +429,7 @@ static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     JSStringDecoder* castedThis = jsCast<JSStringDecoder*>(stringDecoderValue);
     return jsStringDecoderPrototypeFunction_endBody(globalObject, callFrame, castedThis);
 }
-static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text,
+JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSValue stringDecoderValue = JSValue::decode(jsStringDecoderCast(globalObject, callFrame->thisValue()));

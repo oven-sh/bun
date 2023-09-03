@@ -22,10 +22,12 @@ Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, JSC::JSUint8Array*
 
 int32_t static write(WTF::StringView view, size_t offset, size_t length, BufferEncodingType encodingType)
 {
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Buffer::~Buffer()
 {
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Ref<Buffer> Buffer::createEmpty(JSC::JSGlobalObject* globalObject)
@@ -34,18 +36,20 @@ Ref<Buffer> Buffer::createEmpty(JSC::JSGlobalObject* globalObject)
 }
 Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, UChar* ptr, size_t len, BufferEncodingType encoding)
 {
+    RELEASE_ASSERT_NOT_REACHED();
 }
 Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, LChar* ptr, size_t len, BufferEncodingType encoding)
 {
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, WTF::StringView& str, BufferEncodingType encoding)
 {
-    if (str.is8Bit()) {
-    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, WTF::String& str, BufferEncodingType encoding)
 {
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 }

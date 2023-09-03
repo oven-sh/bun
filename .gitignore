@@ -133,3 +133,10 @@ make-dev-stats.csv
 
 .uuid
 tsconfig.tsbuildinfo
+CMakeFiles
+build.ninja
+.ninja_deps
+.ninja_log
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json

@@ -76,6 +76,8 @@ const BunBuildOptions = struct {
     runtime_js_version: u64 = 0,
     fallback_html_version: u64 = 0,
 
+    tinycc: bool = true,
+
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
             defer file.close();
@@ -114,6 +116,7 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.base_path), "base_path", this.base_path);
         opts.addOption(@TypeOf(this.runtime_js_version), "runtime_js_version", this.runtime_js_version);
         opts.addOption(@TypeOf(this.fallback_html_version), "fallback_html_version", this.fallback_html_version);
+        opts.addOption(@TypeOf(this.tinycc), "tinycc", this.tinycc);
         return opts;
     }
 };
@@ -167,9 +170,11 @@ pub fn build_(b: *Build) !void {
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
-    var target = b.standardTargetOptions(.{ .default_target = .{
-        .os_tag = .windows,
-    } });
+    var target = b.standardTargetOptions(.{
+        .default_target = .{
+            // .os_tag = .windows,
+        },
+    });
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     optimize = b.standardOptimizeOption(.{});

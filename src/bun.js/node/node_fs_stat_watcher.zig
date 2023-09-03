@@ -74,6 +74,7 @@ pub const StatWatcherScheduler = struct {
         } else {
             this.tail.?.next = watcher;
             this.tail = watcher;
+            this.timer.?.set(this, timerCallback, 1, 0);
         }
     }
 

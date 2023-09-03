@@ -18,6 +18,7 @@ import fs, {
   rmSync,
   rmdir,
   rmdirSync,
+  renameSync,
   createReadStream,
   createWriteStream,
   promises,
@@ -2019,4 +2020,10 @@ it("BigIntStats", () => {
   expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
   expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
   expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+});
+
+it("test syscall errno, issue#4198", () => {
+  const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
+  expect(() => unlinkSync(path)).toThrow("No such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
 });

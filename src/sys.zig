@@ -256,11 +256,16 @@ pub fn getErrno(rc: anytype) bun.C.E {
     if (comptime use_libc) return std.os.errno(rc);
     const Type = @TypeOf(rc);
 
-    return switch (Type) {
-        comptime_int, usize => std.os.linux.getErrno(@as(usize, rc)),
-        i32, c_int, isize => std.os.linux.getErrno(@as(usize, @bitCast(@as(isize, rc)))),
+    switch (Type) {
+        comptime_int, usize => return std.os.linux.getErrno(@as(usize, rc)),
+        i32, c_int, isize => {
+            if (rc == -1) {
+                return std.os.errno(rc);
+            }
+            return std.os.linux.getErrno(@as(usize, @bitCast(@as(isize, rc))));
+        },
         else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
-    };
+    }
 }
 
 // pub fn openOptionsFromFlagsWindows(flags: u32) windows.OpenFileOptions {

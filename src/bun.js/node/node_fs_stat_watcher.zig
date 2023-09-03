@@ -68,7 +68,6 @@ pub const StatWatcherScheduler = struct {
                 this,
             );
 
-            // TODO: what's bad is new watches with less delay will take longer to hit
             this.timer.?.set(this, timerCallback, watcher.interval, 0);
             log("I will wait {d} milli initially", .{watcher.interval});
         } else {
@@ -143,7 +142,6 @@ pub const StatWatcherScheduler = struct {
 
         log("I will wait {d} milli", .{min_interval});
 
-        // TODO: new watches can delay
         this.timer.?.set(this, timerCallback, min_interval, 0);
     }
 };

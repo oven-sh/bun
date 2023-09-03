@@ -205,9 +205,12 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     }
     default: {
         // should never reach here.
-        RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
+        RELEASE_AND_RETURN(throwScope, JSC::jsUndefined());
+        break;
     }
     }
+
+    __builtin_unreachable();
 }
 
 JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
@@ -245,6 +248,8 @@ JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObje
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr, length, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     }
+
+    __builtin_unreachable();
 }
 
 class ResetScope final {

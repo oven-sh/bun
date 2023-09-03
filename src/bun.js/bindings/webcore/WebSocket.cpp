@@ -881,13 +881,14 @@ String WebSocket::extensions() const
 String WebSocket::binaryType() const
 {
     switch (m_binaryType) {
-    // case BinaryType::Blob:
-    //     return "blob"_s;
-    case BinaryType::ArrayBuffer:
-        return "arraybuffer"_s;
     case BinaryType::NodeBuffer:
         return "nodebuffer"_s;
+    case BinaryType::ArrayBuffer:
+        return "arraybuffer"_s;
+    case BinaryType::Blob:
+        return "blob"_s;
     }
+
     ASSERT_NOT_REACHED();
     return String();
 }
@@ -1111,6 +1112,9 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         }
 
         break;
+    }
+    case BinaryType::Blob: {
+        // TODO: Blob is not supported currently.
     }
     }
     // });
@@ -1431,7 +1435,7 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString *reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
 {
     WTF::String wtf_reason = Bun::toWTFString(*reason);
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));

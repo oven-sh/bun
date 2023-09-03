@@ -346,50 +346,42 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_consumeBody(JSC:
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->consume(vm, lexicalGlobalObject, n, hasString)));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_push);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_push,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_push,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_pushBody>(*globalObject, *callFrame, "push");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_unshift);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_unshift,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_unshift,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_unshiftBody>(*globalObject, *callFrame, "unshift");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_shift);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_shift,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_shift,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_shiftBody>(*globalObject, *callFrame, "shift");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_clear);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_clear,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_clear,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_clearBody>(*globalObject, *callFrame, "clear");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_first);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_first,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_first,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_firstBody>(*globalObject, *callFrame, "first");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_concat);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_concat,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_concat,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_concatBody>(*globalObject, *callFrame, "concat");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_join);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_join,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_join,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_joinBody>(*globalObject, *callFrame, "join");
 }
-static JSC_DECLARE_HOST_FUNCTION(jsBufferListPrototypeFunction_consume);
-static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_consume,
+JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_consume,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSBufferList>::call<jsBufferListPrototypeFunction_consumeBody>(*globalObject, *callFrame, "consume");

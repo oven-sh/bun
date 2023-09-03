@@ -1492,7 +1492,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -2266,6 +2266,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         }
         break;
     }
+    default: {
+        break;
+    }
     }
 
     return false;
@@ -2887,6 +2890,8 @@ bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
         if (callData.native.isBoundFunction)
             return false;
         return value.isConstructor();
+    default:
+        return false;
     }
     return false;
 }
@@ -3945,6 +3950,7 @@ void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1)
 
 JSC__VM* JSC__VM__create(unsigned char HeapType0)
 {
+    return nullptr;
 }
 
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))

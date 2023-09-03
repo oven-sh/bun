@@ -396,7 +396,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toString, (JSGlobalO
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
 }
 
-JSC::JSValue WebCore::getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis)
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis)
 {
     auto& impl = castedThis->wrapped();
     auto iter = impl.createIterator();

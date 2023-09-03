@@ -49,6 +49,7 @@ pub const StatWatcherScheduler = struct {
     }
 
     pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
+        log("append new watcher {s}", .{watcher.path});
         std.debug.assert(watcher.closed == false);
         std.debug.assert(watcher.next == null);
 
@@ -59,7 +60,6 @@ pub const StatWatcherScheduler = struct {
             this.head = watcher;
             this.tail = watcher;
 
-            watcher.used_by_scheduler_thread = true;
             watcher.last_check = std.time.Instant.now() catch unreachable;
 
             const vm = watcher.globalThis.bunVM();
@@ -111,7 +111,7 @@ pub const StatWatcherScheduler = struct {
             }
         }
 
-        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1000000 - 500)) {
+        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 - 500)) {
             prev.last_check = now;
             prev.restat();
         }
@@ -130,7 +130,7 @@ pub const StatWatcherScheduler = struct {
                 }
                 continue;
             }
-            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1000000 - 500)) {
+            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 - 500)) {
                 c.last_check = now;
                 c.restat();
             }
@@ -416,7 +416,6 @@ pub const StatWatcher = struct {
             },
         );
         // TODO: what if this throws?
-
         const vm = this.globalThis.bunVM();
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }

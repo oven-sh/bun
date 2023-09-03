@@ -1,5 +1,3 @@
-#pragma once
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"

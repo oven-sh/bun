@@ -243,6 +243,9 @@ static inline EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObj
         }
         break;
     }
+    default: {
+        break;
+    }
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(written));
@@ -345,6 +348,9 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
             break;
         }
+        default: {
+            break;
+        }
         }
     } else {
         switch (encoding) {
@@ -361,6 +367,9 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
             // The native encoding is UTF-16
             // so we don't need to do any conversion.
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2);
+            break;
+        }
+        default: {
             break;
         }
         }
@@ -580,6 +589,9 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         } else {
             written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
         }
+        break;
+    }
+    default: {
         break;
     }
     }

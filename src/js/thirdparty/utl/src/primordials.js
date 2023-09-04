@@ -1,5 +1,3 @@
-// back-patch in primordials in user-land
-
 const createSafeIterator = (factory, next) => {
   class SafeIterator {
     constructor(iterable) {
@@ -89,7 +87,9 @@ function ErrorCaptureStackTrace(targetObject) {
 export default {
   makeSafe, // exported for testing
   Array,
+  ArrayFrom: Array.from,
   ArrayIsArray: Array.isArray,
+  ArrayPrototypeFlat: Function.prototype.call.bind(Array.prototype.flat),
   ArrayPrototypeFilter: Function.prototype.call.bind(Array.prototype.filter),
   ArrayPrototypeForEach: Function.prototype.call.bind(Array.prototype.forEach),
   ArrayPrototypeIncludes: Function.prototype.call.bind(Array.prototype.includes),
@@ -116,6 +116,8 @@ export default {
   JSONStringify: JSON.stringify,
   MapPrototypeGetSize: getGetter(Map, 'size'),
   MapPrototypeEntries: Function.prototype.call.bind(Map.prototype.entries),
+  MapPrototypeValues: Function.prototype.call.bind(Map.prototype.values),
+  MapPrototypeKeys: Function.prototype.call.bind(Map.prototype.keys),
   MathFloor: Math.floor,
   MathMax: Math.max,
   MathMin: Math.min,
@@ -166,6 +168,7 @@ export default {
       constructor(i) { super(i); }
     }),
   SetPrototypeGetSize: getGetter(Set, 'size'),
+  SetPrototypeEntries: Function.prototype.call.bind(Set.prototype.entries),
   SetPrototypeValues: Function.prototype.call.bind(Set.prototype.values),
   String,
   StringPrototypeCharCodeAt: Function.prototype.call.bind(String.prototype.charCodeAt),
@@ -174,6 +177,7 @@ export default {
   StringPrototypeIncludes: Function.prototype.call.bind(String.prototype.includes),
   StringPrototypeIndexOf: Function.prototype.call.bind(String.prototype.indexOf),
   StringPrototypeLastIndexOf: Function.prototype.call.bind(String.prototype.lastIndexOf),
+  StringPrototypeMatch: Function.prototype.call.bind(String.prototype.match),
   StringPrototypeNormalize: Function.prototype.call.bind(String.prototype.normalize),
   StringPrototypePadEnd: Function.prototype.call.bind(String.prototype.padEnd),
   StringPrototypePadStart: Function.prototype.call.bind(String.prototype.padStart),

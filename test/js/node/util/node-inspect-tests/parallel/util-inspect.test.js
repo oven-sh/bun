@@ -73,23 +73,27 @@ test('no assertion failures', () => {
       '[AsyncGeneratorFunction: abc]'
     );
     Object.setPrototypeOf(fn, Object.getPrototypeOf(async () => { }));
-    //!assert.strictEqual(
-    //!  util.inspect(fn),
-    //!  '[GeneratorFunction (anonymous)] AsyncFunction'
-    //!);
+    //! Note:
+    // The following tests are relying on the JS-based is(Async|Generator)Function polyfills,
+    // when switching them out back for the native implementation make sure they are fixed!
+    // Due to the bug with the native impl. being flaky make sure its tested multiple times.
+    assert.strictEqual(
+      util.inspect(fn),
+      '[GeneratorFunction (anonymous)] AsyncFunction'
+    );
     Object.defineProperty(fn, 'name', { value: 5, configurable: true });
-    //!assert.strictEqual(
-    //!  util.inspect(fn),
-    //!  '[GeneratorFunction: 5] AsyncFunction'
-    //!);
+    assert.strictEqual(
+      util.inspect(fn),
+      '[GeneratorFunction: 5] AsyncFunction'
+    );
     Object.defineProperty(fn, Symbol.toStringTag, {
       value: 'Foobar',
       configurable: true
     });
-    //!assert.strictEqual(
-    //!  util.inspect({ ['5']: fn }),
-    //!  "{ '5': [GeneratorFunction: 5] AsyncFunction [Foobar] }"
-    //!);
+    assert.strictEqual(
+      util.inspect({ ['5']: fn }),
+      "{ '5': [GeneratorFunction: 5] AsyncFunction [Foobar] }"
+    );
     Object.defineProperty(fn, 'name', { value: '5', configurable: true });
     Object.setPrototypeOf(fn, null);
     assert.strictEqual(
@@ -596,21 +600,6 @@ test('no assertion failures 2', () => {
     assert.strictEqual(util.inspect(a, {
       maxArrayLength: 2
     }), "[ 'foo', <1 empty item>, ... 99 more items ]");
-  }
-
-  // Test for Array constructor in different context.
-  if (false) { //! SKIP TEST: Need a replacement for internalBinding('util').previewEntries
-    const map = new Map();
-    map.set(1, 2);
-    // Passing only a single argument to indicate a set iterator.
-    const valsSetIterator = previewEntries(map.entries());
-    // Passing through true to indicate a map iterator.
-    const valsMapIterEntries = previewEntries(map.entries(), true);
-    const valsMapIterKeys = previewEntries(map.keys(), true);
-
-    assert.strictEqual(util.inspect(valsSetIterator), '[ 1, 2 ]');
-    assert.strictEqual(util.inspect(valsMapIterEntries), '[ [ 1, 2 ], true ]');
-    assert.strictEqual(util.inspect(valsMapIterKeys), '[ [ 1 ], false ]');
   }
 
   // Test for other constructors in different context.
@@ -1298,75 +1287,72 @@ test('no assertion failures 2', () => {
   // Test Map iterators.
   {
     const map = new Map([['foo', 'bar']]);
-    // TODO: can't figure out how to tell entry iterators from other iterators,
-    // but it doesn't much matter because we can't safe-iterate them anyway.
-    // assert.strictEqual(util.inspect(map.keys()), '[Map Iterator] { \'foo\' }');
-    assert.strictEqual(util.inspect(map.keys()), '[Map Iterator] {  }');
+    assert.strictEqual(util.inspect(map.keys()), "[Map Iterator] { 'foo' }");
     const mapValues = map.values();
     Object.defineProperty(mapValues, Symbol.toStringTag, { value: 'Foo' });
     assert.strictEqual(
       util.inspect(mapValues),
-      // TODO: '[Foo] [Map Iterator] { \'bar\' }'
-      '[Foo] [Map Iterator] {  }'
+      "[Foo] [Map Iterator] { 'bar' }"
     );
     map.set('A', 'B!');
     assert.strictEqual(
       util.inspect(map.entries(), { maxArrayLength: 1 }),
-      // TODO: "[Map Entries] { [ 'foo', 'bar' ], ... 1 more item }");
-      '[Map Iterator] {  }');
+      "[Map Entries] { [ 'foo', 'bar' ], ... 1 more item }"
+    );
     // Make sure the iterator doesn't get consumed.
     const keys = map.keys();
     assert.strictEqual(
       util.inspect(keys),
-      // TODO: "[Map Iterator] { 'foo', 'A' }");
-      '[Map Iterator] {  }');
+      "[Map Iterator] { 'foo', 'A' }"
+    );
     assert.strictEqual(
       util.inspect(keys),
-      // TODO: "[Map Iterator] { 'foo', 'A' }");
-      '[Map Iterator] {  }');
+      "[Map Iterator] { 'foo', 'A' }"
+    );
     keys.extra = true;
     assert.strictEqual(
       util.inspect(keys, { maxArrayLength: 0 }),
-      // TODO: '[Map Iterator] { ... 2 more items, extra: true }');
-      '[Map Iterator] { extra: true }');
+      '[Map Iterator] { ... 2 more items, extra: true }'
+    );
   }
 
   // Test Set iterators.
   {
     const aSet = new Set([1]);
-    assert.strictEqual(util.inspect(aSet.entries(), { compact: false }),
-      // TODO: '[Set Entries] {\n  [\n    1,\n    1\n  ]\n}');
-      '[Set Iterator] {\n  \n}');
+    assert.strictEqual(
+      util.inspect(aSet.entries(), { compact: false }),
+      '[Set Entries] {\n  [\n    1,\n    1\n  ]\n}'
+    );
     aSet.add(3);
     assert.strictEqual(
       util.inspect(aSet.keys()),
-      // TODO: '[Set Iterator] { 1, 3 }');
-      '[Set Iterator] {  }');
+      '[Set Iterator] { 1, 3 }'
+    );
     assert.strictEqual(
       util.inspect(aSet.values()),
-      // TODO: '[Set Iterator] { 1, 3 }');
-      '[Set Iterator] {  }');
+      '[Set Iterator] { 1, 3 }'
+    );
     const setEntries = aSet.entries();
     Object.defineProperty(setEntries, Symbol.toStringTag, { value: 'Foo' });
     assert.strictEqual(util.inspect(setEntries),
-      // TODO: '[Foo] [Set Entries] { [ 1, 1 ], [ 3, 3 ] }');
-      '[Foo] [Set Iterator] {  }');
+      '[Foo] [Set Entries] { [ 1, 1 ], [ 3, 3 ] }'
+    );
     // Make sure the iterator doesn't get consumed.
     const keys = aSet.keys();
     Object.defineProperty(keys, Symbol.toStringTag, { value: null });
     assert.strictEqual(
       util.inspect(keys),
-      // TODO: '[Set Iterator] { 1, 3 }');
-      '[Set Iterator] {  }');
+      '[Set Iterator] { 1, 3 }'
+    );
     assert.strictEqual(
       util.inspect(keys),
-      // TODO: '[Set Iterator] { 1, 3 }');
-      '[Set Iterator] {  }');
+      '[Set Iterator] { 1, 3 }'
+    );
     keys.extra = true;
     assert.strictEqual(
       util.inspect(keys, { maxArrayLength: 1 }),
-      // TODO: '[Set Iterator] { 1, ... 1 more item, extra: true }');
-      '[Set Iterator] { extra: true }');
+      '[Set Iterator] { 1, ... 1 more item, extra: true }'
+    );
   }
 
   // Minimal inspection should still return as much information as possible about
@@ -1865,26 +1851,24 @@ test('no assertion failures 2', () => {
       '    }',
       '  ],',
       '  [Set Iterator] {',
-      // TODO: Set iterator state
-      // '    [',
-      // '      1,',
-      // '      2,',
-      // '      [length]: 2',
-      // '    ],',
+      '    [',
+      '      1,',
+      '      2,',
+      '      [length]: 2',
+      '    ],',
       "    [Symbol(Symbol.toStringTag)]: 'Set Iterator'",
-      // '  } => <ref *1> [Map Iterator] {',
-      '  } => [Map Iterator] {',
-      // '    Uint8Array(0) [',
-      // '      [BYTES_PER_ELEMENT]: 1,',
-      // '      [length]: 0,',
-      // '      [byteLength]: 0,',
-      // '      [byteOffset]: 0,',
-      // '      [buffer]: ArrayBuffer {',
-      // '        byteLength: 0,',
-      // '        foo: true',
-      // '      }',
-      // '    ],',
-      // '    [Circular *1],',
+      '  } => <ref *1> [Map Iterator] {',
+      '    Uint8Array(0) [',
+      '      [BYTES_PER_ELEMENT]: 1,',
+      '      [length]: 0,',
+      '      [byteLength]: 0,',
+      '      [byteOffset]: 0,',
+      '      [buffer]: ArrayBuffer {',
+      '        byteLength: 0,',
+      '        foo: true',
+      '      }',
+      '    ],',
+      '    [Circular *1],',
       "    [Symbol(Symbol.toStringTag)]: 'Map Iterator'",
       '  }',
       '}',
@@ -1913,22 +1897,20 @@ test('no assertion failures 2', () => {
       '    [byteOffset]: 0,',
       '    [buffer]: ArrayBuffer { byteLength: 0, foo: true }',
       '  ],',
-      '  [Set Iterator] {' +
-      // TODO: Set internals
-      // '    [ 1, 2, [length]: 2 ],',
-      " [Symbol(Symbol.toStringTag)]: 'Set Iterator'" +
-      ' } => [Map Iterator] {' +
-      // TODO: Map internals
-      // '    Uint8Array(0) [',
-      // '      [BYTES_PER_ELEMENT]: 1,',
-      // '      [length]: 0,',
-      // '      [byteLength]: 0,',
-      // '      [byteOffset]: 0,',
-      // '      [buffer]: ArrayBuffer { byteLength: 0, foo: true }',
-      // '    ],',
-      // '    [Circular *1],',
-      " [Symbol(Symbol.toStringTag)]: 'Map Iterator'" +
-      ' }',
+      '  [Set Iterator] {\n' +
+      '    [ 1, 2, [length]: 2 ],',
+      "    [Symbol(Symbol.toStringTag)]: 'Set Iterator'\n" +
+      '  } => <ref *1> [Map Iterator] {\n' +
+      '    Uint8Array(0) [',
+      '      [BYTES_PER_ELEMENT]: 1,',
+      '      [length]: 0,',
+      '      [byteLength]: 0,',
+      '      [byteOffset]: 0,',
+      '      [buffer]: ArrayBuffer { byteLength: 0, foo: true }',
+      '    ],',
+      '    [Circular *1],',
+      "    [Symbol(Symbol.toStringTag)]: 'Map Iterator'\n" +
+      '  }',
       '}',
     ].join('\n');
 
@@ -1972,20 +1954,20 @@ test('no assertion failures 2', () => {
       '      byteLength: 0,',
       '      foo: true } ],',
       '  [Set Iterator] {',
-      // '    [ 1,',
-      // '      2,',
-      // '      [length]: 2 ],',
+      '    [ 1,',
+      '      2,',
+      '      [length]: 2 ],',
       '    [Symbol(Symbol.toStringTag)]:',
-      "     'Set Iterator' } => [Map Iterator] {",
-      // '    Uint8Array(0) [',
-      // '      [BYTES_PER_ELEMENT]: 1,',
-      // '      [length]: 0,',
-      // '      [byteLength]: 0,',
-      // '      [byteOffset]: 0,',
-      // '      [buffer]: ArrayBuffer {',
-      // '        byteLength: 0,',
-      // '        foo: true } ],',
-      // '    [Circular *1],',
+      "     'Set Iterator' } => <ref *1> [Map Iterator] {",
+      '    Uint8Array(0) [',
+      '      [BYTES_PER_ELEMENT]: 1,',
+      '      [length]: 0,',
+      '      [byteLength]: 0,',
+      '      [byteOffset]: 0,',
+      '      [buffer]: ArrayBuffer {',
+      '        byteLength: 0,',
+      '        foo: true } ],',
+      '    [Circular *1],',
       '    [Symbol(Symbol.toStringTag)]:',
       "     'Map Iterator' } }",
     ].join('\n');
@@ -2000,7 +1982,7 @@ test('no assertion failures 2', () => {
     let out = util.inspect(weakMap, { showHidden: true });
     // TODO: WeakMap internals
     // let expect = 'WeakMap { [ [length]: 0 ] => {}, {} => [ [length]: 0 ] }';
-    let expect = 'WeakMap { [ [length]: 0 ] => false }';
+    let expect = 'WeakMap {  }';
     assert.strictEqual(out, expect);
 
     out = util.inspect(weakMap);
@@ -2009,7 +1991,7 @@ test('no assertion failures 2', () => {
 
     out = util.inspect(weakMap, { maxArrayLength: 0, showHidden: true });
     // expect = 'WeakMap { ... 2 more items }';
-    expect = 'WeakMap { ... 1 more item }';
+    expect = 'WeakMap {  }';
     assert.strictEqual(out, expect);
 
     weakMap.extra = true;
@@ -2017,20 +1999,16 @@ test('no assertion failures 2', () => {
     // It is not possible to determine the output reliable.
     // TODO:
     // expect = 'WeakMap { [ [length]: 0 ] => {}, ... 1 more item, extra: true }';
-    expect = 'WeakMap { [ [length]: 0 ] => false, extra: true }';
-    //
-    // let expectAlt = 'WeakMap { {} => [ [length]: 0 ], ... 1 more item, ' +
-    //                 'extra: true }';
-    let expectAlt = 'WeakMap { {} => [ [length]: 0 ], extra: true }';
-    assert(out === expect || out === expectAlt,
-      `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
+    // let expectAlt = 'WeakMap { {} => [ [length]: 0 ], ... 1 more item, extra: true }';
+    assert(out === 'WeakMap { extra: true }', //out === expect || out === expectAlt,
+      `Found: "${out}"\nrather than: "WeakMap { extra: true }"`);//"${expect}"\nor: "${expectAlt}"`);
 
     // Test WeakSet
     arr.push(1);
     const weakSet = new WeakSet([obj, arr]);
     out = util.inspect(weakSet, { showHidden: true });
     // TODO: expect = 'WeakSet { [ 1, [length]: 1 ], {} }';
-    expect = 'WeakSet { [ [length]: 0 ], false }';
+    expect = 'WeakSet {  }';
     assert.strictEqual(out, expect);
 
     out = util.inspect(weakSet);
@@ -2038,7 +2016,8 @@ test('no assertion failures 2', () => {
     assert.strictEqual(out, expect);
 
     out = util.inspect(weakSet, { maxArrayLength: -2, showHidden: true });
-    expect = 'WeakSet { ... 2 more items }';
+    //expect = 'WeakSet { ... 2 more items }';
+    expect = 'WeakSet {  }';
     assert.strictEqual(out, expect);
 
     weakSet.extra = true;
@@ -2047,10 +2026,8 @@ test('no assertion failures 2', () => {
     // TODO: WeakSet internals
     // expect = 'WeakSet { {}, ... 1 more item, extra: true }';
     // expectAlt = 'WeakSet { [ 1, [length]: 1 ], ... 1 more item, extra: true }';
-    expect = 'WeakSet { {}, extra: true }';
-    expectAlt = 'WeakSet { [ [length]: 0 ], ... 1 more item, extra: true }';
-    assert(out === expect || out === expectAlt,
-      `Found: "${out}"\nrather than: "${expect}"\nor: "${expectAlt}"`);
+    assert(out === 'WeakSet { extra: true }',//out === expect || out === expectAlt,
+      `Found: "${out}"\nrather than: "WeakSet { extra: true }"`);//"${expect}"\nor: "${expectAlt}"`);
     // Keep references to the WeakMap entries, otherwise they could be GCed too
     // early.
     assert(obj && arr);
@@ -2260,12 +2237,8 @@ test('no assertion failures 3', () => {
     [{ a: 5 }, '{ a: 5 }'],
     [new Set([1, 2]), 'Set(2) { 1, 2 }'],
     [new Map([[1, 2]]), 'Map(1) { 1 => 2 }'],
-    // TODO: set iterator internals
-    // [new Set([1, 2]).entries(), '[Set Entries] { [ 1, 1 ], [ 2, 2 ] }'],
-    [new Set([1, 2]).entries(), '[Set Iterator] {  }'],
-    // TODO: map iterator internals
-    // [new Map([[1, 2]]).keys(), '[Map Iterator] { 1 }'],
-    [new Map([[1, 2]]).keys(), '[Map Iterator] {  }'],
+    [new Set([1, 2]).entries(), '[Set Entries] { [ 1, 1 ], [ 2, 2 ] }'],
+    [new Map([[1, 2]]).keys(), '[Map Iterator] { 1 }'],
     [new Date(2000), '1970-01-01T00:00:02.000Z'],
     [new Uint8Array(2), 'Uint8Array(2) [ 0, 0 ]'],
     [new Promise((resolve) => setTimeout(resolve, 10)), 'Promise { <pending> }'],

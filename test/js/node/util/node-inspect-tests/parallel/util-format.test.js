@@ -337,38 +337,40 @@ test('no assertion failures', () => {
     '    }\n' +
     '  }\n' +
     '}');
-  //! SKIP TEST: fails only due to different property order
-  //assert.strictEqual(
-  //  util.format('%o %o', obj, obj),
-  //  '{\n' +
-  //  '  foo: \'bar\',\n' +
-  //  '  foobar: 1,\n' +
-  //  '  func: <ref *1> [Function: func] {\n' +
-  //  '    [length]: 0,\n' +
-  //  '    [name]: \'func\',\n' +
-  //  '    [prototype]: { [constructor]: [Circular *1] }\n' +
-  //  '  }\n' +
-  //  '} {\n' +
-  //  '  foo: \'bar\',\n' +
-  //  '  foobar: 1,\n' +
-  //  '  func: <ref *1> [Function: func] {\n' +
-  //  '    [length]: 0,\n' +
-  //  '    [name]: \'func\',\n' +
-  //  '    [prototype]: { [constructor]: [Circular *1] }\n' +
-  //  '  }\n' +
-  //  '}');
-  //! SKIP TEST: fails only due to different property order
-  //assert.strictEqual(
-  //  util.format('%o %o', obj),
-  //  '{\n' +
-  //  '  foo: \'bar\',\n' +
-  //  '  foobar: 1,\n' +
-  //  '  func: <ref *1> [Function: func] {\n' +
-  //  '    [length]: 0,\n' +
-  //  '    [name]: \'func\',\n' +
-  //  '    [prototype]: { [constructor]: [Circular *1] }\n' +
-  //  '  }\n' +
-  //  '} %o');
+
+  assert.strictEqual(
+    util.format('%o %o', obj, obj),
+    '{\n' +
+    '  foo: \'bar\',\n' +
+    '  foobar: 1,\n' +
+    '  func: <ref *1> [Function: func] {\n' +
+    '    [prototype]: { [constructor]: [Circular *1] },\n' +
+    '    [name]: \'func\',\n' +
+    '    [length]: 0\n' +
+    '  }\n' +
+    '} {\n' +
+    '  foo: \'bar\',\n' +
+    '  foobar: 1,\n' +
+    '  func: <ref *1> [Function: func] {\n' +
+    '    [prototype]: { [constructor]: [Circular *1] },\n' +
+    '    [name]: \'func\',\n' +
+    '    [length]: 0\n' +
+    '  }\n' +
+    '}'
+  );
+
+  assert.strictEqual(
+    util.format('%o %o', obj),
+    '{\n' +
+    '  foo: \'bar\',\n' +
+    '  foobar: 1,\n' +
+    '  func: <ref *1> [Function: func] {\n' +
+    '    [prototype]: { [constructor]: [Circular *1] },\n' +
+    '    [name]: \'func\',\n' +
+    '    [length]: 0\n' +
+    '  }\n' +
+    '} %o'
+  );
 
   assert.strictEqual(util.format('%O'), '%O');
   assert.strictEqual(util.format('%O', 42), '42');
@@ -450,7 +452,8 @@ test('no assertion failures', () => {
 
   // Errors
   const err = new Error('foo');
-  //assert.strictEqual(util.format(err), err.stack);   //! SKIP TEST: fails only due to extra properties
+  assert(util.format(err).startsWith(err.stack), `Expected "${util.format(err)}" to start with "${err.stack}"`);
+
   class CustomError extends Error {
     constructor(msg) {
       super();
@@ -473,8 +476,7 @@ test('no assertion failures', () => {
   }
   Object.setPrototypeOf(BadCustomError.prototype, Error.prototype);
   Object.setPrototypeOf(BadCustomError, Error);
-  assert.strictEqual(util.format(new BadCustomError('foo')),
-    '[BadCustomError: foo]');
+  assert.strictEqual(util.format(new BadCustomError('foo')), '[BadCustomError: foo]');
 
   // The format of arguments should not depend on type of the first argument
   assert.strictEqual(util.format('1', '1'), '1 1');

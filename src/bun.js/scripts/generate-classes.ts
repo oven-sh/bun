@@ -304,8 +304,12 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   //     { "CLOSING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
   //     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
   // };
+  if (rows.length === 0) {
+    return "";
+  }
+
   return `
-  static const HashTableValue ${nameToUse}TableValues[] = {${rows.length > 0 ? "\n" + rows.join("  ,\n") + "\n" : ""}};
+  static const HashTableValue ${nameToUse}TableValues[${rows.length}] = {${"\n" + rows.join("  ,\n") + "\n"}};
 `;
 }
 

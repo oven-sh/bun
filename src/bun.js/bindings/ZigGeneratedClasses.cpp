@@ -72,7 +72,7 @@ JSC_DECLARE_HOST_FUNCTION(AttributeIteratorPrototype__nextCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAttributeIteratorPrototype, JSAttributeIteratorPrototype::Base);
 
-static const HashTableValue JSAttributeIteratorPrototypeTableValues[] = {
+static const HashTableValue JSAttributeIteratorPrototypeTableValues[1] = {
     { "next"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, AttributeIteratorPrototype__nextCallback, 0 } }
 };
 
@@ -518,7 +518,7 @@ JSC_DECLARE_CUSTOM_GETTER(BigIntStatsPrototype__uidGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBigIntStatsPrototype, JSBigIntStatsPrototype::Base);
 
-static const HashTableValue JSBigIntStatsPrototypeTableValues[] = {
+static const HashTableValue JSBigIntStatsPrototypeTableValues[29] = {
     { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeGetterWrap, 0 } },
     { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeMsGetterWrap, 0 } },
     { "atimeNs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BigIntStatsPrototype__atimeNsGetterWrap, 0 } },
@@ -1401,7 +1401,7 @@ JSC_DECLARE_HOST_FUNCTION(BlobPrototype__writerCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBlobPrototype, JSBlobPrototype::Base);
 
-static const HashTableValue JSBlobPrototypeTableValues[] = {
+static const HashTableValue JSBlobPrototypeTableValues[12] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__arrayBufferCallback, 0 } },
     { "exists"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__existsCallback, 0 } },
     { "formData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__formDataCallback, 0 } },
@@ -1980,7 +1980,7 @@ JSC_DECLARE_CUSTOM_GETTER(BuildArtifactPrototype__typeGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBuildArtifactPrototype, JSBuildArtifactPrototype::Base);
 
-static const HashTableValue JSBuildArtifactPrototypeTableValues[] = {
+static const HashTableValue JSBuildArtifactPrototypeTableValues[12] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__arrayBufferCallback, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildArtifactPrototype__hashGetterWrap, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BuildArtifactPrototype__jsonCallback, 0 } },
@@ -2549,7 +2549,7 @@ JSC_DECLARE_HOST_FUNCTION(BuildMessagePrototype__toStringCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBuildMessagePrototype, JSBuildMessagePrototype::Base);
 
-static const HashTableValue JSBuildMessagePrototypeTableValues[] = {
+static const HashTableValue JSBuildMessagePrototypeTableValues[5] = {
     { "level"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildMessagePrototype__levelGetterWrap, 0 } },
     { "message"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildMessagePrototype__messageGetterWrap, 0 } },
     { "position"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BuildMessagePrototype__positionGetterWrap, 0 } },
@@ -2994,7 +2994,7 @@ JSC_DECLARE_CUSTOM_SETTER(CommentPrototype__textSetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCommentPrototype, JSCommentPrototype::Base);
 
-static const HashTableValue JSCommentPrototypeTableValues[] = {
+static const HashTableValue JSCommentPrototypeTableValues[6] = {
     { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__afterCallback, 1 } },
     { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__beforeCallback, 1 } },
     { "remove"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CommentPrototype__removeCallback, 0 } },
@@ -3391,7 +3391,7 @@ JSC_DEFINE_JIT_OPERATION(CryptoPrototype__timingSafeEqualWithoutTypeChecksWrappe
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoPrototype, JSCryptoPrototype::Base);
 
-static const HashTableValue JSCryptoPrototypeTableValues[] = {
+static const HashTableValue JSCryptoPrototypeTableValues[5] = {
     { "getRandomValues"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, CryptoPrototype__getRandomValuesCallback, &DOMJITSignatureForCryptoPrototype__getRandomValues } },
     { "randomInt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoPrototype__randomIntCallback, 2 } },
     { "randomUUID"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, CryptoPrototype__randomUUIDCallback, &DOMJITSignatureForCryptoPrototype__randomUUID } },
@@ -3790,7 +3790,7 @@ JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoHasherPrototype, JSCryptoHasherPrototype::Base);
 
-static const HashTableValue JSCryptoHasherPrototypeTableValues[] = {
+static const HashTableValue JSCryptoHasherPrototypeTableValues[5] = {
     { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__algorithmGetterWrap, 0 } },
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__byteLengthGetterWrap, 0 } },
     { "copy"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__copyCallback, 0 } },
@@ -3949,7 +3949,7 @@ void JSCryptoHasherPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
 extern "C" JSC_DECLARE_CUSTOM_GETTER(CryptoHasherClass__getAlgorithms);
 extern "C" JSC_DECLARE_HOST_FUNCTION(CryptoHasherClass__hash);
 
-static const HashTableValue JSCryptoHasherConstructorTableValues[] = {
+static const HashTableValue JSCryptoHasherConstructorTableValues[2] = {
     { "algorithms"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherClass__getAlgorithms, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherClass__hash, 2 } }
 };
@@ -4205,7 +4205,7 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, JSDebugHTTPSServerPrototype::Base);
 
-static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
+static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[12] = {
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -4687,7 +4687,7 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, JSDebugHTTPServerPrototype::Base);
 
-static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
+static const HashTableValue JSDebugHTTPServerPrototypeTableValues[12] = {
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -5194,7 +5194,7 @@ JSC_DECLARE_CUSTOM_GETTER(DirentPrototype__nameGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDirentPrototype, JSDirentPrototype::Base);
 
-static const HashTableValue JSDirentPrototypeTableValues[] = {
+static const HashTableValue JSDirentPrototypeTableValues[8] = {
     { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isBlockDeviceCallback, 0 } },
     { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isCharacterDeviceCallback, 0 } },
     { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isDirectoryCallback, 0 } },
@@ -5670,7 +5670,7 @@ JSC_DECLARE_HOST_FUNCTION(DocEndPrototype__appendCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocEndPrototype, JSDocEndPrototype::Base);
 
-static const HashTableValue JSDocEndPrototypeTableValues[] = {
+static const HashTableValue JSDocEndPrototypeTableValues[1] = {
     { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DocEndPrototype__appendCallback, 1 } }
 };
 
@@ -5846,7 +5846,7 @@ JSC_DECLARE_CUSTOM_GETTER(DocTypePrototype__systemIdGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDocTypePrototype, JSDocTypePrototype::Base);
 
-static const HashTableValue JSDocTypePrototypeTableValues[] = {
+static const HashTableValue JSDocTypePrototypeTableValues[3] = {
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__nameGetterWrap, 0 } },
     { "publicId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__publicIdGetterWrap, 0 } },
     { "systemId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DocTypePrototype__systemIdGetterWrap, 0 } }
@@ -6175,7 +6175,7 @@ JSC_DECLARE_CUSTOM_SETTER(ElementPrototype__tagNameSetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSElementPrototype, JSElementPrototype::Base);
 
-static const HashTableValue JSElementPrototypeTableValues[] = {
+static const HashTableValue JSElementPrototypeTableValues[19] = {
     { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__afterCallback, 1 } },
     { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ElementPrototype__appendCallback, 1 } },
     { "attributes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ElementPrototype__attributesGetterWrap, 0 } },
@@ -6846,7 +6846,7 @@ JSC_DECLARE_HOST_FUNCTION(EndTagPrototype__removeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEndTagPrototype, JSEndTagPrototype::Base);
 
-static const HashTableValue JSEndTagPrototypeTableValues[] = {
+static const HashTableValue JSEndTagPrototypeTableValues[4] = {
     { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, EndTagPrototype__afterCallback, 1 } },
     { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, EndTagPrototype__beforeCallback, 1 } },
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, EndTagPrototype__nameGetterWrap, EndTagPrototype__nameSetterWrap } },
@@ -7328,7 +7328,7 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toThrowErrorMatchingSnapshotCallback)
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectPrototype, JSExpectPrototype::Base);
 
-static const HashTableValue JSExpectPrototypeTableValues[] = {
+static const HashTableValue JSExpectPrototypeTableValues[65] = {
     { "fail"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__failCallback, 1 } },
     { "not"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ExpectPrototype__notGetterWrap, 0 } },
     { "pass"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__passCallback, 1 } },
@@ -9229,7 +9229,7 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(ExpectClass__getStaticResolves);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectClass__stringContaining);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectClass__stringMatching);
 
-static const HashTableValue JSExpectConstructorTableValues[] = {
+static const HashTableValue JSExpectConstructorTableValues[13] = {
     { "addSnapshotSerializer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectClass__addSnapshotSerializer, 1 } },
     { "any"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectClass__any, 1 } },
     { "anything"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectClass__anything, 1 } },
@@ -9457,8 +9457,6 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectAnyClass__call);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectAnyPrototype, JSExpectAnyPrototype::Base);
 
-static const HashTableValue JSExpectAnyPrototypeTableValues[] = {};
-
 const ClassInfo JSExpectAnyPrototype::s_info = { "ExpectAny"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectAnyPrototype) };
 
 extern "C" void ExpectAnyPrototype__constructorValueSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
@@ -9625,8 +9623,6 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectAnythingClass__call);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectAnythingPrototype, JSExpectAnythingPrototype::Base);
 
-static const HashTableValue JSExpectAnythingPrototypeTableValues[] = {};
-
 const ClassInfo JSExpectAnythingPrototype::s_info = { "ExpectAnything"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectAnythingPrototype) };
 
 void JSExpectAnythingPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -9747,8 +9743,6 @@ extern "C" void ExpectStringContainingClass__finalize(void*);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectStringContainingClass__call);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectStringContainingPrototype, JSExpectStringContainingPrototype::Base);
-
-static const HashTableValue JSExpectStringContainingPrototypeTableValues[] = {};
 
 const ClassInfo JSExpectStringContainingPrototype::s_info = { "ExpectStringContaining"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectStringContainingPrototype) };
 
@@ -9915,8 +9909,6 @@ extern "C" void ExpectStringMatchingClass__finalize(void*);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectStringMatchingClass__call);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectStringMatchingPrototype, JSExpectStringMatchingPrototype::Base);
-
-static const HashTableValue JSExpectStringMatchingPrototypeTableValues[] = {};
 
 const ClassInfo JSExpectStringMatchingPrototype::s_info = { "ExpectStringMatching"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectStringMatchingPrototype) };
 
@@ -10092,7 +10084,7 @@ JSC_DECLARE_CUSTOM_GETTER(FFIPrototype__symbolsGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFFIPrototype, JSFFIPrototype::Base);
 
-static const HashTableValue JSFFIPrototypeTableValues[] = {
+static const HashTableValue JSFFIPrototypeTableValues[2] = {
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FFIPrototype__closeCallback, 0 } },
     { "symbols"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, FFIPrototype__symbolsGetterWrap, 0 } }
 };
@@ -10345,7 +10337,7 @@ JSC_DECLARE_HOST_FUNCTION(FSWatcherPrototype__unrefCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFSWatcherPrototype, JSFSWatcherPrototype::Base);
 
-static const HashTableValue JSFSWatcherPrototypeTableValues[] = {
+static const HashTableValue JSFSWatcherPrototypeTableValues[4] = {
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FSWatcherPrototype__closeCallback, 0 } },
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FSWatcherPrototype__hasRefCallback, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FSWatcherPrototype__refCallback, 0 } },
@@ -10692,7 +10684,7 @@ JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__styleGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFileSystemRouterPrototype, JSFileSystemRouterPrototype::Base);
 
-static const HashTableValue JSFileSystemRouterPrototypeTableValues[] = {
+static const HashTableValue JSFileSystemRouterPrototypeTableValues[5] = {
     { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__matchCallback, 1 } },
     { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__originGetterWrap, 0 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__reloadCallback, 0 } },
@@ -11132,7 +11124,7 @@ JSC_DECLARE_HOST_FUNCTION(HTMLRewriterPrototype__transformCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTMLRewriterPrototype, JSHTMLRewriterPrototype::Base);
 
-static const HashTableValue JSHTMLRewriterPrototypeTableValues[] = {
+static const HashTableValue JSHTMLRewriterPrototypeTableValues[3] = {
     { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__onCallback, 2 } },
     { "onDocument"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__onDocumentCallback, 1 } },
     { "transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTMLRewriterPrototype__transformCallback, 1 } }
@@ -11460,7 +11452,7 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, JSHTTPSServerPrototype::Base);
 
-static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
+static const HashTableValue JSHTTPSServerPrototypeTableValues[12] = {
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__hostnameGetterWrap, 0 } },
@@ -11942,7 +11934,7 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, JSHTTPServerPrototype::Base);
 
-static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
+static const HashTableValue JSHTTPServerPrototypeTableValues[12] = {
     { "development"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__developmentGetterWrap, 0 } },
     { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__fetchCallback, 1 } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__hostnameGetterWrap, 0 } },
@@ -12415,7 +12407,7 @@ JSC_DECLARE_HOST_FUNCTION(ListenerPrototype__unrefCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSListenerPrototype, JSListenerPrototype::Base);
 
-static const HashTableValue JSListenerPrototypeTableValues[] = {
+static const HashTableValue JSListenerPrototypeTableValues[8] = {
     { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__dataGetterWrap, ListenerPrototype__dataSetterWrap } },
     { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__hostnameGetterWrap, 0 } },
     { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__portGetterWrap, 0 } },
@@ -12850,7 +12842,7 @@ JSC_DECLARE_HOST_FUNCTION(MD4Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD4Prototype, JSMD4Prototype::Base);
 
-static const HashTableValue JSMD4PrototypeTableValues[] = {
+static const HashTableValue JSMD4PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MD4Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Prototype__updateCallback, 1 } }
@@ -12948,7 +12940,7 @@ void JSMD4Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObje
 extern "C" JSC_DECLARE_CUSTOM_GETTER(MD4Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(MD4Class__hash);
 
-static const HashTableValue JSMD4ConstructorTableValues[] = {
+static const HashTableValue JSMD4ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MD4Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Class__hash, 2 } }
 };
@@ -13180,7 +13172,7 @@ JSC_DECLARE_HOST_FUNCTION(MD5Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD5Prototype, JSMD5Prototype::Base);
 
-static const HashTableValue JSMD5PrototypeTableValues[] = {
+static const HashTableValue JSMD5PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MD5Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Prototype__updateCallback, 1 } }
@@ -13278,7 +13270,7 @@ void JSMD5Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObje
 extern "C" JSC_DECLARE_CUSTOM_GETTER(MD5Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(MD5Class__hash);
 
-static const HashTableValue JSMD5ConstructorTableValues[] = {
+static const HashTableValue JSMD5ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MD5Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Class__hash, 2 } }
 };
@@ -13488,7 +13480,7 @@ JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, JSMatchedRoutePrototype::Base);
 
-static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
+static const HashTableValue JSMatchedRoutePrototypeTableValues[8] = {
     { "filePath"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__filePathGetterWrap, 0 } },
     { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__kindGetterWrap, 0 } },
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
@@ -14213,7 +14205,7 @@ JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__writevSyncCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeJSFSPrototype, JSNodeJSFSPrototype::Base);
 
-static const HashTableValue JSNodeJSFSPrototypeTableValues[] = {
+static const HashTableValue JSNodeJSFSPrototypeTableValues[85] = {
     { "access"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessCallback, 3 } },
     { "accessSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessSyncCallback, 2 } },
     { "appendFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileCallback, 4 } },
@@ -16945,7 +16937,7 @@ JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__urlGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSRequestPrototype, JSRequestPrototype::Base);
 
-static const HashTableValue JSRequestPrototypeTableValues[] = {
+static const HashTableValue JSRequestPrototypeTableValues[20] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__arrayBufferCallback, 0 } },
     { "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__blobCallback, 0 } },
     { "body"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__bodyGetterWrap, 0 } },
@@ -17690,7 +17682,7 @@ JSC_DECLARE_HOST_FUNCTION(ResolveMessagePrototype__toStringCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResolveMessagePrototype, JSResolveMessagePrototype::Base);
 
-static const HashTableValue JSResolveMessagePrototypeTableValues[] = {
+static const HashTableValue JSResolveMessagePrototypeTableValues[9] = {
     { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__codeGetterWrap, 0 } },
     { "importKind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__importKindGetterWrap, 0 } },
     { "level"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResolveMessagePrototype__levelGetterWrap, 0 } },
@@ -18328,7 +18320,7 @@ JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__urlGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResponsePrototype, JSResponsePrototype::Base);
 
-static const HashTableValue JSResponsePrototypeTableValues[] = {
+static const HashTableValue JSResponsePrototypeTableValues[15] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__arrayBufferCallback, 0 } },
     { "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__blobCallback, 0 } },
     { "body"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__bodyGetterWrap, 0 } },
@@ -18724,7 +18716,7 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructError);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructJSON);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructRedirect);
 
-static const HashTableValue JSResponseConstructorTableValues[] = {
+static const HashTableValue JSResponseConstructorTableValues[3] = {
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructError, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructJSON, 0 } },
     { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRedirect, 0 } }
@@ -18996,7 +18988,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA1Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA1Prototype, JSSHA1Prototype::Base);
 
-static const HashTableValue JSSHA1PrototypeTableValues[] = {
+static const HashTableValue JSSHA1PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA1Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Prototype__updateCallback, 1 } }
@@ -19094,7 +19086,7 @@ void JSSHA1Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA1Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA1Class__hash);
 
-static const HashTableValue JSSHA1ConstructorTableValues[] = {
+static const HashTableValue JSSHA1ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA1Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Class__hash, 2 } }
 };
@@ -19326,7 +19318,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA224Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA224Prototype, JSSHA224Prototype::Base);
 
-static const HashTableValue JSSHA224PrototypeTableValues[] = {
+static const HashTableValue JSSHA224PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA224Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Prototype__updateCallback, 1 } }
@@ -19424,7 +19416,7 @@ void JSSHA224Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA224Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA224Class__hash);
 
-static const HashTableValue JSSHA224ConstructorTableValues[] = {
+static const HashTableValue JSSHA224ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA224Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Class__hash, 2 } }
 };
@@ -19656,7 +19648,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA256Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA256Prototype, JSSHA256Prototype::Base);
 
-static const HashTableValue JSSHA256PrototypeTableValues[] = {
+static const HashTableValue JSSHA256PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA256Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Prototype__updateCallback, 1 } }
@@ -19754,7 +19746,7 @@ void JSSHA256Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA256Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA256Class__hash);
 
-static const HashTableValue JSSHA256ConstructorTableValues[] = {
+static const HashTableValue JSSHA256ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA256Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Class__hash, 2 } }
 };
@@ -19986,7 +19978,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA384Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA384Prototype, JSSHA384Prototype::Base);
 
-static const HashTableValue JSSHA384PrototypeTableValues[] = {
+static const HashTableValue JSSHA384PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA384Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Prototype__updateCallback, 1 } }
@@ -20084,7 +20076,7 @@ void JSSHA384Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA384Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA384Class__hash);
 
-static const HashTableValue JSSHA384ConstructorTableValues[] = {
+static const HashTableValue JSSHA384ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA384Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Class__hash, 2 } }
 };
@@ -20316,7 +20308,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA512Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512Prototype, JSSHA512Prototype::Base);
 
-static const HashTableValue JSSHA512PrototypeTableValues[] = {
+static const HashTableValue JSSHA512PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Prototype__updateCallback, 1 } }
@@ -20414,7 +20406,7 @@ void JSSHA512Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA512Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA512Class__hash);
 
-static const HashTableValue JSSHA512ConstructorTableValues[] = {
+static const HashTableValue JSSHA512ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Class__hash, 2 } }
 };
@@ -20646,7 +20638,7 @@ JSC_DECLARE_HOST_FUNCTION(SHA512_256Prototype__updateCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512_256Prototype, JSSHA512_256Prototype::Base);
 
-static const HashTableValue JSSHA512_256PrototypeTableValues[] = {
+static const HashTableValue JSSHA512_256PrototypeTableValues[3] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512_256Prototype__byteLengthGetterWrap, 0 } },
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Prototype__digestCallback, 0 } },
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Prototype__updateCallback, 1 } }
@@ -20744,7 +20736,7 @@ void JSSHA512_256Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glo
 extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA512_256Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA512_256Class__hash);
 
-static const HashTableValue JSSHA512_256ConstructorTableValues[] = {
+static const HashTableValue JSSHA512_256ConstructorTableValues[2] = {
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512_256Class__getByteLengthStatic, 0 } },
     { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Class__hash, 2 } }
 };
@@ -21102,7 +21094,7 @@ JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocketPrototype::Base);
 
-static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
+static const HashTableValue JSServerWebSocketPrototypeTableValues[19] = {
     { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__binaryTypeGetterWrap, ServerWebSocketPrototype__binaryTypeSetterWrap } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 3 } },
     { "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } },
@@ -22126,7 +22118,7 @@ JSC_DECLARE_CUSTOM_GETTER(StatsPrototype__uidGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatsPrototype, JSStatsPrototype::Base);
 
-static const HashTableValue JSStatsPrototypeTableValues[] = {
+static const HashTableValue JSStatsPrototypeTableValues[25] = {
     { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeGetterWrap, 0 } },
     { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeMsGetterWrap, 0 } },
     { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__birthtimeGetterWrap, 0 } },
@@ -22899,7 +22891,7 @@ JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__writableGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSubprocessPrototype, JSSubprocessPrototype::Base);
 
-static const HashTableValue JSSubprocessPrototypeTableValues[] = {
+static const HashTableValue JSSubprocessPrototypeTableValues[13] = {
     { "exitCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__exitCodeGetterWrap, 0 } },
     { "exited"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__exitedGetterWrap, 0 } },
     { "kill"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__killCallback, 1 } },
@@ -23487,7 +23479,7 @@ JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__writeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTCPSocketPrototype, JSTCPSocketPrototype::Base);
 
-static const HashTableValue JSTCPSocketPrototypeTableValues[] = {
+static const HashTableValue JSTCPSocketPrototypeTableValues[31] = {
     { "alpnProtocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__alpnProtocolGetterWrap, 0 } },
     { "authorized"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__authorizedGetterWrap, 0 } },
     { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__dataGetterWrap, TCPSocketPrototype__dataSetterWrap } },
@@ -24598,7 +24590,7 @@ JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__writeCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTLSSocketPrototype, JSTLSSocketPrototype::Base);
 
-static const HashTableValue JSTLSSocketPrototypeTableValues[] = {
+static const HashTableValue JSTLSSocketPrototypeTableValues[31] = {
     { "alpnProtocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__alpnProtocolGetterWrap, 0 } },
     { "authorized"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__authorizedGetterWrap, 0 } },
     { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__dataGetterWrap, TLSSocketPrototype__dataSetterWrap } },
@@ -25634,7 +25626,7 @@ JSC_DECLARE_CUSTOM_GETTER(TextChunkPrototype__textGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextChunkPrototype, JSTextChunkPrototype::Base);
 
-static const HashTableValue JSTextChunkPrototypeTableValues[] = {
+static const HashTableValue JSTextChunkPrototypeTableValues[7] = {
     { "after"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__afterCallback, 1 } },
     { "before"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TextChunkPrototype__beforeCallback, 1 } },
     { "lastInTextNode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextChunkPrototype__lastInTextNodeGetterWrap, 0 } },
@@ -26043,7 +26035,7 @@ JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, JSTextDecoderPrototype::Base);
 
-static const HashTableValue JSTextDecoderPrototypeTableValues[] = {
+static const HashTableValue JSTextDecoderPrototypeTableValues[3] = {
     { "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, TextDecoderPrototype__decodeCallback, &DOMJITSignatureForTextDecoderPrototype__decode } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__encodingGetterWrap, 0 } },
     { "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } }
@@ -26367,7 +26359,7 @@ JSC_DECLARE_HOST_FUNCTION(TimeoutPrototype__unrefCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTimeoutPrototype, JSTimeoutPrototype::Base);
 
-static const HashTableValue JSTimeoutPrototypeTableValues[] = {
+static const HashTableValue JSTimeoutPrototypeTableValues[4] = {
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__hasRefCallback, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__refCallback, 0 } },
     { "refresh"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TimeoutPrototype__refreshCallback, 0 } },
@@ -26746,7 +26738,7 @@ JSC_DECLARE_HOST_FUNCTION(TranspilerPrototype__transformSyncCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTranspilerPrototype, JSTranspilerPrototype::Base);
 
-static const HashTableValue JSTranspilerPrototypeTableValues[] = {
+static const HashTableValue JSTranspilerPrototypeTableValues[4] = {
     { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__scanCallback, 2 } },
     { "scanImports"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__scanImportsCallback, 2 } },
     { "transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__transformCallback, 2 } },

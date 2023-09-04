@@ -630,6 +630,8 @@ pub const Fetch = struct {
         scheduled_response_buffer: MutableString = undefined,
         /// response strong ref
         response: JSC.Strong = .{},
+        /// stream strong ref if any is available
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
@@ -722,6 +724,7 @@ pub const Fetch = struct {
 
             this.response_buffer.deinit();
             this.response.deinit();
+            this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
@@ -851,6 +854,33 @@ pub const Fetch = struct {
                                 old.resolve(&response.body.value, this.global_this);
                             }
                         }
+                    } else if (this.readable_stream_ref.get()) |readable| {
+                        if (readable.ptr == .Bytes) {
+                            readable.ptr.Bytes.size_hint = this.getSizeHint();
+                            // body can be marked as used but we still need to pipe the data
+                            var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                            const chunk = scheduled_response_buffer.items;
+
+                            if (this.result.has_more) {
+                                readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
+
+                                // clean for reuse later
+                                this.scheduled_response_buffer.reset();
+                            } else {
+                                readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary_and_done = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -964,6 +994,11 @@ pub const Fetch = struct {
             return fetch_error.toErrorInstance(this.global_this);
         }
 
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+            const this = bun.cast(*FetchTasklet, ctx);
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this) catch .{};
+        }
+
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
             const this = bun.cast(*FetchTasklet, ctx);
             if (this.http) |http| {
@@ -1020,6 +1055,7 @@ pub const Fetch = struct {
                         .task = this,
                         .global = this.global_this,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
+                        .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     },
                 };
                 return response;
@@ -1239,6 +1275,7 @@ pub const Fetch = struct {
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.mutex.lock();
             defer task.mutex.unlock();
+            log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
             task.result = result;
 
             // metadata should be provided only once so we preserve it until we consume it

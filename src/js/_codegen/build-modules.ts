@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { cap, declareASCIILiteral, readdirRecursive, resolveSyncOrNull } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
@@ -333,33 +333,33 @@ fs.writeFileSync(
 namespace Bun {
 namespace InternalModuleRegistryConstants {
 
-#if __APPLE__
+#if OS(DARWIN)
   ${moduleList
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.darwin.get(id.slice(0, -3)))}_s;
+${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.darwin.get(id.slice(0, -3)))}
 //
 `,
     )
     .join("\n")}
-  #elif _WIN32
+#elif OS(WINDOWS)
   ${moduleList
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.win32.get(id.slice(0, -3)))}_s;
+${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.win32.get(id.slice(0, -3)))}
 //
 `,
     )
     .join("\n")}
-  #else
+#else
   // Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
   ${moduleList
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.linux.get(id.slice(0, -3)))}_s;
+${declareASCIILiteral(`${idToEnumName(id)}Code`, bundledOutputs.linux.get(id.slice(0, -3)))}
 //
 `,
     )

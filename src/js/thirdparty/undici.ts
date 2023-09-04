@@ -10,7 +10,7 @@ const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-const fetch = Bun.fetch;
+const { fetch } = Bun;
 // @ts-ignore
 const { Response, Request, Headers, URLSearchParams, URL, FormData } = globalThis;
 

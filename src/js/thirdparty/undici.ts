@@ -10,14 +10,10 @@ const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
+const fetch = Bun.fetch;
 // @ts-ignore
-var Response = globalThis.Response;
-var Headers = globalThis.Headers;
-// @ts-ignore
-var Request = globalThis.Request;
-var URLSearchParams = globalThis.URLSearchParams;
-var URL = globalThis.URL;
+const { Response, Request, Headers, URLSearchParams, URL, FormData } = globalThis;
+
 class File extends Blob {}
 class FileReader extends EventTarget {
   // @ts-ignore
@@ -26,7 +22,6 @@ class FileReader extends EventTarget {
   }
 }
 
-var FormData = globalThis.FormData;
 function notImplemented() {
   throw new Error("Not implemented in bun");
 }
@@ -204,7 +199,6 @@ async function request(
   }
 
   let resp;
-  /** @type {Response} */
   const {
     status: statusCode,
     headers,

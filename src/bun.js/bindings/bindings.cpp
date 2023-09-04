@@ -5,50 +5,50 @@
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
 
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/ExceptionHelpers.h"
-#include "JavaScriptCore/ExceptionScope.h"
-#include "JavaScriptCore/FunctionConstructor.h"
-#include "JavaScriptCore/HeapSnapshotBuilder.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSArrayBuffer.h"
-#include "JavaScriptCore/JSArrayInlines.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
+#include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayInlines.h>
 
-#include "JavaScriptCore/JSCallbackObject.h"
-#include "JavaScriptCore/JSClassRef.h"
-#include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/JSModuleRecord.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
-#include "JavaScriptCore/JSONObject.h"
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/JSSet.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/Microtask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ParserError.h"
-#include "JavaScriptCore/ScriptExecutable.h"
-#include "JavaScriptCore/StackFrame.h"
-#include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "JavaScriptCore/Watchdog.h"
+#include <JavaScriptCore/JSCallbackObject.h>
+#include <JavaScriptCore/JSClassRef.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/Microtask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/WasmFaultSignalHandler.h>
+#include <JavaScriptCore/Watchdog.h>
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
-#include "wtf/text/ExternalStringImpl.h"
-#include "wtf/text/StringCommon.h"
-#include "wtf/text/StringImpl.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/FunctionPrototype.h"
+#include <wtf/text/ExternalStringImpl.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImpl.h>
+#include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "DOMURL.h"
@@ -74,28 +74,28 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 
-#include "wtf/text/AtomString.h"
+#include <wtf/text/AtomString.h>
 #include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
-#include "JavaScriptCore/TestRunnerUtils.h"
-#include "JavaScriptCore/DateInstance.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
+#include <JavaScriptCore/TestRunnerUtils.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/HashMapImpl.h>
+#include <JavaScriptCore/HashMapImplInlines.h>
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
 #include "ZigGeneratedClasses.h"
-#include "JavaScriptCore/JSMapInlines.h"
+#include <JavaScriptCore/JSMapInlines.h>
 
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
 
 #include "AsyncContextFrame.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -1982,75 +1982,7 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 //     arg2->depen
 // }
 
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
 
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
-};
-
-void Microtask__run(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
-}
-
-void Microtask__run_default(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
-}
 
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
@@ -4093,7 +4025,7 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
 }
 
-extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,

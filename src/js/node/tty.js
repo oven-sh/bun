@@ -119,6 +119,60 @@ Object.defineProperty(WriteStream, "prototype", {
     const Real = require("node:fs").WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
+    WriteStream.prototype[Symbol.asyncIterator] = async function* () {
+      const stream = Bun.file(this.fd).stream();
+
+      var reader = stream.getReader();
+      // TODO: use builtin
+      var deferredError;
+      var indexOf = Bun.indexOfLine;
+      try {
+        while (true) {
+          var done, value;
+          var pendingChunk;
+          const firstResult = reader.readMany();
+          if ($isPromise(firstResult)) {
+            ({ done, value } = await firstResult);
+          } else {
+            ({ done, value } = firstResult);
+          }
+          if (done) {
+            if (pendingChunk) {
+              yield pendingChunk;
+            }
+            return;
+          }
+          var actualChunk;
+          // we assume it was given line-by-line
+          for (const chunk of value) {
+            actualChunk = chunk;
+            if (pendingChunk) {
+              actualChunk = Buffer.concat([pendingChunk, chunk]);
+              pendingChunk = null;
+            }
+            var last = 0;
+            // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
+            var i = indexOf(actualChunk, last) + 1;
+            while (i !== -1) {
+              yield actualChunk.subarray(last, i);
+              last = i + 1;
+              i = indexOf(actualChunk, last);
+            }
+            if (i != -1) {
+              pendingChunk = actualChunk.subarray(last);
+            }
+          }
+        }
+      } catch (e) {
+        deferredError = e;
+      } finally {
+        reader.releaseLock();
+        if (deferredError) {
+          throw deferredError;
+        }
+      }
+    };
+
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
       const oldRows = this.rows;

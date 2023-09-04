@@ -3924,6 +3924,11 @@ pub const FIFO = struct {
             }
         }
 
+        if (read_result == .read and (this.poll_ref != null and this.poll_ref.?.flags.contains(.eof))) {
+            this.close();
+            return;
+        }
+
         this.pending.result = read_result.toStream(
             &this.pending,
             this.buf,
@@ -4054,6 +4059,9 @@ pub const FIFO = struct {
                 }
 
                 if (result == 0) {
+                    if (this.poll_ref) |poll| {
+                        poll.flags.insert(.eof);
+                    }
                     return .{ .read = buf[0..0] };
                 }
                 return .{ .read = buf[0..result] };

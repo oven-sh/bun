@@ -146,11 +146,10 @@ export function getStdinStream(fd) {
     try {
       var done: any, value: any;
       const read = reader?.readMany();
-
+      if (!read) return;
       if ($isPromise(read)) {
         ({ done, value } = await read);
       } else {
-        // @ts-expect-error
         ({ done, value } = read);
       }
 

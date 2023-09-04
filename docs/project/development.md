@@ -131,7 +131,7 @@ The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. 
 
 ```bash
 $ packages/debug-bun-*/bun-debug --version
-bun 0.x.y__dev
+bun 1.x.y__dev
 ```
 
 Note: `make setup` is just an alias for the following:

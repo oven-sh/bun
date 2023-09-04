@@ -300,12 +300,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 ---
 
 - 🟢
-- [`.resolves()`](https://jestjs.io/docs/expect#resolves) (since Bun v0.6.12+)
+- [`.resolves()`](https://jestjs.io/docs/expect#resolves)
 
 ---
 
 - 🟢
-- [`.rejects()`](https://jestjs.io/docs/expect#rejects) (since Bun v0.6.12+)
+- [`.rejects()`](https://jestjs.io/docs/expect#rejects)
 
 ---
 
@@ -385,7 +385,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 ---
 
 - 🟢
-- [`.toBeInstanceOf()`](https://jestjs.io/docs/expect#tobeinstanceofclass) (Bun v0.5.8+)
+- [`.toBeInstanceOf()`](https://jestjs.io/docs/expect#tobeinstanceofclass)
 
 ---
 
@@ -405,7 +405,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 ---
 
 - 🟢
-- [`.toMatchSnapshot()`](https://jestjs.io/docs/expect#tomatchsnapshotpropertymatchers-hint) (Bun v0.5.8+)
+- [`.toMatchSnapshot()`](https://jestjs.io/docs/expect#tomatchsnapshotpropertymatchers-hint)
 
 ---
 

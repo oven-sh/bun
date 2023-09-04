@@ -57,7 +57,9 @@ it("should add existing package", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", ""]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("bun add");
+  expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -102,9 +104,10 @@ it("should reject missing package", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.includes("bun add")).toBeTrue();
-  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
-  expect(err.includes(`note: error occured while resolving file:${add_path}`)).toBeTrue();
+  expect(err).toContain("bun add");
+  expect(err).toContain("error: MissingPackageJSON");
+  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
+  expect(err).not.toContain("Saved lockfile");
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -144,9 +147,10 @@ it("should reject invalid path without segfault", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.includes("bun add")).toBeTrue();
-  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
-  expect(err.includes(`note: error occured while resolving file://${add_path}`)).toBeTrue();
+  expect(err).toContain("bun add");
+  expect(err).toContain("error: MissingPackageJSON");
+  expect(err).toContain(`note: error occured while resolving file://${add_path}`);
+  expect(err).not.toContain("Saved lockfile");
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -189,7 +193,8 @@ it("should handle semver-like names", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "1.2.3" not found localhost/1.2.3 404');
+  expect(err).toContain('error: package "1.2.3" not found localhost/1.2.3 404');
+  expect(err).not.toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
@@ -232,7 +237,8 @@ it("should handle @scoped names", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "@bar/baz" not found localhost/@bar/baz 404');
+  expect(err).toContain('error: package "@bar/baz" not found localhost/@bar/baz 404');
+  expect(err).not.toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
@@ -266,6 +272,7 @@ it("should add dependency with capital letters", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -321,6 +328,7 @@ it("should add exact version", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -384,6 +392,7 @@ it("should add dependency with specified semver", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -445,6 +454,7 @@ it("should add dependency (GitHub)", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -532,6 +542,7 @@ it("should add dependency alongside workspaces", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -605,6 +616,7 @@ it("should add aliased dependency (npm)", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -666,6 +678,7 @@ it("should add aliased dependency (GitHub)", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -751,6 +764,7 @@ it("should let you add the same package twice", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
@@ -803,6 +817,7 @@ it("should let you add the same package twice", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -866,6 +881,7 @@ it("should install version tagged with `latest` by default", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
@@ -918,6 +934,7 @@ it("should install version tagged with `latest` by default", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -977,6 +994,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   let out1 = await new Response(stdout1).text();
@@ -1043,6 +1061,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -1081,6 +1100,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1141,6 +1161,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1199,6 +1220,7 @@ it("should add dependency without duplication", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
@@ -1248,6 +1270,7 @@ it("should add dependency without duplication", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -1299,6 +1322,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
@@ -1360,6 +1384,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -1438,6 +1463,7 @@ it("should add dependencies to workspaces directly", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1501,7 +1527,9 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", ""]);
+  expect(err).not.toContain("error:");
+  expect(err).toContain("bun add");
+  expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([

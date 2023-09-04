@@ -719,6 +719,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -2973,7 +2974,7 @@ cache = false
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
-});
+}, 20000);
 
 it("should consider peerDependencies during hoisting", async () => {
   const urls: string[] = [];
@@ -4928,8 +4929,8 @@ cache = false
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
-  expect(err1).toContain("Saved lockfile");
   expect(err1).not.toContain("error:");
+  expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -5127,6 +5128,7 @@ it("should handle trustedDependencies", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

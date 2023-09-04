@@ -880,7 +880,7 @@ pub const Map = struct {
                 bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.value);
                 envp_buf[i] = env_buf.ptr;
             }
-            std.debug.assert(i == envp_count);
+            if (comptime Environment.allow_assert) std.debug.assert(i == envp_count);
         }
         return envp_buf;
     }

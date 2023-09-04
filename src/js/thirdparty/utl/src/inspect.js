@@ -73,6 +73,7 @@ const {
   StringPrototypeIncludes,
   StringPrototypeIndexOf,
   StringPrototypeLastIndexOf,
+  StringPrototypeMatch,
   StringPrototypeNormalize,
   StringPrototypePadEnd,
   StringPrototypePadStart,
@@ -111,9 +112,15 @@ const {
 
 const customInspectSymbol = Symbol.for('nodejs.util.inspect.custom');
 
+const isAsyncFunction = v =>
+  (typeof v === 'function') && StringPrototypeStartsWith(FunctionPrototypeToString(v), 'async');
+const isGeneratorFunction = v =>
+  (typeof v === 'function') && StringPrototypeMatch(FunctionPrototypeToString(v), /^(async\s+)?function *\*/);
+
 const {
-  isAsyncFunction,
-  isGeneratorFunction,
+  //! The native versions of these two are currently buggy, so we use the polyfills above for now.
+  //isAsyncFunction,
+  //isGeneratorFunction,
   isAnyArrayBuffer,
   isArrayBuffer,
   isArgumentsObject,
@@ -1946,6 +1953,7 @@ function formatWeakMap(ctx, value, recurseTimes) {
 function formatIterator(braces, ctx, value, recurseTimes) {
   const { 0: entries, 1: isKeyValue } = previewEntries(value, true);
   if (isKeyValue) {
+    // TODO: JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
     // Mark entry iterators as such.
     braces[0] = RegExpPrototypeSymbolReplace(/ Iterator] {$/, braces[0], ' Entries] {');
     return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);

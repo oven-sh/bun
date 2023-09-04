@@ -1298,12 +1298,7 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
-            const trimmed = bun.simdutf.trim.utf8(bytes);
-
-            if (trimmed.len == 0)
-                break :simd null;
-
-            const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
+            const out_length = bun.simdutf.length.utf16.from.utf8.le(bytes);
 
             if (out_length == 0)
                 break :simd null;
@@ -1312,7 +1307,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
             // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
-            switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
+            switch (bun.simdutf.convert.utf8.to.utf16.le(bytes, out)) {
                 0 => {
                     if (comptime fail_if_invalid) {
                         allocator.free(out);

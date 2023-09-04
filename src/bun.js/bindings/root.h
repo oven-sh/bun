@@ -57,7 +57,7 @@
 #if COMPILER(MSVC)
 #pragma warning(disable : 4206)
 
-// noreturn buiiltin_unreachable()
+// __builtin_unreachable() polyfill
 static __declspec(noreturn) void __builtin_unreachable() { __assume(0); }
 #endif
 

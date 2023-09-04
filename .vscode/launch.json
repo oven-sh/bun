@@ -123,7 +123,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "bun-debug",
+      "program": "./Build/debug/bun.exe",
       "args": ["run", "${file}", "${file}"],
       "cwd": "${fileDirname}",
       "env": {

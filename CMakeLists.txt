@@ -485,9 +485,13 @@ else()
 
     if (WIN32)
         string (APPEND CMAKE_CXX_FLAGS 
-            " /external:anglebrackets "
+            " /external:anglebrackets /Gs- /Zi "
         )
-        set_target_properties(bun PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE /STACK:4194304,4194304 ")
+
+        string (APPEND CMAKE_FLAGS 
+            " /external:anglebrackets /Gs- /Zi "
+        )
+        set_target_properties(bun PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE /STACK:4194304,2097152 ")
     endif()
     
     if (DEFINED ENV{VCPKG_ROOT})

@@ -442,8 +442,8 @@ pub const ZlibReaderArrayList = struct {
         // always free with `inflateEnd`
         if (this.state != State.End) {
             _ = inflateEnd(&this.zlib);
+            this.state = State.End;
         }
-        this.state = State.End;
     }
 
     pub fn init(

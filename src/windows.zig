@@ -2918,3 +2918,20 @@ pub const Win32Error = enum(u16) {
 };
 
 pub const libuv = @import("./deps/libuv.zig");
+
+pub extern fn GetProcAddress(
+    ptr: ?*anyopaque,
+    [*:0]const u16,
+) ?*anyopaque;
+
+pub fn GetProcAddressA(
+    ptr: ?*anyopaque,
+    utf8: [:0]const u8,
+) ?*anyopaque {
+    var wbuf: [2048]u16 = undefined;
+    return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
+}
+
+pub extern fn LoadLibraryA(
+    [*:0]const u8,
+) ?*anyopaque;

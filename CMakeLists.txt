@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
+cmake_policy(SET CMP0091 NEW)
+
 project(bun)
 
 set(DEFAULT_USE_STATIC_SQLITE ON)
@@ -37,14 +39,19 @@ if (DEFINED ENV{CPU_TARGET})
 endif()
 
 
+set(DEFAULT_CUSTOM_UNLESS_WINDOWS ON)
+
+if (WIN32)
+    set(DEFAULT_CUSTOM_UNLESS_WINDOWS OFF)
+endif()
 
 option(USE_STATIC_SQLITE "Statically link SQLite?" DEFAULT_USE_STATIC_SQLITE)
-option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
+option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" DEFAULT_CUSTOM_UNLESS_WINDOWS)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
-option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
-option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
-option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd`" ON)
-option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
+option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" OFF)
+option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" DEFAULT_CUSTOM_UNLESS_WINDOWS)
+option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd`" DEFAULT_CUSTOM_UNLESS_WINDOWS)
+option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" DEFAULT_CUSTOM_UNLESS_WINDOWS)
 option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
@@ -54,8 +61,8 @@ option(USE_BASELINE_BUILD "Build Bun for older CPUs" OFF)
 set(ZIG_EXECUTABLE "${DEFAULT_ZIG_EXECUTABLE}" CACHE STRING "Path to zig executable")
 set(BUN_EXECUTABLE "${DEFAULT_BUN_EXECUTABLE}" CACHE STRING "Path to bun executable")
 
-set(WEBKIT_LIB_DIR "${CMAKE_SOURCE_DIR}/bun-webkit/lib" CACHE STRING "WebKit lib folder")
-set(WEBKIT_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/bun-webkit/include" CACHE STRING "WebKit include folder")
+set(WEBKIT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit/lib" CACHE STRING "WebKit lib folder")
+set(WEBKIT_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bun-webkit/include" CACHE STRING "WebKit include folder")
 set(BUN_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps" CACHE STRING "Directory holding submodules" )
 set(BUN_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/deps" CACHE STRING "Directory holding static libraries" )
 
@@ -86,28 +93,36 @@ if(CCACHE_PROGRAM)
     message(STATUS "Using ccache")
 endif()
 
-file(GLOB BunCpp_SRC 
-    "src/deps/*.cpp"
-    "src/io/*.cpp"
-    "src/bun.js/modules/*.cpp"
-    "src/bun.js/bindings/*.cpp"
-    "src/bun.js/bindings/WebCore/*.cpp"
-    "src/bun.js/bindings/sqlite/*.cpp"
-    "src/bun.js/bindings/webcrypto/*.cpp"
-    "src/bun.js/bindings/webcrypto/*/*.cpp"
-    "src/js/out/*.cpp"
-    "src/deps/picohttpparser/picohttpparser.c"
+file(GLOB bun_SRC 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/io/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/modules/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/WebCore/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/sqlite/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/webcrypto/*/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/js/out/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/picohttpparser/picohttpparser.c"
 )
 
-add_library(BunCpp STATIC ${BunCpp_SRC} ${uSockets_FILES})
-
-set_target_properties(BunCpp PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS YES
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN YES
+file(GLOB uSockets_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src/eventing/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src/internal/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src/crypto/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src/crypto/*.cpp"
 )
+
+add_compile_definitions(
+    "LIBUS_USE_OPENSSL=1"
+    "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
+    "LIBUS_USE_BORINGSSL=1"
+    "WITH_BORINGSSL=1"
+)
+
+
+
 
 include_directories(
     packages/bun-uws
@@ -169,9 +184,9 @@ else ()
     string(APPEND CMAKE_CXX_FLAGS " /O2 " )
     string(APPEND CMAKE_C_FLAGS " /O2 ")
 endif()
-
+set(EXTRA_SRC "")
 if (WIN32)
-    string(APPEND BunCpp_SRC "src/bindings/musl-memmem.c")
+    set(EXTRA_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings/musl-memmem.c")
     add_compile_definitions("WIN32")
     add_compile_definitions("_WINDOWS")
     add_compile_definitions("_CRT_SECURE_NO_WARNINGS")
@@ -194,9 +209,15 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         "-fvisibility-inlines-hidden "
     )
 elseif(MSVC)
+    string(APPEND SUPPRESS_WARNING_NUMBERS
+        # JSC deletes operator delete to prevent accidental use
+        "/wd4291 "
+        # we use #pragma mark in some places
+        "/wd4068 "
+    )
     string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-  ")
-    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- ")
-    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj ")
+    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- /MP  ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17 ")
+    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj /MP ${SUPPRESS_WARNING_NUMBERS} ")
 endif()
 
 
@@ -242,39 +263,27 @@ add_custom_command(
 
 
 # add_custom_command(
-#     TARGET BunCpp
+#     TARGET bun
 #     COMMAND bun ./codegen/index.ts
 #     DEPENDS src/js/modules/**/*.{js,ts}
 #     COMMENT "Running bun codegen"
 # )
 
-file(GLOB uSockets_FILES
-    "packages/bun-usockets/src/*.c"
-    "packages/bun-usockets/src/eventing/*.c"
-    "packages/bun-usockets/src/internal/*.c"
-    "packages/bun-usockets/src/crypto/*.c"
-    "packages/bun-usockets/src/crypto/*.cpp"
-)
 
-add_compile_definitions(
-    "LIBUS_USE_OPENSSL=1"
-    "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
-    "LIBUS_USE_BORINGSSL=1"
-    "WITH_BORINGSSL=1"
-)
-
-add_executable(bun ${BUN_OBJECT_FILE})
+add_executable(bun ${bun_SRC} ${uSockets_FILES} ${BUN_OBJECT_FILE} ${EXTRA_SRC})
 
 set_target_properties(bun PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS YES
     CXX_VISIBILITY_PRESET hidden
+    C_STANDARD 17
+    C_STANDARD_REQUIRED YES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
-target_link_libraries(bun PRIVATE BunCpp)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
+
 
 if (APPLE)
     target_link_libraries(bun PRIVATE "${HOMEBREW_PREFIX}/opt/libiconv/lib/libiconv.a")
@@ -346,19 +355,19 @@ endif()
 if (USE_CUSTOM_LIBARCHIVE)
     include_directories(src/deps/libarchive/include)
     if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/archive.lib")
+        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/archive_static.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libarchive.a")
     endif()
 else ()
     find_package(LibArchive REQUIRED)
-    target_link_libraries(bun PRIVATE ZLIB::ZLIB)
+    target_link_libraries(bun PRIVATE LibArchive::LibArchive)
 endif()
 
 if (USE_CUSTOM_MIMALLOC)
     include_directories(src/deps/mimalloc/include)
     if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/mimalloc.lib")
+        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/mimalloc-static.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libmimalloc.a")
     endif()
@@ -370,24 +379,24 @@ endif()
 if (USE_CUSTOM_ZSTD)
     include_directories(src/deps/zstd/include)
     if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/zstd.lib")
+        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/zstd_static.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libzstd.a")
     endif()
 else ()
-    find_package(zstd REQUIRED)
-    target_link_libraries(bun PRIVATE zstd)
+    find_package(zstd CONFIG REQUIRED)
+    target_link_libraries(bun PRIVATE zstd::libzstd_static>)
 endif()
 
 if (USE_CUSTOM_CARES)
-    include_directories(src/deps/c-ares/include)
+    include_directories(src/deps/zstd/include)
     if (WIN32)
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/cares.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libcares.a")
     endif()
 else ()
-    find_package(c-ares REQUIRED)
+    find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(bun PRIVATE c-ares::cares)
 endif()
 
@@ -404,16 +413,23 @@ else ()
     target_link_libraries(bun PRIVATE base64::base64)
 endif()
 
-if (USE_CUSTOM_TINYCC)
-    if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/tcc.lib")
-    else()
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libtcc.a")
+if (NOT WIN32)
+    if (USE_CUSTOM_TINYCC)
+        if (WIN32)
+            target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/tcc.lib")
+        else()
+            target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libtcc.a")
+        endif()
+    else ()
+        find_package(tinycc REQUIRED)
+        target_link_libraries(bun PRIVATE tinycc::tinycc)
     endif()
-else ()
-    find_package(tinycc REQUIRED)
-    target_link_libraries(bun PRIVATE tinycc::tinycc)
 endif()
+
+set_property(TARGET bun PROPERTY
+             MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+             set_property(TARGET bun PROPERTY
+             MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
 if (USE_CUSTOM_LOLHTML)
     if (WIN32)
@@ -431,10 +447,9 @@ if (WIN32)
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/uv.lib")
     else ()
         find_package(libuv CONFIG REQUIRED )
-        target_link_libraries(BunCpp PRIVATE STATIC $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+        target_link_libraries(bun PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
     endif()
 
-    include_directories(C:\\Users\\windo\\Build\\libicu\\include)
 endif()
 
 if (USE_STATIC_SQLITE)
@@ -447,8 +462,6 @@ else()
 endif()
 
 
-
-
 if (NOT MSVC)
     string(APPEND CMAKE_CXX_FLAGS " -fPIC ")
 endif()
@@ -459,7 +472,25 @@ if (NOT MSVC)
     target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
     target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
 else()
-    target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib ${WEBKIT_LIB_DIR}/JavaScriptCore.lib ${WEBKIT_LIB_DIR}/bmalloc.lib")
+
+    target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib")
+    target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/JavaScriptCore.lib")
+
+    if (WIN32)
+        string (APPEND CMAKE_CXX_FLAGS 
+            " /external:anglebrackets "
+        )
+    endif()
+    
+    if (DEFINED ENV{VCPKG_ROOT})
+        include_directories($ENV{VCPKG_ROOT}/installed/x64-windows/include)
+    endif()
+
+    file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings)  
+
+    include_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
+    link_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
+    link_libraries(icudata.lib icui8n.lib icu8uc.lib NtosKrnl winmm.lib Bcrypt.lib ntdl NtosKrnl)
 endif()
 
 

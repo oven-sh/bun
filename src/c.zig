@@ -388,6 +388,16 @@ const LazyStatus = enum {
     failed,
 };
 
+fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.GetProcAddressA(handle, name);
+    } else if (comptime Environment.isMac or Environment.isLinux) {
+        return std.c.dlsym(handle, name.ptr);
+    }
+    
+    return bun.todo(@src(), null);
+}
+
 pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
     if (comptime @typeInfo(Type) != .Pointer) {
         @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
@@ -399,7 +409,7 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
     };
 
     if (Wrapper.loaded == .pending) {
-        const result = std.c.dlsym(@call(.always_inline, handle_getter, .{}), name);
+        const result = _dlsym(@call(.always_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);
@@ -442,3 +452,11 @@ pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
 
 // https://man7.org/linux/man-pages/man3/fmod.3.html
 pub extern fn fmod(f64, f64) f64;
+
+pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.LoadLibraryA(filename);
+    } 
+
+    return std.c.dlopen(filename, flags);
+}

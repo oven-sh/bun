@@ -668,7 +668,9 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
-                TCC.tcc_delete(state);
+                if (comptime !Environment.isWindows) {
+                    TCC.tcc_delete(state);
+                }
                 val.state = null;
             }
 
@@ -768,6 +770,9 @@ pub const FFI = struct {
             this: *Function,
             allocator: std.mem.Allocator,
         ) !void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -782,7 +787,9 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    if (comptime !Environment.isWindows) {
+                        TCC.tcc_delete(state);
+                    }
                     this.state = null;
                 }
             }
@@ -891,6 +898,9 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
+                if (comptime Environment.isWindows) {
+                    return;
+                }
                 JSC.markBinding(@src());
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
@@ -931,6 +941,9 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
+            if (comptime Environment.isWindows) {
+                return;
+            }
             JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
@@ -954,7 +967,9 @@ pub const FFI = struct {
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    if (comptime !Environment.isWindows) {
+                        TCC.tcc_delete(state);
+                    }
                     this.state = null;
                 }
             }

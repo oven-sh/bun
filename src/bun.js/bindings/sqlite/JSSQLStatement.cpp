@@ -509,7 +509,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     if (UNLIKELY(!sqliteStrValue.isString())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite path"_s));
         return JSValue::encode(JSC::jsUndefined());
-    }
+}
 
 #ifdef LAZY_LOAD_SQLITE
     if (sqlite3_handle) {

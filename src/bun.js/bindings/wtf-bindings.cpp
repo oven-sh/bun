@@ -3,7 +3,7 @@
 
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
-#include <stdatomic.h>
+#include <atomic>
 
 #if OS(WINDOWS)
 #include <uv.h>

@@ -1,4 +1,8 @@
-#ifndef WIN32
+#pragma once
+
+#include "root.h"
+
+#if !OS(WINDOWS)
 #include <dlfcn.h>
 #else 
 #include <windows.h>
@@ -157,23 +161,31 @@ static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
 
-#ifndef WIN32
+#if !OS(WINDOWS)
 #define HMODULE void*
-static char* dlerror() { return nullptr; }
+#else
+static const char* dlerror() { return "Unknown error while loading sqlite"; }
+#define dlsym GetProcAddress
+#endif
+
+#if OS(WINDOWS)
+static const char* sqlite3_lib_path = "sqlite3.dll";
+#elif OS(DARWIN)
+static const char* sqlite3_lib_path = "libsqlite3.dylib";
+#else
+static const char* sqlite3_lib_path = "sqlite3";
 #endif
 
 static HMODULE sqlite3_handle = nullptr;
-static const char* sqlite3_lib_path = "libsqlite3.dylib";
 
 static int lazyLoadSQLite()
 {
     if (sqlite3_handle)
         return 0;
-#ifndef WIN32 
-    sqlite3_handle = dlopen(sqlite3_lib_path, RTLD_LAZY);
-#else
+#if OS(WINDOWS)
     sqlite3_handle = LoadLibraryA(sqlite3_lib_path);
-    #define dlsym GetProcAddress 
+#else
+    sqlite3_handle = dlopen(sqlite3_lib_path, RTLD_LAZY);
 #endif
 
     if (!sqlite3_handle) {
@@ -221,3 +233,7 @@ static int lazyLoadSQLite()
 
     return 0;
 }
+
+#if OS(WINDOWS)
+#undef dlsym
+#endif

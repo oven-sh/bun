@@ -42,7 +42,7 @@ const LibInfo = struct {
         const RTLD_LAZY = 1;
         const RTLD_LOCAL = 4;
 
-        handle = std.c.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
+        handle = bun.C.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
         if (handle == null)
             Output.debug("libinfo.dylib not found", .{});
         return handle;

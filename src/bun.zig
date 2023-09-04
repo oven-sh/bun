@@ -757,7 +757,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         // Windows UCRT will fill this in for us
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
-            const key_end = strings.indexOfCharUsize('=') orelse line.len;
+            const key_end = strings.indexOfCharUsize(path_, '=') orelse line.len;
             const key = line[0..key_end];
             if (strings.eqlLong(key, path_, true)) {
                 return line[@min(key_end + 1, line.len)..];

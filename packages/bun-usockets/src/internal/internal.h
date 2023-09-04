@@ -20,7 +20,9 @@
 
 
 #if defined(_MSC_VER)
+#ifndef __cplusplus
 #define alignas(x) __declspec(align(x))
+#endif
 #else
 #include <stdalign.h>
 #endif
@@ -130,7 +132,14 @@ struct us_internal_callback_t {
 
 #endif
 
+#if __cplusplus
+extern "C" {
+#endif
 int us_internal_raw_root_certs(struct us_cert_string_t** out);
+
+#if __cplusplus
+}
+#endif
 
 /* Listen sockets are sockets */
 struct us_listen_socket_t {

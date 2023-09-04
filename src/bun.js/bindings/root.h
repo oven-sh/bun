@@ -23,6 +23,7 @@
  * Boston, MA 02110-1301, USA.
  *
  */
+
 #define HAVE_CONFIG_H 1
 #define BUILDING_WITH_CMAKE 1
 
@@ -37,25 +38,17 @@
 #define JSC_MAC_VERSION_TBA 0
 #define JSC_IOS_VERSION_TBA 0
 
-#include "wtf/ExportMacros.h"
+#include <wtf/ExportMacros.h>
 
-#if !defined(JS_EXPORT_PRIVATE)
-
-#if defined(BUILDING_JavaScriptCore) || defined(STATICALLY_LINKED_WITH_JavaScriptCore)
-#define JS_EXPORT_PRIVATE WTF_EXPORT_DECLARATION
-#else
-#define JS_EXPORT_PRIVATE WTF_IMPORT_DECLARATION
-#endif
-
-#endif
+#define JS_EXPORT_PRIVATE 
 
 #ifdef __cplusplus
 #undef new
 #undef delete
-#include "wtf/FastMalloc.h"
+#include <wtf/FastMalloc.h>
 #endif
 
-#include "wtf/DisallowCType.h"
+#include <wtf/DisallowCType.h>
 
 /* Disabling warning C4206: nonstandard extension used: translation unit is empty.
    By design, we rely on #define flags to make some translation units empty.
@@ -63,26 +56,24 @@
 */
 #if COMPILER(MSVC)
 #pragma warning(disable : 4206)
+
+// noreturn buiiltin_unreachable()
+static __declspec(noreturn) void __builtin_unreachable() { __assume(0); }
 #endif
 
 #ifndef WEBCORE_EXPORT
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
-#include "wtf/PlatformCallingConventions.h"
-#include "JavaScriptCore/JSCInlines.h"
-#include "wtf/IsoMalloc.h"
-#include "wtf/IsoMallocInlines.h"
+#include <wtf/PlatformCallingConventions.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <wtf/IsoMalloc.h>
+#include <wtf/IsoMallocInlines.h>
+#include <JavaScriptCore/HandleSet.h>
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1
-
-// #define WTF_MAKE_ISO_ALLOCATED(className) \
-//     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className)
-
-// #define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
-
-// #define WTF_MAKE_ISO_ALLOCATED_IMPL(className)
 
 #endif

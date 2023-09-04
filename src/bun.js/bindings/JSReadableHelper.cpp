@@ -4,14 +4,14 @@
 #include "JSBuffer.h"
 #include "JSEventEmitter.h"
 #include "JSStringDecoder.h"
-#include "JavaScriptCore/Lookup.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 #include "JSDOMOperation.h"
 #include "JSDOMAttribute.h"
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
-#include "JavaScriptCore/StrongInlines.h"
+#include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
 
 namespace WebCore {

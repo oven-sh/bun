@@ -84,13 +84,13 @@ public:
     int64_t m_length = 0;
     int64_t m_highWaterMark;
 
-    mutable WriteBarrier<Unknown> m_buffer;
-    mutable WriteBarrier<Unknown> m_pipes;
-    mutable WriteBarrier<Unknown> m_errored;
-    mutable WriteBarrier<Unknown> m_defaultEncoding;
-    mutable WriteBarrier<Unknown> m_awaitDrainWriters;
-    mutable WriteBarrier<Unknown> m_decoder;
-    mutable WriteBarrier<Unknown> m_encoding;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_buffer;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_pipes;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_errored;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_defaultEncoding;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_awaitDrainWriters;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_decoder;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_encoding;
 };
 
 class JSReadableStatePrototype : public JSC::JSNonFinalObject {

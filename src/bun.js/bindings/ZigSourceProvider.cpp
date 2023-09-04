@@ -4,12 +4,12 @@
 
 #include "ZigSourceProvider.h"
 
-#include "JavaScriptCore/BytecodeCacheError.h"
+#include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
 
-#include "JavaScriptCore/Completion.h"
-#include "wtf/Scope.h"
-#include "wtf/text/StringHash.h"
+#include <JavaScriptCore/Completion.h>
+#include <wtf/Scope.h>
+#include <wtf/text/StringHash.h>
 #include <sys/stat.h>
 
 extern "C" void RefString__free(void*, void*, unsigned);

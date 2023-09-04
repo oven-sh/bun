@@ -3,7 +3,6 @@ const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
-const Microtask = JSC.Microtask;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
@@ -297,7 +296,6 @@ pub const JSCScheduler = struct {
 };
 
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
 const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
@@ -306,8 +304,6 @@ const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
 const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
-    Microtask,
-    MicrotaskForDefaultGlobalObject,
     AsyncTransformTask,
     ReadFileTask,
     CopyFilePromiseTask,
@@ -581,14 +577,6 @@ pub const EventLoop = struct {
         while (this.tasks.readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                .Microtask => {
-                    var micro: *Microtask = task.as(Microtask);
-                    micro.run(global);
-                },
-                .MicrotaskForDefaultGlobalObject => {
-                    var micro: *MicrotaskForDefaultGlobalObject = task.as(MicrotaskForDefaultGlobalObject);
-                    micro.run(global);
-                },
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();

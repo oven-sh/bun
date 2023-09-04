@@ -3,9 +3,9 @@
 #include "headers.h"
 #include "BunClientData.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/JSMicrotask.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSMicrotask.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 #pragma mark - Node.js Path
 

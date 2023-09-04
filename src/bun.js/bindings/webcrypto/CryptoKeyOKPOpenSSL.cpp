@@ -338,10 +338,10 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return base64URLEncodeToString(WTFMove(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+        return base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return base64URLEncodeToString(WTFMove(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
+    return base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const

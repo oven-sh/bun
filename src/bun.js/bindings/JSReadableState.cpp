@@ -1,8 +1,8 @@
 #include "JSReadableState.h"
 #include "JSBufferList.h"
 #include "JSBuffer.h"
-#include "JavaScriptCore/Lookup.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 #include "JSDOMOperation.h"
 #include "JSDOMAttribute.h"
@@ -149,7 +149,7 @@ DEFINE_VISIT_CHILDREN(JSReadableState);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStatePrototype, JSReadableStatePrototype::Base);
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -166,7 +166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGl
 
 #define JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(NAME)                                                                                                                       \
     static JSC_DECLARE_CUSTOM_GETTER(jsReadableState_##NAME);                                                                                                                      \
-    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))                                 \
+    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))                                 \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -179,7 +179,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGl
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsBoolean(state->m_##NAME > 0)));                                                                                 \
     }                                                                                                                                                                              \
     static JSC_DECLARE_CUSTOM_SETTER(setJSReadableState_##NAME);                                                                                                                   \
-    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName)) \
+    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName)) \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -200,7 +200,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
 
 #define JSReadableState_NUMBER_GETTER_SETTER(NAME)                                                                                                                                 \
     static JSC_DECLARE_CUSTOM_GETTER(jsReadableState_##NAME);                                                                                                                      \
-    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))                                 \
+    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))                                 \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -212,7 +212,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
     }                                                                                                                                                                              \
                                                                                                                                                                                    \
     static JSC_DECLARE_CUSTOM_SETTER(setJSReadableState_##NAME);                                                                                                                   \
-    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName)) \
+    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName)) \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -232,7 +232,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
 
 #define JSReadableState_BOOLEAN_GETTER_SETTER(NAME)                                                                                                                                \
     static JSC_DECLARE_CUSTOM_GETTER(jsReadableState_##NAME);                                                                                                                      \
-    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))                                 \
+    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))                                 \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -244,7 +244,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
     }                                                                                                                                                                              \
                                                                                                                                                                                    \
     static JSC_DECLARE_CUSTOM_SETTER(setJSReadableState_##NAME);                                                                                                                   \
-    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName)) \
+    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName)) \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -280,7 +280,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
 
 #define JSReadableState_JSVALUE_GETTER_SETTER(NAME)                                                                                                                                \
     static JSC_DECLARE_CUSTOM_GETTER(jsReadableState_##NAME);                                                                                                                      \
-    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))                                 \
+    JSC_DEFINE_CUSTOM_GETTER(jsReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))                                 \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \
@@ -291,7 +291,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(state->m_##NAME.get()));                                                                                               \
     }                                                                                                                                                                              \
     static JSC_DECLARE_CUSTOM_SETTER(setJSReadableState_##NAME);                                                                                                                   \
-    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName)) \
+    JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_##NAME, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName)) \
     {                                                                                                                                                                              \
         auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                                                                \
         auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                                                                 \

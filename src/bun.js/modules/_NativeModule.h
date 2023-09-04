@@ -1,8 +1,8 @@
 // clang-format off
 #pragma once
 #include "JSBuffer.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 
 // These modules are implemented in native code as a function which writes ESM

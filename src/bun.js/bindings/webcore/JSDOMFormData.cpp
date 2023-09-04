@@ -108,7 +108,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
@@ -154,7 +154,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMFormDataPrototype, JSDOMFormDataPrototy
 
 using JSDOMFormDataDOMConstructor = JSDOMConstructor<JSDOMFormData>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -184,7 +184,7 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
-extern "C" EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+extern "C" JSC::EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
 
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -260,7 +260,7 @@ void JSDOMFormData::destroy(JSC::JSCell* cell)
     thisObject->JSDOMFormData::~JSDOMFormData();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -565,7 +565,7 @@ const JSC::ClassInfo DOMFormDataIterator::s_info = { "FormData Iterator"_s, &Bas
 template<>
 const JSC::ClassInfo DOMFormDataIteratorPrototype::s_info = { "FormData Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DOMFormDataIteratorPrototype) };
 
-static inline EncodedJSValue jsDOMFormDataPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
 {
     return JSValue::encode(iteratorCreate<DOMFormDataIterator>(*thisObject, IterationKind::Entries));
 }
@@ -575,7 +575,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_entries, (JSC::JSGlobalO
     return IDLOperation<JSDOMFormData>::call<jsDOMFormDataPrototypeFunction_entriesCaller>(*lexicalGlobalObject, *callFrame, "entries");
 }
 
-static inline EncodedJSValue jsDOMFormDataPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
 {
     return JSValue::encode(iteratorCreate<DOMFormDataIterator>(*thisObject, IterationKind::Keys));
 }
@@ -585,7 +585,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_keys, (JSC::JSGlobalObje
     return IDLOperation<JSDOMFormData>::call<jsDOMFormDataPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-static inline EncodedJSValue jsDOMFormDataPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
 {
     return JSValue::encode(iteratorCreate<DOMFormDataIterator>(*thisObject, IterationKind::Values));
 }
@@ -595,7 +595,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_values, (JSC::JSGlobalOb
     return IDLOperation<JSDOMFormData>::call<jsDOMFormDataPrototypeFunction_valuesCaller>(*lexicalGlobalObject, *callFrame, "values");
 }
 
-static inline EncodedJSValue jsDOMFormDataPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSDOMFormData* thisObject)
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSDOMFormData* thisObject)
 {
     return JSValue::encode(iteratorForEach<DOMFormDataIterator>(*lexicalGlobalObject, *callFrame, *thisObject));
 }

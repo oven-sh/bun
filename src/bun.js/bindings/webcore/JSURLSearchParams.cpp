@@ -41,20 +41,20 @@
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
-#include "JavaScriptCore/BuiltinNames.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
-#include "JavaScriptCore/JSArray.h"
+#include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/JSArray.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
-#include "wtf/Vector.h"
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
+#include <wtf/Vector.h>
 #include <variant>
 #include "GCDefferalContext.h"
 
@@ -115,7 +115,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSURLSearchParamsPrototype, JSURLSearchParam
 
 using JSURLSearchParamsDOMConstructor = JSDOMConstructor<JSURLSearchParams>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -154,7 +154,7 @@ template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JS
     putDirect(vm, vm.propertyNames->prototype, JSURLSearchParams::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -230,7 +230,7 @@ void JSURLSearchParams::destroy(JSC::JSCell* cell)
     thisObject->JSURLSearchParams::~JSURLSearchParams();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -516,7 +516,7 @@ const JSC::ClassInfo URLSearchParamsIterator::s_info = { "URLSearchParams Iterat
 template<>
 const JSC::ClassInfo URLSearchParamsIteratorPrototype::s_info = { "URLSearchParams Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(URLSearchParamsIteratorPrototype) };
 
-static inline EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {
     return JSValue::encode(iteratorCreate<URLSearchParamsIterator>(*thisObject, IterationKind::Entries));
 }
@@ -526,7 +526,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_entries, (JSC::JSGlo
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_entriesCaller>(*lexicalGlobalObject, *callFrame, "entries");
 }
 
-static inline EncodedJSValue jsURLSearchParamsPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {
     return JSValue::encode(iteratorCreate<URLSearchParamsIterator>(*thisObject, IterationKind::Keys));
 }
@@ -536,7 +536,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_keys, (JSC::JSGlobal
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-static inline EncodedJSValue jsURLSearchParamsPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {
     return JSValue::encode(iteratorCreate<URLSearchParamsIterator>(*thisObject, IterationKind::Values));
 }
@@ -546,7 +546,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_values, (JSC::JSGlob
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_valuesCaller>(*lexicalGlobalObject, *callFrame, "values");
 }
 
-static inline EncodedJSValue jsURLSearchParamsPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSURLSearchParams* thisObject)
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSURLSearchParams* thisObject)
 {
     return JSValue::encode(iteratorForEach<URLSearchParamsIterator>(*lexicalGlobalObject, *callFrame, *thisObject));
 }

@@ -1,7 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
 // Most of the constants are defined with #if checks on existing #defines, instead of platform-checks

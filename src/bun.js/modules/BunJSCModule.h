@@ -1,43 +1,43 @@
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
-#include "JavaScriptCore/APICast.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/ClassInfo.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/DeferTermination.h"
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/HeapSnapshotBuilder.h"
-#include "JavaScriptCore/JIT.h"
-#include "JavaScriptCore/JSBasePrivate.h"
-#include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/JSONObject.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SamplingProfiler.h"
-#include "JavaScriptCore/TestRunnerUtils.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
+#include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DeferTermination.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/JIT.h>
+#include <JavaScriptCore/JSBasePrivate.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SamplingProfiler.h>
+#include <JavaScriptCore/TestRunnerUtils.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
-#include "wtf/FileSystem.h"
-#include "wtf/MemoryFootprint.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/FileSystem.h>
+#include <wtf/MemoryFootprint.h>
+#include <wtf/text/WTFString.h>
 
-#include "Process.h"
+#include "BunProcess.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
+#include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
 
-#include "JavaScriptCore/ControlFlowProfiler.h"
+#include <JavaScriptCore/ControlFlowProfiler.h>
 
 using namespace JSC;
 using namespace WTF;
@@ -653,7 +653,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
-extern "C" EncodedJSValue ByteRangeMapping__findExecutedLines(
+extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
     JSC::JSGlobalObject *, BunString sourceURL, BasicBlockRange *ranges,
     size_t len, size_t functionOffset, bool ignoreSourceMap);
 

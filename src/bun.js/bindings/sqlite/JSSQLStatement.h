@@ -28,12 +28,12 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 
 #ifndef LAZY_LOAD_SQLITE_DEFAULT_SETTING
 #if defined(__APPLE__)

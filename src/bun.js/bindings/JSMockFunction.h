@@ -1,8 +1,8 @@
 #pragma once
 
 #include "root.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/Strong.h"
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/Strong.h>
 
 namespace WebCore {
 }
@@ -29,7 +29,7 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    JSC::Strong<Unknown> activeSpies;
+    JSC::Strong<JSC::Unknown> activeSpies;
 };
 
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {

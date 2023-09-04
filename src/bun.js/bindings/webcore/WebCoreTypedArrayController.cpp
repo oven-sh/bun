@@ -31,9 +31,9 @@
 
 #include "JSDOMGlobalObject.h"
 
-#include "JavaScriptCore/ArrayBuffer.h"
+#include <JavaScriptCore/ArrayBuffer.h>
 
-#include "JavaScriptCore/JSArrayBuffer.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 namespace WebCore {
 

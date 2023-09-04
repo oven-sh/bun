@@ -31,19 +31,21 @@ class DOMWrapperWorld;
 
 #include "root.h"
 
-#include "headers-handwritten.h"
 
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
-#include "JavaScriptCore/Structure.h"
-#include "WebCoreJSBuiltins.h"
+
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/Structure.h>
 
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
 #include "ProcessBindingConstants.h"
+
+#include "WebCoreJSBuiltins.h"
+#include "headers-handwritten.h"
 
 namespace WebCore {
 class GlobalScope;
@@ -310,7 +312,7 @@ public:
         return m_subtleCryptoObject.getInitializedOnMainThread(this);
     }
 
-    EncodedJSValue assignToStream(JSValue stream, JSValue controller);
+    JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
     WebCore::EventTarget& eventTarget();
     Bun::GlobalScope& globalEventScope;
@@ -370,35 +372,35 @@ public:
      * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
-    mutable WriteBarrier<JSFunction> m_assignToStream;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
-    mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
-    mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
-    mutable WriteBarrier<JSFunction> m_readableStreamToText;
-    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
+    mutable JSC::WriteBarrier<JSFunction> m_assignToStream;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToBlob;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToJSON;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable JSC::WriteBarrier<JSFunction> m_readableStreamToFormData;
 
-    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
-    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
-    mutable WriteBarrier<Unknown> m_JSCloseEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSCustomEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSDOMExceptionSetterValue;
-    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
-    mutable WriteBarrier<Unknown> m_JSErrorEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSEventTargetSetterValue;
-    mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
-    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
-    mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
-    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
-    mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_BunCommonJSModuleValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSBroadcastChannelSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSBufferSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSCloseEventSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSCustomEventSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSDOMExceptionSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSDOMFormDataSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSErrorEventSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSEventSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSEventTargetSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSFetchHeadersSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSMessageChannelSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSMessageEventSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSMessagePortSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSTextEncoderSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSURLSearchParamsSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSWebSocketSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSWorkerSetterValue;
 
-    mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
-    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
+    mutable JSC::WriteBarrier<JSC::Unknown> m_JSBunDebuggerValue;
+    mutable JSC::WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     Structure* memoryFootprintStructure()
     {

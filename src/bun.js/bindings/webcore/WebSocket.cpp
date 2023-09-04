@@ -1061,7 +1061,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         if (auto* context = scriptExecutionContext()) {
             auto arrayBuffer = JSC::ArrayBuffer::create(binaryData.data(), binaryData.size());
             this->incPendingActivityCount();
-            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
                 protectedThis->decPendingActivityCount();
@@ -1093,13 +1093,13 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
 
             this->incPendingActivityCount();
 
-            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 size_t length = buffer->byteLength();
                 JSUint8Array* uint8array = JSUint8Array::create(
                     scriptExecutionContext()->jsGlobalObject(),
                     reinterpret_cast<Zig::GlobalObject*>(scriptExecutionContext()->jsGlobalObject())->JSBufferSubclassStructure(),
-                    WTFMove(buffer.copyRef()),
+                    buffer.copyRef(),
                     0,
                     length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);

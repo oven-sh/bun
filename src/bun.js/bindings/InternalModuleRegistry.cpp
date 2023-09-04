@@ -1,12 +1,12 @@
 #include "InternalModuleRegistry.h"
 
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/BuiltinUtils.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/BuiltinUtils.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
 
 #include "InternalModuleRegistryConstants.h"
 
@@ -61,7 +61,8 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
     return result;
 
-#if BUN_DEBUG
+#if BUN_DEBUG && __has_include("../../src/js/out/DebugPath.h")
+
 #include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \

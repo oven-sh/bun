@@ -1,24 +1,24 @@
 #include "JSBundlerPlugin.h"
 
 #include "headers-handwritten.h"
-#include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSTypeInfo.h"
-#include "JavaScriptCore/Structure.h"
+#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSTypeInfo.h>
+#include <JavaScriptCore/Structure.h>
 #include "helpers.h"
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/JSObjectInlines.h"
-#include "wtf/text/WTFString.h"
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/JSCInlines.h>
 
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/JSPromise.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
 #include "ModuleLoader.h"
-#include "JavaScriptCore/RegularExpression.h"
+#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -383,10 +383,10 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         target);
 }
 
-extern "C" EncodedJSValue JSBundlerPlugin__runSetupFunction(
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     Bun::JSBundlerPlugin* plugin,
-    EncodedJSValue encodedSetupFunction,
-    EncodedJSValue encodedConfig)
+    JSC::EncodedJSValue encodedSetupFunction,
+    JSC::EncodedJSValue encodedConfig)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);

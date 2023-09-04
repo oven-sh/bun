@@ -1,4 +1,5 @@
 #pragma once
+#ifndef HEADERS_HANDWRITTEN
 
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
@@ -22,6 +23,11 @@ typedef struct BunString {
     BunStringImpl impl;
 } BunString;
 #else
+namespace WTF {
+    class StringImpl;
+    class String;
+}
+
 typedef union BunStringImpl {
     ZigString zig;
     WTF::StringImpl* wtf;
@@ -271,8 +277,6 @@ extern "C" const char* Bun__userAgent;
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
-extern "C" void Microtask__run(void* ptr, void* global);
-extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
@@ -347,4 +351,5 @@ class ScriptArguments;
 
 using ScriptArguments = Inspector::ScriptArguments;
 
+#endif
 #endif

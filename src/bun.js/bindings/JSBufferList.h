@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "wtf/Deque.h"
+#include <wtf/Deque.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -49,12 +49,12 @@ public:
     size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
-        m_deque.append(WriteBarrier<Unknown>());
+        m_deque.append(WriteBarrier<JSC::Unknown>());
         m_deque.last().set(vm, this, v);
     }
     void unshift(JSC::VM& vm, JSC::JSValue v)
     {
-        m_deque.prepend(WriteBarrier<Unknown>());
+        m_deque.prepend(WriteBarrier<JSC::Unknown>());
         m_deque.first().set(vm, this, v);
     }
     JSC::JSValue shift()
@@ -83,7 +83,7 @@ public:
     JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, size_t);
 
 private:
-    Deque<WriteBarrier<Unknown>> m_deque;
+    Deque<WriteBarrier<JSC::Unknown>> m_deque;
 };
 
 class JSBufferListPrototype : public JSC::JSNonFinalObject {

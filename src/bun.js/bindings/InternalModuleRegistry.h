@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
-#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include "BunClientData.h"
 #include "../../../src/js/out/InternalModuleRegistry+numberOfModules.h"
 
@@ -29,8 +29,8 @@ public:
     enum Field : uint8_t {
 #include "../../../src/js/out/InternalModuleRegistry+enum.h"
     };
-    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
-    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+    const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     template<typename, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

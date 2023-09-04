@@ -7938,7 +7938,7 @@ pub const PackageManager = struct {
             // 2. install
             // 3. postinstall
             try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postinstall");
+            try manager.lockfile.scripts.runInParallel(manager.allocator, manager.env, log_level != .silent, "postinstall");
 
             // 4. preprepare
             // 5. prepare

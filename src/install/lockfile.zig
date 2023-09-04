@@ -115,11 +115,16 @@ const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
+    const MAX_PARALLEL_PROCESSES = 10;
     const Entry = struct {
         cwd: string,
         script: string,
     };
     const Entries = std.ArrayListUnmanaged(Entry);
+    const Status = struct {
+        pid: std.os.pid_t,
+    };
+    const Queue = std.fifo.LinearFifo(Status, .Dynamic);
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: Entries = .{},
@@ -140,6 +145,30 @@ pub const Scripts = struct {
         for (@field(this, hook).items) |entry| {
             if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
             _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
+        }
+    }
+
+    pub fn runInParallel(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+        if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
+        var queue = Queue.init(allocator);
+        defer queue.deinit();
+
+        for (@field(this, hook).items) |entry| {
+            if (try RunCommand.spawnPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent)) |pid| {
+                try queue.writeItem(.{ .pid = pid });
+            }
+
+            while (queue.readableLength() >= MAX_PARALLEL_PROCESSES) {
+                if (queue.readItem()) |status| {
+                    if (!RunCommand.waitForPackageScript(hook, status.pid, false)) {
+                        try queue.writeItem(status);
+                    }
+                }
+            }
+        }
+
+        while (queue.readItem()) |status| {
+            _ = RunCommand.waitForPackageScript(hook, status.pid, true);
         }
     }
 

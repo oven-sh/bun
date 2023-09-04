@@ -41,6 +41,7 @@ const NpmArgs = struct {
 const yarn_commands: []u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
+const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -49,7 +50,7 @@ pub const RunCommand = struct {
         "zsh",
     };
 
-    pub fn findShell(PATH: string, cwd: string) ?string {
+    pub fn findShell(PATH: string, cwd: string) ?stringZ {
         if (comptime Environment.isWindows) {
             return "C:\\Windows\\System32\\cmd.exe";
         }
@@ -225,7 +226,50 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn runPackageScript(
+    inline fn spawn(
+        allocator: std.mem.Allocator,
+        name: string,
+        cwd: string,
+        env: *DotEnv.Loader,
+        argv: [*:null]?[*:0]const u8,
+    ) !?std.os.pid_t {
+        var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+        if (comptime Environment.isMac) {
+            flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+        }
+
+        var attr = try PosixSpawn.Attr.init();
+        defer attr.deinit();
+        try attr.set(@intCast(flags));
+        try attr.resetSignals();
+
+        var actions = try PosixSpawn.Actions.init();
+        defer actions.deinit();
+        try actions.inherit(0);
+        try actions.inherit(1);
+        try actions.inherit(2);
+        try actions.chdir(cwd);
+
+        var arena = bun.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+
+        switch (PosixSpawn.spawnZ(
+            argv[0].?,
+            actions,
+            attr,
+            argv,
+            try env.map.createNullDelimitedEnvMap(arena.allocator()),
+        )) {
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
+                Output.flush();
+                return null;
+            },
+            .result => |pid| return pid,
+        }
+    }
+
+    pub fn spawnPackageScript(
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -233,18 +277,19 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
-    ) !bool {
+    ) !?std.os.pid_t {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var script = original_script;
-        var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
+        var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len + 1);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
 
         try replacePackageManagerRun(&copy_script, script);
+        try copy_script.append(0);
 
-        var combined_script: []u8 = copy_script.items;
+        var combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
         log("Script: \"{s}\"", .{combined_script});
 
@@ -253,7 +298,7 @@ pub const RunCommand = struct {
             for (passthrough) |p| {
                 combined_script_len += p.len + 1;
             }
-            var combined_script_buf = try allocator.alloc(u8, combined_script_len);
+            var combined_script_buf = try allocator.allocSentinel(u8, combined_script_len, 0);
             bun.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |part| {
@@ -265,57 +310,77 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        var argv = [_]string{ shell_bin, "-c", combined_script };
-
         if (!silent) {
             Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
             Output.flush();
         }
 
-        var child_process = std.ChildProcess.init(&argv, allocator);
-        var buf_map = try env.map.cloneToEnvMap(allocator);
+        var argv = try allocator.allocSentinel(?[*:0]const u8, 3, null);
+        defer allocator.free(argv);
+        argv[0] = shell_bin;
+        argv[1] = "-c";
+        argv[2] = combined_script;
 
-        child_process.env_map = &buf_map;
-        child_process.cwd = cwd;
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
-
-        const result = child_process.spawnAndWait() catch |err| {
+        return spawn(allocator, name, cwd, env, argv) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             Output.flush();
-            return true;
+            return null;
         };
+    }
 
-        switch (result) {
-            .Exited => |code| {
-                if (code > 0) {
-                    if (code != 2) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
-                        Output.flush();
+    pub fn waitForPackageScript(name: string, pid: std.os.pid_t, is_sync: bool) bool {
+        while (true) {
+            switch (PosixSpawn.waitpid(pid, if (is_sync) 0 else std.os.W.NOHANG)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
+                    Output.flush();
+                    return true;
+                },
+                .result => |result| {
+                    if (result.pid == 0) return false;
+                    if (std.os.W.IFEXITED(result.status)) {
+                        const code = std.os.W.EXITSTATUS(result.status);
+                        if (code > 0) {
+                            if (code != 2) {
+                                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
+                                Output.flush();
+                            }
+                            Global.exit(code);
+                        }
+                        return true;
                     }
-
-                    Global.exit(code);
-                }
-            },
-            .Signal => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
-
-                Global.exit(1);
-            },
-            .Stopped => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
-
-                Global.exit(1);
-            },
-
-            else => {},
+                    if (std.os.W.IFSIGNALED(result.status)) {
+                        const signal = std.os.W.TERMSIG(result.status);
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                        Output.flush();
+                        Global.exit(1);
+                    }
+                    if (std.os.W.IFSTOPPED(result.status)) {
+                        const signal = std.os.W.STOPSIG(result.status);
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                        Output.flush();
+                        Global.exit(1);
+                    }
+                },
+            }
         }
+    }
 
+    pub fn runPackageScript(
+        allocator: std.mem.Allocator,
+        original_script: string,
+        name: string,
+        cwd: string,
+        env: *DotEnv.Loader,
+        passthrough: []const string,
+        silent: bool,
+    ) !bool {
+        if (try spawnPackageScript(allocator, original_script, name, cwd, env, passthrough, silent)) |pid| {
+            _ = waitForPackageScript(name, pid, true);
+        }
         return true;
     }
+
     pub fn runBinary(
         ctx: Command.Context,
         executable: []const u8,

@@ -1682,14 +1682,16 @@ pub const Subprocess = struct {
                 this.waitpid_err = err;
             },
             .result => |result| {
-                if (std.os.W.IFEXITED(result.status)) {
-                    this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
-                }
+                if (result.pid != 0) {
+                    if (std.os.W.IFEXITED(result.status)) {
+                        this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
+                    }
 
-                if (std.os.W.IFSIGNALED(result.status)) {
-                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
-                } else if (std.os.W.IFSTOPPED(result.status)) {
-                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                    if (std.os.W.IFSIGNALED(result.status)) {
+                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
+                    } else if (std.os.W.IFSTOPPED(result.status)) {
+                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                    }
                 }
 
                 if (!this.hasExited()) {

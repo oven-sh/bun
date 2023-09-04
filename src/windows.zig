@@ -2935,3 +2935,15 @@ pub fn GetProcAddressA(
 pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
+
+pub extern "kernel32" fn CreateHardLinkW(
+    newFileName: [*:0]const u16,
+    existingFileName: [*:0]const u16,
+    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) win32.BOOL;
+
+pub extern "kernel32" fn CopyFileW(
+    source: [*:0]const u16,
+    dest: [*:0]const u16,
+    bFailIfExists: win32.BOOL,
+) win32.BOOL;

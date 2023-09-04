@@ -1264,10 +1264,37 @@ const PackageInstall = struct {
         };
         defer walker_.deinit();
 
+        var buf: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
+        var buf2: if (Environment.isWindows) [2048]u16 else [0]u16 = undefined;
+        var to_copy_buf: []u16 = undefined;
+        var to_copy_buf2: []u16 = undefined;
+        if (comptime Environment.isWindows) {
+            buf[0] = '\\';
+            buf[1] = '\\';
+            buf[2] = '?';
+            buf[3] = '\\';
+
+            strings.copyU8IntoU16(buf[3..], this.destination_dir_subpath);
+            buf[3 + this.destination_dir_subpath.len] = 0;
+
+            buf2[0] = '\\';
+            buf2[1] = '\\';
+            buf2[2] = '?';
+            buf2[3] = '\\';
+            strings.copyU8IntoU16(buf2[3..], this.cache_dir_subpath);
+
+            to_copy_buf = buf[0 .. 4 + this.destination_dir_subpath.len :0];
+            to_copy_buf2 = buf2[0 .. 4 + this.cache_dir_subpath.len :0];
+        }
+
         const FileCopier = struct {
             pub fn copy(
                 destination_dir_: std.fs.IterableDir,
                 walker: *Walker,
+                to_copy_into1: if (Environment.isWindows) []u16 else void,
+                head1: if (Environment.isWindows) []u16 else void,
+                to_copy_into2: if (Environment.isWindows) []u16 else void,
+                head2: if (Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
@@ -1276,7 +1303,41 @@ const PackageInstall = struct {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
-                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            if (comptime Environment.isWindows) {
+                                if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                                    return error.NameTooLong;
+                                }
+
+                                // TODO: this copy shouldn't be necessary in the first place.
+                                strings.copyU8IntoU16(
+                                    to_copy_into1,
+                                    entry.path,
+                                );
+                                head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                                var dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
+
+                                strings.copyU8IntoU16(
+                                    to_copy_into2,
+                                    entry.path,
+                                );
+                                head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                                var src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                                // Windows limits hardlinks to 1023 per file
+                                if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
+                                    if (bun.windows.CopyFileW(src, dest, 0) == 0) {
+                                        if (bun.windows.Win32Error.get().toSystemErrno()) |_| {
+                                            // TODO: make this better
+                                            return error.FailedToCopyFile;
+                                        }
+
+                                        return error.FailedToCopyFile;
+                                    }
+                                }
+                            } else {
+                                try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            }
+
                             real_file_count += 1;
                         },
                         else => {},
@@ -1296,11 +1357,24 @@ const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| switch (err) {
-            error.NotSameFileSystem => return err,
-            else => return Result{
+            if (Environment.isWindows) to_copy_buf else void{},
+            if (Environment.isWindows) &buf else void{},
+            if (Environment.isWindows) to_copy_buf2 else void{},
+            if (Environment.isWindows) &buf2 else void{},
+        ) catch |err| {
+            if (comptime Environment.isWindows) {
+                if (err == error.FailedToCopyFile) {
+                    return Result{
+                        .fail = .{ .err = err, .step = .copying_files },
+                    };
+                }
+            } else if (err == error.NotSameFileSystem) {
+                return err;
+            }
+
+            return Result{
                 .fail = .{ .err = err, .step = .copying_files },
-            },
+            };
         };
 
         return Result{

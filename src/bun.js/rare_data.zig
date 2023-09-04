@@ -322,7 +322,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 
     var opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    Subprocess.IPCSocket.configure(ctx, false, Subprocess, Subprocess.IPCHandler);
+    Subprocess.IPCSocket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }

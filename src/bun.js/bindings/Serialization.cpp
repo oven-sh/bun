@@ -45,5 +45,5 @@ extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject
     Vector<uint8_t> vector(bytes, size);
     /// ?! did i just give ownership of these bytes to JSC?
     auto scriptValue = SerializedScriptValue::createFromWireBytes(WTFMove(vector));
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(scriptValue->deserialize(*globalObject, globalObject));
 }

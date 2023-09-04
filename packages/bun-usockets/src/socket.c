@@ -22,8 +22,6 @@
 #include <string.h>
 #include <stdint.h>
 
-#include <stdio.h>
-
 /* Shared with SSL */
 
 int us_socket_local_port(int ssl, struct us_socket_t *s) {

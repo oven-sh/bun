@@ -1,19 +1,26 @@
+import type { IncomingHttpHeaders } from "node:http";
+import type * as e from "node:events";
+import type * as s from "stream";
+
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
+const { Readable } = StreamModule as { Readable: s.Readable };
 const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
 var fetch = Bun.fetch;
+// @ts-ignore
 var Response = globalThis.Response;
 var Headers = globalThis.Headers;
+// @ts-ignore
 var Request = globalThis.Request;
 var URLSearchParams = globalThis.URLSearchParams;
 var URL = globalThis.URL;
 class File extends Blob {}
 class FileReader extends EventTarget {
+  // @ts-ignore
   constructor() {
     throw new Error("Not implemented yet!");
   }
@@ -24,24 +31,17 @@ function notImplemented() {
   throw new Error("Not implemented in bun");
 }
 
-/**
- * An object representing a URL.
- * @typedef {Object} UrlObject
- * @property {string | number} [port]
- * @property {string} [path]
- * @property {string} [pathname]
- * @property {string} [hostname]
- * @property {string} [origin]
- * @property {string} [protocol]
- * @property {string} [search]
- */
+type UrlObject = {
+  port: string | number;
+  path: string;
+  pathname: string;
+  hostname: string;
+  origin: string;
+  protocol: "http://" | "https://";
+  search: string;
+};
 
-/**
- * @typedef {import('http').IncomingHttpHeaders} IncomingHttpHeaders
- * @typedef {'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH'} HttpMethod
- * @typedef {import('stream').Readable} Readable
- * @typedef {import('events').EventEmitter} EventEmitter
- */
+type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH";
 
 class BodyReadable extends ReadableFromWeb {
   #response;
@@ -102,36 +102,37 @@ class BodyReadable extends ReadableFromWeb {
 // *   upgrade?: boolean | string | null;
 // *   blocking?: boolean;
 
+type RequestOptions = {
+  dispatcher: Dispatcher;
+  method: HttpMethod | string;
+  signal?: AbortSignal | e.EventEmitter | null;
+  maxRedirections?: number;
+  body?: string | Buffer | Uint8Array | s.Readable | null | FormData;
+  headers?: IncomingHttpHeaders | string[] | null;
+  query?: Record<string, any>;
+  reset?: boolean;
+  throwOnError?: boolean;
+};
+
+type UndiciResponse = {
+  statusCode: number;
+  headers: IncomingHttpHeaders;
+  body: BodyReadable | null;
+  trailers: Record<string, string>;
+  opaque: unknown;
+  context: Record<string, any>;
+};
+
 /**
  * Performs an HTTP request.
- * @param {string | URL | UrlObject} url
- * @param {{
- *   dispatcher: Dispatcher;
- *   method: HttpMethod;
- *   signal?: AbortSignal | EventEmitter | null;
- *   maxRedirections?: number;
- *   body?: string | Buffer | Uint8Array | Readable | null | FormData;
- *   headers?: IncomingHttpHeaders | string[] | null;
- *   query?: Record<string, any>;
- *   reset?: boolean;
- *   throwOnError?: boolean;
- * }} [options]
- * @returns {{
- *   statusCode: number;
- *   headers: IncomingHttpHeaders;
- *   body: ResponseBody;
- *   trailers: Object<string, string>;
- *   opaque: *;
- *   context: Object<string, *>;
- * }}
  */
 async function request(
-  url,
+  url: string | URL | UrlObject,
   options = {
     method: "GET",
     signal: null,
     headers: null,
-    query: null,
+    query: undefined,
     // idempotent: false, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
@@ -140,9 +141,10 @@ async function request(
     reset: false,
     throwOnError: false,
     body: null,
-    // dispatcher,
+    maxRedirections: undefined,
+    dispatcher: undefined,
   },
-) {
+): Promise<UndiciResponse> {
   let {
     method = "GET",
     headers: inputHeaders,
@@ -157,8 +159,8 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
-  } = options;
+    dispatcher,
+  } = options as RequestOptions;
 
   // TODO: More validations
 
@@ -174,18 +176,19 @@ async function request(
   if (typeof url === "string" && query) url = new URL(url);
   if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
-  method = method && typeof method === "string" ? method.toUpperCase() : null;
+  const sanitizedMethod = method && typeof method === "string" ? method.toUpperCase() : null;
   // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
   }
 
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
+  // @ts-ignore
+  if (inputBody && (inputBody as s.Readable).read && inputBody instanceof Readable) {
     // TODO: Streaming via ReadableStream?
     let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
+    (inputBody as s.Readable).setEncoding("utf8");
+    for await (const chunk of inputBody) {
       data += chunk;
     }
     inputBody = new TextEncoder().encode(data);
@@ -205,16 +208,17 @@ async function request(
   const {
     status: statusCode,
     headers,
+    // @ts-ignore
     trailers,
   } = (resp = await fetch(url, {
     signal,
     mode: "cors",
-    method,
+    method: sanitizedMethod,
     headers: inputHeaders || kEmptyObject,
     body: inputBody,
-    redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
+    redirect: maxRedirections === undefined || maxRedirections > 0 ? "follow" : "manual",
     keepalive: !reset,
-  }));
+  } as RequestInit));
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
@@ -265,6 +269,30 @@ function Undici() {
 
 class Dispatcher extends EventEmitter {}
 class Agent extends Dispatcher {}
+
+// declare class ProxyAgent extends Dispatcher {
+//   constructor(options: ProxyAgent.Options | string)
+
+//   dispatch(options: Agent.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean;
+//   close(): Promise<void>;
+// }
+
+// declare namespace ProxyAgent {
+//   export interface Options extends Agent.Options {
+//     uri: string;
+//     /**
+//      * @deprecated use opts.token
+//      */
+//     auth?: string;
+//     token?: string;
+//     headers?: IncomingHttpHeaders;
+//     requestTls?: buildConnector.BuildOptions;
+//     proxyTls?: buildConnector.BuildOptions;
+//   }
+// }
+class ProxyAgent extends Dispatcher {
+  // constructor(options: string) {}
+}
 class Pool extends Dispatcher {
   request() {
     throw new Error("Not implemented in bun");
@@ -282,6 +310,7 @@ Undici.Pool = Pool;
 Undici.BalancedPool = BalancedPool;
 Undici.Client = Client;
 Undici.Agent = Agent;
+Undici.ProxyAgent = ProxyAgent;
 
 Undici.buildConnector =
   Undici.errors =
@@ -324,5 +353,6 @@ export default {
   BalancedPool,
   Client,
   Agent,
+  ProxyAgent,
   Undici,
 };

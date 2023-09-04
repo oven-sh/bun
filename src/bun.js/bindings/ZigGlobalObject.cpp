@@ -142,6 +142,7 @@ using namespace Bun;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" EncodedJSValue H2FrameParser__getConstructor(Zig::GlobalObject* globalObject);
 
 using JSGlobalObject
     = JSC::JSGlobalObject;
@@ -1755,6 +1756,14 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSValue::encode(obj);
         }
 
+        if(string == "internal/http2"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "H2FrameParser"_s)), JSValue::decode(H2FrameParser__getConstructor(globalObject)), 0);
+
+            return JSValue::encode(obj);            
+        } 
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { request, ProxyAgent } from "undici";
+import { request } from "undici";
+import type { Server } from "bun";
 
 import { createServer } from "../../../http-test-server";
-import { Server } from "bun";
 
 describe("undici", () => {
   let server: Server;

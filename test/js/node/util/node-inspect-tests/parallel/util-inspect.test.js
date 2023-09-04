@@ -1009,7 +1009,7 @@ test('no assertion failures 2', () => {
       assert.strictEqual(opts.budget, undefined);
       assert.strictEqual(opts.indentationLvl, undefined);
       assert.strictEqual(opts.showHidden, false);
-      //!assert.strictEqual(inspect, util.inspect); flaky test due to different object keys order
+      assert.strictEqual(inspect, util.inspect);
       assert.deepStrictEqual(
         new Set(Object.keys(inspect.defaultOptions).concat(['stylize'])),
         new Set(Object.keys(opts))
@@ -1140,11 +1140,11 @@ test('no assertion failures 2', () => {
 
     const sym = Object(Symbol('foo'));
     sym.foo = 'bar';
-    //!assert.strictEqual(util.inspect(sym), "[Symbol: Symbol(foo)] { foo: 'bar' }");
+    assert.strictEqual(util.inspect(sym), "[Symbol: Symbol(foo)] { foo: 'bar' }");
 
     const big = Object(BigInt(55));
     big.foo = 'bar';
-    //!assert.strictEqual(util.inspect(big), "[BigInt: 55n] { foo: 'bar' }");
+    assert.strictEqual(util.inspect(big), "[BigInt: 55n] { foo: 'bar' }");
   }
 
   // Test es6 Symbol.
@@ -1161,15 +1161,13 @@ test('no assertion failures 2', () => {
     subject[Symbol('sym\nbol')] = 42;
 
     assert.strictEqual(util.inspect(subject), '{ [Symbol(sym\\nbol)]: 42 }');
-    assert.strictEqual(
-      util.inspect(subject, options),
-      '{ [Symbol(sym\\nbol)]: 42 }'
-    );
+    assert.strictEqual(util.inspect(subject, options), '{ [Symbol(sym\\nbol)]: 42 }');
 
     Object.defineProperty(
       subject,
       Symbol(),
-      { enumerable: false, value: 'non-enum' });
+      { enumerable: false, value: 'non-enum' }
+    );
     assert.strictEqual(util.inspect(subject), '{ [Symbol(sym\\nbol)]: 42 }');
     assert.strictEqual(
       util.inspect(subject, options),
@@ -1178,9 +1176,7 @@ test('no assertion failures 2', () => {
 
     subject = [1, 2, 3];
     subject[Symbol('symbol')] = 42;
-
-    assert.strictEqual(util.inspect(subject),
-      '[ 1, 2, 3, [Symbol(symbol)]: 42 ]');
+    assert.strictEqual(util.inspect(subject), '[ 1, 2, 3, [Symbol(symbol)]: 42 ]');
   }
 
   // Test Set.
@@ -1629,7 +1625,7 @@ test('no assertion failures 2', () => {
     );
   }
 
-  //util.inspect(process); //! segfault
+  util.inspect(process);
 
   // Setting custom inspect property to a non-function should do nothing.
   {
@@ -2069,14 +2065,14 @@ test('no assertion failures 3', () => {
   // Errors should visualize as much information as possible.
   // If the name is not included in the stack, visualize it as well.
   [ //! skipped tests, broken for unknown reason, maybe the extra error props (?)
-    //![class Foo extends TypeError { }, 'test'],
-    //![class Foo extends TypeError { }, undefined],
-    //![class BarError extends Error { }, 'test'],
-    //![class BazError extends Error {
-    //!  get name() {
-    //!    return 'BazError';
-    //!  }
-    //!}, undefined],
+    //[class Foo extends TypeError { }, 'test'],
+    //[class Foo extends TypeError { }, undefined],
+    //[class BarError extends Error { }, 'test'],
+    //[class BazError extends Error {
+    //  get name() {
+    //    return 'BazError';
+    //  }
+    //}, undefined],
   ].forEach(([Class, message], i) => {
     console.log('Test %i', i);
     const foo = new Class(message);
@@ -2228,8 +2224,8 @@ test('no assertion failures 3', () => {
     [new String(55), "[String: '55']"],
     [new Boolean(true), '[Boolean: true]'],
     [new Number(55), '[Number: 55]'],
-    //![Object(BigInt(55)), '[BigInt: 55n]'],
-    //![Object(Symbol('foo')), '[Symbol: Symbol(foo)]'],
+    [Object(BigInt(55)), '[BigInt: 55n]'],
+    [Object(Symbol('foo')), '[Symbol: Symbol(foo)]'],
     [function () { }, '[Function (anonymous)]'],
     [() => { }, '[Function (anonymous)]'],
     [[1, 2], '[ 1, 2 ]'],
@@ -2267,34 +2263,7 @@ test('no assertion failures 3', () => {
   // Verify that having no prototype still produces nice results.
   [
     [[1, 3, 4], '[Array(3): null prototype] [ 1, 3, 4 ]'],
-    // TODO: null prototypes
-    // [new Set([1, 2]), '[Set(2): null prototype] { 1, 2 }'],
-    // [new Map([[1, 2]]), '[Map(1): null prototype] { 1 => 2 }'],
-    // [new Promise((resolve) => setTimeout(resolve, 10)),
-    //  '[Promise: null prototype] { <pending> }'],
-    // [new WeakSet(), '[WeakSet: null prototype] { <items unknown> }'],
-    // [new WeakMap(), '[WeakMap: null prototype] { <items unknown> }'],
-    // [new Uint8Array(2), '[Uint8Array(2): null prototype] [ 0, 0 ]'],
-    // [new Uint16Array(2), '[Uint16Array(2): null prototype] [ 0, 0 ]'],
-    // [new Uint32Array(2), '[Uint32Array(2): null prototype] [ 0, 0 ]'],
-    // [new Int8Array(2), '[Int8Array(2): null prototype] [ 0, 0 ]'],
-    // [new Int16Array(2), '[Int16Array(2): null prototype] [ 0, 0 ]'],
-    // [new Int32Array(2), '[Int32Array(2): null prototype] [ 0, 0 ]'],
-    // [new Float32Array(2), '[Float32Array(2): null prototype] [ 0, 0 ]'],
-    // [new Float64Array(2), '[Float64Array(2): null prototype] [ 0, 0 ]'],
-    // [new BigInt64Array(2), '[BigInt64Array(2): null prototype] [ 0n, 0n ]'],
-    // [new BigUint64Array(2), '[BigUint64Array(2): null prototype] [ 0n, 0n ]'],
-    // [new ArrayBuffer(16), '[ArrayBuffer: null prototype] {\n' +
-    // '  [Uint8Contents]: <00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00>,\n' +
-    // '  byteLength: undefined\n}'],
-    // [new DataView(new ArrayBuffer(16)),
-    //  '[DataView: null prototype] {\n  byteLength: undefined,\n  ' +
-    //    'byteOffset: undefined,\n  buffer: undefined\n}'],
-    // [new SharedArrayBuffer(2), '[SharedArrayBuffer: null prototype] ' +
-    //    '{\n  [Uint8Contents]: <00 00>,\n  byteLength: undefined\n}'],
-    // [/foobar/, '[RegExp: null prototype] /foobar/'],
-    // [new Date('Sun, 14 Feb 2010 11:48:40 GMT'),
-    //  '[Date: null prototype] 2010-02-14T11:48:40.000Z']
+    [/foobar/, '[RegExp: null prototype] /foobar/'],
     [new Set([1, 2]), '[Set(2): null prototype] { 1, 2 }'],
     [new Map([[1, 2]]), '[Map(1): null prototype] { 1 => 2 }'],
     [new Promise((resolve) => setTimeout(resolve, 10)), '[Promise: null prototype] { <pending> }'],
@@ -2311,7 +2280,7 @@ test('no assertion failures 3', () => {
     [new BigInt64Array(2), "[BigInt64Array(2): null prototype] [ 0n, 0n ]"],
     [new BigUint64Array(2), "[BigUint64Array(2): null prototype] [ 0n, 0n ]"],
     [new ArrayBuffer(4), '[ArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00 00 00>,\n  byteLength: undefined\n}'],
-    [new DataView(new ArrayBuffer(16)), '[DataView: null prototype] {\n  byteLength: undefined,\n  byteOffset: undefined,\n  buffer: undefined\n}'],
+    [new DataView(new ArrayBuffer(4)), '[DataView: null prototype] {\n  byteLength: undefined,\n  byteOffset: undefined,\n  buffer: undefined\n}'],
     [new SharedArrayBuffer(2), '[SharedArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00>,\n  byteLength: undefined\n}'],
     [new Date('Sun, 14 Feb 2010 11:48:40 GMT'), '[Date: null prototype] 2010-02-14T11:48:40.000Z'],
   ].forEach(([value, expected]) => {
@@ -3136,18 +3105,14 @@ test('no assertion failures 3', () => {
       '\x1B[2mdef: \x1B[33m5\x1B[39m\x1B[22m }'
     );
 
-    //! SKIP TEST: different object key order
-    /*assert.strictEqual(
+    assert.strictEqual(
       inspect(Object.getPrototypeOf(bar), { showHidden: true, getters: true }),
       '<ref *1> Foo [Map] {\n' +
       '    [constructor]: [class Bar extends Foo] {\n' +
+      `      [prototype]: [Circular *1],\n      [name]: 'Bar',\n` +
       '      [length]: 0,\n' +
-      // Different order starting in node 16
-      (!'version >= 16'
-        ? `      [name]: 'Bar',\n      [prototype]: [Circular *1],\n`
-        : `      [prototype]: [Circular *1],\n      [name]: 'Bar',\n`) +
       '      [Symbol(Symbol.species)]: [Getter: <Inspection threw ' +
-      "(Symbol.prototype.toString requires that 'this' be a Symbol)>]\n" +
+      "(Symbol.prototype.toString requires that |this| be a symbol or a symbol object)>]\n" +
       '    },\n' +
       "    [xyz]: [Getter: 'YES!'],\n" +
       '    [Symbol(nodejs.util.inspect.custom)]: ' +
@@ -3158,7 +3123,7 @@ test('no assertion failures 3', () => {
       '    [abc]: [Getter: true],\n' +
       '    [def]: [Getter/Setter: false]\n' +
       '  }'
-    );*/
+    );
 
     assert.strictEqual(
       inspect(Object.getPrototypeOf(bar)),
@@ -3209,12 +3174,12 @@ test('no assertion failures 3', () => {
 
   // https://github.com/nodejs/node/issues/31889
   //! SKIP TEST: unusable v8 api
-  //!{
-  //!  v8.setFlagsFromString('--allow-natives-syntax');
-  //!  const undetectable = vm.runInThisContext('%GetUndetectable()');
-  //!  v8.setFlagsFromString('--no-allow-natives-syntax');
-  //!  assert.strictEqual(inspect(undetectable), '{}');
-  //!}
+  //{
+  //  v8.setFlagsFromString('--allow-natives-syntax');
+  //  const undetectable = vm.runInThisContext('%GetUndetectable()');
+  //  v8.setFlagsFromString('--no-allow-natives-syntax');
+  //  assert.strictEqual(inspect(undetectable), '{}');
+  //}
 
   // Truncate output for Primitives with 1 character left
   {
@@ -3261,7 +3226,7 @@ test('no assertion failures 3', () => {
       assert(!objectGraph.has(Function));
     }
 
-    test.skip('stylize non-primitive', () => { //! SKIP TEST: non-standard api
+    if (false) { //! SKIP TEST: non-standard api
       // Subtest 2: Use a stylize function that returns a non-primitive.
       const output = util.inspect(target, {
         stylize: mustCall((str) => {
@@ -3273,9 +3238,9 @@ test('no assertion failures 3', () => {
       const objectGraph = fullObjectGraph(target);
       assert(!objectGraph.has(Object));
       assert(!objectGraph.has(Function));
-    });
+    };
 
-    test.skip('stylize exception', () => { //! SKIP TEST: non-standard api
+    if (false) { //! SKIP TEST: non-standard api
       // Subtest 3: Use a stylize function that throws an exception.
       const output = util.inspect(target, {
         stylize: mustCall((str) => {
@@ -3287,7 +3252,7 @@ test('no assertion failures 3', () => {
       const objectGraph = fullObjectGraph(target);
       assert(!objectGraph.has(Object));
       assert(!objectGraph.has(Function));
-    });
+    };
 
     function fullObjectGraph(value) {
       const graph = new Set([value]);

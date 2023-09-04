@@ -17,7 +17,7 @@ const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
-  it("can deflate with and without headers", async () => {
+  it("can deflate with and without headers #4478", async () => {
     let server: Server | null = null;
     try {
       server = Bun.serve({

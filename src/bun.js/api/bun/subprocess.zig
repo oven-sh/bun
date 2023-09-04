@@ -1,4 +1,3 @@
-const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -62,13 +61,18 @@ pub const Subprocess = struct {
     is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
 
-    serialization: IPCSerialization,
+    ipc: IPCMode,
+    // this is only ever accessed when `ipc` is not `none`
+    ipc_socket: IPCSocket = undefined,
+    ipc_callback: JSC.Strong = .{},
+    ipc_buffer: bun.ByteList,
 
     pub const SignalCode = bun.SignalCode;
 
-    pub const IPCSerialization = enum {
-        json,
-        advanced,
+    pub const IPCMode = enum {
+        none,
+        // json,
+        advanced, // "advanced" in node uses v8 serialize, so this wont be compatible
     };
 
     pub fn hasExited(this: *const Subprocess) bool {
@@ -209,7 +213,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd, .ipc => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
+                .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => Readable{
                     .pipe = .{
                         .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
@@ -417,6 +421,39 @@ pub const Subprocess = struct {
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.unref();
         return JSC.JSValue.jsUndefined();
+    }
+
+    /// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
+    /// Returns `true` on success, `false` on failure + throws a JS error.
+    extern fn Bun__serializeJSValueForSubprocess(global: *JSC.JSGlobalObject, value: JSValue, fd: bun.FileDescriptor) bool;
+
+    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        if (this.ipc == .none) {
+            global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+            return .zero;
+        }
+
+        if (callFrame.argumentsCount() == 0) {
+            global.throwInvalidArguments("Subprocess.send() requires one argument", .{});
+            return .zero;
+        }
+
+        const value = callFrame.argument(0);
+
+        const success = Bun__serializeJSValueForSubprocess(
+            global,
+            value,
+            this.ipc_socket.fd(),
+        );
+        if (!success) return .zero;
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn disconnect(this: *Subprocess) void {
+        if (this.ipc == .none) return;
+        this.ipc_socket.close();
+        this.ipc = .none;
     }
 
     pub fn getPid(
@@ -895,9 +932,6 @@ pub const Subprocess = struct {
                 .fd => {
                     return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
                 },
-                .ipc => {
-                    return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
-                },
                 .inherit => {
                     return Writable{ .inherit = {} };
                 },
@@ -1084,9 +1118,9 @@ pub const Subprocess = struct {
         var cmd_value = JSValue.zero;
         var detached = false;
         var args = args_;
-        var has_ipc = false;
-        var serialization = IPCSerialization.json;
-        _ = serialization;
+        var ipc = IPCMode.none;
+        var ipc_callback: JSValue = .zero;
+        _ = ipc_callback;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -1180,7 +1214,11 @@ pub const Subprocess = struct {
                             globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                             return .zero;
                         }
-                        on_exit_callback = onExit_.withAsyncContextIfNeeded(globalThis);
+
+                        on_exit_callback = if (comptime is_sync)
+                            onExit_
+                        else
+                            onExit_.withAsyncContextIfNeeded(globalThis);
                     }
                 }
 
@@ -1238,17 +1276,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio, &has_ipc))
+                        if (!extractStdio(globalThis, bun.STDIN_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio, &has_ipc))
+                        if (!extractStdio(globalThis, bun.STDERR_FD, value, &stdio))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio, &has_ipc))
+                        if (!extractStdio(globalThis, bun.STDOUT_FD, value, &stdio))
                             return .zero;
                     }
                 }
@@ -1267,10 +1305,10 @@ pub const Subprocess = struct {
                     }
                 }
 
-                // TODO: do we want this to be the flag used?
-                if (args.get(globalThis, "ipc")) |ipc_val| {
-                    if (ipc_val.isBoolean()) {
-                        has_ipc = ipc_val.toBoolean();
+                // TODO: We use this secret flag for IPC. see comment below.
+                if (args.get(globalThis, "onMessage")) |val| {
+                    if (val.isCell() and val.isCallable(globalThis.vm())) {
+                        ipc = .advanced;
                     }
                 }
             }
@@ -1312,20 +1350,37 @@ pub const Subprocess = struct {
         }
 
         // IPC is currently implemented in a very limited way.
-        // Node lets you pass as many fds as you want, and they can all be sockets; IPC is just a special
-        // runtime-controlled version of "pipe" (in which pipe is a misleading name since they're bidirectional).
         //
-        // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional.
-        // And then fd 3 is only for IPC.
-        if (has_ipc) {
+        // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
+        // runtime-owned version of "pipe" (in which pipe is a misleading name since they're bidirectional sockets).
+        //
+        // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional
+        //
+        // And then fd 3 is assigned specifically and only for IPC. This is quite lame, because Node.js allows
+        // the ipc fd to be any number and it just works. But most people only care about the default `.fork()`
+        // behavior, where this workaround suffices.
+        //
+        // When Bun.spawn() is given a `.onMessage` callback, it enables IPC as follows:
+        var socket: uws.SocketTCP = undefined;
+        if (ipc != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
                 return .zero;
             }
 
             env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
-            env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
-            env_array.appendAssumeCapacity("NODE_CHANNEL_SERIALIZATION_MODE=json");
+            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_MODE=advanced");
+
+            var fds: [2]uws.LIBUS_SOCKET_DESCRIPTOR = undefined;
+            socket = uws.newSocketFromPair(jsc_vm.rareData().spawnIPCContext(jsc_vm), &fds) orelse {
+                globalThis.throw("failed to create socket pair: E{s}", .{
+                    @tagName(bun.sys.getErrno(-1)),
+                });
+                return .zero;
+            };
+
+            actions.dup2(fds[1], 3) catch |err| return globalThis.handleError(err, "in posix_spawn");
         }
 
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
@@ -1360,15 +1415,6 @@ pub const Subprocess = struct {
             stderr_pipe,
             bun.STDERR_FD,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
-
-        if (has_ipc) {
-            var fds: uws.LIBUS_SOCKET_DESCRIPTOR[2] = undefined;
-            const socket = uws.newSocketFromPair(ctx, &fds) orelse {
-                globalThis.throw("failed to create socket pair");
-                return .zero;
-            };
-            _ = socket;
-        }
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
 
@@ -1453,6 +1499,9 @@ pub const Subprocess = struct {
             .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
+            .ipc = ipc,
+            .ipc_socket = socket,
+            .ipc_buffer = bun.ByteList{},
         };
 
         if (subprocess.stdin == .pipe) {
@@ -1728,11 +1777,10 @@ pub const Subprocess = struct {
         blob: JSC.WebCore.AnyBlob,
         pipe: ?JSC.WebCore.ReadableStream,
         array_buffer: JSC.ArrayBuffer.Strong,
-        ipc: bun.FileDescriptor,
 
         pub fn isPiped(self: Stdio) bool {
             return switch (self) {
-                .array_buffer, .blob, .pipe, .ipc => true,
+                .array_buffer, .blob, .pipe => true,
                 else => false,
             };
         }
@@ -1764,9 +1812,6 @@ pub const Subprocess = struct {
                     } else {
                         try actions.dup2(std_fileno, std_fileno);
                     }
-                },
-                .ipc => |fd| {
-                    try actions.dup2(fd, std_fileno);
                 },
                 .ignore => {
                     const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
@@ -1919,6 +1964,7 @@ pub const Subprocess = struct {
                     .held = JSC.Strong.create(array_buffer.value, globalThis),
                 },
             };
+
             return true;
         }
 
@@ -1928,17 +1974,80 @@ pub const Subprocess = struct {
 
     pub const IPCSocket = uws.NewSocketHandler(false);
 
-    pub const Handler = struct {
+    pub const IPCHandler = struct {
+        // ?! are ALL of these needed tbh
+        pub fn onOpen(
+            _: *Subprocess,
+            _: IPCSocket,
+        ) void {}
+        pub fn onClose(
+            this: *Subprocess,
+            _: IPCSocket,
+            _: c_int,
+            _: ?*anyopaque,
+        ) void {
+            // uSocket is already freed so calling .close() again can segfault
+            log("onClose", .{});
+            this.ipc = .none;
+            std.debug.print("onClose\n", .{});
+        }
         pub fn onData(
-            ptr: *anyopaque,
-            socket: Subprocess,
+            this: *Subprocess,
+            _: IPCSocket,
             buf: []const u8,
         ) void {
-            _ = socket;
-            _ = ptr;
-            uws.us_create_socket_context(0, null, 0, .{});
+            // log("onData", .{});
+            std.debug.print("onData: '{}'\n", .{std.fmt.fmtSliceHexLower(buf)});
+            if (this.ipc_buffer.len == 0 and buf.len >= 2) {
+                // attempt to do everything without buffering
+                if (buf[0] != 1) {
+                    // incorrect format
+                    log("Invalid `type` byte {d}", .{buf[0]});
+                    this.disconnect();
+                    return;
+                }
 
-            std.debug.print("yooo[{s}]\n", .{buf});
+                const len = @as(u32, @intCast(buf[1]));
+                if (buf.len < len + 2) {
+                    // not enough data
+                    log("Not enough data yet {d}, {d}", .{ buf.len, len + 2 });
+                    this.ipc_buffer.write(bun.default_allocator, buf);
+                    return;
+                }
+
+                const message = buf[2 .. 2 + len];
+                const deserialized = JSValue.deserialize(message);
+
+                if (deserialized != .zero) {
+                    if (this.ipc_callback.get()) |cb| {
+                        log("Calling callback with data", .{});
+                        cb.callWithThis(
+                            this.globalThis,
+                            this.this_jsvalue,
+                            &[_]JSValue{deserialized},
+                        );
+                    }
+                }
+            }
         }
+        pub fn onWritable(
+            _: *Subprocess,
+            _: IPCSocket,
+        ) void {}
+        pub fn onTimeout(
+            _: *Subprocess,
+            _: IPCSocket,
+        ) void {}
+        pub fn onConnectError(
+            _: *Subprocess,
+            _: IPCSocket,
+            _: c_int,
+        ) void {
+            // I don't think this is possible to hit.
+        }
+        pub fn onEnd(
+            _: *Subprocess,
+            _: IPCSocket,
+        ) void {}
     };
 };

@@ -6140,6 +6140,8 @@ pub const JSSubprocess = struct {
 
         if (@TypeOf(Subprocess.doRef) != CallbackType)
             @compileLog("Expected Subprocess.doRef to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doRef)));
+        if (@TypeOf(Subprocess.doSend) != CallbackType)
+            @compileLog("Expected Subprocess.doSend to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doSend)));
         if (@TypeOf(Subprocess.getSignalCode) != GetterType)
             @compileLog("Expected Subprocess.getSignalCode to be a getter");
 
@@ -6159,6 +6161,7 @@ pub const JSSubprocess = struct {
 
         if (!JSC.is_bindgen) {
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
+            @export(Subprocess.doSend, .{ .name = "SubprocessPrototype__doSend" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
             @export(Subprocess.getExitCode, .{ .name = "SubprocessPrototype__getExitCode" });

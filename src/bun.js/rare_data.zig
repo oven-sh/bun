@@ -11,6 +11,7 @@ const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const uws = @import("root").bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -30,6 +31,8 @@ cleanup_hook: ?*CleanupHook = null,
 file_polls_: ?*JSC.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
+
+spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
 mime_types: ?bun.HTTP.MimeType.Map = null,
 
@@ -308,6 +311,20 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         rare.stdin_store = store;
         break :brk store;
     };
+}
+
+const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
+
+pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
+    if (rare.spawn_ipc_usockets_context) |ctx| {
+        return ctx;
+    }
+
+    var opts: uws.us_socket_context_options_t = .{};
+    const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
+    Subprocess.IPCSocket.configure(ctx, false, Subprocess, Subprocess.IPCHandler);
+    rare.spawn_ipc_usockets_context = ctx;
+    return ctx;
 }
 
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {

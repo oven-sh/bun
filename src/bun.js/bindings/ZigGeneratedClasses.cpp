@@ -23215,6 +23215,9 @@ JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__readableGetterWrap);
 extern "C" EncodedJSValue SubprocessPrototype__doRef(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(SubprocessPrototype__refCallback);
 
+extern "C" EncodedJSValue SubprocessPrototype__doSend(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(SubprocessPrototype__sendCallback);
+
 extern "C" JSC::EncodedJSValue SubprocessPrototype__getSignalCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__signalCodeGetterWrap);
 
@@ -23243,6 +23246,7 @@ static const HashTableValue JSSubprocessPrototypeTableValues[] = {
     { "pid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__pidGetterWrap, 0 } },
     { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__readableGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__refCallback, 0 } },
+    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__sendCallback, 1 } },
     { "signalCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__signalCodeGetterWrap, 0 } },
     { "stderr"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__stderrGetterWrap, 0 } },
     { "stdin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__stdinGetterWrap, 0 } },
@@ -23398,6 +23402,34 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__refCallback, (JSGlobalObject * lex
 #endif
 
     return SubprocessPrototype__doRef(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSSubprocess* thisObject = jsDynamicCast<JSSubprocess*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Subprocess"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return SubprocessPrototype__doSend(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__signalCodeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

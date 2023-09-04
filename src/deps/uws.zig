@@ -165,7 +165,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @as(*NativeSocketHandleType(is_ssl), @ptrCast(us_socket_get_native_handle(comptime ssl_int, this.socket).?));
         }
 
-        pub fn fd(this: ThisSocket) i32 {
+        pub inline fn fd(this: ThisSocket) i32 {
             if (comptime is_ssl) {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
@@ -2268,7 +2268,6 @@ extern fn uws_app_listen_domain_with_options(
 ) void;
 
 extern fn us_socket_pair(
-    ssl: c_int,
     ctx: *SocketContext,
     ext_size: c_int,
     fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
@@ -2276,6 +2275,6 @@ extern fn us_socket_pair(
 
 pub fn newSocketFromPair(ctx: *SocketContext, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
     return SocketTCP{
-        .socket = us_socket_pair(0, ctx, 0, fds) orelse return null,
+        .socket = us_socket_pair(ctx, 0, fds) orelse return null,
     };
 }

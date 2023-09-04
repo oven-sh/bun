@@ -37,7 +37,7 @@ logLevel = "debug" # "debug", "warn", "error"
 # This will probably change in a future release to be just regular TOML instead. It is a holdover from the CLI argument parsing.
 "process.env.bagel" = "'lox'"
 
-[loaders]
+[loader]
 # When loading a .bagel file, run the JS parser
 ".bagel" = "js"
 ```

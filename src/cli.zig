@@ -1195,29 +1195,33 @@ pub const Command = struct {
             // _ = BunxCommand;
         }
 
-        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            var ctx = Command.Context{
-                .args = std.mem.zeroes(Api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = bun.default_allocator,
-            };
+        // there's a bug with openSelfExe() on Windows
+        if (comptime !bun.Environment.isWindows) {
+            // bun build --compile entry point
+            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+                var ctx = Command.Context{
+                    .args = std.mem.zeroes(Api.TransformOptions),
+                    .log = log,
+                    .start_time = start_time,
+                    .allocator = bun.default_allocator,
+                };
 
-            ctx.args.target = Api.Target.bun;
-            var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
-            if (bun.argv().len > 1) {
-                for (argv, bun.argv()[1..]) |*dest, src| {
-                    dest.* = bun.span(src);
+                ctx.args.target = Api.Target.bun;
+                var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
+                if (bun.argv().len > 1) {
+                    for (argv, bun.argv()[1..]) |*dest, src| {
+                        dest.* = bun.span(src);
+                    }
                 }
-            }
-            ctx.passthrough = argv;
+                ctx.passthrough = argv;
 
-            try @import("./bun_js.zig").Run.bootStandalone(
-                ctx,
-                graph.entryPoint().name,
-                graph,
-            );
-            return;
+                try @import("./bun_js.zig").Run.bootStandalone(
+                    ctx,
+                    graph.entryPoint().name,
+                    graph,
+                );
+                return;
+            }
         }
 
         const tag = which();

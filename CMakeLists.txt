@@ -48,9 +48,9 @@ endif()
 option(USE_STATIC_SQLITE "Statically link SQLite?" DEFAULT_USE_STATIC_SQLITE)
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" DEFAULT_CUSTOM_UNLESS_WINDOWS)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
-option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" OFF)
-option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" DEFAULT_CUSTOM_UNLESS_WINDOWS)
-option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd`" DEFAULT_CUSTOM_UNLESS_WINDOWS)
+option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
+option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
+option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd`" ON)
 option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" DEFAULT_CUSTOM_UNLESS_WINDOWS)
 option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
@@ -270,7 +270,15 @@ add_custom_command(
 # )
 
 
-add_executable(bun ${bun_SRC} ${uSockets_FILES} ${BUN_OBJECT_FILE} ${EXTRA_SRC})
+
+
+add_executable(bun WIN32 ${bun_SRC} ${uSockets_FILES} ${BUN_OBJECT_FILE} ${EXTRA_SRC})
+# Set /subsystem:console on bun for windows
+
+if (WIN32)
+    set_target_properties(bun PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
+endif()
+
 
 set_target_properties(bun PROPERTIES
     CXX_STANDARD 20
@@ -355,7 +363,7 @@ endif()
 if (USE_CUSTOM_LIBARCHIVE)
     include_directories(src/deps/libarchive/include)
     if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/archive_static.lib")
+        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/archive.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libarchive.a")
     endif()
@@ -379,13 +387,13 @@ endif()
 if (USE_CUSTOM_ZSTD)
     include_directories(src/deps/zstd/include)
     if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/zstd_static.lib")
+        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/zstd.lib")
     else()
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libzstd.a")
     endif()
 else ()
     find_package(zstd CONFIG REQUIRED)
-    target_link_libraries(bun PRIVATE zstd::libzstd_static>)
+    target_link_libraries(bun PRIVATE zstd::libzstd)
 endif()
 
 if (USE_CUSTOM_CARES)
@@ -427,9 +435,8 @@ if (NOT WIN32)
 endif()
 
 set_property(TARGET bun PROPERTY
-             MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
-             set_property(TARGET bun PROPERTY
-             MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
+)
 
 if (USE_CUSTOM_LOLHTML)
     if (WIN32)
@@ -480,17 +487,25 @@ else()
         string (APPEND CMAKE_CXX_FLAGS 
             " /external:anglebrackets "
         )
+        set_target_properties(bun PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE /STACK:4194304,4194304 ")
     endif()
     
     if (DEFINED ENV{VCPKG_ROOT})
         include_directories($ENV{VCPKG_ROOT}/installed/x64-windows/include)
     endif()
 
+    # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/DerivedSources)
+    # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/Headers)
     file(COPY C:/Users/windo/Code/WebKit/WebKitBuild/cmakeconfig.h DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/src/bun.js/bindings)  
+    
 
     include_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
     link_directories(C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
-    link_libraries(icudata.lib icui8n.lib icu8uc.lib NtosKrnl winmm.lib Bcrypt.lib ntdl NtosKrnl)
+    target_link_directories(bun PUBLIC ${ICU_LIBRARY})
+    
+    
+    target_link_libraries(bun PUBLIC icuuc icudt icutu icuio icuin icutest)
+    target_link_libraries(bun PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
 endif()
 
 

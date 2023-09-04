@@ -1494,6 +1494,8 @@ pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     // TODO: error handling
     // if (result.status == .surrogate) {
     // }
+    wbuf[result.count] = 0;
+    
     return wbuf[0..result.count :0];
 }
 

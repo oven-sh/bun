@@ -700,7 +700,12 @@ pub const CreateCommand = struct {
         {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
-            std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+            if (comptime Environment.isWindows) {
+                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+            } else {
+                std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
+            }
+
             std.os.unlinkat(
                 parent_dir.fd,
                 "gitignore",

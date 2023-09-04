@@ -15,9 +15,7 @@ pub fn main() void {
     const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
-    if (comptime Environment.isWindows) {
-        bun.win32.populateArgv();
-    }
+
 
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
@@ -41,8 +39,25 @@ pub fn main() void {
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
+pub export fn windows_main(argc: c_int, argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.C) c_int {
+    var env_count: usize = 0;
+    while (c_envp[env_count] != null) : (env_count += 1) {}
+    const envp = @as([*][*:0]u8, @ptrCast(c_envp))[0..env_count];
+
+    std.os.argv = @ptrCast(argv[0..@intCast(argc)]);
+    std.os.environ = envp;
+
+    main();
+
+    return 0;
+}
+
 test "panic" {
     panic("woah", null);
 }
 
 pub const build_options = @import("build_options");
+
+comptime {
+    _ = windows_main;
+}

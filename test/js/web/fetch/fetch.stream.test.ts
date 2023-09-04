@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
-
+import zlib from "zlib";
 const fixtures = {
   "fixture": readFileSync(join(import.meta.dir, "fixture.html")),
   "fixture.png": readFileSync(join(import.meta.dir, "fixture.png")),
@@ -17,6 +17,39 @@ const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
+  it("can deflate with and without headers", async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (req.url.endsWith("/with_headers")) {
+            const content = zlib.deflateSync(Buffer.from("Hello, World"));
+            return new Response(content, {
+              headers: {
+                "Content-Type": "text/plain",
+                "Content-Encoding": "deflate",
+                "Access-Control-Allow-Origin": "*",
+              },
+            });
+          }
+          const content = zlib.deflateRawSync(Buffer.from("Hello, World"));
+          return new Response(content, {
+            headers: {
+              "Content-Type": "text/plain",
+              "Content-Encoding": "deflate",
+              "Access-Control-Allow-Origin": "*",
+            },
+          });
+        },
+      });
+      const url = `http://${server.hostname}:${server.port}/`;
+      expect(await (await fetch(`${url}with_headers`)).text()).toBe("Hello, World");
+      expect(await (await fetch(url)).text()).toBe("Hello, World");
+    } finally {
+      server?.stop();
+    }
+  });
   it("stream still works after response get out of scope", async () => {
     let server: Server | null = null;
     try {

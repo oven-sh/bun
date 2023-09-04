@@ -439,10 +439,11 @@ pub const ZlibReaderArrayList = struct {
     }
 
     pub fn end(this: *ZlibReader) void {
-        if (this.state == State.Inflating) {
+        // always free with `inflateEnd`
+        if (this.state != State.End) {
             _ = inflateEnd(&this.zlib);
-            this.state = State.End;
         }
+        this.state = State.End;
     }
 
     pub fn init(
@@ -846,7 +847,7 @@ pub const ZlibCompressorArrayList = struct {
     }
 
     pub fn end(this: *ZlibCompressor) void {
-        if (this.state == State.Inflating) {
+        if (this.state != State.End) {
             _ = deflateEnd(&this.zlib);
             this.state = State.End;
         }
@@ -981,13 +982,13 @@ pub const ZlibCompressorArrayList = struct {
 
             switch (rc) {
                 ReturnCode.StreamEnd => {
-                    this.state = State.End;
                     this.list.items.len = this.zlib.total_out;
-
                     this.end();
+
                     return;
                 },
                 ReturnCode.MemError => {
+                    this.end();
                     this.state = State.Error;
                     return error.OutOfMemory;
                 },
@@ -998,6 +999,7 @@ pub const ZlibCompressorArrayList = struct {
                 ReturnCode.VersionError,
                 ReturnCode.ErrNo,
                 => {
+                    this.end();
                     this.state = State.Error;
                     return error.ZlibError;
                 },

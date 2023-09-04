@@ -1155,9 +1155,9 @@ pub const InternalState = struct {
                     // TODO: add br support today we support gzip and deflate only
                     // zlib.MAX_WBITS = 15
                     // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                    // to (de-)compress zlib format, use wbits = zlib.MAX_WBITS
+                    // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
                     // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else -Zlib.MAX_WBITS,
+                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
                 },
             );
             this.zlib_reader = reader;

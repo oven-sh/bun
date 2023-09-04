@@ -1,9 +1,9 @@
 #include "root.h"
 #include "headers-handwritten.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include "helpers.h"
 #include "simdutf.h"
-#include "wtf/text/ExternalStringImpl.h"
+#include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
@@ -278,7 +278,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" EncodedJSValue BunString__toJSON(
+extern "C" JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {
@@ -291,7 +291,7 @@ extern "C" EncodedJSValue BunString__toJSON(
     return JSC::JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue BunString__createArray(
+extern "C" JSC::EncodedJSValue BunString__createArray(
     JSC::JSGlobalObject* globalObject,
     const BunString* ptr, size_t length)
 {

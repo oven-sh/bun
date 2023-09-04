@@ -36,26 +36,24 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JSSourceCode.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSValueInternal.h"
-#include "JavaScriptCore/JSVirtualMachineInternal.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/OptionsList.h"
-#include "JavaScriptCore/ParserError.h"
-#include "JavaScriptCore/ScriptExecutable.h"
-#include "JavaScriptCore/SourceOrigin.h"
-#include "JavaScriptCore/StackFrame.h"
-#include "JavaScriptCore/StackVisitor.h"
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParserError.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
-#include "JavaScriptCore/Identifier.h"
+#include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
 
-#include "JavaScriptCore/TypedArrayInlines.h"
-#include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/JSWeakMap.h"
-#include "JavaScriptCore/JSWeakMapInlines.h"
-#include "JavaScriptCore/JSWithScope.h"
+#include <JavaScriptCore/TypedArrayInlines.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
+#include <JavaScriptCore/JSWithScope.h>
 
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
@@ -65,7 +63,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include "ZigSourceProvider.h"
-#include "JavaScriptCore/FunctionPrototype.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -271,7 +269,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     return true;
 }
 
-extern "C" EncodedJSValue Resolver__propForRequireMainPaths(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Resolver__propForRequireMainPaths(JSGlobalObject*);
 
 JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

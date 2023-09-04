@@ -19,6 +19,8 @@ endif()
 
 set(DEFAULT_CPU_TARGET "native")
 
+add_compile_definitions("JSC_OBJC_API_ENABLED=0")
+
 if (ARCH STREQUAL "x86_64")
     if (NOT MSVC)
         if (USE_BASELINE_BUILD)
@@ -46,7 +48,7 @@ option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
 option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
-option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
+option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" OFF)
 option(USE_BASELINE_BUILD "Build Bun for older CPUs" OFF)
 
 set(ZIG_EXECUTABLE "${DEFAULT_ZIG_EXECUTABLE}" CACHE STRING "Path to zig executable")
@@ -70,24 +72,12 @@ if(UNIX AND NOT APPLE)
     set(LINUX ON)
 endif()
 
-include_directories(packages/bun-uws)
-include_directories(packages)
-include_directories(packages/bun-usockets)
-include_directories(packages/bun-usockets/src)
-include_directories(src/bun.js/bindings)
-include_directories(src/bun.js/bindings/WebCore)
-include_directories(src/bun.js/bindings/webcrypto)
-include_directories(src/bun.js/bindings/sqlite)
-include_directories(src/bun.js/modules)
-include_directories(${WEBKIT_INCLUDE_DIR})
-include_directories(src/js/out)
-include_directories(src/js/out/modules)
-include_directories(src/js/builtins)
-include_directories(src/napi)
-include_directories(src/deps)
-include_directories(src/deps/picohttpparser)
 
 add_compile_definitions("BUILDING_JSCONLY__")
+
+
+
+add_definitions(-D_HAS_EXCEPTIONS=0)
 
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
@@ -109,7 +99,34 @@ file(GLOB BunCpp_SRC
     "src/deps/picohttpparser/picohttpparser.c"
 )
 
-add_library(BunCpp STATIC ${BunCpp_SRC})
+add_library(BunCpp STATIC ${BunCpp_SRC} ${uSockets_FILES})
+
+set_target_properties(BunCpp PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS YES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+)
+
+include_directories(
+    packages/bun-uws
+    packages
+    packages/bun-usockets
+    packages/bun-usockets/src
+    src/bun.js/bindings
+    src/bun.js/bindings/webcore
+    src/bun.js/bindings/webcrypto
+    src/bun.js/bindings/sqlite
+    src/bun.js/modules
+    src/js/out
+    src/js/out/modules
+    src/js/builtins
+    src/napi
+    src/deps
+    src/deps/picohttpparser
+)
+
 
 add_compile_definitions(
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
@@ -137,14 +154,28 @@ endif()
 set(BUN_OBJECT_FILE zig-out/lib/bun.o)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(BUN_OBJECT_FILE zig-out/lib/bun-debug.o)
-    string(APPEND CMAKE_CXX_FLAGS " -g3 -O1")
+    if (NOT MSVC)
+        string(APPEND CMAKE_CXX_FLAGS " -g3 -O1")
+        string(APPEND CMAKE_C_FLAGS " -g3 -O1")
+    else()
+        string(APPEND CMAKE_CXX_FLAGS " /O1 ")
+        string(APPEND CMAKE_C_FLAGS " /O1  ")
+    endif()
     add_compile_definitions("BUN_DEBUG")
 elseif (NOT MSVC)
     string(APPEND CMAKE_CXX_FLAGS " -O3 -femit-llvm " )
     string(APPEND CMAKE_C_FLAGS " -O3 -femit-llvm ")
 else ()
-    string(APPEND CMAKE_CXX_FLAGS " -O3 " )
-    string(APPEND CMAKE_C_FLAGS " -O3 ")
+    string(APPEND CMAKE_CXX_FLAGS " /O2 " )
+    string(APPEND CMAKE_C_FLAGS " /O2 ")
+endif()
+
+if (WIN32)
+    string(APPEND BunCpp_SRC "src/bindings/musl-memmem.c")
+    add_compile_definitions("WIN32")
+    add_compile_definitions("_WINDOWS")
+    add_compile_definitions("_CRT_SECURE_NO_WARNINGS")
+    add_compile_definitions("WIN32_LEAN_AND_MEAN=1")
 endif()
 
 # if clang
@@ -162,6 +193,10 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         "-fvisibility=hidden "
         "-fvisibility-inlines-hidden "
     )
+elseif(MSVC)
+    string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-  ")
+    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- ")
+    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj ")
 endif()
 
 
@@ -178,8 +213,8 @@ if (NOT MSVC)
     string(APPEND CMAKE_CXX_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET} ")
     string(APPEND CMAKE_C_FLAGS " -march=${CPU_TARGET} -mtune=${CPU_TARGET} ")
 else()
-    string(APPEND CMAKE_CXX_FLAGS " /arch:${CPU_TARGET} ")
-    string(APPEND CMAKE_C_FLAGS " /arch:${CPU_TARGET} ")
+    # string(APPEND CMAKE_CXX_FLAGS " /arch:x64 ")
+    # string(APPEND CMAKE_C_FLAGS " /arch:x64 ")
 endif()
 
 file(GLOB ZIG_FILES 
@@ -221,7 +256,6 @@ file(GLOB uSockets_FILES
     "packages/bun-usockets/src/crypto/*.cpp"
 )
 
-add_library(uSockets STATIC ${uSockets_FILES})
 add_compile_definitions(
     "LIBUS_USE_OPENSSL=1"
     "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
@@ -230,6 +264,15 @@ add_compile_definitions(
 )
 
 add_executable(bun ${BUN_OBJECT_FILE})
+
+set_target_properties(bun PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS YES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+)
+
 target_link_libraries(bun PRIVATE BunCpp)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
@@ -276,12 +319,9 @@ elseif (LINUX)
 endif()
 
 
-if (USE_CUSTOM_ZLIB)
-    if (WIN32)
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/zlib.lib")
-    else()
-        target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libz.a")
-    endif()
+if (USE_CUSTOM_ZLIB AND (NOT WIN32))
+    target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/libz.a")
+    include_directories(${BUN_DEPS_DIR}/zlib/include)
 else ()
     find_package(ZLIB REQUIRED)
     target_link_libraries(bun PRIVATE ZLIB::ZLIB)
@@ -390,9 +430,11 @@ if (WIN32)
     if (USE_CUSTOM_LIBUV)
         target_link_libraries(bun PRIVATE "${BUN_LIB_DIR}/uv.lib")
     else ()
-        find_package(libuv REQUIRED)
-        target_link_libraries(bun PRIVATE libuv::libuv)
+        find_package(libuv CONFIG REQUIRED )
+        target_link_libraries(BunCpp PRIVATE STATIC $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
     endif()
+
+    include_directories(C:\\Users\\windo\\Build\\libicu\\include)
 endif()
 
 if (USE_STATIC_SQLITE)
@@ -405,15 +447,6 @@ else()
 endif()
 
 
-set_target_properties(bun PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN YES
-)
-
-target_link_libraries(bun PRIVATE uSockets)
 
 
 if (NOT MSVC)
@@ -428,5 +461,6 @@ if (NOT MSVC)
 else()
     target_link_libraries(bun PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib ${WEBKIT_LIB_DIR}/JavaScriptCore.lib ${WEBKIT_LIB_DIR}/bmalloc.lib")
 endif()
+
 
 

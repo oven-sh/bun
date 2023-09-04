@@ -17,12 +17,12 @@ class DOMWrapperWorld;
 #include "BunBuiltinNames.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
-#include "wtf/Function.h"
-#include "wtf/HashSet.h"
-#include "wtf/RefPtr.h"
-#include "JavaScriptCore/WeakInlines.h"
-#include "JavaScriptCore/IsoSubspacePerVM.h"
-#include "wtf/StdLibExtras.h"
+#include <wtf/Function.h>
+#include <wtf/HashSet.h>
+#include <wtf/RefPtr.h>
+#include <JavaScriptCore/WeakInlines.h>
+#include <JavaScriptCore/IsoSubspacePerVM.h>
+#include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
 

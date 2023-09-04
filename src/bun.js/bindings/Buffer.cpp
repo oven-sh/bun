@@ -7,7 +7,7 @@
 #include "root.h"
 
 #include "Buffer.h"
-#include "JavaScriptCore/Uint8Array.h"
+#include <JavaScriptCore/Uint8Array.h>
 
 namespace WebCore {
 

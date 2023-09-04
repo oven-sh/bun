@@ -25,7 +25,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
     mutable JSC::WriteBarrier<JSC::Unknown> m_filename;
     mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
-    mutable JSC::WriteBarrier<Unknown> m_paths;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_paths;
     mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
     bool ignoreESModuleAnnotation { false };
 

@@ -8,8 +8,8 @@
 #include "root.h"
 
 #include "BufferEncodingType.h"
-#include "JavaScriptCore/GenericTypedArrayView.h"
-#include "JavaScriptCore/JSBase.h"
+#include <JavaScriptCore/GenericTypedArrayView.h>
+#include <JavaScriptCore/JSBase.h>
 #include "headers-handwritten.h"
 
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length);

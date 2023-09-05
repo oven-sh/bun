@@ -1247,7 +1247,7 @@ pub const ESModule = struct {
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
     allocator: std.mem.Allocator,
-    module_type: *options.ModuleType = undefined,
+    module_type: ?*options.ModuleType = null,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,
@@ -1775,24 +1775,26 @@ pub const ESModule = struct {
                             log.addNoteFmt("The key \"{s}\" matched", .{key});
                         }
 
-                        var prev_module_type = r.module_type.*;
-                        var result = r.resolveTarget(package_url, slice.items(.value)[i], subpath, internal, pattern);
-                        if (result.status.isUndefined()) {
-                            did_find_map_entry = true;
-                            last_map_entry_i = i;
-                            r.module_type.* = prev_module_type;
-                            continue;
-                        }
+                        if (r.module_type) |module_type_| {
+                            var prev_module_type = module_type_.*;
+                            var result = r.resolveTarget(package_url, slice.items(.value)[i], subpath, internal, pattern);
+                            if (result.status.isUndefined()) {
+                                did_find_map_entry = true;
+                                last_map_entry_i = i;
+                                module_type_.* = prev_module_type;
+                                continue;
+                            }
 
-                        if (strings.eqlComptime(key, "import")) {
-                            r.module_type.* = .esm;
-                        }
+                            if (strings.eqlComptime(key, "import")) {
+                                module_type_.* = .esm;
+                            }
 
-                        if (strings.eqlComptime(key, "require")) {
-                            r.module_type.* = .cjs;
-                        }
+                            if (strings.eqlComptime(key, "require")) {
+                                module_type_.* = .cjs;
+                            }
 
-                        return result;
+                            return result;
+                        }
                     }
 
                     if (r.debug_logs) |log| {
@@ -1876,19 +1878,21 @@ pub const ESModule = struct {
 
                 for (array) |targetValue| {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
-                    var prev_module_type = r.module_type.*;
-                    const result = r.resolveTarget(package_url, targetValue, subpath, internal, pattern);
-                    if (result.status == .InvalidPackageTarget or result.status == .Null) {
-                        last_debug = result.debug;
-                        last_exception = result.status;
-                    }
+                    if (r.module_type) |module_type_| {
+                        var prev_module_type = module_type_.*;
+                        const result = r.resolveTarget(package_url, targetValue, subpath, internal, pattern);
+                        if (result.status == .InvalidPackageTarget or result.status == .Null) {
+                            last_debug = result.debug;
+                            last_exception = result.status;
+                        }
 
-                    if (result.status.isUndefined()) {
-                        r.module_type.* = prev_module_type;
-                        continue;
-                    }
+                        if (result.status.isUndefined()) {
+                            module_type_.* = prev_module_type;
+                            continue;
+                        }
 
-                    return result;
+                        return result;
+                    }
                 }
 
                 return Resolution{ .path = "", .status = last_exception, .debug = last_debug };
@@ -2023,9 +2027,13 @@ pub const ESModule = struct {
                     if (r.conditions.contains(map_key)) {
                         if (r.resolveTargetReverse(query, key, slice.items(.value)[i], kind)) |result| {
                             if (strings.eqlComptime(map_key, "import")) {
-                                r.module_type.* = .esm;
+                                if (r.module_type) |module_type_| {
+                                    module_type_.* = .esm;
+                                }
                             } else if (strings.eqlComptime(map_key, "require")) {
-                                r.module_type.* = .cjs;
+                                if (r.module_type) |module_type_| {
+                                    module_type_.* = .cjs;
+                                }
                             }
 
                             return result;

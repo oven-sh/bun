@@ -35,12 +35,10 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
 pub const StatWatcherScheduler = struct {
     timer: ?*uws.Timer = null,
 
-    head: ?*StatWatcher = null,
-    tail: ?*StatWatcher = null,
+    head: std.atomic.Atomic(?*StatWatcher) = .{ .value = null },
+    is_running: std.atomic.Atomic(bool) = .{ .value = false },
 
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-
-    mutex: Mutex = Mutex.init(),
 
     pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
         var this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
@@ -53,32 +51,30 @@ pub const StatWatcherScheduler = struct {
         std.debug.assert(watcher.closed == false);
         std.debug.assert(watcher.next == null);
 
-        this.mutex.lock();
-        defer this.mutex.unlock();
-
-        if (this.head == null) {
-            this.head = watcher;
-            this.tail = watcher;
-
-            watcher.last_check = std.time.Instant.now() catch unreachable;
-
-            const vm = watcher.globalThis.bunVM();
-            this.timer = uws.Timer.create(
-                vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
-                this,
-            );
-
-            this.timer.?.set(this, timerCallback, watcher.interval, 0);
-            log("I will wait {d} milli initially", .{watcher.interval});
+        if (this.head.swap(watcher, .Monotonic)) |head| {
+            watcher.next = head;
+            if (!this.is_running.load(.Monotonic)) {
+                this.timer.?.set(this, timerCallback, 1, 0);
+            }
         } else {
-            this.tail.?.next = watcher;
-            this.tail = watcher;
-            this.timer.?.set(this, timerCallback, 1, 0);
+            if (!this.is_running.load(.Monotonic)) {
+                watcher.last_check = std.time.Instant.now() catch unreachable;
+
+                const vm = watcher.globalThis.bunVM();
+                this.timer = uws.Timer.create(
+                    vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
+                    this,
+                );
+
+                this.timer.?.set(this, timerCallback, watcher.interval, 0);
+                log("I will wait {d} milli initially", .{watcher.interval});
+            }
         }
     }
 
     pub fn timerCallback(timer: *uws.Timer) callconv(.C) void {
         var this = timer.ext(StatWatcherScheduler).?;
+        this.is_running.store(true, .Monotonic);
         JSC.WorkPool.schedule(&this.task);
     }
 
@@ -87,7 +83,9 @@ pub const StatWatcherScheduler = struct {
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
-        var prev: *StatWatcher = this.head.?;
+        var head: *StatWatcher = this.head.swap(null, .Monotonic).?;
+
+        var prev = head;
         while (prev.closed) {
             var c = prev;
             defer {
@@ -102,16 +100,16 @@ pub const StatWatcherScheduler = struct {
             if (prev.next) |next| {
                 prev = next;
             } else {
-                this.head = null;
-                this.tail = null;
-                this.timer.?.deinit();
-                this.timer = null;
-                // The scheduler is not deinit here, but it will get reused.
+                if (this.head.load(.Monotonic) == null) {
+                    this.timer.?.deinit();
+                    this.timer = null;
+                    // The scheduler is not deinit here, but it will get reused.
+                }
                 return;
             }
         }
 
-        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 - 500)) {
+        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 -| 500)) {
             prev.last_check = now;
             prev.restat();
         }
@@ -130,7 +128,7 @@ pub const StatWatcherScheduler = struct {
                 }
                 continue;
             }
-            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 - 500)) {
+            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
                 c.last_check = now;
                 c.restat();
             }
@@ -138,7 +136,8 @@ pub const StatWatcherScheduler = struct {
             prev = c;
             curr = c.next;
         }
-        this.tail = prev;
+
+        prev.next = this.head.swap(head, .Monotonic);
 
         log("I will wait {d} milli", .{min_interval});
 

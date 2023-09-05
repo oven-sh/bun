@@ -12,26 +12,22 @@ const { isWeakMap, isWeakSet } = require('node:util/types');
 
 const ALL_PROPERTIES = 0;
 const ONLY_ENUMERABLE = 2;
-const kPending = Symbol('kPending');
-const kRejected = Symbol('kRejected');
+const kPending = Symbol('kPending'); // state ID 0
+const kFulfilled = Symbol('kFulfilled'); // state ID 1
+const kRejected = Symbol('kRejected'); // state ID 2
 
 function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   const desc = Object.getOwnPropertyDescriptors(a);
   const ret = [];
   for (const [k, v] of Object.entries(desc)) {
-    if (!/^(0|[1-9][0-9]*)$/.test(k) ||
-        (parseInt(k, 10) >= (2 ** 32 - 1))) { // Arrays are limited in size
-      if ((filter === ONLY_ENUMERABLE) && !v.enumerable) {
-        continue;
-      }
+    if (!/^(0|[1-9][0-9]*)$/.test(k) || (parseInt(k, 10) >= (2 ** 32 - 1))) { // Arrays are limited in size
+      if ((filter === ONLY_ENUMERABLE) && !v.enumerable) continue;
       ret.push(k);
     }
   }
   for (const s of Object.getOwnPropertySymbols(a)) {
     const v = Object.getOwnPropertyDescriptor(a, s);
-    if ((filter === ONLY_ENUMERABLE) && !v.enumerable) {
-      continue;
-    }
+    if ((filter === ONLY_ENUMERABLE) && !v.enumerable) continue;
     ret.push(s);
   }
   return ret;
@@ -45,7 +41,16 @@ export default {
     ONLY_ENUMERABLE,
   },
   getOwnNonIndexProperties,
-  getPromiseDetails() { return [kPending, undefined]; }, // TODO
+  getPromiseDetails(promise) {
+    const state = $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask;
+    if (state !== $promiseStatePending) {
+      return [
+        state === $promiseStateRejected ? kRejected : kFulfilled,
+        $getPromiseInternalField(promise, $promiseFieldReactionsOrResult)
+      ];
+    }
+    return [kPending, undefined];
+  },
   getProxyDetails(proxy, withHandler = true) {
     const isProxy = $isProxyObject(proxy);
     if (!isProxy) return undefined;

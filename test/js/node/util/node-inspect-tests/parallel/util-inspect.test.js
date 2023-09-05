@@ -1254,23 +1254,20 @@ test('no assertion failures 2', () => {
 
   // Test Promise.
   {
-    // TODO: Promise internals
-    // const resolved = Promise.resolve(3);
-    // assert.strictEqual(util.inspect(resolved), 'Promise { 3 }');
+    const resolved = Promise.resolve(3);
+    assert.strictEqual(util.inspect(resolved), 'Promise { 3 }');
 
-    // const rejected = Promise.reject(3);
-    // assert.strictEqual(util.inspect(rejected), 'Promise { <rejected> 3 }');
-    // // Squelch UnhandledPromiseRejection.
-    // rejected.catch(() => {});
+    const rejected = Promise.reject(3);
+    assert.strictEqual(util.inspect(rejected), 'Promise { <rejected> 3 }');
+    // Squelch UnhandledPromiseRejection.
+    rejected.catch(() => {});
 
     const pending = new Promise(() => { });
     assert.strictEqual(util.inspect(pending), 'Promise { <pending> }');
 
-    //
-    // const promiseWithProperty = Promise.resolve('foo');
-    // promiseWithProperty.bar = 42;
-    // assert.strictEqual(util.inspect(promiseWithProperty),
-    //                    "Promise { 'foo', bar: 42 }");
+    const promiseWithProperty = Promise.resolve('foo');
+    promiseWithProperty.bar = 42;
+    assert.strictEqual(util.inspect(promiseWithProperty), "Promise { 'foo', bar: 42 }");
   }
 
   // Make sure it doesn't choke on polyfills. Unlike Set/Map, there is no standard interface to
@@ -1822,22 +1819,20 @@ test('no assertion failures 2', () => {
     let expected = [
       'Map(2) {',
       '  Promise {',
-      // TODO: Promise internals
-      '    <pending>',
-      // '    [',
-      // '      [',
-      // '        1,',
-      // '        Set(1) {',
-      // '          [',
-      // '            1,',
-      // '            2,',
-      // '            [length]: 2',
-      // '          ]',
-      // '        },',
-      // '        [length]: 2',
-      // '      ],',
-      // '      [length]: 1',
-      // '    ]',
+      '    [',
+      '      [',
+      '        1,',
+      '        Set(1) {',
+      '          [',
+      '            1,',
+      '            2,',
+      '            [length]: 2',
+      '          ]',
+      '        },',
+      '        [length]: 2',
+      '      ],',
+      '      [length]: 1',
+      '    ]',
       '  } => Uint8Array(0) [',
       '    [BYTES_PER_ELEMENT]: 1,',
       '    [length]: 0,',
@@ -1878,17 +1873,16 @@ test('no assertion failures 2', () => {
 
     expected = [
       'Map(2) {',
-      '  Promise { <pending>' +
-      // TODO: Promise internals
-      // '    [',
-      // '      [',
-      // '        1,',
-      // '        Set(1) { [ 1, 2, [length]: 2 ] },',
-      // '        [length]: 2',
-      // '      ],',
-      // '      [length]: 1',
-      // '    ]',
-      ' } => Uint8Array(0) [',
+      '  Promise {\n' +
+      '    [',
+      '      [',
+      '        1,',
+      '        Set(1) { [ 1, 2, [length]: 2 ] },',
+      '        [length]: 2',
+      '      ],',
+      '      [length]: 1',
+      '    ]',
+      '  } => Uint8Array(0) [',
       '    [BYTES_PER_ELEMENT]: 1,',
       '    [length]: 0,',
       '    [byteLength]: 0,',
@@ -1921,29 +1915,13 @@ test('no assertion failures 2', () => {
     expected = [
       'Map(2) {',
       '  Promise {',
-      '    <pending> } =>' +
-      // TODO: Promise internals
-      // '    [ [ 1,',
-      // '        Set(1) {',
-      // '          [ 1,',
-      // '            2,',
-      // '            [length]: 2 ] },',
-      // '        [length]: 2 ],',
-      // '      [length]: 1 ] } => Uint8Array(0) [',
-      // '    [BYTES_PER_ELEMENT]: 1,',
-      // '    [length]: 0,',
-      // '    [byteLength]: 0,',
-      // '    [byteOffset]: 0,',
-      // '    [buffer]: ArrayBuffer {',
-      // '      byteLength: 0,',
-      // '      foo: true } ],',
-      // '  [Set Iterator] {',
-      // '    [ 1,',
-      // '      2,',
-      // '      [length]: 2 ],',
-      // '    [Symbol(Symbol.toStringTag)]:',
-      // "     'Set Iterator' } => <ref *1> [Map Iterator] {",
-      ' Uint8Array(0) [',
+      '    [ [ 1,',
+      '        Set(1) {',
+      '          [ 1,',
+      '            2,',
+      '            [length]: 2 ] },',
+      '        [length]: 2 ],',
+      '      [length]: 1 ] } => Uint8Array(0) [',
       '    [BYTES_PER_ELEMENT]: 1,',
       '    [length]: 0,',
       '    [byteLength]: 0,',
@@ -2355,8 +2333,7 @@ test('no assertion failures 3', () => {
   // Check for special colors.
   {
     const special = inspect.colors[inspect.styles.special];
-    // TODO: Promise internals
-    // const string = inspect.colors[inspect.styles.string];
+    const string = inspect.colors[inspect.styles.string];
 
     assert.strictEqual(
       inspect(new WeakSet(), { colors: true }),
@@ -2371,14 +2348,13 @@ test('no assertion failures 3', () => {
       `Promise { \u001b[${special[0]}m<pending>\u001b[${special[1]}m }`
     );
 
-    // TODO: Promise internals
-    // const rejection = Promise.reject('Oh no!');
-    // assert.strictEqual(
-    //   inspect(rejection, { colors: true }),
-    //   `Promise { \u001b[${special[0]}m<rejected>\u001b[${special[1]}m ` +
-    //   `\u001b[${string[0]}m'Oh no!'\u001b[${string[1]}m }`
-    // );
-    // rejection.catch(() => {});
+    const rejection = Promise.reject('Oh no!');
+    assert.strictEqual(
+      inspect(rejection, { colors: true }),
+      `Promise { \u001b[${special[0]}m<rejected>\u001b[${special[1]}m ` +
+      `\u001b[${string[0]}m'Oh no!'\u001b[${string[1]}m }`
+    );
+    rejection.catch(() => {});
 
     // Verify that aliases do not show up as key while checking `inspect.colors`.
     const colors = Object.keys(inspect.colors);

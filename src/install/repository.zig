@@ -20,6 +20,7 @@ threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
+/// Because this is stored in the lockfile, we can't change the size of it.
 pub const Repository = extern struct {
     owner: String = .{},
     repo: String = .{},
@@ -123,18 +124,73 @@ pub const Repository = extern struct {
 
     pub fn tryHTTPS(url: string) ?string {
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            final_path_buf[0.."https".len].* = "https".*;
+            @memcpy(final_path_buf[0.."https".len], "https");
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
             return final_path_buf[0..(url.len - "ssh".len + "https".len)];
         }
         if (Dependency.isSCPLikePath(url)) {
-            final_path_buf[0.."https://".len].* = "https://".*;
+            @memcpy(final_path_buf[0.."https://".len], "https://");
             var rest = final_path_buf["https://".len..];
             bun.copy(u8, rest, url);
             if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
             return final_path_buf[0..(url.len + "https://".len)];
         }
         return null;
+    }
+
+    /// Parses `url`, converting to a schema Git will accept.
+    pub fn normalize_to_git_url(url: []const u8) []const u8 {
+        //npm: <protocol>://[<user>[:<password>]@]<hostname>[:<port>][:][/]<path>[#<commit-ish> | #semver:<semver>]
+
+        // GIT_URL <= (SSH / GIT / HTTP / FTP / FILE) PATH_TO_REPO
+
+        // SSH <= SSH_URL / SSH_SCP
+        // SSH_URL <= "ssh://" (USER "@")? HOST (":" PORT)? "/"
+        // SSH_SCP <= (USER "@") HOST ":"
+
+        // GIT <= "git://" HOST (":" PORT)? "/"
+        // HTTPS <= "http" "s"? "://" (":" PORT)? "/"
+        // FTP <= "ftp" "s"? "://" HOST (":" PORT) "/"
+        // FILE <= "file://" / "/"
+
+        // USER <= IDENT
+        // HOST <= IDENT ("." IDENT )*
+        // PORT <= [0-9]+ ("." [0-9]+)*
+        // PATH_TO_REPO <= (IDENT "/")* IDENT ".git"
+        // IDENT <= [a-z  A-Z  0-9  _]+
+
+        const protocol: ?[]const u8 = if (strings.hasPrefixComptime(url, "ssh://"))
+            "ssh://"
+        else if (strings.hasPrefixComptime(url, "http://"))
+            "http://"
+        else if (strings.hasPrefixComptime(url, "https://"))
+            "https://"
+        else if (strings.hasPrefixComptime(url, "ftp://"))
+            "ftp://"
+        else if (strings.hasPrefixComptime(url, "ftps://"))
+            "ftps://"
+        else
+            null;
+
+        var len = url.len;
+        var buf: []u8 = if (protocol == null) blk: {
+            // Add a protocol if it's missing.
+            @memcpy(final_path_buf[0.."https://".len], "https://");
+            len += "https://".len;
+            break :blk final_path_buf["https://".len..];
+        } else &final_path_buf;
+
+        bun.copy(u8, buf, url);
+
+        {
+            const without_protocol = if (protocol) |p| buf[p.len..] else buf;
+            if (Dependency.isSCPLikePath(without_protocol)) {
+                if (strings.indexOfChar(without_protocol, ':')) |colon| without_protocol[colon] = '/';
+            }
+        }
+
+        std.debug.print("\nBEFORE_URL: {s}\nAFTER__URL: {s}\n", .{ url, final_path_buf[0..len] });
+        return final_path_buf[0..len];
     }
 
     pub fn download(
@@ -173,12 +229,14 @@ pub const Repository = extern struct {
                 url,
                 folder_name,
             }) catch |err| {
-                log.addErrorFmt(
+                log.addErrorFmtWithNote(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "\"git clone\" for \"{s}\" failed",
                     .{name},
+                    "tried to clone url: \"{s}\"",
+                    .{url},
                 ) catch unreachable;
                 return err;
             };

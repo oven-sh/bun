@@ -412,6 +412,10 @@ pub const Version = struct {
                 // git_tarball.tgz
                 // github:user/repo
                 // git@example.com/repo.git
+                // git+ssh://user@example.com/repo.git
+                // git+file://user@example.com/repo.git
+                // git+http://user@example.com/repo.git
+                // git+https://user@example.com/repo.git
                 // git://user@example.com/repo.git
                 'g' => {
                     if (strings.hasPrefixComptime(dependency, "git")) {

@@ -10,6 +10,10 @@ const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
+const kBunUndiciProxyAgentUri = Symbol("::bunUndiciProxyAgentUri::");
+const kBunUndiciProxyAgentToken = Symbol("::bunUndiciProxyAgentToken::");
+// const kBunUndiciProxyAgentHeaders = Symbol("::bunUndiciProxyAgentHeaders::");
+
 const { fetch } = Bun;
 // @ts-ignore
 const { Response, Request, Headers, URLSearchParams, URL, FormData } = globalThis;
@@ -98,7 +102,7 @@ class BodyReadable extends ReadableFromWeb {
 // *   blocking?: boolean;
 
 type RequestOptions = {
-  dispatcher: Dispatcher;
+  dispatcher?: Dispatcher;
   method: HttpMethod | string;
   signal?: AbortSignal | e.EventEmitter | null;
   maxRedirections?: number;
@@ -198,6 +202,23 @@ async function request(
     throw new Error("signal must be an instance of AbortSignal");
   }
 
+  let proxy: string | undefined;
+  if (dispatcher && dispatcher instanceof ProxyAgent) {
+    // get proxy uri
+    proxy = dispatcher[kBunUndiciProxyAgentUri];
+    // if proxyAgent.token is defined, put a proxy auth header with token in the headers
+    const token = dispatcher[kBunUndiciProxyAgentToken];
+    if (token) {
+      if (inputHeaders) {
+        if (Array.isArray(inputHeaders)) {
+          // TODO: figure out what to do here???
+        } else {
+          inputHeaders["proxy-authorization"] = token;
+        }
+      }
+    }
+  }
+
   let resp;
   const {
     status: statusCode,
@@ -212,6 +233,7 @@ async function request(
     body: inputBody,
     redirect: maxRedirections === undefined || maxRedirections > 0 ? "follow" : "manual",
     keepalive: !reset,
+    proxy,
   } as RequestInit));
 
   // Throw if received 4xx or 5xx response indicating HTTP error
@@ -264,29 +286,62 @@ function Undici() {
 class Dispatcher extends EventEmitter {}
 class Agent extends Dispatcher {}
 
-// declare class ProxyAgent extends Dispatcher {
-//   constructor(options: ProxyAgent.Options | string)
+type ProxyAgentOptions = {
+  uri: string;
+  /**
+   * @deprecated use opts.token
+   */
+  auth?: string;
+  token?: string;
+  headers?: IncomingHttpHeaders;
+};
 
-//   dispatch(options: Agent.DispatchOptions, handler: Dispatcher.DispatchHandlers): boolean;
-//   close(): Promise<void>;
-// }
-
-// declare namespace ProxyAgent {
-//   export interface Options extends Agent.Options {
-//     uri: string;
-//     /**
-//      * @deprecated use opts.token
-//      */
-//     auth?: string;
-//     token?: string;
-//     headers?: IncomingHttpHeaders;
-//     requestTls?: buildConnector.BuildOptions;
-//     proxyTls?: buildConnector.BuildOptions;
-//   }
-// }
 class ProxyAgent extends Dispatcher {
-  // constructor(options: string) {}
+  #uri: string;
+  #token?: string;
+  // #headers?: Dict<string | string[]>;
+
+  constructor(uri: string, options: ProxyAgentOptions) {
+    super();
+
+    if (!uri || typeof uri !== "string") throw new TypeError("uri must be a string");
+    if (uri.startsWith("https://")) throw new TypeError("proxy over TLS not implemented");
+    if (!uri.startsWith("http://")) throw new Error("uri must be a valid URL string with the protocol `http://`");
+
+    let token;
+    if (options) {
+      if (typeof options !== "object") throw new TypeError("options must be an object");
+      // Auth token can either be passed via `token` or `auth` prop, though `auth` is now deprecated
+      const { token: _token, auth } = options;
+      token = _token ?? auth;
+      if (token && (typeof token !== "string" || !token.startsWith("Basic ")))
+        throw new TypeError("token must be a string formated as `Basic <TOKEN_IN_BASE_64>`");
+    }
+
+    this.#uri = uri;
+    this.#token = token;
+    // this.#headers = options.headers;
+  }
+
+  get [kBunUndiciProxyAgentUri]() {
+    return this.#uri;
+  }
+
+  get [kBunUndiciProxyAgentToken]() {
+    return this.#token;
+  }
+
+  // get [kBunUndiciProxyAgentHeaders]() {
+  //   return this.#headers;
+  // }
+
+  dispatch() {
+    return false;
+  }
+
+  async close(): Promise<void> {}
 }
+
 class Pool extends Dispatcher {
   request() {
     throw new Error("Not implemented in bun");

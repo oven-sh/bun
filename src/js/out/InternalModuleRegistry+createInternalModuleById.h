@@ -180,23 +180,8 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::ThirdpartyUtlIndex: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/index"_s, "thirdparty/utl/index.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlIndexCode, "builtin://thirdparty/utl/index"_s);
     }
-    case Field::ThirdpartyUtlSrcInspect: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/inspect"_s, "thirdparty/utl/src/inspect.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcInspectCode, "builtin://thirdparty/utl/src/inspect"_s);
-    }
-    case Field::ThirdpartyUtlSrcInternalAssert: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/internal/assert"_s, "thirdparty/utl/src/internal/assert.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcInternalAssertCode, "builtin://thirdparty/utl/src/internal/assert"_s);
-    }
-    case Field::ThirdpartyUtlSrcInternalErrors: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/internal/errors"_s, "thirdparty/utl/src/internal/errors.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcInternalErrorsCode, "builtin://thirdparty/utl/src/internal/errors"_s);
-    }
-    case Field::ThirdpartyUtlSrcInternalValidators: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/internal/validators"_s, "thirdparty/utl/src/internal/validators.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcInternalValidatorsCode, "builtin://thirdparty/utl/src/internal/validators"_s);
-    }
-    case Field::ThirdpartyUtlSrcPrimordials: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/primordials"_s, "thirdparty/utl/src/primordials.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcPrimordialsCode, "builtin://thirdparty/utl/src/primordials"_s);
-    }
-    case Field::ThirdpartyUtlSrcUtil: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/src/util"_s, "thirdparty/utl/src/util.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlSrcUtilCode, "builtin://thirdparty/utl/src/util"_s);
+    case Field::ThirdpartyUtlPrimordials: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utl/primordials"_s, "thirdparty/utl/primordials.js"_s, InternalModuleRegistryConstants::ThirdpartyUtlPrimordialsCode, "builtin://thirdparty/utl/primordials"_s);
     }
     case Field::ThirdpartyVercelFetch: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "vercel_fetch"_s, "thirdparty/vercel_fetch.js"_s, InternalModuleRegistryConstants::ThirdpartyVercelFetchCode, "builtin://thirdparty/vercel/fetch"_s);

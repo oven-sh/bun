@@ -918,7 +918,7 @@ pub const RunCommand = struct {
                         if (script_name_to_search[0] == std.fs.path.sep) {
                             break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
                         } else {
-                            const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
+                            const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                             path_buf[cwd.len] = std.fs.path.sep;
                             var parts = [_]string{script_name_to_search};
                             file_path = resolve_path.joinAbsStringBuf(

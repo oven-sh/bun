@@ -208,7 +208,7 @@ pub const PackageManagerCommand = struct {
                 try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const path = std.os.getcwd(&cwd_buf) catch {
+                const path = bun.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                     Global.exit(1);
                 };
@@ -324,7 +324,7 @@ fn printNodeModulesFolderStructure(
             }
         } else {
             var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const path = std.os.getcwd(&cwd_buf) catch {
+            const path = bun.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Global.exit(1);
             };

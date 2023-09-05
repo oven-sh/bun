@@ -106,7 +106,7 @@ pub const InstallCompletionsCommand = struct {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
         }
 
-        var cwd = std.os.getcwd(&cwd_buf) catch {
+        var cwd = bun.getcwd(&cwd_buf) catch {
             // don't fail on this if we don't actually need to
             if (fail_exit_code == 1) {
                 if (!stdout.isTty()) {

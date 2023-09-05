@@ -5,9 +5,18 @@ const utl = require("../thirdparty/utl");
 
 var cjs_exports = {};
 
-function isBuffer(value) {
-  return Buffer.isBuffer(value);
+function isBufferInterface({ copy, fill, readUint8 }) {
+  return typeof copy === "function" && typeof fill === "function" && typeof readUint8 === "function";
 }
+
+function isBuffer(value) {
+  return (
+    Buffer.isBuffer(value) ||
+    // incase it ends up as a browserify buffer
+    (typeof value === "object" && isBufferInterface(value || {}))
+  );
+}
+
 function isFunction(value) {
   return typeof value === "function";
 }

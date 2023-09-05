@@ -53,7 +53,7 @@ const HashMapPool = struct {
 
     pub fn get(_: std.mem.Allocator) *LinkedList.Node {
         if (list) |list_| {
-            if (list_.?.popFirst()) |node| {
+            if (list_.popFirst()) |node| {
                 node.data.clearRetainingCapacity();
                 return node;
             }
@@ -66,7 +66,7 @@ const HashMapPool = struct {
 
     pub fn release(node: *LinkedList.Node) void {
         if (list) |list_| {
-            list_.?.prepend(node);
+            list_.prepend(node);
             return;
         }
 

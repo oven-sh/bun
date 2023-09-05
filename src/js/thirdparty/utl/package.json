@@ -2,7 +2,7 @@
   "private": true,
   "name": "node-inspect-extracted",
   "version": "3.0.0",
-  "main": "./index.js",
+  "main": "./inspect.js",
   "types": "./types/util.d.ts",
   "homepage": "https://github.com/hildjj/node-inspect-extracted",
   "repository": {

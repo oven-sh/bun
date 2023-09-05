@@ -3,8 +3,10 @@ const { pathToFileURL } = require("node:url");
 const primordials = require("./primordials");
 const {
   Array,
+  ArrayFrom,
   ArrayIsArray,
   ArrayPrototypeFilter,
+  ArrayPrototypeFlat,
   ArrayPrototypeForEach,
   ArrayPrototypeIncludes,
   ArrayPrototypeIndexOf,
@@ -22,6 +24,7 @@ const {
   DatePrototypeGetTime,
   DatePrototypeToISOString,
   DatePrototypeToString,
+  ErrorCaptureStackTrace,
   ErrorPrototypeToString,
   FunctionPrototypeBind,
   FunctionPrototypeCall,
@@ -29,6 +32,8 @@ const {
   JSONStringify,
   MapPrototypeGetSize,
   MapPrototypeEntries,
+  MapPrototypeValues,
+  MapPrototypeKeys,
   MathFloor,
   MathMax,
   MathMin,
@@ -45,7 +50,9 @@ const {
   Object,
   ObjectAssign,
   ObjectDefineProperty,
+  ObjectEntries,
   ObjectGetOwnPropertyDescriptor,
+  ObjectGetOwnPropertyDescriptors,
   ObjectGetOwnPropertyNames,
   ObjectGetOwnPropertySymbols,
   ObjectGetPrototypeOf,
@@ -53,6 +60,7 @@ const {
   ObjectKeys,
   ObjectPrototypeHasOwnProperty,
   ObjectPrototypePropertyIsEnumerable,
+  ObjectPrototypeToString,
   ObjectSeal,
   ObjectSetPrototypeOf,
   ReflectApply,
@@ -61,10 +69,12 @@ const {
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
+  RegExpPrototypeTest,
   RegExpPrototypeToString,
   SafeStringIterator,
   SafeMap,
   SafeSet,
+  SetPrototypeEntries,
   SetPrototypeGetSize,
   SetPrototypeValues,
   String,
@@ -95,16 +105,12 @@ const {
   Uint8Array,
 } = primordials;
 
-const {
-  constants: { ALL_PROPERTIES, ONLY_ENUMERABLE, kPending, kRejected },
-  getOwnNonIndexProperties,
-  getPromiseDetails,
-  getProxyDetails,
-  previewEntries,
-  getConstructorName: internalGetConstructorName,
-} = require("./util");
-
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
+const kPending = Symbol("kPending"); // state ID 0
+const kFulfilled = Symbol("kFulfilled"); // state ID 1
+const kRejected = Symbol("kRejected"); // state ID 2
+const ALL_PROPERTIES = 0;
+const ONLY_ENUMERABLE = 2;
 
 const isAsyncFunction = v =>
   typeof v === "function" && StringPrototypeStartsWith(FunctionPrototypeToString(v), "async");
@@ -166,9 +172,144 @@ const {
 //! temp workaround to apply is{BigInt,Symbol}Object fix
 const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _native_isBoxedPrimitive(val);
 
-const assert = require("./internal/assert");
+// We need this duplicate here to avoid a circular dependency between node:assert and node:util.
+class AssertionError extends Error {
+  constructor(message, isForced = false) {
+    super(message);
+    this.name = "AssertionError";
+    this.code = "ERR_ASSERTION";
+    this.operator = "==";
+    this.generatedMessage = !isForced;
+    this.actual = isForced && undefined;
+    this.expected = !isForced || undefined;
+  }
+}
+function assert(p, message) {
+  if (!p) throw new AssertionError(message);
+}
 
-const { validateObject, validateString } = require("./internal/validators");
+const codes = {}; // exported from errors.js
+{ // errors.js
+  // Sorted by a rough estimate on most frequently used entries.
+  const kTypes = [
+    "string",
+    "function",
+    "number",
+    "object",
+    // Accept 'Function' and 'Object' as alternative to the lower cased version.
+    "Function",
+    "Object",
+    "boolean",
+    "bigint",
+    "symbol",
+  ];
+  const classRegExp = /^([A-Z][a-z0-9]*)+$/;
+  const messages = new SafeMap();
+  const sym = "ERR_INVALID_ARG_TYPE";
+  messages.set(sym, (name, expected, actual) => {
+    assert(typeof name === "string", "'name' must be a string");
+    if (!ArrayIsArray(expected)) expected = [expected];
+
+    let msg = "The ";
+    if (StringPrototypeEndsWith(name, " argument")) msg += `${name} `; // For cases like 'first argument'
+    else msg += `"${name}" ${StringPrototypeIncludes(name, ".") ? "property" : "argument"} `;
+    msg += "must be ";
+
+    const types = [];
+    const instances = [];
+    const other = [];
+    for (const value of expected) {
+      assert(typeof value === "string", "All expected entries have to be of type string");
+      if (ArrayPrototypeIncludes(kTypes, value)) ArrayPrototypePush(types, StringPrototypeToLowerCase(value));
+      else if (RegExpPrototypeTest(classRegExp, value)) ArrayPrototypePush(instances, value);
+      else {
+        assert(value !== "object", 'The value "object" should be written as "Object"');
+        ArrayPrototypePush(other, value);
+      }
+    }
+    // Special handle `object` in case other instances are allowed to outline the differences between each other.
+    if (instances.length > 0) {
+      const pos = ArrayPrototypeIndexOf(types, "object");
+      if (pos !== -1) {
+        ArrayPrototypeSplice(types, pos, 1);
+        ArrayPrototypePush(instances, "Object");
+      }
+    }
+    if (types.length > 0) {
+      if (types.length > 2) msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${ArrayPrototypePop(types)}`;
+      else if (types.length === 2) msg += `one of type ${types[0]} or ${types[1]}`;
+      else msg += `of type ${types[0]}`;
+      if (instances.length > 0 || other.length > 0) msg += " or ";
+    }
+    if (instances.length > 0) {
+      if (instances.length > 2) msg += `an instance of ${ArrayPrototypeJoin(instances, ", ")}, or ${ArrayPrototypePop(instances)}`;
+      else msg += `an instance of ${instances[0]}` + (instances.length === 2 ? ` or ${instances[1]}` : "");
+      if (other.length > 0) msg += " or ";
+    }
+    if (other.length > 0) {
+      if (other.length > 2) {
+        const last = ArrayPrototypePop(other);
+        msg += `one of ${ArrayPrototypeJoin(other, ", ")}, or ${last}`;
+      } else if (other.length === 2) {
+        msg += `one of ${other[0]} or ${other[1]}`;
+      } else {
+        if (StringPrototypeToLowerCase(other[0]) !== other[0]) msg += "an ";
+        msg += `${other[0]}`;
+      }
+    }
+
+    if (actual == null) msg += `. Received ${actual}`;
+    else if (typeof actual === "function" && actual.name) msg += `. Received function ${actual.name}`;
+    else if (typeof actual === "object") {
+      if (actual.constructor && actual.constructor.name) msg += `. Received an instance of ${actual.constructor.name}`;
+      else msg += `. Received ${inspect(actual, { depth: -1 })}`;
+    } else {
+      let inspected = inspect(actual, { colors: false });
+      if (inspected.length > 25) inspected = `${StringPrototypeSlice(inspected, 0, 25)}...`;
+      msg += `. Received type ${typeof actual} (${inspected})`;
+    }
+    return msg;
+  });
+  codes[sym] = function NodeError(...args) {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    const error = new TypeError();
+    Error.stackTraceLimit = limit; // Reset the limit and setting the name property.
+
+    const msg = messages.get(sym);
+    assert(typeof msg === "function");
+    assert(msg.length <= args.length, // Default options do not count.
+      `Code: ${sym}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`);
+    const message = ReflectApply(msg, error, args);
+
+    ObjectDefineProperty(error, "message", { value: message, enumerable: false, writable: true, configurable: true });
+    ObjectDefineProperty(error, "toString", {
+      value() { return `${this.name} [${sym}]: ${this.message}`; },
+      enumerable: false, writable: true, configurable: true,
+    });
+    // addCodeToName + captureLargerStackTrace
+    let err = error;
+    const userStackTraceLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = Infinity;
+    ErrorCaptureStackTrace(err);
+    Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
+    err.name = `${TypeError.name} [${sym}]`; // Add the error code to the name to include it in the stack trace.
+    err.stack; // Access the stack to generate the error message including the error code from the name.
+    delete err.name; // Reset the name to the actual name.
+    error.code = sym;
+    return error;
+  };
+}
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {{ allowArray?: boolean, allowFunction?: boolean, nullable?: boolean }} [options] */
+const validateObject = ((value, name, allowArray = false) => {
+  if (
+    (value === null) || (!allowArray && ArrayIsArray(value)) ||
+    (typeof value !== "object" && (typeof value !== "function"))
+  ) throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
+});
 
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
@@ -663,24 +804,22 @@ defineColorAlias("doubleunderline", "doubleUnderline");
 
 // TODO(BridgeAR): Add function style support for more complex styles.
 // Don't use 'blue' not visible on cmd.exe
-inspect.styles = ObjectAssign(
-  { __proto__: null },
-  {
-    special: "cyan",
-    number: "yellow",
-    bigint: "yellow",
-    boolean: "yellow",
-    undefined: "grey",
-    null: "bold",
-    string: "green",
-    symbol: "green",
-    date: "magenta",
-    // "name": intentionally not styling
-    // TODO(BridgeAR): Highlight regular expressions properly.
-    regexp: "red",
-    module: "underline",
-  },
-);
+inspect.styles = {
+  __proto__: null,
+  special: "cyan",
+  number: "yellow",
+  bigint: "yellow",
+  boolean: "yellow",
+  undefined: "grey",
+  null: "bold",
+  string: "green",
+  symbol: "green",
+  date: "magenta",
+  // "name": intentionally not styling
+  // TODO(BridgeAR): Highlight regular expressions properly.
+  regexp: "red",
+  module: "underline",
+};
 
 function addQuotes(str, quotes) {
   if (quotes === -1) return `"${str}"`;
@@ -1226,7 +1365,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
         "special",
       );
     }
-    assert.fail("handleMaxCallStackSize assertion failed:" + String(err));
+    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
   }
   if (ctx.circular !== undefined) {
     const index = ctx.circular.get(value);
@@ -1780,8 +1919,7 @@ function formatPrimitive(fn, value, ctx) {
     if (
       ctx.compact !== true &&
       // We do not support handling unicode characters width with
-      // the readline getStringWidth function as there are
-      // performance implications.
+      // the readline getStringWidth function as there are performance implications.
       value.length > kMinLineLength &&
       value.length > ctx.breakLength - ctx.indentationLvl - 4
     ) {
@@ -2134,8 +2272,7 @@ function isBelowBreakLength(ctx, output, start, base) {
   // length of at least `output.length`. In addition, some cases have a
   // whitespace in-between each other that is added to the total as well.
   // TODO(BridgeAR): Add unicode support. Use the readline getStringWidth
-  // function. Check the performance overhead and make it an opt-in in case it's
-  // significant.
+  // function. Check the performance overhead and make it an opt-in in case it's significant.
   let totalLength = output.length + start;
   if (totalLength + output.length > ctx.breakLength) return false;
   for (let i = 0; i < output.length; i++) {
@@ -2488,11 +2625,99 @@ function isZeroWidthCodePoint(code) {
  * Remove all VT control characters. Use to estimate displayed string width.
  */
 function stripVTControlCharacters(str) {
-  validateString(str, "str");
+  if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
   return RegExpPrototypeSymbolReplace(ansi, str, "");
 }
 
-const entities = {
+// utils
+function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
+  const desc = ObjectGetOwnPropertyDescriptors(a);
+  const ret = [];
+  for (const [k, v] of ObjectEntries(desc)) {
+    if (!RegExpPrototypeTest(/^(0|[1-9][0-9]*)$/, k) || NumberParseInt(k, 10) >= 2 ** 32 - 1) {
+      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue; // Arrays are limited in size
+      else ArrayPrototypePush(ret, k);
+    }
+  }
+  for (const s of ObjectGetOwnPropertySymbols(a)) {
+    const v = ObjectGetOwnPropertyDescriptor(a, s);
+    if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
+    ArrayPrototypePush(ret, s);
+  }
+  return ret;
+}
+function getPromiseDetails(promise) {
+  const state = $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask;
+  if (state !== $promiseStatePending) {
+    return [
+      state === $promiseStateRejected ? kRejected : kFulfilled,
+      $getPromiseInternalField(promise, $promiseFieldReactionsOrResult),
+    ];
+  }
+  return [kPending, undefined];
+}
+function getProxyDetails(proxy, withHandler = true) {
+  const isProxy = $isProxyObject(proxy);
+  if (!isProxy) return undefined;
+  const handler = $getProxyInternalField(proxy, $proxyFieldHandler);
+  // if handler is null, the proxy is revoked
+  const target = handler === null ? null : $getProxyInternalField(proxy, $proxyFieldTarget);
+  if (withHandler) return [target, handler];
+  else return target;
+}
+function previewEntries(val, isIterator = false) {
+  if (isIterator) {
+    // the Map or Set instance this iterator belongs to
+    const iteratedObject = $getInternalField(val, 1 /*iteratorFieldIteratedObject*/);
+    // for Maps: 0 = keys, 1 = values,      2 = entries
+    // for Sets:           1 = keys|values, 2 = entries
+    const kind = $getInternalField(val, 2 /*iteratorFieldKind*/);
+    const isEntries = kind === 2;
+    // TODO(bun): improve performance by not using Array.from and instead using the iterator directly to only get the first
+    // few entries which will actually be displayed (this requires changing some logic in the call sites of this function)
+    if ($isMap(iteratedObject)) {
+      if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(iteratedObject)), true];
+      else if (kind === 1) return [ArrayFrom(MapPrototypeValues(iteratedObject)), false];
+      else return [ArrayFrom(MapPrototypeKeys(iteratedObject)), false];
+    } else if ($isSet(iteratedObject)) {
+      if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(SetPrototypeEntries(iteratedObject))), true];
+      else return [ArrayFrom(iteratedObject), false];
+    }
+    // TODO(bun): This function is currently only called for Map and Set iterators
+    // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
+    else throw new Error("previewEntries(): Invalid iterator received");
+  }
+  // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
+  if (isWeakMap(val)) return [];
+  if (isWeakSet(val)) return [];
+  else throw new Error("previewEntries(): Invalid object received");
+}
+function internalGetConstructorName(val) {
+  if (!val || typeof val !== "object") throw new Error("Invalid object");
+  if (val.constructor?.name) return val.constructor.name;
+  const str = ObjectPrototypeToString(val);
+  const m = StringPrototypeMatch(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
+  return m ? m[1] : "Object";
+}
+
+export default {
+  inspect,
+  format,
+  formatWithOptions,
+  stripVTControlCharacters,
+  //! non-standard properties, should these be kept? (not currently exposed)
+  //stylizeWithColor,
+  //stylizeWithHTML(str, styleType) {
+  //  const style = inspect.styles[styleType];
+  //  if (style !== undefined) {
+  //    return `<span style="color:${style};">${escapeHTML(str)}</span>`;
+  //  }
+  //  return escapeHTML(str);
+  //},
+};
+
+// unused without `stylizeWithHTML`
+/*const entities = {
   34: "&quot;",
   38: "&amp;",
   39: "&apos;",
@@ -2500,31 +2725,10 @@ const entities = {
   62: "&gt;",
   160: "&nbsp;",
 };
-
 function escapeHTML(str) {
   return str.replace(/[\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u00FF]/g, c => {
     const code = String(c.charCodeAt(0));
     const ent = entities[code];
     return ent || "&#" + code + ";";
   });
-}
-
-export default {
-  identicalSequenceRange,
-  inspect,
-  inspectDefaultOptions,
-  format,
-  formatWithOptions,
-  getStringWidth,
-  stripVTControlCharacters,
-  isZeroWidthCodePoint,
-  stylizeWithColor,
-  stylizeWithHTML(str, styleType) {
-    const style = inspect.styles[styleType];
-    if (style !== undefined) {
-      return `<span style="color:${style};">${escapeHTML(str)}</span>`;
-    }
-    return escapeHTML(str);
-  },
-  Proxy,
-};
+}*/

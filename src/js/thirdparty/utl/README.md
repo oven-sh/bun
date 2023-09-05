@@ -14,7 +14,7 @@ The following [`util`](https://nodejs.org/api/util.html) functions:
 - [`format(format[, ...args])`](https://nodejs.org/api/util.html#util_util_format_format_args)
 - [`formatWithOptions(inspectOptions, format[, ...args])`](https://nodejs.org/api/util.html#util_util_formatwithoptions_inspectoptions_format_args)
 
-And these extras:
+<!--And these extras:
 
 - `stylizeWithColor(str, styleType)`: colorize `str` with ANSI escapes according to the styleType
 - `stylizeWithHTML(str, styleType)`: colorize `str` with HTML span tags
@@ -53,22 +53,13 @@ function stylizeWithHTML(str, styleType) {
   }
   return str;
 }
-```
+```-->
 
 ## Known Limitations
 
-- [`arguments`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/arguments)
-  objects are not treated specially.
-  [[bug](https://github.com/hildjj/node-inspect-extracted/issues/1)]
 - Objects that have been mangled with `Object.setPrototypeOf`
   do not retain their original type information.
   [[bug](https://github.com/hildjj/node-inspect-extracted/issues/3)]
-- `Promise` state is not visible. All Promises will show up as
-  `Promise< pending >` no matter what state they are in.
-- `Map` and `Set` iterators will not show their internal state because that
-  cannot be done from unprivileged code without modifying the iterator.
-  Entry iterators are not distinguished from value iterators.
-  [[bug](https://github.com/hildjj/node-inspect-extracted/issues/4)]
 - `WeakMap` and `WeakSet` will not show their contents, because those contents
   cannot be iterated over in unprivileged code.
 - Colorful stack traces are not completely accurate with respect to what

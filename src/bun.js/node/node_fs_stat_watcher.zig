@@ -123,11 +123,7 @@ pub const StatWatcherScheduler = struct {
         while (prev.closed) {
             var c = prev;
             defer {
-                if (c.js_this == .zero) {
-                    c.deinit();
-                } else {
-                    c.used_by_scheduler_thread = false;
-                }
+                c.used_by_scheduler_thread = false;
             }
 
             log("[1] removing closed watcher for '{s}'", .{prev.path});
@@ -155,11 +151,7 @@ pub const StatWatcherScheduler = struct {
                 log("[2] removing closed watcher for '{s}'", .{c.path});
                 prev.next = c.next;
                 curr = c.next;
-                if (c.js_this == .zero) {
-                    c.deinit();
-                } else {
-                    c.used_by_scheduler_thread = false;
-                }
+                c.used_by_scheduler_thread = false;
                 continue;
             }
             if (stdTimeInstantSince(now, c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
@@ -184,7 +176,9 @@ pub const StatWatcher = struct {
 
     ctx: *VirtualMachine,
 
+    /// Closed is set to true to tell the scheduler to remove from list and mark `used_by_scheduler_thread` as false.
     closed: bool,
+    /// When this is marked `false` this StatWatcher can get freed
     used_by_scheduler_thread: bool,
 
     path: [:0]u8,
@@ -212,12 +206,18 @@ pub const StatWatcher = struct {
     }
 
     pub fn deinit(this: *StatWatcher) void {
-        if (!this.closed) {
-            this.close();
+        log("deinit\n", .{});
+        std.debug.assert(!this.hasPendingActivity());
+
+        if (this.persistent) {
+            this.persistent = false;
+            this.poll_ref.unref(this.ctx);
         }
+        this.closed = true;
+        this.last_jsvalue.clear();
+
         bun.default_allocator.free(this.path);
         bun.default_allocator.destroy(this);
-        log("deinit\n", .{});
     }
 
     pub const Arguments = struct {
@@ -342,7 +342,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) callconv(.C) bool {
-        return !this.closed or this.used_by_scheduler_thread;
+        return this.used_by_scheduler_thread;
     }
 
     /// Stops file watching but does not free the instance.
@@ -365,12 +365,7 @@ pub const StatWatcher = struct {
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
     pub fn finalize(this: *StatWatcher) callconv(.C) void {
         log("Finalize\n", .{});
-        if (!this.used_by_scheduler_thread) {
-            this.deinit();
-        } else {
-            this.close();
-            this.js_this = .zero;
-        }
+        this.deinit();
     }
 
     pub const InitialStatTask = struct {
@@ -391,7 +386,7 @@ pub const StatWatcher = struct {
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
-                this.finalize();
+                this.used_by_scheduler_thread = false;
                 return;
             }
 
@@ -415,9 +410,6 @@ pub const StatWatcher = struct {
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
             this.used_by_scheduler_thread = false;
-            if (this.js_this == .zero) {
-                this.deinit();
-            }
             return;
         }
 
@@ -431,24 +423,25 @@ pub const StatWatcher = struct {
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
             this.used_by_scheduler_thread = false;
-            if (this.js_this == .zero) {
-                this.deinit();
-            }
             return;
         }
 
         const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
-        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
+        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
             },
         );
-        // TODO: what if this throws?
+
         const vm = this.globalThis.bunVM();
+        if (result.isAnyError()) {
+            vm.onUnhandledError(this.globalThis, result);
+        }
+
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
@@ -473,14 +466,17 @@ pub const StatWatcher = struct {
         const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
+        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
         );
-        // TODO: what if this throws?
+        if (result.isAnyError()) {
+            const vm = this.globalThis.bunVM();
+            vm.onUnhandledError(this.globalThis, result);
+        }
     }
 
     pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {

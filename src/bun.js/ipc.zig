@@ -48,7 +48,8 @@ pub fn decodeIPCMessage(
     }
 
     const message_type: IPCMessageType = @enumFromInt(data[0]);
-    const message_len: u32 = @intCast(data[1]);
+    const message_len: u32 = @as(*align(1) const u32, @ptrCast(data[1 .. @sizeOf(u32) + 1])).*;
+
     log("Received IPC message type {d} ({s}) len {d}", .{
         @intFromEnum(message_type),
         std.enums.tagName(IPCMessageType, message_type) orelse "unknown",
@@ -128,6 +129,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
             data_: []const u8,
         ) void {
             var data = data_;
+            log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
@@ -151,6 +153,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                     const result = decodeIPCMessage(data, globalThis) catch |e| switch (e) {
                         error.NotEnoughBytes => {
                             _ = this.ipc_buffer.write(bun.default_allocator, data) catch @panic("OOM");
+                            log("hit NotEnoughBytes", .{});
                             return;
                         },
                         error.InvalidFormat => {
@@ -170,7 +173,9 @@ pub fn NewIPCHandler(comptime Context: type) type {
                     }
                 }
             }
+
             _ = this.ipc_buffer.write(bun.default_allocator, data) catch @panic("OOM");
+
             var slice = this.ipc_buffer.slice();
             while (true) {
                 const result = decodeIPCMessage(slice, globalThis) catch |e| switch (e) {
@@ -178,6 +183,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                         // copy the remaining bytes to the start of the buffer
                         @memcpy(this.ipc_buffer.ptr[0..slice.len], slice);
                         this.ipc_buffer.len = @truncate(slice.len);
+                        log("hit NotEnoughBytes2", .{});
                         return;
                     },
                     error.InvalidFormat => {
@@ -190,7 +196,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
 
                 this.handleIPCMessage(result.message);
 
-                if (result.bytes_consumed < data.len) {
+                if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
                 } else {
                     // clear the buffer

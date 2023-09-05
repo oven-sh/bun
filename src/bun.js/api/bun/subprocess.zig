@@ -1237,8 +1237,13 @@ pub const Subprocess = struct {
                             return .zero;
                         };
 
+                        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+                        PATH = "";
+
                         while (object_iter.next()) |key| {
                             var value = object_iter.value;
+                            if (value == .undefined) continue;
+
                             var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
                                 globalThis.throw("out of memory", .{});
                                 return .zero;

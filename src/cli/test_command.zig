@@ -454,7 +454,7 @@ const Scanner = struct {
             return false;
         }
 
-        if (jest.Jest.runner.?.test_options.coverage.skip_test_files) {
+        if (jest.Jest.runner.?.test_options.?.coverage.skip_test_files) {
             const name_without_extension = slice[0 .. slice.len - ext.len];
             inline for (test_name_suffixes) |suffix| {
                 if (strings.endsWithComptime(name_without_extension, suffix)) {
@@ -968,7 +968,7 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
-                const module = reporter.jest.files.items(.module_scope)[module_id];
+                const module = reporter.jest.files.items(.module_scope)[module_id].?;
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;

@@ -612,7 +612,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 ctx: Writer,
                 failed: bool = false,
-                estimated_line_length: *usize = undefined,
+                estimated_line_length: ?*usize = null,
 
                 pub fn print(self: *@This(), comptime fmt: string, args: anytype) void {
                     self.ctx.print(fmt, args) catch {

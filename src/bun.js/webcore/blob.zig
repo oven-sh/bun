@@ -90,7 +90,7 @@ pub const Blob = struct {
     /// Was it created via file constructor?
     is_jsdom_file: bool = false,
 
-    globalThis: *JSGlobalObject = undefined,
+    globalThis: ?*JSGlobalObject = null,
 
     last_modified: f64 = 0.0,
 
@@ -125,11 +125,11 @@ pub const Blob = struct {
         joiner: StringJoiner,
         boundary: []const u8,
         failed: bool = false,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: ?*JSC.JSGlobalObject,
 
         pub fn onEntry(this: *FormDataContext, name: ZigString, entry: JSC.DOMFormData.FormDataEntry) void {
             if (this.failed) return;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
 
             const allocator = this.allocator;
             const joiner = &this.joiner;
@@ -1685,8 +1685,8 @@ pub const Blob = struct {
             task: HTTPClient.NetworkThread.Task = undefined,
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
-            onCompleteCtx: *anyopaque = undefined,
-            onCompleteCallback: OnReadFileCallback = undefined,
+            onCompleteCtx: ?*anyopaque = null,
+            onCompleteCallback: ?OnReadFileCallback = null,
             io_task: ?*ReadFileTask = null,
 
             pub const Read = struct {
@@ -1759,8 +1759,8 @@ pub const Blob = struct {
             pub const ReadFileTask = JSC.IOTask(@This());
 
             pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
-                var cb = this.onCompleteCallback;
-                var cb_ctx = this.onCompleteCtx;
+                var cb = this.onCompleteCallback.?;
+                var cb_ctx = this.onCompleteCtx.?;
 
                 if (this.store == null and this.system_error != null) {
                     var system_error = this.system_error.?;
@@ -1953,8 +1953,8 @@ pub const Blob = struct {
             task: HTTPClient.NetworkThread.Task = undefined,
             io_task: ?*WriteFileTask = null,
 
-            onCompleteCtx: *anyopaque = undefined,
-            onCompleteCallback: OnWriteFileCallback = undefined,
+            onCompleteCtx: ?*anyopaque = null,
+            onCompleteCallback: ?OnWriteFileCallback = null,
             wrote: usize = 0,
 
             pub const ResultType = SystemError.Maybe(SizeType);
@@ -2031,8 +2031,8 @@ pub const Blob = struct {
             pub const WriteFileTask = JSC.IOTask(@This());
 
             pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
-                var cb = this.onCompleteCallback;
-                var cb_ctx = this.onCompleteCtx;
+                var cb = this.onCompleteCallback.?;
+                var cb_ctx = this.onCompleteCtx.?;
 
                 this.bytes_blob.store.?.deref();
                 this.file_blob.store.?.deref();
@@ -2668,7 +2668,7 @@ pub const Blob = struct {
     };
 
     pub const ByteStore = struct {
-        ptr: [*]u8 = undefined,
+        ptr: ?[*]u8 = null,
         len: SizeType = 0,
         cap: SizeType = 0,
         allocator: std.mem.Allocator,
@@ -2690,12 +2690,12 @@ pub const Blob = struct {
         }
 
         pub fn slice(this: ByteStore) []u8 {
-            return this.ptr[0..this.len];
+            return this.ptr.?[0..this.len];
         }
 
         pub fn deinit(this: *ByteStore) void {
             bun.default_allocator.free(this.stored_name.slice());
-            this.allocator.free(this.ptr[0..this.cap]);
+            this.allocator.free(this.ptr.?[0..this.cap]);
         }
 
         pub fn asArrayList(this: ByteStore) std.ArrayListUnmanaged(u8) {
@@ -2704,7 +2704,7 @@ pub const Blob = struct {
 
         pub fn asArrayListLeak(this: ByteStore) std.ArrayListUnmanaged(u8) {
             return .{
-                .items = this.ptr[0..this.len],
+                .items = this.ptr.?[0..this.len],
                 .capacity = this.cap,
             };
         }

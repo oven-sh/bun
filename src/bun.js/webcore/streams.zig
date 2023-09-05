@@ -2450,7 +2450,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         signal: Signal = .{},
         pending_flush: ?*JSC.JSPromise = null,
         wrote_at_start_of_flush: Blob.SizeType = 0,
-        globalThis: *JSGlobalObject = undefined,
+        globalThis: ?*JSGlobalObject = null,
         highWaterMark: Blob.SizeType = 2048,
 
         requested_end: bool = false,
@@ -2946,12 +2946,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn unregisterAutoFlusher(this: *@This()) void {
             if (this.auto_flusher.registered)
-                AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+                AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.?.bunVM());
         }
 
         fn registerAutoFlusher(this: *@This()) void {
             if (!this.auto_flusher.registered)
-                AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
+                AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.?.bunVM());
         }
 
         pub fn onAutoFlush(this: *@This()) bool {
@@ -3028,7 +3028,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 log("flushPromise()", .{});
 
                 this.pending_flush = null;
-                const globalThis = this.globalThis;
+                const globalThis = this.globalThis.?;
                 prom.asValue(globalThis).unprotect();
                 prom.resolve(globalThis, JSC.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
                 this.wrote_at_start_of_flush = this.wrote;

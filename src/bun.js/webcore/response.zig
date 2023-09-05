@@ -621,8 +621,8 @@ pub const Fetch = struct {
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
         metadata: ?HTTPClient.HTTPResponseMetadata = null,
-        javascript_vm: *VirtualMachine = undefined,
-        global_this: *JSGlobalObject = undefined,
+        javascript_vm: ?*VirtualMachine = null,
+        global_this: ?*JSGlobalObject = null,
         request_body: HTTPRequestBody = undefined,
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
@@ -752,7 +752,7 @@ pub const Fetch = struct {
         pub fn onBodyReceived(this: *FetchTasklet) void {
             this.mutex.lock();
             const success = this.result.isSuccess();
-            const globalThis = this.global_this;
+            const globalThis = this.global_this.?;
             const is_done = !success or !this.result.has_more;
             defer {
                 this.has_schedule_callback.store(false, .Monotonic);
@@ -881,7 +881,7 @@ pub const Fetch = struct {
                             };
 
                             if (old == .Locked) {
-                                old.resolve(&response.body.value, this.global_this);
+                                old.resolve(&response.body.value, this.global_this.?);
                             }
                         }
                     }
@@ -896,7 +896,7 @@ pub const Fetch = struct {
                 return this.onBodyReceived();
             }
             this.mutex.lock();
-            const globalThis = this.global_this;
+            const globalThis = this.global_this.?;
 
             var ref = this.promise;
             const promise_value = ref.value();
@@ -963,12 +963,12 @@ pub const Fetch = struct {
 
             if (this.result.isTimeout()) {
                 // Timeout without reason
-                return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this.?);
             }
 
             if (this.result.isAbort()) {
                 // Abort without reason
-                return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this.?);
             }
 
             var path: bun.String = undefined;
@@ -994,12 +994,12 @@ pub const Fetch = struct {
                 .path = path,
             };
 
-            return fetch_error.toErrorInstance(this.global_this);
+            return fetch_error.toErrorInstance(this.global_this.?);
         }
 
         pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this) catch .{};
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this.?) catch .{};
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1056,7 +1056,7 @@ pub const Fetch = struct {
                     .Locked = .{
                         .size_hint = this.getSizeHint(),
                         .task = this,
-                        .global = this.global_this,
+                        .global = this.global_this.?,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
                         .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     },
@@ -1109,9 +1109,9 @@ pub const Fetch = struct {
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
-            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
+            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this.?), response);
             response_js.ensureStillAlive();
-            this.response = JSC.Strong.create(response_js, this.global_this);
+            this.response = JSC.Strong.create(response_js, this.global_this.?);
             return response_js;
         }
 
@@ -1224,7 +1224,7 @@ pub const Fetch = struct {
             this.abort_reason = reason;
             reason.protect();
             this.signal_store.aborted.store(true, .Monotonic);
-            this.tracker.didCancel(this.global_this);
+            this.tracker.didCancel(this.global_this.?);
 
             if (this.http != null) {
                 HTTPClient.http_thread.scheduleShutdown(this.http.?);
@@ -1302,7 +1302,7 @@ pub const Fetch = struct {
                 }
             }
 
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+            task.javascript_vm.?.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
 

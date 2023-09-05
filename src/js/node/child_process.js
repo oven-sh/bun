@@ -1216,6 +1216,15 @@ class ChildProcess extends EventEmitter {
       }
     }
 
+    if (!this.#handle) {
+      if (callback) {
+        process.nextTick(callback, new TypeError("Process was closed while trying to send message"));
+      } else {
+        this.emit("error", new TypeError("Process was closed while trying to send message"));
+      }
+      return false;
+    }
+
     // Bun does not handle handles yet
     try {
       this.#handle.send(message);
@@ -1233,7 +1242,7 @@ class ChildProcess extends EventEmitter {
 
   #disconnect() {
     if (!this.connected) {
-      this.emit("error", new ERR_IPC_DISCONNECTED());
+      this.emit("error", new TypeError("Process was closed while trying to send message"));
       return;
     }
     this.connected = false;

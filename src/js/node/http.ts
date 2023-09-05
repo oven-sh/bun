@@ -214,6 +214,7 @@ var FakeSocket = class Socket extends Duplex {
 };
 
 function createServer(options, callback) {
+  console.trace("UwU...");
   return new Server(options, callback);
 }
 

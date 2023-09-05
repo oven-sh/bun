@@ -528,6 +528,21 @@ static void loadSignalNumberMap()
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    if (eventName.string() == "message"_s) {
+        if (isAdded) {
+            if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                && eventEmitter.listenerCount(eventName) == 1) {
+                eventEmitter.scriptExecutionContext()->refEventLoop();
+                eventEmitter.m_hasIPCRef = true;
+            }
+        } else {
+            if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
+                eventEmitter.scriptExecutionContext()->unrefEventLoop();
+            }
+        }
+        return;
+    }
+
     loadSignalNumberMap();
 
     static std::once_flag signalNumberToNameMapOnceFlag;

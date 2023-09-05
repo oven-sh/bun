@@ -443,6 +443,7 @@ pub const Subprocess = struct {
             value,
             this.ipc_socket.fd(),
         );
+        log("serializeJSValueForSubprocess {s}", .{if (success) "success" else "failed"});
         if (!success) return .zero;
 
         return JSC.JSValue.jsUndefined();

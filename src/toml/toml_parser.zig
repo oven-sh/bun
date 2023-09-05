@@ -49,12 +49,11 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
     const LinkedList = std.SinglyLinkedList(HashMap);
-    threadlocal var list: LinkedList = undefined;
-    threadlocal var loaded: bool = false;
+    threadlocal var list: ?LinkedList = null;
 
     pub fn get(_: std.mem.Allocator) *LinkedList.Node {
-        if (loaded) {
-            if (list.popFirst()) |node| {
+        if (list) |list_| {
+            if (list_.?.popFirst()) |node| {
                 node.data.clearRetainingCapacity();
                 return node;
             }
@@ -66,13 +65,12 @@ const HashMapPool = struct {
     }
 
     pub fn release(node: *LinkedList.Node) void {
-        if (loaded) {
-            list.prepend(node);
+        if (list) |list_| {
+            list_.?.prepend(node);
             return;
         }
 
         list = LinkedList{ .first = node };
-        loaded = true;
     }
 };
 

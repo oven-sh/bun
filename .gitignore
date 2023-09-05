@@ -140,3 +140,9 @@ build.ninja
 CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
+
+*.lib
+x64
+**/*.vcxproj*
+**/*.sln*
+**/*.dir

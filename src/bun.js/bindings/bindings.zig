@@ -4917,9 +4917,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 
-
-
-
 pub const Exception = extern struct {
     pub const shim = Shimmer("JSC", "Exception", @This());
     bytes: shim.Bytes,

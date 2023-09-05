@@ -394,7 +394,7 @@ fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     } else if (comptime Environment.isMac or Environment.isLinux) {
         return std.c.dlsym(handle, name.ptr);
     }
-    
+
     return bun.todo(@src(), null);
 }
 
@@ -456,7 +456,7 @@ pub extern fn fmod(f64, f64) f64;
 pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.LoadLibraryA(filename);
-    } 
+    }
 
     return std.c.dlopen(filename, flags);
 }

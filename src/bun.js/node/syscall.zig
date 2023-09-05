@@ -932,7 +932,7 @@ pub fn getFdPath(fd_: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe
             var slash_buf: [MAX_PATH_BYTES * 2]u8 = undefined;
             var slash_str = bun.strings.fromWPath(&slash_buf, wide_slice);
 
-            return .{.result = bun.path.normalizeStringBuf(slash_str, out_buffer, false, .loose) };
+            return .{ .result = bun.path.normalizeStringBuf(slash_str, out_buffer, false, .loose) };
         },
         .macos, .ios, .watchos, .tvos => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for

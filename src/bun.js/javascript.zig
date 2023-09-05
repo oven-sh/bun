@@ -1581,7 +1581,6 @@ pub const VirtualMachine = struct {
         ret.path = result_path.text;
     }
 
-
     pub fn resolveForAPI(
         res: *ErrorableString,
         global: *JSGlobalObject,

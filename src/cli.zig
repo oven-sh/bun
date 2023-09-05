@@ -241,9 +241,8 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        
-        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)){ 
-            .result => |fd| std.fs.File{ .handle = bun.fdcast( fd) },
+        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
+            .result => |fd| std.fs.File{ .handle = bun.fdcast(fd) },
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -251,7 +250,7 @@ pub const Arguments = struct {
                     config_path,
                 });
                 Global.exit(1);
-            }
+            },
         };
 
         defer config_file.close();
@@ -329,7 +328,7 @@ pub const Arguments = struct {
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
-            
+
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,

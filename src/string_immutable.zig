@@ -1494,7 +1494,7 @@ pub fn toWObjectPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     wbuf[0..4].* = [_]u16{ '\\', '?', '?', '\\' };
-    return wbuf[0..toWPathNormalized(wbuf[4..], utf8).len + 4:0];
+    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
 // These are the same because they don't have rules like needing a trailing slash
@@ -1551,9 +1551,8 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     std.debug.assert(wbuf.len > 0);
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
-        wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool( add_trailing_lash)))],
+        wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
-
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';

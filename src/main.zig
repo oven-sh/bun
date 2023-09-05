@@ -18,12 +18,11 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
-
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
     if (comptime Environment.isWindows) {
         std.c.environ = @ptrCast(std.os.environ.ptr);
-        _environ = @ptrCast( std.os.environ.ptr);
+        _environ = @ptrCast(std.os.environ.ptr);
     }
 
     bun.start_time = std.time.nanoTimestamp();
@@ -45,13 +44,10 @@ pub fn main() void {
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
-
-
 test "panic" {
     panic("woah", null);
 }
 
 pub const build_options = @import("build_options");
 
-comptime {
-}
+comptime {}

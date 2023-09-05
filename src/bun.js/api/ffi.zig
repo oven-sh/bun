@@ -50,7 +50,6 @@ const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
 
-
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;

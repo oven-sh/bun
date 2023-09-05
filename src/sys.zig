@@ -526,7 +526,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-       if (flags & O.DIRECTORY != 0) {
+        if (flags & O.DIRECTORY != 0) {
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
         }
 
@@ -539,7 +539,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
 
 pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-         if (flags & O.DIRECTORY != 0) {
+        if (flags & O.DIRECTORY != 0) {
             return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
         }
 

@@ -233,6 +233,13 @@ describe("TextDecoder", () => {
     }).toThrow(TypeError);
   });
 
+  it("should not trim invalid byte sequences when fatal is false", () => {
+    const buf = Buffer.from([77, 97, 110, 32, 208, 129, 240, 164, 173]);
+    const received = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+    const expected = "Man Ё\ufffd";
+    expect(received).toBe(expected);
+  });
+
   it("constructor should set values", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     expect(decoder.fatal).toBe(true);

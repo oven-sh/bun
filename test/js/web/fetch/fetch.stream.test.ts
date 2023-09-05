@@ -4,6 +4,11 @@ import { join } from "path";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
 import zlib from "zlib";
+import http from "http";
+import { createReadStream } from "fs";
+import { pipeline } from "stream";
+import type { AddressInfo } from "net";
+
 const fixtures = {
   "fixture": readFileSync(join(import.meta.dir, "fixture.html")),
   "fixture.png": readFileSync(join(import.meta.dir, "fixture.png")),
@@ -50,6 +55,47 @@ describe("fetch() with streaming", () => {
       server?.stop();
     }
   });
+  const files = [
+    join(import.meta.dir, "fixture.html"),
+    join(import.meta.dir, "fixture.png"),
+    join(import.meta.dir, "fixture.png.gz"),
+  ];
+
+  for (let file of files) {
+    it("stream can handle response.body + await response.something() #4500", async () => {
+      const errorHandler = (err: any) => expect(err).toBeUndefined();
+
+      const server = http
+        .createServer(function (req, res) {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+
+          pipeline(createReadStream(file), res, errorHandler);
+        })
+        .listen(0);
+
+      const address = server.address() as AddressInfo;
+      const url = `http://${address.address}:${address.port}`;
+      async function getRequestLen(url: string) {
+        const response = await fetch(url);
+        const hasBody = response.body;
+        if (hasBody) {
+          const res = await response.blob();
+          return res.size;
+        }
+        return 0;
+      }
+
+      for (let i = 0; i < 10; i++) {
+        let len = await getRequestLen(url);
+        if (len <= 0) {
+          throw new Error("Request length is 0");
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      expect(true).toBe(true);
+    });
+  }
 
   it("stream still works after response get out of scope", async () => {
     let server: Server | null = null;

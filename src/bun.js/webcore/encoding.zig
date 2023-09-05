@@ -621,7 +621,7 @@ pub const TextDecoder = struct {
             },
             EncodingLabel.@"UTF-8" => {
                 if (this.fatal) {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {
+                    if (strings.toUTF16AllocNoTrim(default_allocator, buffer_slice, true)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -640,7 +640,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 } else {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, false)) |result_| {
+                    if (strings.toUTF16AllocNoTrim(default_allocator, buffer_slice, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }

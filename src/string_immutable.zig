@@ -1298,6 +1298,126 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
+            const trimmed = bun.simdutf.trim.utf8(bytes);
+
+            if (trimmed.len == 0)
+                break :simd null;
+
+            const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
+
+            if (out_length == 0)
+                break :simd null;
+
+            var out = try allocator.alloc(u16, out_length);
+            log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
+
+            // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
+            switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
+                0 => {
+                    if (comptime fail_if_invalid) {
+                        allocator.free(out);
+                        return error.InvalidByteSequence;
+                    }
+
+                    break :simd .{
+                        .items = out[0..i],
+                        .capacity = out.len,
+                        .allocator = allocator,
+                    };
+                },
+                else => return out,
+            }
+        } else null;
+        var output = output_ orelse fallback: {
+            var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
+            list.items.len = i;
+            strings.copyU8IntoU16(list.items, bytes[0..i]);
+            break :fallback list;
+        };
+        errdefer output.deinit();
+
+        var remaining = bytes[i..];
+
+        {
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            if (comptime fail_if_invalid) {
+                if (replacement.fail) {
+                    if (comptime Environment.allow_assert) std.debug.assert(replacement.code_point == unicode_replacement);
+                    return error.InvalidByteSequence;
+                }
+            }
+            remaining = remaining[@max(replacement.len, 1)..];
+
+            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
+            switch (replacement.code_point) {
+                0...0xffff => |c| {
+                    try output.append(@as(u16, @intCast(c)));
+                },
+                else => |c| {
+                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
+                },
+            }
+        }
+
+        while (strings.firstNonASCII(remaining)) |j| {
+            const end = output.items.len;
+            try output.ensureUnusedCapacity(j);
+            output.items.len += j;
+            strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
+            remaining = remaining[j..];
+
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            if (comptime fail_if_invalid) {
+                if (replacement.fail) {
+                    if (comptime Environment.allow_assert) std.debug.assert(replacement.code_point == unicode_replacement);
+                    return error.InvalidByteSequence;
+                }
+            }
+            remaining = remaining[@max(replacement.len, 1)..];
+
+            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
+            switch (replacement.code_point) {
+                0...0xffff => |c| {
+                    try output.append(@as(u16, @intCast(c)));
+                },
+                else => |c| {
+                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
+                },
+            }
+        }
+
+        if (remaining.len > 0) {
+            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
+
+            output.items.len += remaining.len;
+            strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
+        }
+
+        return output.items;
+    }
+
+    return null;
+}
+
+pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+    if (strings.firstNonASCII(bytes)) |i| {
+        const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const out_length = bun.simdutf.length.utf16.from.utf8.le(bytes);
 
             if (out_length == 0)

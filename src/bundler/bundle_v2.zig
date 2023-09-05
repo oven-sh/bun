@@ -132,16 +132,17 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [*:0]const u8
 }
 
 pub const ThreadPool = struct {
-    pool: *ThreadPoolLib = undefined,
+    pool: ?*ThreadPoolLib = null,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Lock = bun.Lock.init(),
 
-    v2: *BundleV2 = undefined,
+    v2: ?*BundleV2 = null,
 
     const debug = Output.scoped(.ThreadPool, false);
 
     pub fn go(this: *ThreadPool, allocator: std.mem.Allocator, comptime Function: anytype) !ThreadPoolLib.ConcurrentFunction(Function) {
-        return this.pool.go(allocator, Function);
+        var pool = this.pool orelse return error.ThreadPoolNotStarted;
+        return pool.go(allocator, Function);
     }
 
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
@@ -160,18 +161,18 @@ pub const ThreadPool = struct {
 
             cpu_count = @max(@min(cpu_count, @as(u32, @truncate(128 - 1))), 2);
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
-            this.pool.* = ThreadPoolLib.init(.{
+            this.pool.?.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,
             });
             debug("{d} workers", .{cpu_count});
         }
 
-        this.pool.warm(8);
+        this.pool.?.warm(8);
 
-        this.pool.setThreadContext(this);
+        this.pool.?.setThreadContext(this);
     }
 
-    pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
+    pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) !*Worker {
         const trace = tracer(@src(), "getWorker");
         defer trace.end();
 
@@ -188,12 +189,13 @@ pub const ThreadPool = struct {
             entry.value_ptr.* = worker;
         }
 
+        var v2 = this.v2 orelse return error.BundleV2NotSet;
         worker.* = .{
-            .ctx = this.v2,
+            .ctx = v2,
             .allocator = undefined,
             .thread = ThreadPoolLib.Thread.current,
         };
-        worker.init(this.v2);
+        worker.init(v2);
 
         return worker;
     }

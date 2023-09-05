@@ -1193,7 +1193,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn drainMicrotasks(this: *const RequestContext) void {
             if (this.isAsync()) return;
-            this.server.vm.drainMicrotasks();
+            this.server.vm.?.drainMicrotasks();
         }
 
         pub fn setAbortHandler(this: *RequestContext) void {
@@ -1600,7 +1600,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (this.pending_promises_for_abort > 0) {
-                    this.server.vm.tick();
+                    this.server.vm.?.tick();
                 }
             }
         }
@@ -1713,7 +1713,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.request_body = null;
             }
 
-            server.request_pool_allocator.put(this);
+            server.request_pool_allocator.?.put(this);
         }
 
         fn writeHeaders(
@@ -2358,7 +2358,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             var wait_for_promise = false;
-            var vm = this.vm;
+            var vm = this.vm.?;
 
             if (response_value.asAnyPromise()) |promise| {
                 // If we immediately have the value available, we can skip the extra event loop tick
@@ -2523,7 +2523,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (!err.isEmptyOrUndefinedOrNull()) {
                     var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
                     defer exception_list.deinit();
-                    req.server.vm.runErrorHandler(err, &exception_list);
+                    req.server.vm.?.runErrorHandler(err, &exception_list);
                 }
             }
             req.finalize();
@@ -2796,7 +2796,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn finishRunningErrorHandler(this: *RequestContext, value: JSC.JSValue, status: u16) void {
-            var vm = this.server.vm;
+            var vm = this.server.vm.?;
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
             defer exception_list.deinit();
             if (comptime debug_mode) {
@@ -3013,7 +3013,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (body.value.Locked.readable) |readable| {
                         if (readable.ptr == .Bytes) {
                             std.debug.assert(this.request_body_buf.items.len == 0);
-                            var vm = this.server.vm;
+                            var vm = this.server.vm.?;
                             defer vm.drainMicrotasks();
 
                             if (!last) {
@@ -3072,7 +3072,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     if (old == .Locked) {
-                        var vm = this.server.vm;
+                        var vm = this.server.vm.?;
                         defer vm.drainMicrotasks();
                         old.resolve(&body.value, this.server.globalThis);
                     }
@@ -3169,7 +3169,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 }
 
 pub const WebSocketServer = struct {
-    globalObject: *JSC.JSGlobalObject = undefined,
+    globalObject: ?*JSC.JSGlobalObject = null,
     handler: WebSocketServer.Handler = .{},
 
     maxPayloadLength: u32 = 1024 * 1024 * 16, // 16MB
@@ -3192,7 +3192,7 @@ pub const WebSocketServer = struct {
 
         app: ?*anyopaque = null,
 
-        globalObject: *JSC.JSGlobalObject = undefined,
+        globalObject: ?*JSC.JSGlobalObject = null,
         active_connections: usize = 0,
 
         /// used by publish()
@@ -3540,7 +3540,7 @@ pub const ServerWebSocket = struct {
 
         var handler = this.handler;
         handler.active_connections +|= 1;
-        var globalObject = handler.globalObject;
+        var globalObject = handler.globalObject.?;
 
         const onOpenHandler = handler.onOpen;
         this.this_value = .zero;
@@ -3592,7 +3592,7 @@ pub const ServerWebSocket = struct {
     pub fn getThisValue(this: *ServerWebSocket) JSValue {
         var this_value = this.this_value;
         if (this_value == .zero) {
-            this_value = this.toJS(this.handler.globalObject);
+            this_value = this.toJS(this.handler.globalObject.?);
             this_value.protect();
             this.this_value = this_value;
         }
@@ -3611,7 +3611,7 @@ pub const ServerWebSocket = struct {
         });
         const onMessageHandler = this.handler.onMessage;
         if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
-        var globalObject = this.handler.globalObject;
+        var globalObject = this.handler.globalObject.?;
         // This is the start of a task.
         defer globalObject.bunVM().drainMicrotasks();
 
@@ -3689,7 +3689,7 @@ pub const ServerWebSocket = struct {
             return;
 
         if (handler.onDrain != .zero) {
-            var globalObject = handler.globalObject;
+            var globalObject = handler.globalObject.?;
 
             var corker = Corker{
                 .args = &[_]JSC.JSValue{this.this_value},
@@ -3721,7 +3721,7 @@ pub const ServerWebSocket = struct {
         var handler = this.handler;
         var cb = handler.onPing;
         if (cb.isEmptyOrUndefinedOrNull()) return;
-        var globalThis = handler.globalObject;
+        var globalThis = handler.globalObject.?;
 
         // This is the start of a task.
         defer globalThis.bunVM().drainMicrotasks();
@@ -3750,7 +3750,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPing error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            handler.globalObject.?.bunVM().runErrorHandler(err, null);
         }
     }
 
@@ -3761,7 +3761,7 @@ pub const ServerWebSocket = struct {
         var cb = handler.onPong;
         if (cb.isEmptyOrUndefinedOrNull()) return;
 
-        var globalThis = handler.globalObject;
+        var globalThis = handler.globalObject.?;
 
         // This is the start of a task.
         defer globalThis.bunVM().drainMicrotasks();
@@ -3790,7 +3790,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPong error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            handler.globalObject.?.bunVM().runErrorHandler(err, null);
         }
     }
 
@@ -3809,13 +3809,13 @@ pub const ServerWebSocket = struct {
             var str = ZigString.init(message);
             str.markUTF8();
             const result = handler.onClose.call(
-                handler.globalObject,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(handler.globalObject) },
+                handler.globalObject.?,
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(handler.globalObject.?) },
             );
 
             if (result.toError()) |err| {
                 log("onClose error", .{});
-                handler.globalObject.bunVM().runErrorHandler(err, null);
+                handler.globalObject.?.bunVM().runErrorHandler(err, null);
             }
         }
 
@@ -4715,13 +4715,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
-        app: *App = undefined,
-        vm: *JSC.VirtualMachine = undefined,
+        app: ?*App = null,
+        vm: ?*JSC.VirtualMachine = null,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
-        request_pool_allocator: *RequestContext.RequestContextStackAllocator = undefined,
+        request_pool_allocator: ?*RequestContext.RequestContextStackAllocator = null,
 
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
@@ -4757,14 +4757,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
-                JSC.JSError(this.vm.allocator, "publish requires a topic string", .{}, globalThis, exception);
+                JSC.JSError(this.vm.?.allocator, "publish requires a topic string", .{}, globalThis, exception);
                 return .zero;
             }
 
             var topic_slice = topic.toSlice(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
-                JSC.JSError(this.vm.allocator, "publish requires a non-empty topic", .{}, globalThis, exception);
+                JSC.JSError(this.vm.?.allocator, "publish requires a non-empty topic", .{}, globalThis, exception);
                 return .zero;
             }
 
@@ -4774,7 +4774,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
+                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app.?, topic_slice.slice(), buffer.slice(), .binary, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
 
@@ -4786,7 +4786,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
+                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app.?, topic_slice.slice(), buffer, .text, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
 
@@ -4922,7 +4922,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             resp.clearAborted();
 
-            var ws = this.vm.allocator.create(ServerWebSocket) catch return .zero;
+            var ws = this.vm.?.allocator.create(ServerWebSocket) catch return .zero;
             ws.* = .{
                 .handler = &this.config.websocket.?.handler,
                 .this_value = data_value,
@@ -4964,7 +4964,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     if (this.config.websocket) |old_ws| {
                         old_ws.unprotect();
                     } else {
-                        this.app.ws("/*", this, 0, ServerWebSocket.behavior(
+                        this.app.?.ws("/*", this, 0, ServerWebSocket.behavior(
                             ThisServer,
                             ssl_enabled,
                             ws.toBehavior(),
@@ -5217,7 +5217,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {
-            this.vm.eventLoop().processGCTimer();
+            this.vm.?.eventLoop().processGCTimer();
 
             this.pending_requests -= 1;
             this.deinitIfWeCan();
@@ -5258,7 +5258,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 listener.close();
             } else if (!this.flags.terminated) {
                 this.flags.terminated = true;
-                this.app.close();
+                this.app.?.close();
             }
         }
 
@@ -5281,12 +5281,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (!this.flags.terminated) {
                 this.flags.terminated = true;
-                this.app.close();
+                this.app.?.close();
             }
 
             var task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
             task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
-            this.vm.enqueueTask(JSC.Task.init(task));
+            this.vm.?.enqueueTask(JSC.Task.init(task));
         }
 
         pub fn deinit(this: *ThisServer) void {
@@ -5300,7 +5300,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 bun.default_allocator.free(this.config.base_url.href);
             }
 
-            this.app.destroy();
+            this.app.?.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
         }
@@ -5427,21 +5427,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.event_loop_handle = uws.Loop.get();
+            this.vm.?.event_loop_handle = uws.Loop.get();
         }
 
         pub fn ref(this: *ThisServer) void {
             if (this.poll_ref.isActive()) return;
 
-            this.poll_ref.ref(this.vm);
-            this.vm.eventLoop().start_server_on_next_tick = true;
+            this.poll_ref.ref(this.vm.?);
+            this.vm.?.eventLoop().start_server_on_next_tick = true;
         }
 
         pub fn unref(this: *ThisServer) void {
             if (!this.poll_ref.isActive()) return;
 
-            this.poll_ref.unrefOnNextTick(this.vm);
-            this.vm.eventLoop().start_server_on_next_tick = false;
+            this.poll_ref.unrefOnNextTick(this.vm.?);
+            this.vm.?.eventLoop().start_server_on_next_tick = false;
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -5510,7 +5510,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
 
             req.setYield(false);
-            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.?.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
@@ -5631,7 +5631,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             JSC.markBinding(@src());
             this.pending_requests += 1;
             req.setYield(false);
-            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.?.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
@@ -5699,7 +5699,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.app = App.create(ssl_config.asUSockets());
 
                 if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
-                    this.app.addServerName(ssl_config.server_name);
+                    this.app.?.addServerName(ssl_config.server_name);
                 }
             } else {
                 this.app = App.create(.{});
@@ -5709,7 +5709,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = this.app;
                 websocket.handler.flags.ssl = ssl_enabled;
-                this.app.ws(
+                this.app.?.ws(
                     "/*",
                     this,
                     0,
@@ -5717,25 +5717,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 );
             }
 
-            this.app.any("/*", *ThisServer, this, onRequest);
+            this.app.?.any("/*", *ThisServer, this, onRequest);
 
             if (comptime debug_mode) {
-                this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
+                this.app.?.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
                     JSC.markBinding(@src());
-                    Bun__addInspector(ssl_enabled, this.app, this.globalThis);
+                    Bun__addInspector(ssl_enabled, this.app.?, this.globalThis);
                 }
 
-                this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
+                this.app.?.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
             this.ref();
 
             // Starting up an HTTP server is a good time to GC
-            if (this.vm.aggressive_garbage_collection == .aggressive) {
-                this.vm.autoGarbageCollect();
+            if (this.vm.?.aggressive_garbage_collection == .aggressive) {
+                this.vm.?.autoGarbageCollect();
             } else {
-                this.vm.eventLoop().performGC();
+                this.vm.?.eventLoop().performGC();
             }
 
             switch (this.config.address) {
@@ -5754,7 +5754,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         }
                     }
 
-                    this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                    this.app.?.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
                         .options = if (this.config.reuse_port) 0 else 1,
@@ -5762,7 +5762,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
 
                 .unix => |unix| {
-                    this.app.listenOnUnixSocket(
+                    this.app.?.listenOnUnixSocket(
                         *ThisServer,
                         this,
                         onListen,

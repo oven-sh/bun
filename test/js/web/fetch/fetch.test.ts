@@ -540,7 +540,13 @@ describe("fetch", () => {
       },
     });
 
-    const res = await fetch(`http://[::1]:${server.port}`);
+    let res = await fetch(`http://[::1]:${server.port}`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[::]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0:0:0:0:0:0:0:1]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0000:0000:0000:0000:0000:0000:0000:0001]:${server.port}/`);
     expect(await res.text()).toBe("Pass!");
 
     server.stop();

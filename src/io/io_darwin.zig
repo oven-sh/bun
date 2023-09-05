@@ -506,7 +506,7 @@ pub fn init(_: u12, _: u32, waker: Waker) !IO {
 
 pub const Waker = struct {
     kq: os.fd_t,
-    machport: *anyopaque = undefined,
+    machport: ?*anyopaque = null,
     machport_buf: []u8 = &.{},
     has_pending_wake: bool = false,
 
@@ -515,10 +515,13 @@ pub const Waker = struct {
     pub fn wake(this: *Waker) !void {
         bun.JSC.markBinding(@src());
 
-        if (io_darwin_schedule_wakeup(this.machport)) {
-            this.has_pending_wake = false;
-            return;
+        if (this.machport) |machport| {
+            if (io_darwin_schedule_wakeup(machport)) {
+                this.has_pending_wake = false;
+                return;
+            }
         }
+
         this.has_pending_wake = true;
     }
 

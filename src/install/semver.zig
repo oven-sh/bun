@@ -602,6 +602,7 @@ pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
+    _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
     // raw: RawType = RawType{},
 

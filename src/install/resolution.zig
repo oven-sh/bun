@@ -11,6 +11,7 @@ const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
+    _padding: [7]u8 = .{0} ** 7,
     value: Value = .{ .uninitialized = {} },
 
     pub fn order(

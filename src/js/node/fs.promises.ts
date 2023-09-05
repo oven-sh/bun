@@ -105,6 +105,19 @@ function cp(src, dest, options) {
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
+function opendir(dir: string) {
+  // TODO: actually implement this 💀
+  const loser = fs.readdirSync(dir, { withFileTypes: true });
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const dirent of loser) {
+        yield dirent;
+      }
+    },
+  };
+}
+
 export default {
   access: promisify(fs.accessSync),
   appendFile: promisify(fs.appendFileSync),
@@ -175,4 +188,6 @@ export default {
   },
   constants,
   watch,
+
+  opendir,
 };

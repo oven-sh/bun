@@ -181,7 +181,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                 const result = decodeIPCMessage(slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
-                        @memcpy(this.ipc_buffer.ptr[0..slice.len], slice);
+                        std.mem.copyForwards(u8, this.ipc_buffer.ptr[0..slice.len], slice);
                         this.ipc_buffer.len = @truncate(slice.len);
                         log("hit NotEnoughBytes2", .{});
                         return;

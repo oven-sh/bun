@@ -23406,7 +23406,6 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__refCallback, (JSGlobalObject * lex
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    printf("SubprocessPrototype__sendCallback\n");
     auto& vm = lexicalGlobalObject->vm();
 
     JSSubprocess* thisObject = jsDynamicCast<JSSubprocess*>(callFrame->thisValue());

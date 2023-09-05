@@ -1,6 +1,6 @@
 #pragma once
 #ifndef HEADERS_HANDWRITTEN
-
+#define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy

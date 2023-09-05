@@ -1445,6 +1445,9 @@ function formatError(err, constructor, tag, ctx, keys) {
   const name = err.name != null ? String(err.name) : 'Error';
   let stack = getStackString(err);
 
+  //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
+  stack = stack.replace(/^Error: /, `${name}${err.message ? ': ': ''}`);
+
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
   if ('cause' in err &&

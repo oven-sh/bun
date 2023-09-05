@@ -5,11 +5,11 @@ import util from 'util';
 // this would crash or throw an maximum string size error.
 
 //! This test currently relies on a non-standard extension to util.inspect
-//! that optimizes the output of circular objects. If that extension ends up
-//! being removed, this test will likely hang for a pretty long time.
-//! We are missing some kind of optimization Node does to pass this test near instantly even without the extension.
+//  It optimizes the output of circular objects. If that extension ends up
+//  being removed, this test will likely hang for a pretty long time.
+//  We are missing some kind of optimization Node does to pass this test near instantly even without the extension.
 
-test('should take longer than 2 seconds', () => {
+test('should not take longer than 2 seconds', () => {
   let last = {};
   const obj = last;
 

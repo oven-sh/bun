@@ -2650,7 +2650,7 @@ pub const Resolver = struct {
 
             var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
-            var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+            var dir_entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
             var needs_iter: bool = true;
             var in_place: ?*Fs.FileSystem.DirEntry = null;
 
@@ -3669,7 +3669,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         info: *DirInfo,
         path: string,
-        _entries: *Fs.FileSystem.RealFS.EntriesOption,
+        _entries: ?*Fs.FileSystem.RealFS.EntriesOption,
         _result: allocators.Result,
         dir_entry_index: allocators.IndexType,
         parent: ?*DirInfo,
@@ -3680,7 +3680,7 @@ pub const Resolver = struct {
         var result = _result;
 
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
-        var entries = _entries.entries;
+        var entries = if (_entries) |it| it.entries else return error.EntriesIsNull;
 
         info.* = DirInfo{
             .abs_path = path,

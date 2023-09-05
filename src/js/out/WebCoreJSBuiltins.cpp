@@ -479,158 +479,30 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
-/* TransformStreamInternals.ts */
-// isTransformStream
-const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsIsTransformStreamCodeLength = 103;
-static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsIsTransformStreamCode = "(function (stream){\"use strict\";return @isObject(stream)&&!!@getByIdDirectPrivate(stream,\"readable\")})\n";
+/* UtilInspect.ts */
+// getStylizeWithColor
+const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectGetStylizeWithColorCodeLength = 261;
+static const JSC::Intrinsic s_utilInspectGetStylizeWithColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectGetStylizeWithColorCode = "(function (inspect){\"use strict\";return function stylizeWithColor(str,styleType){const style=inspect.styles[styleType];if(style!==@undefined){const color=inspect.colors[style];if(color!==@undefined)return`\\x1B[${color[0]}m${str}\\x1B[${color[1]}m`}return str}})\n";
 
-// isTransformStreamDefaultController
-const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsIsTransformStreamDefaultControllerCodeLength = 125;
-static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsIsTransformStreamDefaultControllerCode = "(function (controller){\"use strict\";return @isObject(controller)&&!!@getByIdDirectPrivate(controller,\"transformAlgorithm\")})\n";
-
-// createTransformStream
-const JSC::ConstructAbility s_transformStreamInternalsCreateTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsCreateTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsCreateTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsCreateTransformStreamCodeLength = 1042;
-static const JSC::Intrinsic s_transformStreamInternalsCreateTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsCreateTransformStreamCode = "(function (startAlgorithm,transformAlgorithm,flushAlgorithm,writableHighWaterMark,writableSizeAlgorithm,readableHighWaterMark,readableSizeAlgorithm){\"use strict\";if(writableHighWaterMark===@undefined)writableHighWaterMark=1;if(writableSizeAlgorithm===@undefined)writableSizeAlgorithm=()=>1;if(readableHighWaterMark===@undefined)readableHighWaterMark=0;if(readableSizeAlgorithm===@undefined)readableSizeAlgorithm=()=>1;const transform={};@putByIdDirectPrivate(transform,\"TransformStream\",!0);const stream=new @TransformStream(transform),startPromiseCapability=@newPromiseCapability(@Promise);@initializeTransformStream(stream,startPromiseCapability.promise,writableHighWaterMark,writableSizeAlgorithm,readableHighWaterMark,readableSizeAlgorithm);const controller=new @TransformStreamDefaultController;return @setUpTransformStreamDefaultController(stream,controller,transformAlgorithm,flushAlgorithm),startAlgorithm().@then(()=>{startPromiseCapability.resolve.@call()},(error)=>{startPromiseCapability.reject.@call(@undefined,error)}),stream})\n";
-
-// initializeTransformStream
-const JSC::ConstructAbility s_transformStreamInternalsInitializeTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsInitializeTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsInitializeTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsInitializeTransformStreamCodeLength = 1593;
-static const JSC::Intrinsic s_transformStreamInternalsInitializeTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsInitializeTransformStreamCode = "(function (stream,startPromise,writableHighWaterMark,writableSizeAlgorithm,readableHighWaterMark,readableSizeAlgorithm){\"use strict\";const startAlgorithm=()=>{return startPromise},writeAlgorithm=(chunk)=>{return @transformStreamDefaultSinkWriteAlgorithm(stream,chunk)},abortAlgorithm=(reason)=>{return @transformStreamDefaultSinkAbortAlgorithm(stream,reason)},closeAlgorithm=()=>{return @transformStreamDefaultSinkCloseAlgorithm(stream)},writable=@createWritableStream(startAlgorithm,writeAlgorithm,closeAlgorithm,abortAlgorithm,writableHighWaterMark,writableSizeAlgorithm),pullAlgorithm=()=>{return @transformStreamDefaultSourcePullAlgorithm(stream)},cancelAlgorithm=(reason)=>{return @transformStreamErrorWritableAndUnblockWrite(stream,reason),@Promise.@resolve()},underlyingSource={};@putByIdDirectPrivate(underlyingSource,\"start\",startAlgorithm),@putByIdDirectPrivate(underlyingSource,\"pull\",pullAlgorithm),@putByIdDirectPrivate(underlyingSource,\"cancel\",cancelAlgorithm);const options={};@putByIdDirectPrivate(options,\"size\",readableSizeAlgorithm),@putByIdDirectPrivate(options,\"highWaterMark\",readableHighWaterMark);const readable=new @ReadableStream(underlyingSource,options);@putByIdDirectPrivate(stream,\"writable\",writable),@putByIdDirectPrivate(stream,\"internalWritable\",@getInternalWritableStream(writable)),@putByIdDirectPrivate(stream,\"readable\",readable),@putByIdDirectPrivate(stream,\"backpressure\",@undefined),@putByIdDirectPrivate(stream,\"backpressureChangePromise\",@undefined),@transformStreamSetBackpressure(stream,!0),@putByIdDirectPrivate(stream,\"controller\",@undefined)})\n";
-
-// transformStreamError
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamErrorCodeLength = 285;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamErrorCode = "(function (stream,e){\"use strict\";const readable=@getByIdDirectPrivate(stream,\"readable\"),readableController=@getByIdDirectPrivate(readable,\"readableStreamController\");@readableStreamDefaultControllerError(readableController,e),@transformStreamErrorWritableAndUnblockWrite(stream,e)})\n";
-
-// transformStreamErrorWritableAndUnblockWrite
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeLength = 378;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCode = "(function (stream,e){\"use strict\";@transformStreamDefaultControllerClearAlgorithms(@getByIdDirectPrivate(stream,\"controller\"));const writable=@getByIdDirectPrivate(stream,\"internalWritable\");if(@writableStreamDefaultControllerErrorIfNeeded(@getByIdDirectPrivate(writable,\"controller\"),e),@getByIdDirectPrivate(stream,\"backpressure\"))@transformStreamSetBackpressure(stream,!1)})\n";
-
-// transformStreamSetBackpressure
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamSetBackpressureCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamSetBackpressureCodeLength = 369;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamSetBackpressureCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamSetBackpressureCode = "(function (stream,backpressure){\"use strict\";const backpressureChangePromise=@getByIdDirectPrivate(stream,\"backpressureChangePromise\");if(backpressureChangePromise!==@undefined)backpressureChangePromise.resolve.@call();@putByIdDirectPrivate(stream,\"backpressureChangePromise\",@newPromiseCapability(@Promise)),@putByIdDirectPrivate(stream,\"backpressure\",backpressure)})\n";
-
-// setUpTransformStreamDefaultController
-const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeLength = 323;
-static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerCode = "(function (stream,controller,transformAlgorithm,flushAlgorithm){\"use strict\";@putByIdDirectPrivate(controller,\"stream\",stream),@putByIdDirectPrivate(stream,\"controller\",controller),@putByIdDirectPrivate(controller,\"transformAlgorithm\",transformAlgorithm),@putByIdDirectPrivate(controller,\"flushAlgorithm\",flushAlgorithm)})\n";
-
-// setUpTransformStreamDefaultControllerFromTransformer
-const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeLength = 704;
-static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCode = "(function (stream,transformer,transformerDict){\"use strict\";const controller=new @TransformStreamDefaultController;let transformAlgorithm=(chunk)=>{try{@transformStreamDefaultControllerEnqueue(controller,chunk)}catch(e){return @Promise.@reject(e)}return @Promise.@resolve()},flushAlgorithm=()=>{return @Promise.@resolve()};if(\"transform\"in transformerDict)transformAlgorithm=(chunk)=>{return @promiseInvokeOrNoopMethod(transformer,transformerDict.transform,[chunk,controller])};if(\"flush\"in transformerDict)flushAlgorithm=()=>{return @promiseInvokeOrNoopMethod(transformer,transformerDict.flush,[controller])};@setUpTransformStreamDefaultController(stream,controller,transformAlgorithm,flushAlgorithm)})\n";
-
-// transformStreamDefaultControllerClearAlgorithms
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeLength = 158;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCode = "(function (controller){\"use strict\";@putByIdDirectPrivate(controller,\"transformAlgorithm\",!0),@putByIdDirectPrivate(controller,\"flushAlgorithm\",@undefined)})\n";
-
-// transformStreamDefaultControllerEnqueue
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeLength = 717;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCode = "(function (controller,chunk){\"use strict\";const stream=@getByIdDirectPrivate(controller,\"stream\"),readable=@getByIdDirectPrivate(stream,\"readable\"),readableController=@getByIdDirectPrivate(readable,\"readableStreamController\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))@throwTypeError(\"TransformStream.readable cannot close or enqueue\");try{@readableStreamDefaultControllerEnqueue(readableController,chunk)}catch(e){throw @transformStreamErrorWritableAndUnblockWrite(stream,e),@getByIdDirectPrivate(readable,\"storedError\")}if(!@readableStreamDefaultControllerShouldCallPull(readableController)!==@getByIdDirectPrivate(stream,\"backpressure\"))@transformStreamSetBackpressure(stream,!0)})\n";
-
-// transformStreamDefaultControllerError
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeLength = 108;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerErrorCode = "(function (controller,e){\"use strict\";@transformStreamError(@getByIdDirectPrivate(controller,\"stream\"),e)})\n";
-
-// transformStreamDefaultControllerPerformTransform
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeLength = 373;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCode = "(function (controller,chunk){\"use strict\";const promiseCapability=@newPromiseCapability(@Promise);return @getByIdDirectPrivate(controller,\"transformAlgorithm\").@call(@undefined,chunk).@then(()=>{promiseCapability.resolve()},(r)=>{@transformStreamError(@getByIdDirectPrivate(controller,\"stream\"),r),promiseCapability.reject.@call(@undefined,r)}),promiseCapability.promise})\n";
-
-// transformStreamDefaultControllerTerminate
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeLength = 473;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerTerminateCode = "(function (controller){\"use strict\";const stream=@getByIdDirectPrivate(controller,\"stream\"),readable=@getByIdDirectPrivate(stream,\"readable\"),readableController=@getByIdDirectPrivate(readable,\"readableStreamController\");if(@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))@readableStreamDefaultControllerClose(readableController);const error=@makeTypeError(\"the stream has been terminated\");@transformStreamErrorWritableAndUnblockWrite(stream,error)})\n";
-
-// transformStreamDefaultSinkWriteAlgorithm
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeLength = 816;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCode = "(function (stream,chunk){\"use strict\";const writable=@getByIdDirectPrivate(stream,\"internalWritable\"),controller=@getByIdDirectPrivate(stream,\"controller\");if(@getByIdDirectPrivate(stream,\"backpressure\")){const promiseCapability=@newPromiseCapability(@Promise);return @getByIdDirectPrivate(stream,\"backpressureChangePromise\").promise.@then(()=>{if(@getByIdDirectPrivate(writable,\"state\")===\"erroring\"){promiseCapability.reject.@call(@undefined,@getByIdDirectPrivate(writable,\"storedError\"));return}@transformStreamDefaultControllerPerformTransform(controller,chunk).@then(()=>{promiseCapability.resolve()},(e)=>{promiseCapability.reject.@call(@undefined,e)})},(e)=>{promiseCapability.reject.@call(@undefined,e)}),promiseCapability.promise}return @transformStreamDefaultControllerPerformTransform(controller,chunk)})\n";
-
-// transformStreamDefaultSinkAbortAlgorithm
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeLength = 105;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCode = "(function (stream,reason){\"use strict\";return @transformStreamError(stream,reason),@Promise.@resolve()})\n";
-
-// transformStreamDefaultSinkCloseAlgorithm
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeLength = 1016;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCode = "(function (stream){\"use strict\";const readable=@getByIdDirectPrivate(stream,\"readable\"),controller=@getByIdDirectPrivate(stream,\"controller\"),readableController=@getByIdDirectPrivate(readable,\"readableStreamController\"),flushAlgorithm=@getByIdDirectPrivate(controller,\"flushAlgorithm\"),flushPromise=@getByIdDirectPrivate(controller,\"flushAlgorithm\").@call();@transformStreamDefaultControllerClearAlgorithms(controller);const promiseCapability=@newPromiseCapability(@Promise);return flushPromise.@then(()=>{if(@getByIdDirectPrivate(readable,\"state\")===@streamErrored){promiseCapability.reject.@call(@undefined,@getByIdDirectPrivate(readable,\"storedError\"));return}if(@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))@readableStreamDefaultControllerClose(readableController);promiseCapability.resolve()},(r)=>{@transformStreamError(@getByIdDirectPrivate(controller,\"stream\"),r),promiseCapability.reject.@call(@undefined,@getByIdDirectPrivate(readable,\"storedError\"))}),promiseCapability.promise})\n";
-
-// transformStreamDefaultSourcePullAlgorithm
-const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeLength = 150;
-static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCode = "(function (stream){\"use strict\";return @transformStreamSetBackpressure(stream,!1),@getByIdDirectPrivate(stream,\"backpressureChangePromise\").promise})\n";
+// stylizeWithNoColor
+const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectStylizeWithNoColorCodeLength = 42;
+static const JSC::Intrinsic s_utilInspectStylizeWithNoColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectStylizeWithNoColorCode = "(function (str){\"use strict\";return str})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().transformStreamInternalsBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().transformStreamInternalsBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().utilInspectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().utilInspectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
-WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* ProcessObjectInternals.ts */
@@ -709,46 +581,21 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
-/* Module.ts */
 // main
-const JSC::ConstructAbility s_moduleMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_moduleMainCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleMainCodeLength = 63;
-static const JSC::Intrinsic s_moduleMainCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleMainCode = "(function (){\"use strict\";return @requireMap.@get(@Bun.main)})\n";
-
-// require
-const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireCodeLength = 769;
-static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireCode = "(function (id){\"use strict\";const existing=@requireMap.@get(id)||@requireMap.@get(id=@resolveSync(id,this.path,!1));if(existing)return @evaluateCommonJSModule(existing),existing.exports;if(id.endsWith(\".json\")||id.endsWith(\".toml\")||id.endsWith(\".node\"))return @internalRequire(id);const mod=@createCommonJSModule(id,{},!1);@requireMap.@set(id,mod);var out=this.@require(id,mod);if(out===-1){try{out=@requireESM(id)}catch(exception){throw @requireMap.@delete(id),exception}const esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady){const namespace=@Loader.getModuleNamespaceObject(esm.module);return mod.exports=namespace.__esModule\?namespace:Object.create(namespace,{__esModule:{value:!0}})}}return @evaluateCommonJSModule(mod),mod.exports})\n";
-
-// requireResolve
-const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireResolveCodeLength = 96;
-static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)})\n";
-
-// requireNativeModule
-const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_moduleRequireNativeModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_moduleRequireNativeModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireNativeModuleCodeLength = 203;
-static const JSC::Intrinsic s_moduleRequireNativeModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireNativeModuleCode = "(function (id){\"use strict\";let esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady)return @Loader.getModuleNamespaceObject(esm.module).default;return @requireESM(id).default})\n";
+const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectMainCodeLength = 76;
+static const JSC::Intrinsic s_importMetaObjectMainCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectMainCode = "(function (){\"use strict\";return this.path===@Bun.main&&@Bun.isMainThread})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().moduleBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().moduleBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().importMetaObjectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().importMetaObjectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
-WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* JSBufferPrototype.ts */
@@ -2105,166 +1952,46 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
-/* StreamInternals.ts */
-// markPromiseAsHandled
-const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsMarkPromiseAsHandledCodeLength = 164;
-static const JSC::Intrinsic s_streamInternalsMarkPromiseAsHandledCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsMarkPromiseAsHandledCode = "(function (promise){\"use strict\";@putPromiseInternalField(promise,@promiseFieldFlags,@getPromiseInternalField(promise,@promiseFieldFlags)|@promiseFlagsIsHandled)})\n";
+/* Module.ts */
+// main
+const JSC::ConstructAbility s_moduleMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleMainCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleMainCodeLength = 63;
+static const JSC::Intrinsic s_moduleMainCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleMainCode = "(function (){\"use strict\";return @requireMap.@get(@Bun.main)})\n";
 
-// shieldingPromiseResolve
-const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsShieldingPromiseResolveCodeLength = 158;
-static const JSC::Intrinsic s_streamInternalsShieldingPromiseResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsShieldingPromiseResolveCode = "(function (result){\"use strict\";const promise=@Promise.@resolve(result);if(promise.@then===@undefined)promise.@then=@Promise.prototype.@then;return promise})\n";
+// require
+const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireCodeLength = 769;
+static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireCode = "(function (id){\"use strict\";const existing=@requireMap.@get(id)||@requireMap.@get(id=@resolveSync(id,this.path,!1));if(existing)return @evaluateCommonJSModule(existing),existing.exports;if(id.endsWith(\".json\")||id.endsWith(\".toml\")||id.endsWith(\".node\"))return @internalRequire(id);const mod=@createCommonJSModule(id,{},!1);@requireMap.@set(id,mod);var out=this.@require(id,mod);if(out===-1){try{out=@requireESM(id)}catch(exception){throw @requireMap.@delete(id),exception}const esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady){const namespace=@Loader.getModuleNamespaceObject(esm.module);return mod.exports=namespace.__esModule\?namespace:Object.create(namespace,{__esModule:{value:!0}})}}return @evaluateCommonJSModule(mod),mod.exports})\n";
 
-// promiseInvokeOrNoopMethodNoCatch
-const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength = 156;
-static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode = "(function (object,method,args){\"use strict\";if(method===@undefined)return @Promise.@resolve();return @shieldingPromiseResolve(method.@apply(object,args))})\n";
+// requireResolve
+const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireResolveCodeLength = 96;
+static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)})\n";
 
-// promiseInvokeOrNoopNoCatch
-const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength = 109;
-static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopNoCatchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode = "(function (object,key,args){\"use strict\";return @promiseInvokeOrNoopMethodNoCatch(object,object[key],args)})\n";
-
-// promiseInvokeOrNoopMethod
-const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength = 156;
-static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode = "(function (object,method,args){\"use strict\";try{return @promiseInvokeOrNoopMethodNoCatch(object,method,args)}catch(error){return @Promise.@reject(error)}})\n";
-
-// promiseInvokeOrNoop
-const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopCodeLength = 144;
-static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopCode = "(function (object,key,args){\"use strict\";try{return @promiseInvokeOrNoopNoCatch(object,key,args)}catch(error){return @Promise.@reject(error)}})\n";
-
-// promiseInvokeOrFallbackOrNoop
-const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength = 269;
-static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode = "(function (object,key1,args1,key2,args2){\"use strict\";try{const method=object[key1];if(method===@undefined)return @promiseInvokeOrNoopNoCatch(object,key2,args2);return @shieldingPromiseResolve(method.@apply(object,args1))}catch(error){return @Promise.@reject(error)}})\n";
-
-// validateAndNormalizeQueuingStrategy
-const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 365;
-static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (size,highWaterMark){\"use strict\";if(size!==@undefined&&typeof size!==\"function\")@throwTypeError(\"size parameter must be a function\");const newHighWaterMark=@toNumber(highWaterMark);if(newHighWaterMark!==newHighWaterMark||newHighWaterMark<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return{size,highWaterMark:newHighWaterMark}})\n";
-
-// createFIFO
-const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_streamInternalsCreateFIFOCodeLength = 1650;
-static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsCreateFIFOCode = "(function (){\"use strict\";var slice=@Array.prototype.slice;class Denqueue{constructor(){this._head=0,this._tail=0,this._capacityMask=3,this._list=@newArrayWithSize(4)}_head;_tail;_capacityMask;_list;size(){if(this._head===this._tail)return 0;if(this._head<this._tail)return this._tail-this._head;else return this._capacityMask+1-(this._head-this._tail)}isEmpty(){return this.size()==0}isNotEmpty(){return this.size()>0}shift(){var{_head:head,_tail,_list,_capacityMask}=this;if(head===_tail)return @undefined;var item=_list[head];if(@putByValDirect(_list,head,@undefined),head=this._head=head+1&_capacityMask,head<2&&_tail>1e4&&_tail<=_list.length>>>2)this._shrinkArray();return item}peek(){if(this._head===this._tail)return @undefined;return this._list[this._head]}push(item){var tail=this._tail;if(@putByValDirect(this._list,tail,item),this._tail=tail+1&this._capacityMask,this._tail===this._head)this._growArray()}toArray(fullCopy){var list=this._list,len=@toLength(list.length);if(fullCopy||this._head>this._tail){var _head=@toLength(this._head),_tail=@toLength(this._tail),total=@toLength(len-_head+_tail),array=@newArrayWithSize(total),j=0;for(var i=_head;i<len;i++)@putByValDirect(array,j++,list[i]);for(var i=0;i<_tail;i++)@putByValDirect(array,j++,list[i]);return array}else return slice.@call(list,this._head,this._tail)}clear(){this._head=0,this._tail=0,this._list.fill(@undefined)}_growArray(){if(this._head)this._list=this.toArray(!0),this._head=0;this._tail=@toLength(this._list.length),this._list.length<<=1,this._capacityMask=this._capacityMask<<1|1}_shrinkArray(){this._list.length>>>=1,this._capacityMask>>>=1}}return new Denqueue})\n";
-
-// newQueue
-const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsNewQueueCodeLength = 65;
-static const JSC::Intrinsic s_streamInternalsNewQueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsNewQueueCode = "(function (){\"use strict\";return{content:@createFIFO(),size:0}})\n";
-
-// dequeueValue
-const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsDequeueValueCodeLength = 141;
-static const JSC::Intrinsic s_streamInternalsDequeueValueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsDequeueValueCode = "(function (queue){\"use strict\";const record=queue.content.shift();if(queue.size-=record.size,queue.size<0)queue.size=0;return record.value})\n";
-
-// enqueueValueWithSize
-const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsEnqueueValueWithSizeCodeLength = 191;
-static const JSC::Intrinsic s_streamInternalsEnqueueValueWithSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsEnqueueValueWithSizeCode = "(function (queue,value,size){\"use strict\";if(size=@toNumber(size),!@isFinite(size)||size<0)@throwRangeError(\"size has an incorrect value\");queue.content.push({value,size}),queue.size+=size})\n";
-
-// peekQueueValue
-const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPeekQueueValueCodeLength = 68;
-static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPeekQueueValueCode = "(function (queue){\"use strict\";return queue.content.peek()\?.value})\n";
-
-// resetQueue
-const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsResetQueueCodeLength = 68;
-static const JSC::Intrinsic s_streamInternalsResetQueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsResetQueueCode = "(function (queue){\"use strict\";queue.content.clear(),queue.size=0})\n";
-
-// extractSizeAlgorithm
-const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractSizeAlgorithmCodeLength = 246;
-static const JSC::Intrinsic s_streamInternalsExtractSizeAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractSizeAlgorithmCode = "(function (strategy){\"use strict\";const sizeAlgorithm=strategy.size;if(sizeAlgorithm===@undefined)return()=>1;if(typeof sizeAlgorithm!==\"function\")@throwTypeError(\"strategy.size must be a function\");return(chunk)=>{return sizeAlgorithm(chunk)}})\n";
-
-// extractHighWaterMark
-const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkCodeLength = 288;
-static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (strategy,defaultHWM){\"use strict\";const highWaterMark=strategy.highWaterMark;if(highWaterMark===@undefined)return defaultHWM;if(highWaterMark!==highWaterMark||highWaterMark<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return @toNumber(highWaterMark)})\n";
-
-// extractHighWaterMarkFromQueuingStrategyInit
-const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength = 280;
-static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode = "(function (init){\"use strict\";if(!@isObject(init))@throwTypeError(\"QueuingStrategyInit argument must be an object.\");const{highWaterMark}=init;if(highWaterMark===@undefined)@throwTypeError(\"QueuingStrategyInit.highWaterMark member is required.\");return @toNumber(highWaterMark)})\n";
-
-// createFulfilledPromise
-const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsCreateFulfilledPromiseCodeLength = 107;
-static const JSC::Intrinsic s_streamInternalsCreateFulfilledPromiseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsCreateFulfilledPromiseCode = "(function (value){\"use strict\";const promise=@newPromise();return @fulfillPromise(promise,value),promise})\n";
-
-// toDictionary
-const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsToDictionaryCodeLength = 179;
-static const JSC::Intrinsic s_streamInternalsToDictionaryCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsToDictionaryCode = "(function (value,defaultValue,errorMessage){\"use strict\";if(value===@undefined||value===null)return defaultValue;if(!@isObject(value))@throwTypeError(errorMessage);return value})\n";
+// requireNativeModule
+const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireNativeModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireNativeModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireNativeModuleCodeLength = 203;
+static const JSC::Intrinsic s_moduleRequireNativeModuleCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireNativeModuleCode = "(function (id){\"use strict\";let esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady)return @Loader.getModuleNamespaceObject(esm.module).default;return @requireESM(id).default})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().streamInternalsBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().streamInternalsBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().moduleBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().moduleBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
-WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* ImportMetaObject.ts */
@@ -2621,52 +2348,164 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
-/* ReadableStreamDefaultController.ts */
-// initializeReadableStreamDefaultController
-const JSC::ConstructAbility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength = 333;
-static const JSC::Intrinsic s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode = "(function (stream,underlyingSource,size,highWaterMark){\"use strict\";if(arguments.length!==5&&arguments[4]!==@isReadableStream)@throwTypeError(\"ReadableStreamDefaultController constructor should not be called directly\");return @privateInitializeReadableStreamDefaultController.@call(this,stream,underlyingSource,size,highWaterMark)})\n";
+/* StreamInternals.ts */
+// markPromiseAsHandled
+const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsMarkPromiseAsHandledCodeLength = 164;
+static const JSC::Intrinsic s_streamInternalsMarkPromiseAsHandledCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsMarkPromiseAsHandledCode = "(function (promise){\"use strict\";@putPromiseInternalField(promise,@promiseFieldFlags,@getPromiseInternalField(promise,@promiseFieldFlags)|@promiseFlagsIsHandled)})\n";
 
-// enqueue
-const JSC::ConstructAbility s_readableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerEnqueueCodeLength = 364;
-static const JSC::Intrinsic s_readableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerEnqueueCode = "(function (chunk){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"enqueue\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(this))@throwTypeError(\"ReadableStreamDefaultController is not in a state where chunk can be enqueued\");return @readableStreamDefaultControllerEnqueue(this,chunk)})\n";
+// shieldingPromiseResolve
+const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsShieldingPromiseResolveCodeLength = 158;
+static const JSC::Intrinsic s_streamInternalsShieldingPromiseResolveCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsShieldingPromiseResolveCode = "(function (result){\"use strict\";const promise=@Promise.@resolve(result);if(promise.@then===@undefined)promise.@then=@Promise.prototype.@then;return promise})\n";
 
-// error
-const JSC::ConstructAbility s_readableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerErrorCodeLength = 192;
-static const JSC::Intrinsic s_readableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerErrorCode = "(function (err){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"error\");@readableStreamDefaultControllerError(this,err)})\n";
+// promiseInvokeOrNoopMethodNoCatch
+const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength = 156;
+static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode = "(function (object,method,args){\"use strict\";if(method===@undefined)return @Promise.@resolve();return @shieldingPromiseResolve(method.@apply(object,args))})\n";
 
-// close
-const JSC::ConstructAbility s_readableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamDefaultControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerCloseCodeLength = 337;
-static const JSC::Intrinsic s_readableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerCloseCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"close\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(this))@throwTypeError(\"ReadableStreamDefaultController is not in a state where it can be closed\");@readableStreamDefaultControllerClose(this)})\n";
+// promiseInvokeOrNoopNoCatch
+const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength = 109;
+static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopNoCatchCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode = "(function (object,key,args){\"use strict\";return @promiseInvokeOrNoopMethodNoCatch(object,object[key],args)})\n";
 
-// desiredSize
-const JSC::ConstructAbility s_readableStreamDefaultControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamDefaultControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamDefaultControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerDesiredSizeCodeLength = 209;
-static const JSC::Intrinsic s_readableStreamDefaultControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerDesiredSizeCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeGetterTypeError(\"ReadableStreamDefaultController\",\"desiredSize\");return @readableStreamDefaultControllerGetDesiredSize(this)})\n";
+// promiseInvokeOrNoopMethod
+const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength = 156;
+static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode = "(function (object,method,args){\"use strict\";try{return @promiseInvokeOrNoopMethodNoCatch(object,method,args)}catch(error){return @Promise.@reject(error)}})\n";
+
+// promiseInvokeOrNoop
+const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPromiseInvokeOrNoopCodeLength = 144;
+static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPromiseInvokeOrNoopCode = "(function (object,key,args){\"use strict\";try{return @promiseInvokeOrNoopNoCatch(object,key,args)}catch(error){return @Promise.@reject(error)}})\n";
+
+// promiseInvokeOrFallbackOrNoop
+const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength = 269;
+static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode = "(function (object,key1,args1,key2,args2){\"use strict\";try{const method=object[key1];if(method===@undefined)return @promiseInvokeOrNoopNoCatch(object,key2,args2);return @shieldingPromiseResolve(method.@apply(object,args1))}catch(error){return @Promise.@reject(error)}})\n";
+
+// validateAndNormalizeQueuingStrategy
+const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 365;
+static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (size,highWaterMark){\"use strict\";if(size!==@undefined&&typeof size!==\"function\")@throwTypeError(\"size parameter must be a function\");const newHighWaterMark=@toNumber(highWaterMark);if(newHighWaterMark!==newHighWaterMark||newHighWaterMark<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return{size,highWaterMark:newHighWaterMark}})\n";
+
+// createFIFO
+const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_streamInternalsCreateFIFOCodeLength = 1650;
+static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsCreateFIFOCode = "(function (){\"use strict\";var slice=@Array.prototype.slice;class Denqueue{constructor(){this._head=0,this._tail=0,this._capacityMask=3,this._list=@newArrayWithSize(4)}_head;_tail;_capacityMask;_list;size(){if(this._head===this._tail)return 0;if(this._head<this._tail)return this._tail-this._head;else return this._capacityMask+1-(this._head-this._tail)}isEmpty(){return this.size()==0}isNotEmpty(){return this.size()>0}shift(){var{_head:head,_tail,_list,_capacityMask}=this;if(head===_tail)return @undefined;var item=_list[head];if(@putByValDirect(_list,head,@undefined),head=this._head=head+1&_capacityMask,head<2&&_tail>1e4&&_tail<=_list.length>>>2)this._shrinkArray();return item}peek(){if(this._head===this._tail)return @undefined;return this._list[this._head]}push(item){var tail=this._tail;if(@putByValDirect(this._list,tail,item),this._tail=tail+1&this._capacityMask,this._tail===this._head)this._growArray()}toArray(fullCopy){var list=this._list,len=@toLength(list.length);if(fullCopy||this._head>this._tail){var _head=@toLength(this._head),_tail=@toLength(this._tail),total=@toLength(len-_head+_tail),array=@newArrayWithSize(total),j=0;for(var i=_head;i<len;i++)@putByValDirect(array,j++,list[i]);for(var i=0;i<_tail;i++)@putByValDirect(array,j++,list[i]);return array}else return slice.@call(list,this._head,this._tail)}clear(){this._head=0,this._tail=0,this._list.fill(@undefined)}_growArray(){if(this._head)this._list=this.toArray(!0),this._head=0;this._tail=@toLength(this._list.length),this._list.length<<=1,this._capacityMask=this._capacityMask<<1|1}_shrinkArray(){this._list.length>>>=1,this._capacityMask>>>=1}}return new Denqueue})\n";
+
+// newQueue
+const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsNewQueueCodeLength = 65;
+static const JSC::Intrinsic s_streamInternalsNewQueueCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsNewQueueCode = "(function (){\"use strict\";return{content:@createFIFO(),size:0}})\n";
+
+// dequeueValue
+const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsDequeueValueCodeLength = 141;
+static const JSC::Intrinsic s_streamInternalsDequeueValueCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsDequeueValueCode = "(function (queue){\"use strict\";const record=queue.content.shift();if(queue.size-=record.size,queue.size<0)queue.size=0;return record.value})\n";
+
+// enqueueValueWithSize
+const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsEnqueueValueWithSizeCodeLength = 191;
+static const JSC::Intrinsic s_streamInternalsEnqueueValueWithSizeCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsEnqueueValueWithSizeCode = "(function (queue,value,size){\"use strict\";if(size=@toNumber(size),!@isFinite(size)||size<0)@throwRangeError(\"size has an incorrect value\");queue.content.push({value,size}),queue.size+=size})\n";
+
+// peekQueueValue
+const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsPeekQueueValueCodeLength = 68;
+static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsPeekQueueValueCode = "(function (queue){\"use strict\";return queue.content.peek()\?.value})\n";
+
+// resetQueue
+const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsResetQueueCodeLength = 68;
+static const JSC::Intrinsic s_streamInternalsResetQueueCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsResetQueueCode = "(function (queue){\"use strict\";queue.content.clear(),queue.size=0})\n";
+
+// extractSizeAlgorithm
+const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsExtractSizeAlgorithmCodeLength = 246;
+static const JSC::Intrinsic s_streamInternalsExtractSizeAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsExtractSizeAlgorithmCode = "(function (strategy){\"use strict\";const sizeAlgorithm=strategy.size;if(sizeAlgorithm===@undefined)return()=>1;if(typeof sizeAlgorithm!==\"function\")@throwTypeError(\"strategy.size must be a function\");return(chunk)=>{return sizeAlgorithm(chunk)}})\n";
+
+// extractHighWaterMark
+const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsExtractHighWaterMarkCodeLength = 288;
+static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (strategy,defaultHWM){\"use strict\";const highWaterMark=strategy.highWaterMark;if(highWaterMark===@undefined)return defaultHWM;if(highWaterMark!==highWaterMark||highWaterMark<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return @toNumber(highWaterMark)})\n";
+
+// extractHighWaterMarkFromQueuingStrategyInit
+const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength = 280;
+static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode = "(function (init){\"use strict\";if(!@isObject(init))@throwTypeError(\"QueuingStrategyInit argument must be an object.\");const{highWaterMark}=init;if(highWaterMark===@undefined)@throwTypeError(\"QueuingStrategyInit.highWaterMark member is required.\");return @toNumber(highWaterMark)})\n";
+
+// createFulfilledPromise
+const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsCreateFulfilledPromiseCodeLength = 107;
+static const JSC::Intrinsic s_streamInternalsCreateFulfilledPromiseCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsCreateFulfilledPromiseCode = "(function (value){\"use strict\";const promise=@newPromise();return @fulfillPromise(promise,value),promise})\n";
+
+// toDictionary
+const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_streamInternalsToDictionaryCodeLength = 179;
+static const JSC::Intrinsic s_streamInternalsToDictionaryCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsToDictionaryCode = "(function (value,defaultValue,errorMessage){\"use strict\";if(value===@undefined||value===null)return defaultValue;if(!@isObject(value))@throwTypeError(errorMessage);return value})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().readableStreamDefaultControllerBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().readableStreamDefaultControllerBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().streamInternalsBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().streamInternalsBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
 WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
@@ -3077,6 +2916,11 @@ SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& glo
     Zig::GlobalObject::GlobalPropertyInfo( \
         clientData.builtinFunctions().readableByteStreamInternalsBuiltins().name##PrivateName(), readableByteStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
     WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+  #undef DECLARE_GLOBAL_STATIC
+  #define DECLARE_GLOBAL_STATIC(name) \
+    Zig::GlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().streamInternalsBuiltins().name##PrivateName(), streamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
   #undef DECLARE_GLOBAL_STATIC
   
     };

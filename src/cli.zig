@@ -834,6 +834,15 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
+pub const ReservedCommand = struct {
+    pub fn exec() !void {
+        @setCold(true);
+        Output.prettyError("<r><red>Uh-oh<r>. That command is reserved for future use.\n", .{});
+        Output.flush();
+        std.process.exit(1);
+    }
+};
+
 const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const HelpCommand = struct {
@@ -1127,6 +1136,23 @@ pub const Command = struct {
             } else .DevCommand,
 
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            RootCommandMatcher.case("deploy") => .ReservedCommand,
+            RootCommandMatcher.case("cloud") => .ReservedCommand,
+            RootCommandMatcher.case("info") => .ReservedCommand,
+            RootCommandMatcher.case("config") => .ReservedCommand,
+            RootCommandMatcher.case("use") => .ReservedCommand,
+            RootCommandMatcher.case("auth") => .ReservedCommand,
+            RootCommandMatcher.case("login") => .ReservedCommand,
+            RootCommandMatcher.case("logout") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("publish") => .ReservedCommand,
+            RootCommandMatcher.case("prune") => .ReservedCommand,
+            RootCommandMatcher.case("outdated") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("why") => .ReservedCommand,
+            // RootCommandMatcher.case("ci") => .ReservedCommand,
+
             else => .AutoCommand,
         };
     }
@@ -1226,6 +1252,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
+            .ReservedCommand => return try ReservedCommand.exec(),
             else => {},
         }
 
@@ -1647,6 +1674,8 @@ pub const Command = struct {
         UnlinkCommand,
         UpdateCommand,
         UpgradeCommand,
+
+        ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {

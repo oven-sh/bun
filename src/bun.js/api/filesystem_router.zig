@@ -292,7 +292,7 @@ pub const FileSystemRouter = struct {
             return JSValue.zero;
         };
 
-        if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
+        if (path.len == 0 or (path.len == 1 and path.ptr.?[0] == '/')) {
             path = ZigString.Slice.fromUTF8NeverFree("/");
         }
 

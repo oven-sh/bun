@@ -400,7 +400,7 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8 = undefined,
+        ptr: ?[*]const u8 = null,
         len: u32 = 0,
 
         pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
@@ -413,7 +413,7 @@ pub const ZigString = extern struct {
 
         pub fn toZigString(this: Slice) ZigString {
             if (this.isAllocated())
-                return ZigString.initUTF8(this.ptr[0..this.len]);
+                return ZigString.initUTF8(this.ptr.?[0..this.len]);
             return ZigString.init(this.slice());
         }
 
@@ -439,7 +439,7 @@ pub const ZigString = extern struct {
             };
         }
 
-        pub const empty = Slice{ .ptr = undefined, .len = 0 };
+        pub const empty = Slice{ .ptr = null, .len = 0 };
 
         pub inline fn isAllocated(this: Slice) bool {
             return !this.allocator.isNull();
@@ -450,7 +450,7 @@ pub const ZigString = extern struct {
                 return Slice{ .allocator = this.allocator, .ptr = this.ptr, .len = this.len };
             }
 
-            var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            var duped = try allocator.dupe(u8, this.ptr.?[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
@@ -459,7 +459,7 @@ pub const ZigString = extern struct {
                 return this;
             }
 
-            var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            var duped = try allocator.dupe(u8, this.ptr.?[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
@@ -473,16 +473,16 @@ pub const ZigString = extern struct {
                 return this;
             }
 
-            var duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
+            var duped = try allocator.dupeZ(u8, this.ptr.?[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn slice(this: Slice) []const u8 {
-            return this.ptr[0..this.len];
+            return this.ptr.?[0..this.len];
         }
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
-            return bun.cstring(this.ptr[0..this.len]);
+            return bun.cstring(this.ptr.?[0..this.len]);
         }
 
         pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
@@ -490,7 +490,7 @@ pub const ZigString = extern struct {
                 return "";
             }
 
-            if (this.ptr[this.len] == 0) {
+            if (this.ptr.?[this.len] == 0) {
                 return this.sliceZ();
             }
 
@@ -504,7 +504,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn mut(this: Slice) []u8 {
-            return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr)))[0..this.len];
+            return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr.?)))[0..this.len];
         }
 
         /// Does nothing if the slice is not allocated

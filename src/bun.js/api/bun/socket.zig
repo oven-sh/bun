@@ -365,7 +365,7 @@ pub const SocketConfig = struct {
                 hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
 
                 if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
-                    hostname_or_unix.ptr += 7;
+                    hostname_or_unix.ptr.? += 7;
                     hostname_or_unix.len -|= 7;
                 }
 

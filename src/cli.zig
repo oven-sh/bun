@@ -837,7 +837,7 @@ const AutoCommand = struct {
 pub const ReservedCommand = struct {
     pub fn exec() !void {
         @setCold(true);
-        Output.prettyError("<r><red>Uh-oh<r>. That command is reserved for future use.\n", .{});
+        Output.prettyError("<r><red>Uh-oh<r>. That command is reserved for future use. To run the package.json script with this same name, run:\n\n   bun run \\<command\\>\n\n", .{});
         Output.flush();
         std.process.exit(1);
     }

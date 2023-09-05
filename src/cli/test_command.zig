@@ -314,7 +314,7 @@ pub const CommandLineReporter = struct {
         var avg_count: f64 = 0;
 
         for (byte_ranges.items) |*entry| {
-            var report = bun.sourcemap.CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            var report = bun.sourcemap.CodeCoverageReport.generate(vm.global.?, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
             var fraction = base_fraction;
             report.writeFormat(max_filepath_length, &fraction, relative_dir, coverage_writer, enable_ansi_colors) catch continue;
@@ -654,7 +654,7 @@ pub const TestCommand = struct {
             vm.bundler.options.minify_syntax = false;
             vm.bundler.options.minify_identifiers = false;
             vm.bundler.options.minify_whitespace = false;
-            vm.global.vm().setControlFlowProfiler(true);
+            vm.global.?.vm().setControlFlowProfiler(true);
         }
 
         // For tests, we default to UTC time zone
@@ -668,7 +668,7 @@ pub const TestCommand = struct {
         }
 
         if (TZ_NAME.len > 0) {
-            _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
+            _ = vm.global.?.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
         var scanner = Scanner{
@@ -937,9 +937,9 @@ pub const TestCommand = struct {
             var promise = try vm.loadEntryPoint(file_path);
             reporter.summary.files += 1;
 
-            switch (promise.status(vm.global.vm())) {
+            switch (promise.status(vm.global.?.vm())) {
                 .Rejected => {
-                    var result = promise.result(vm.global.vm());
+                    var result = promise.result(vm.global.?.vm());
                     vm.runErrorHandler(result, null);
                     reporter.summary.fail += 1;
 
@@ -957,11 +957,11 @@ pub const TestCommand = struct {
             {
                 vm.drainMicrotasks();
                 var count = vm.unhandled_error_counter;
-                vm.global.handleRejectedPromises();
+                vm.global.?.handleRejectedPromises();
                 while (vm.unhandled_error_counter > count) {
                     count = vm.unhandled_error_counter;
                     vm.drainMicrotasks();
-                    vm.global.handleRejectedPromises();
+                    vm.global.?.handleRejectedPromises();
                 }
             }
 
@@ -972,7 +972,7 @@ pub const TestCommand = struct {
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(vm.global);
+                module.runTests(vm.global.?);
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
@@ -987,26 +987,26 @@ pub const TestCommand = struct {
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
-                        vm.global.handleRejectedPromises();
+                        vm.global.?.handleRejectedPromises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
                     .mild => {
-                        _ = vm.global.vm().collectAsync();
+                        _ = vm.global.?.vm().collectAsync();
                     },
                     .aggressive => {
-                        _ = vm.global.vm().runGC(false);
+                        _ = vm.global.?.vm().runGC(false);
                     },
                 }
             }
 
-            vm.global.handleRejectedPromises();
+            vm.global.?.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();
                 var entry = JSC.ZigString.init(file_path);
-                vm.global.deleteModuleRegistryEntry(&entry);
+                vm.global.?.deleteModuleRegistryEntry(&entry);
             }
 
             if (Output.is_github_action) {
@@ -1017,8 +1017,8 @@ pub const TestCommand = struct {
 
         if (is_last) {
             if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |after| {
-                    vm.global.bunVM().runErrorHandler(after, null);
+                if (jest.DescribeScope.runGlobalCallbacks(vm.global.?, .afterAll)) |after| {
+                    vm.global.?.bunVM().runErrorHandler(after, null);
                 }
             }
         }

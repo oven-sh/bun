@@ -941,7 +941,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn cast(value: JSValue) ?*DOMURL {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, JSC.VirtualMachine.get().global.?.vm());
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
@@ -1492,7 +1492,7 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn cast(value: JSValue) ?*FetchHeaders {
-        return cast_(value, JSC.VirtualMachine.get().global.vm());
+        return cast_(value, JSC.VirtualMachine.get().global.?.vm());
     }
 
     pub fn toJS(this: *FetchHeaders, globalThis: *JSGlobalObject) JSValue {
@@ -3601,12 +3601,12 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn protect(this: JSValue) void {
         if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
-        JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        JSC.C.JSValueProtect(JSC.VirtualMachine.get().global.?, this.asObjectRef());
     }
 
     pub fn unprotect(this: JSValue) void {
         if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
-        JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global.?, this.asObjectRef());
     }
 
     pub fn JSONValueFromString(

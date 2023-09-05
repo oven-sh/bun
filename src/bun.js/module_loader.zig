@@ -587,7 +587,7 @@ pub const ModuleLoader = struct {
         package_json: ?*PackageJSON = null,
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
-        globalThis: *JSC.JSGlobalObject = undefined,
+        globalThis: ?*JSC.JSGlobalObject = null,
         arena: bun.ArenaAllocator,
 
         // This is the specific state for making it async
@@ -927,7 +927,7 @@ pub const ModuleLoader = struct {
 
         pub fn onDone(this: *AsyncModule) void {
             JSC.markBinding(@src());
-            var jsc_vm = this.globalThis.bunVM();
+            var jsc_vm = this.globalThis.?.bunVM();
             jsc_vm.modules.scheduled -= 1;
             if (jsc_vm.modules.scheduled == 0) {
                 jsc_vm.packageManager().endProgressBar();
@@ -939,7 +939,7 @@ pub const ModuleLoader = struct {
             outer: {
                 errorable = ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                     JSC.VirtualMachine.processFetchLog(
-                        this.globalThis,
+                        this.globalThis.?,
                         bun.String.init(this.specifier),
                         bun.String.init(this.referrer),
                         &log,
@@ -1003,7 +1003,7 @@ pub const ModuleLoader = struct {
         }
 
         pub fn resolveError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
 
             var msg: []u8 = try switch (result.err) {
                 error.PackageManifestHTTP400 => std.fmt.allocPrint(
@@ -1095,7 +1095,7 @@ pub const ModuleLoader = struct {
             promise.rejectAsHandled(globalThis, error_instance);
         }
         pub fn downloadError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
 
             const msg_args = .{
                 result.name,

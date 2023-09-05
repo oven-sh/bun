@@ -260,7 +260,7 @@ const uws = @import("root").bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     _ = @sizeOf(JSC.VirtualMachine) + 1;
-    return JSC.VirtualMachine.get().global;
+    return JSC.VirtualMachine.get().global.?;
 }
 
 pub export fn Bun__getVM() *JSC.VirtualMachine {
@@ -365,7 +365,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
-        Process__dispatchOnExit(vm.global, this.exit_code);
+        Process__dispatchOnExit(vm.global.?, this.exit_code);
         if (vm.isMainThread())
             Bun__closeAllSQLiteDatabasesForTermination();
     }
@@ -373,7 +373,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        Process__dispatchOnBeforeExit(vm.global.?, this.exit_code);
     }
 };
 
@@ -384,7 +384,7 @@ pub const WebWorker = @import("./web_worker.zig").WebWorker;
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
 /// However, that may change in the future
 pub const VirtualMachine = struct {
-    global: *JSGlobalObject,
+    global: ?*JSGlobalObject,
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
     bundler: Bundler,
@@ -408,7 +408,7 @@ pub const VirtualMachine = struct {
     standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 
     hot_reload: bun.CLI.Command.HotReload = .none,
-    jsc: *JSC.VM = undefined,
+    jsc: ?*JSC.VM = null,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -428,7 +428,7 @@ pub const VirtualMachine = struct {
     /// source_mappings
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
 
-    arena: *Arena = undefined,
+    arena: ?*Arena = null,
     has_loaded: bool = false,
 
     transpiled_count: usize = 0,
@@ -471,7 +471,7 @@ pub const VirtualMachine = struct {
     origin_timestamp: u64 = 0,
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
-    event_loop: *EventLoop = undefined,
+    event_loop: ?*EventLoop = null,
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
@@ -483,7 +483,7 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
-    pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    pending_internal_promise: ?*JSC.JSInternalPromise = null,
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
@@ -548,7 +548,7 @@ pub const VirtualMachine = struct {
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
         return vm.active_tasks > 0 or
             vm.event_loop_handle.?.active > 0 or
-            vm.event_loop.tasks.count > 0;
+            vm.event_loop.?.tasks.count > 0;
     }
 
     const SourceMapHandlerGetter = struct {
@@ -678,10 +678,10 @@ pub const VirtualMachine = struct {
         @setCold(true);
         Global.mimalloc_cleanup(false);
         if (sync)
-            return this.global.vm().runGC(true);
+            return this.global.?.vm().runGC(true);
 
-        this.global.vm().collectAsync();
-        return JSValue.jsNumber(this.global.vm().heapSize());
+        this.global.?.vm().collectAsync();
+        return JSValue.jsNumber(this.global.?.vm().heapSize());
     }
 
     pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
@@ -704,7 +704,7 @@ pub const VirtualMachine = struct {
             Output.enableBuffering();
         }
 
-        this.global.reload();
+        this.global.?.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
@@ -736,7 +736,7 @@ pub const VirtualMachine = struct {
     }
 
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
-        return this.event_loop;
+        return this.event_loop.?;
     }
 
     pub fn prepareLoop(_: *VirtualMachine) void {}
@@ -863,7 +863,7 @@ pub const VirtualMachine = struct {
             vm.is_main_thread = false;
             vm.eventLoop().ensureWaker();
 
-            vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
+            vm.global.?.vm().holdAPILock(other_vm, @ptrCast(&start));
         }
 
         pub export fn Debugger__didConnect() void {
@@ -881,15 +881,15 @@ pub const VirtualMachine = struct {
 
             if (debugger.unix.len > 0) {
                 var url = bun.String.create(debugger.unix);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+                Bun__startJSDebuggerThread(this.global.?, debugger.script_execution_context_id, &url);
             }
 
             if (debugger.path_or_port) |path_or_port| {
                 var url = bun.String.create(path_or_port);
-                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+                Bun__startJSDebuggerThread(this.global.?, debugger.script_execution_context_id, &url);
             }
 
-            this.global.handleRejectedPromises();
+            this.global.?.handleRejectedPromises();
 
             if (this.log.msgs.items.len > 0) {
                 if (Output.enable_ansi_colors) {
@@ -1078,7 +1078,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
-        vm.jsc = vm.global.vm();
+        vm.jsc = vm.global.?.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1179,9 +1179,9 @@ pub const VirtualMachine = struct {
             opts.smol,
             null,
         );
-        vm.regular_event_loop.global = vm.global;
+        vm.regular_event_loop.global = vm.global.?;
         vm.regular_event_loop.virtual_machine = vm;
-        vm.jsc = vm.global.vm();
+        vm.jsc = vm.global.?.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1311,7 +1311,7 @@ pub const VirtualMachine = struct {
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
-        vm.jsc = vm.global.vm();
+        vm.jsc = vm.global.?.vm();
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -1927,7 +1927,7 @@ pub const VirtualMachine = struct {
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
-        if (result.isException(this.global.vm())) {
+        if (result.isException(this.global.?.vm())) {
             var exception = @as(*Exception, @ptrCast(result.asVoid()));
 
             this.printException(
@@ -1952,7 +1952,7 @@ pub const VirtualMachine = struct {
         }
 
         var str = ZigString.init(main_file_name);
-        this.global.deleteModuleRegistryEntry(&str);
+        this.global.?.deleteModuleRegistryEntry(&str);
     }
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
@@ -1971,7 +1971,7 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         if (this.debugger != null) {
-            try Debugger.create(this, this.global);
+            try Debugger.create(this, this.global.?);
         }
 
         if (!this.bundler.options.disable_transpilation) {
@@ -2012,7 +2012,7 @@ pub const VirtualMachine = struct {
                             return error.ModuleNotFound;
                         },
                     };
-                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
+                    promise = JSModuleLoader.loadAndEvaluateModule(this.global.?, &String.fromBytes(result.path().?.text));
 
                     this.pending_internal_promise = promise;
                     JSValue.fromCell(promise).protect();
@@ -2021,12 +2021,12 @@ pub const VirtualMachine = struct {
                     // pending_internal_promise can change if hot module reloading is enabled
                     if (this.bun_watcher != null) {
                         this.eventLoop().performGC();
-                        switch (this.pending_internal_promise.status(this.global.vm())) {
+                        switch (this.pending_internal_promise.?.status(this.global.?.vm())) {
                             JSC.JSPromise.Status.Pending => {
-                                while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                while (this.pending_internal_promise.?.status(this.global.?.vm()) == .Pending) {
                                     this.eventLoop().tick();
 
-                                    if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                    if (this.pending_internal_promise.?.status(this.global.?.vm()) == .Pending) {
                                         this.eventLoop().autoTick();
                                     }
                                 }
@@ -2040,7 +2040,7 @@ pub const VirtualMachine = struct {
                         });
                     }
 
-                    if (promise.status(this.global.vm()) == .Rejected)
+                    if (promise.status(this.global.?.vm()) == .Rejected)
                         return promise;
                 }
             }
@@ -2048,11 +2048,11 @@ pub const VirtualMachine = struct {
             // only load preloads once
             this.preload.len = 0;
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global.?, &String.init(main_file_name));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global.?, &String.init(this.main));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         }
@@ -2067,7 +2067,7 @@ pub const VirtualMachine = struct {
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });
-        return this.pending_internal_promise;
+        return this.pending_internal_promise orelse return error.NoPendingInternalPromise;
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -2076,12 +2076,12 @@ pub const VirtualMachine = struct {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.bun_watcher != null) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status(this.global.?.vm())) {
                 JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                    while (this.pending_internal_promise.?.status(this.global.?.vm()) == .Pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.?.status(this.global.?.vm()) == .Pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2097,7 +2097,7 @@ pub const VirtualMachine = struct {
 
         this.eventLoop().autoTick();
 
-        return this.pending_internal_promise;
+        return this.pending_internal_promise orelse return error.NoPendingInternalPromise;
     }
 
     pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
@@ -2124,7 +2124,7 @@ pub const VirtualMachine = struct {
     /// and it is not safe to copy the lock itself
     /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
     pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
-        this.global.vm().holdAPILock(ctx, OpaqueWrap(Context, function));
+        this.global.?.vm().holdAPILock(ctx, OpaqueWrap(Context, function));
     }
 
     const MacroEntryPointLoader = struct {
@@ -2138,7 +2138,7 @@ pub const VirtualMachine = struct {
     pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global.?, &String.init(entry_path));
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });
@@ -2191,7 +2191,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (value.isAggregateError(this.global)) {
+        if (value.isAggregateError(this.global.?)) {
             const AggregateErrorIterator = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
@@ -2209,9 +2209,9 @@ pub const VirtualMachine = struct {
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
             if (comptime allow_ansi_color) {
-                value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor);
+                value.getErrorsProperty(this.global.?).forEach(this.global.?, &iter, AggregateErrorIterator.iteratorWithColor);
             } else {
-                value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor);
+                value.getErrorsProperty(this.global.?).forEach(this.global.?, &iter, AggregateErrorIterator.iteratorWithOutColor);
             }
             return;
         }
@@ -2384,7 +2384,7 @@ pub const VirtualMachine = struct {
         error_instance: JSValue,
         exception_list: ?*ExceptionList,
     ) void {
-        error_instance.toZigException(this.global, exception);
+        error_instance.toZigException(this.global.?, exception);
         // defer this so that it copies correctly
         defer {
             if (exception_list) |list| {
@@ -2434,7 +2434,7 @@ pub const VirtualMachine = struct {
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, &errorable, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global.?, top.source_url, bun.String.empty, &log, &errorable, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 
@@ -2622,12 +2622,12 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.get(this.global, field)) |value| {
+                if (error_instance.get(this.global.?, field)) |value| {
                     if (!value.isEmptyOrUndefinedOrNull()) {
                         const kind = value.jsType();
                         if (kind.isStringLike()) {
-                            if (value.toStringOrNull(this.global)) |str| {
-                                var zig_str = str.toSlice(this.global, bun.default_allocator);
+                            if (value.toStringOrNull(this.global.?)) |str| {
+                                var zig_str = str.toSlice(this.global.?, bun.default_allocator);
                                 defer zig_str.deinit();
                                 try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
                                 add_extra_line = true;
@@ -2635,7 +2635,7 @@ pub const VirtualMachine = struct {
                         } else if (kind.isObject() or kind.isArray()) {
                             var bun_str = bun.String.empty;
                             defer bun_str.deref();
-                            value.jsonStringify(this.global, 2, &bun_str); //2
+                            value.jsonStringify(this.global.?, 2, &bun_str); //2
                             try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, bun_str });
                             add_extra_line = true;
                         }

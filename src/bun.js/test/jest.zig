@@ -676,7 +676,7 @@ pub const TestScope = struct {
 
         if (this.func_has_callback) {
             const callback_func = JSC.NewFunctionWithData(
-                vm.global,
+                vm.global.?,
                 ZigString.static("done"),
                 0,
                 TestScope.onDone,
@@ -687,7 +687,7 @@ pub const TestScope = struct {
             this.func_arg[this.func_arg.len - 1] = callback_func;
         }
 
-        initial_value = this.func.call(vm.global, @as([]const JSC.JSValue, this.func_arg));
+        initial_value = this.func.call(vm.global.?, @as([]const JSC.JSValue, this.func_arg));
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
@@ -715,12 +715,12 @@ pub const TestScope = struct {
                 .Internal => vm.waitForPromise(promise),
                 else => {},
             }
-            switch (promise.status(vm.global.vm())) {
+            switch (promise.status(vm.global.?.vm())) {
                 .Rejected => {
                     if (!Jest.runner.?.did_pending_test_fail) {
                         // test failed unless it's a todo
                         Jest.runner.?.did_pending_test_fail = this.tag != .todo;
-                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                        vm.runErrorHandler(promise.result(vm.global.?.vm()), null);
                     }
 
                     if (this.tag == .todo) {
@@ -733,14 +733,14 @@ pub const TestScope = struct {
                     task.promise_state = .pending;
                     switch (promise) {
                         .Normal => |p| {
-                            _ = p.asValue(vm.global).then(vm.global, task, onResolve, onReject);
+                            _ = p.asValue(vm.global.?).then(vm.global.?, task, onResolve, onReject);
                             return .{ .pending = {} };
                         },
                         else => unreachable,
                     }
                 },
                 else => {
-                    _ = promise.result(vm.global.vm());
+                    _ = promise.result(vm.global.?.vm());
                 },
             }
         }

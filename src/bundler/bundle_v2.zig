@@ -1353,7 +1353,7 @@ pub const BundleV2 = struct {
                 // The file could be on disk.
                 const source = &this.graph.input_files.items(.source)[load.source_index.get()];
                 if (source.path.isFile()) {
-                    this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
+                    this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&load.parse_task.?.task));
                     return;
                 }
 
@@ -1370,7 +1370,7 @@ pub const BundleV2 = struct {
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
-                var parse_task = load.parse_task;
+                var parse_task = load.parse_task.?;
                 parse_task.loader = code.loader;
                 this.free_list.append(code.source_code) catch unreachable;
                 parse_task.contents_or_fd = .{

@@ -1329,7 +1329,7 @@ pub const ThreadSafeFunction = struct {
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, opaq, this.finalizer.ctx);
+            fun(this.event_loop.global.?, opaq, this.finalizer.ctx);
         }
 
         if (this.callback == .js) {

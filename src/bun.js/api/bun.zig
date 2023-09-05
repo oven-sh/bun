@@ -946,7 +946,7 @@ fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callc
 }
 
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    globalObject.bunVM().arena.dumpStats();
+    globalObject.bunVM().arena.?.dumpStats();
     return .undefined;
 }
 
@@ -1006,8 +1006,8 @@ pub const Crypto = struct {
 
     const BoringSSL = bun.BoringSSL;
     const EVP = struct {
-        ctx: BoringSSL.EVP_MD_CTX = undefined,
-        md: *const BoringSSL.EVP_MD = undefined,
+        ctx: BoringSSL.EVP_MD_CTX,
+        md: ?*const BoringSSL.EVP_MD = null,
         algorithm: Algorithm,
 
         // we do this to avoid asking BoringSSL what the digest name is
@@ -1134,7 +1134,7 @@ pub const Crypto = struct {
         }
 
         pub fn copy(this: *const EVP, engine: *BoringSSL.ENGINE) error{OutOfMemory}!EVP {
-            var new = init(this.algorithm, this.md, engine);
+            var new = init(this.algorithm, this.md.?, engine);
             if (BoringSSL.EVP_MD_CTX_copy_ex(&new.ctx, &this.ctx) == 0) {
                 return error.OutOfMemory;
             }

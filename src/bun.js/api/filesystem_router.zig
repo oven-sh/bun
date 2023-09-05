@@ -44,8 +44,8 @@ pub const FileSystemRouter = struct {
     origin: ?*JSC.RefString = null,
     base_dir: ?*JSC.RefString = null,
     router: Router,
-    arena: *@import("root").bun.ArenaAllocator = undefined,
-    allocator: std.mem.Allocator = undefined,
+    arena: ?*@import("root").bun.ArenaAllocator = null,
+    allocator: ?std.mem.Allocator = null,
     asset_prefix: ?*JSC.RefString = null,
 
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
@@ -249,8 +249,8 @@ pub const FileSystemRouter = struct {
             return .zero;
         };
 
-        this.arena.deinit();
-        globalThis.allocator().destroy(this.arena);
+        this.arena.?.deinit();
+        globalThis.allocator().destroy(this.arena.?);
 
         this.arena = arena;
         @This().routesSetCached(this_value, globalThis, JSC.JSValue.zero);
@@ -381,7 +381,7 @@ pub const FileSystemRouter = struct {
             dir.deref();
         }
 
-        this.arena.deinit();
+        this.arena.?.deinit();
     }
 };
 

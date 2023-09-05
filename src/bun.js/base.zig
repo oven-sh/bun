@@ -1684,11 +1684,11 @@ pub const PollRef = struct {
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
-        this.refConcurrently(loop.virtual_machine);
+        this.refConcurrently(loop.virtual_machine.?);
     }
 
     pub fn unrefConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {
-        this.unrefConcurrently(loop.virtual_machine);
+        this.unrefConcurrently(loop.virtual_machine.?);
     }
 };
 

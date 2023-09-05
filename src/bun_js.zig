@@ -129,7 +129,7 @@ pub const Run = struct {
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         var callback = OpaqueWrap(Run, Run.start);
-        vm.global.vm().holdAPILock(&run, callback);
+        vm.global.?.vm().holdAPILock(&run, callback);
     }
 
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
@@ -223,14 +223,14 @@ pub const Run = struct {
         // Allow setting a custom timezone
         if (vm.bundler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
-                _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
+                _ = vm.global.?.setTimeZone(&JSC.ZigString.init(tz));
             }
         }
 
         vm.bundler.env.loadTracy();
 
         var callback = OpaqueWrap(Run, Run.start);
-        vm.global.vm().holdAPILock(&run, callback);
+        vm.global.?.vm().holdAPILock(&run, callback);
     }
 
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -252,8 +252,8 @@ pub const Run = struct {
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .Rejected) {
-                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+            if (promise.status(vm.global.?.vm()) == .Rejected) {
+                vm.runErrorHandler(promise.result(vm.global.?.vm()), null);
 
                 if (vm.hot_reload != .none) {
                     vm.eventLoop().tick();
@@ -265,7 +265,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result(vm.global.vm());
+            _ = promise.result(vm.global.?.vm());
 
             if (vm.log.msgs.items.len > 0) {
                 if (Output.enable_ansi_colors) {
@@ -302,17 +302,17 @@ pub const Run = struct {
         if (vm.isEventLoopAlive() or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
-            vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
-            _ = vm.global.vm().runGC(false);
+            vm.global.?.vm().releaseWeakRefs();
+            _ = vm.arena.?.gc(false);
+            _ = vm.global.?.vm().runGC(false);
             vm.tick();
         }
 
         {
             if (this.vm.isWatcherEnabled()) {
-                var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .Rejected) {
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                var prev_promise = this.vm.pending_internal_promise.?;
+                if (prev_promise.status(vm.global.?.vm()) == .Rejected) {
+                    vm.onUnhandledError(this.vm.global.?, this.vm.pending_internal_promise.?.result(vm.global.?.vm()));
                 }
 
                 while (true) {
@@ -320,9 +320,9 @@ pub const Run = struct {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
-                            prev_promise = this.vm.pending_internal_promise;
-                            vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                        if (this.vm.pending_internal_promise.?.status(vm.global.?.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                            prev_promise = this.vm.pending_internal_promise.?;
+                            vm.onUnhandledError(this.vm.global.?, this.vm.pending_internal_promise.?.result(vm.global.?.vm()));
                             continue;
                         }
 
@@ -331,17 +331,17 @@ pub const Run = struct {
 
                     vm.onBeforeExit();
 
-                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
-                        prev_promise = this.vm.pending_internal_promise;
-                        vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    if (this.vm.pending_internal_promise.?.status(vm.global.?.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise.?) {
+                        prev_promise = this.vm.pending_internal_promise.?;
+                        vm.onUnhandledError(this.vm.global.?, this.vm.pending_internal_promise.?.result(vm.global.?.vm()));
                     }
 
                     vm.eventLoop().tickPossiblyForever();
                 }
 
-                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                if (this.vm.pending_internal_promise.status(vm.global.?.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    vm.onUnhandledError(this.vm.global.?, this.vm.pending_internal_promise.result(vm.global.?.vm()));
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
@@ -364,7 +364,7 @@ pub const Run = struct {
         }
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
-        vm.global.handleRejectedPromises();
+        vm.global.?.handleRejectedPromises();
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
         }

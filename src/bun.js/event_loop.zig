@@ -41,14 +41,14 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.get().event_loop,
+                .event_loop = VirtualMachine.get().event_loop.?,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
             var promise = JSC.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.asValue(globalThis));
-            this.ref.ref(this.event_loop.virtual_machine);
+            this.ref.ref(this.event_loop.virtual_machine.?);
 
             return this;
         }
@@ -61,7 +61,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub fn runFromJS(this: *This) void {
             var promise = this.promise.swap();
-            this.ref.unref(this.event_loop.virtual_machine);
+            this.ref.unref(this.event_loop.virtual_machine.?);
 
             var ctx = this.ctx;
 
@@ -112,7 +112,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
                 .globalThis = globalThis,
                 .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
             };
-            this.ref.ref(this.event_loop.virtual_machine);
+            this.ref.ref(this.event_loop.virtual_machine.?);
 
             return this;
         }
@@ -125,7 +125,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         pub fn runFromJS(this: *This) void {
             var ctx = this.ctx;
             const tracker = this.async_task_tracker;
-            var vm = this.event_loop.virtual_machine;
+            var vm = this.event_loop.virtual_machine.?;
             var globalThis = this.globalThis;
             this.ref.unref(vm);
 
@@ -135,7 +135,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn schedule(this: *This) void {
-            var vm = this.event_loop.virtual_machine;
+            var vm = this.event_loop.virtual_machine.?;
             this.ref.ref(vm);
             this.async_task_tracker.didSchedule(this.globalThis);
             if (comptime async_io) {
@@ -152,7 +152,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
 
         pub fn deinit(this: *This) void {
             var allocator = this.allocator;
-            this.ref.unref(this.event_loop.virtual_machine);
+            this.ref.unref(this.event_loop.virtual_machine.?);
 
             allocator.destroy(this);
         }
@@ -446,7 +446,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn processGCTimer(this: *GarbageCollectionController) void {
-        var vm = this.bunVM().global.vm();
+        var vm = this.bunVM().global.?.vm();
         this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
     }
 
@@ -486,7 +486,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn performGC(this: *GarbageCollectionController) void {
-        var vm = this.bunVM().global.vm();
+        var vm = this.bunVM().global.?.vm();
         vm.collectAsync();
         this.gc_last_heap_size = vm.blockBytesAllocated();
     }
@@ -513,8 +513,8 @@ pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 pub const EventLoop = struct {
     tasks: Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
-    global: *JSGlobalObject = undefined,
-    virtual_machine: *JSC.VirtualMachine = undefined,
+    global: ?*JSGlobalObject = null,
+    virtual_machine: ?*JSC.VirtualMachine = null,
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
@@ -526,7 +526,7 @@ pub const EventLoop = struct {
 
     pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         while (!done.*) {
-            this.virtual_machine.event_loop_handle.?.tick();
+            this.virtual_machine.?.event_loop_handle.?.tick();
         }
     }
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
@@ -536,7 +536,7 @@ pub const EventLoop = struct {
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
-        this.drainMicrotasksWithGlobal(this.global);
+        this.drainMicrotasksWithGlobal(this.global.?);
     }
 
     pub fn ensureAliveForOneTick(this: *EventLoop) void {
@@ -546,7 +546,7 @@ pub const EventLoop = struct {
     }
 
     pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
-        const existing = this.deferred_microtask_map.getOrPutValue(this.virtual_machine.allocator, ctx, task) catch unreachable;
+        const existing = this.deferred_microtask_map.getOrPutValue(this.virtual_machine.?.allocator, ctx, task) catch unreachable;
         return existing.found_existing;
     }
 
@@ -574,7 +574,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickWithCount(this: *EventLoop) u32 {
-        var global = this.global;
+        var global = this.global.?;
         var global_vm = global.vm();
         var counter: usize = 0;
         while (this.tasks.readItem()) |task| {
@@ -650,7 +650,7 @@ pub const EventLoop = struct {
                     any.run(global);
                 },
                 @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
-                    this.virtual_machine.modules.onPoll();
+                    this.virtual_machine.?.modules.onPoll();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
                     var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
@@ -719,7 +719,7 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        var ctx = this.virtual_machine;
+        var ctx = this.virtual_machine.?;
         var loop = ctx.event_loop_handle.?;
 
         // Some tasks need to keep the event loop alive for one more tick.
@@ -743,7 +743,7 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
-        var ctx = this.virtual_machine;
+        var ctx = this.virtual_machine.?;
         var loop = ctx.event_loop_handle.?;
 
         // Some tasks need to keep the event loop alive for one more tick.
@@ -767,7 +767,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
-        var ctx = this.virtual_machine;
+        var ctx = this.virtual_machine.?;
         var loop = ctx.event_loop_handle.?;
 
         const pending_unref = ctx.pending_unref_counter;
@@ -796,9 +796,9 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTickActive(this: *EventLoop) void {
-        var loop = this.virtual_machine.event_loop_handle.?;
+        var loop = this.virtual_machine.?.event_loop_handle.?;
 
-        var ctx = this.virtual_machine;
+        var ctx = this.virtual_machine.?;
 
         const pending_unref = ctx.pending_unref_counter;
         if (pending_unref > 0) {
@@ -815,19 +815,19 @@ pub const EventLoop = struct {
     }
 
     pub fn processGCTimer(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.processGCTimer();
+        this.virtual_machine.?.gc_controller.processGCTimer();
     }
 
     pub fn tick(this: *EventLoop) void {
-        var ctx = this.virtual_machine;
+        var ctx = this.virtual_machine.?;
         this.tickConcurrent();
 
         this.processGCTimer();
 
-        var global = ctx.global;
+        var global = ctx.global.?;
         var global_vm = global.vm();
         while (true) {
-            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
+            while (this.tickWithCount() > 0) : (this.global.?.handleRejectedPromises()) {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();
@@ -842,16 +842,16 @@ pub const EventLoop = struct {
             this.tickConcurrent();
         }
 
-        this.global.handleRejectedPromises();
+        this.global.?.handleRejectedPromises();
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
-        switch (promise.status(this.global.vm())) {
+        switch (promise.status(this.global.?.vm())) {
             JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.global.?.vm()) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.global.?.vm()) == .Pending) {
                         this.autoTick();
                     }
                 }
@@ -863,16 +863,16 @@ pub const EventLoop = struct {
     // TODO: this implementation is terrible
     // we should not be checking the millitimestamp every time
     pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
-        return switch (promise.status(this.global.vm())) {
+        return switch (promise.status(this.global.?.vm())) {
             JSC.JSPromise.Status.Pending => {
                 if (timeout == 0) {
                     return false;
                 }
                 var start_time = std.time.milliTimestamp();
-                while (promise.status(this.global.vm()) == .Pending) {
+                while (promise.status(this.global.?.vm()) == .Pending) {
                     this.tick();
 
-                    if (promise.status(this.global.vm()) == .Pending) {
+                    if (promise.status(this.global.?.vm()) == .Pending) {
                         const remaining = std.time.milliTimestamp() - start_time;
                         if (remaining >= timeout) {
                             return false;
@@ -893,7 +893,7 @@ pub const EventLoop = struct {
 
     pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
         // TODO: make this more efficient!
-        var loop = this.virtual_machine.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
+        var loop = this.virtual_machine.?.event_loop_handle orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
         var timer = uws.Timer.createFallthrough(loop, task.ptr());
         timer.set(task.ptr(), callTask, timeout, 0);
     }
@@ -907,10 +907,10 @@ pub const EventLoop = struct {
 
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
-        if (this.virtual_machine.event_loop_handle == null) {
+        if (this.virtual_machine.?.event_loop_handle == null) {
             var actual = uws.Loop.get().?;
-            this.virtual_machine.event_loop_handle = actual;
-            this.virtual_machine.gc_controller.init(this.virtual_machine);
+            this.virtual_machine.?.event_loop_handle = actual;
+            this.virtual_machine.?.gc_controller.init(this.virtual_machine.?);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
         }
@@ -918,11 +918,11 @@ pub const EventLoop = struct {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn performGC(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.performGC();
+        this.virtual_machine.?.gc_controller.performGC();
     }
 
     pub fn wakeup(this: *EventLoop) void {
-        if (this.virtual_machine.event_loop_handle) |loop| {
+        if (this.virtual_machine.?.event_loop_handle) |loop| {
             loop.wakeup();
         }
     }

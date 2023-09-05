@@ -19,7 +19,7 @@ pub const WebWorker = struct {
     /// Already resolved.
     specifier: []const u8 = "",
     store_fd: bool = false,
-    arena: bun.MimallocArena = undefined,
+    arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -83,7 +83,7 @@ pub const WebWorker = struct {
         defer temp_log.deinit();
 
         var resolved_entry_point = parent.bundler.resolveEntryPoint(spec_slice.slice()) catch {
-            var out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+            var out = temp_log.toJS(parent.global.?, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global.?);
             out.ref();
             error_message.* = out;
             return null;
@@ -144,12 +144,12 @@ pub const WebWorker = struct {
         std.debug.assert(this.vm == null);
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
-            .allocator = this.arena.allocator(),
+            .allocator = this.arena.?.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
         });
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = this.arena.?.allocator();
+        vm.arena = &this.arena.?;
 
         var b = &vm.bundler;
 
@@ -172,7 +172,7 @@ pub const WebWorker = struct {
 
         this.vm = vm;
 
-        vm.global.vm().holdAPILock(this, callback);
+        vm.global.?.vm().holdAPILock(this, callback);
     }
 
     /// Deinit will clean up vm and everything.
@@ -188,9 +188,9 @@ pub const WebWorker = struct {
         JSC.markBinding(@src());
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
-        const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
-        const str = err.toBunString(vm.global);
-        WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
+        const err = vm.log.toJS(vm.global.?, bun.default_allocator, "Error in worker");
+        const str = err.toBunString(vm.global.?);
+        WebWorker__dispatchError(vm.global.?, this.cpp_worker, str, err);
     }
 
     fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance: JSC.JSValue) void {
@@ -247,28 +247,28 @@ pub const WebWorker = struct {
             return;
         };
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
+        if (promise.status(vm.global.?.vm()) == .Rejected) {
+            vm.onUnhandledError(vm.global.?, promise.result(vm.global.?.vm()));
 
             vm.exit_handler.exit_code = 1;
             this.exitAndDeinit();
             return;
         }
 
-        _ = promise.result(vm.global.vm());
+        _ = promise.result(vm.global.?.vm());
 
         this.flushLogs();
         JSC.markBinding(@src());
-        WebWorker__dispatchOnline(this.cpp_worker, vm.global);
+        WebWorker__dispatchOnline(this.cpp_worker, vm.global.?);
         this.setStatus(.running);
 
         // don't run the GC if we don't actually need to
         if (vm.isEventLoopAlive() or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
-            vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
-            _ = vm.global.vm().runGC(false);
+            vm.global.?.vm().releaseWeakRefs();
+            _ = vm.arena.?.gc(false);
+            _ = vm.global.?.vm().runGC(false);
         }
 
         // always doing a first tick so we call CppTask without delay after dispatchOnline
@@ -313,7 +313,7 @@ pub const WebWorker = struct {
         this.setRef(false);
         this.requested_terminate = true;
         if (this.vm) |vm| {
-            vm.global.vm().notifyNeedTermination();
+            vm.global.?.vm().notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
     }
@@ -332,7 +332,7 @@ pub const WebWorker = struct {
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
-            this.arena.deinit();
+            this.arena.?.deinit();
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);

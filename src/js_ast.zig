@@ -6897,15 +6897,15 @@ pub const Macro = struct {
 
         var loaded_result = try vm.loadMacroEntryPoint(path.text, function_name, specifier, hash);
 
-        if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
+        if (loaded_result.status(vm.global.?.vm()) == JSC.JSPromise.Status.Rejected) {
+            vm.runErrorHandler(loaded_result.result(vm.global.?.vm()), null);
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
 
         // We don't need to do anything with the result.
         // We just want to make sure the promise is finished.
-        _ = loaded_result.result(vm.global.vm());
+        _ = loaded_result.result(vm.global.?.vm());
 
         return Macro{
             .vm = vm,
@@ -6952,7 +6952,7 @@ pub const Macro = struct {
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
                     var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                        macro.vm.global,
+                        macro.vm.global.?,
                         macro_callback,
                         null,
                         args_count,
@@ -6964,7 +6964,7 @@ pub const Macro = struct {
                         .function_name = function_name,
                         .macro = &macro,
                         .allocator = allocator,
-                        .global = macro.vm.global,
+                        .global = macro.vm.global.?,
                         .id = id,
                         .log = log,
                         .source = source,
@@ -7270,7 +7270,7 @@ pub const Macro = struct {
                 allocator.free(js_args);
             }
 
-            var globalObject = JSC.VirtualMachine.get().global;
+            var globalObject = JSC.VirtualMachine.get().global.?;
 
             switch (caller.data) {
                 .e_call => |call| {
@@ -7312,7 +7312,7 @@ pub const Macro = struct {
                 pub fn callWrapper(args: CallArgs) MacroError!Expr {
                     JSC.markBinding(@src());
                     call_args = args;
-                    Bun__startMacro(&call, JSC.VirtualMachine.get().global);
+                    Bun__startMacro(&call, JSC.VirtualMachine.get().global.?);
                     return result;
                 }
 

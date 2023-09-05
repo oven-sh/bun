@@ -2362,10 +2362,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (response_value.asAnyPromise()) |promise| {
                 // If we immediately have the value available, we can skip the extra event loop tick
-                switch (promise.status(vm.global.vm())) {
+                switch (promise.status(vm.global.?.vm())) {
                     .Pending => {},
                     .Fulfilled => {
-                        const fulfilled_value = promise.result(vm.global.vm());
+                        const fulfilled_value = promise.result(vm.global.?.vm());
 
                         // if you return a Response object or a Promise<Response>
                         // but you upgraded the connection to a WebSocket
@@ -2408,7 +2408,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     },
                     .Rejected => {
-                        ctx.handleReject(promise.result(vm.global.vm()));
+                        ctx.handleReject(promise.result(vm.global.?.vm()));
                         return;
                     },
                 }

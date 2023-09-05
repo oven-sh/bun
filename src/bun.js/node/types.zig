@@ -929,7 +929,7 @@ pub const ArgumentsSlice = struct {
         var iter = this.protected.iterator(.{});
         var ctx = this.vm.global;
         while (iter.next()) |i| {
-            JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
+            JSC.C.JSValueUnprotect(ctx.?, this.all[i].asObjectRef());
         }
         this.protected = std.bit_set.IntegerBitSet(32).initEmpty();
     }
@@ -943,7 +943,7 @@ pub const ArgumentsSlice = struct {
         if (this.remaining.len == 0) return;
         const index = this.all.len - this.remaining.len;
         this.protected.set(index);
-        JSC.C.JSValueProtect(this.vm.global, this.all[index].asObjectRef());
+        JSC.C.JSValueProtect(this.vm.global.?, this.all[index].asObjectRef());
         this.eat();
     }
 

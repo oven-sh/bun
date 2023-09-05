@@ -774,7 +774,7 @@ pub const Body = struct {
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
                         bun.default_allocator,
-                        JSC.VirtualMachine.get().global,
+                        JSC.VirtualMachine.get().global.?,
                     );
 
                     this.* = .{ .Used = {} };
@@ -788,13 +788,13 @@ pub const Body = struct {
                         new_blob = Blob.init(
                             @constCast(allocated_slice.slice()),
                             bun.default_allocator,
-                            JSC.VirtualMachine.get().global,
+                            JSC.VirtualMachine.get().global.?,
                         );
                     } else {
                         new_blob = Blob.init(
                             bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
                             bun.default_allocator,
-                            JSC.VirtualMachine.get().global,
+                            JSC.VirtualMachine.get().global.?,
                         );
                     }
 
@@ -962,7 +962,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
+                JSC.C.JSValueUnprotect(VirtualMachine.get().global.?, this.Error.asObjectRef());
             }
         }
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {

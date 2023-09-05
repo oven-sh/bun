@@ -712,7 +712,7 @@ pub const JSBundler = struct {
         value: Value,
         js_task: JSC.AnyTask = undefined,
         task: JSC.AnyEventLoop.Task = undefined,
-        parse_task: *bun.ParseTask = undefined,
+        parse_task: ?*bun.ParseTask = null,
 
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         was_file: bool = false,
@@ -823,7 +823,7 @@ pub const JSBundler = struct {
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    completion.bundler.graph.pool.pool.?.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    completion.bundler.graph.pool.pool.?.schedule(bun.ThreadPool.Batch.from(&this.parse_task.?.task));
                     this.deinit();
                     return;
                 }

@@ -741,8 +741,25 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 pub var start_time: i128 = 0;
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
-    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
-    return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    if (comptime Environment.isWindows) {
+        const res = sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false);
+        try res.throw();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res.result) } };
+    } else {
+        const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
+    if (comptime Environment.isWindows) {
+        const res = sys.openDirAtWindowsA(invalid_fd, path_, true, false);
+        try res.throw();
+        return std.fs.Dir{ .fd = fdcast(res.result) };
+    } else {
+        const fd = try std.os.openatZ(invalid_fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
+        return std.fs.Dir{ .fd = fd };
+    }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
@@ -1074,13 +1091,13 @@ pub fn getcwd(buf_: []u8) ![]u8 {
         return std.os.getcwd(buf_);
     }
 
-    var temp: [MAX_PATH_BYTES ]u8 = undefined;
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
     var temp_slice = try std.os.getcwd(&temp);
     return path.normalizeBuf(temp_slice, buf_, .loose);
 }
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
-    var temp: [MAX_PATH_BYTES ]u8 = undefined;
+    var temp: [MAX_PATH_BYTES]u8 = undefined;
     var temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
@@ -1090,7 +1107,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES ]u8 = undefined;
+        var temp: [MAX_PATH_BYTES]u8 = undefined;
         var temp_slice = try std.os.getFdPath(fd, &temp);
         return path.normalizeBuf(temp_slice, buf, .loose);
     }
@@ -1753,7 +1770,7 @@ pub const win32 = struct {
     pub var STDIN_FD: FileDescriptor = undefined;
 
     pub inline fn argv() [][*:0]u8 {
-        return  std.os.argv;
+        return std.os.argv;
     }
 
     pub fn stdio(i: anytype) FileDescriptor {
@@ -1764,7 +1781,6 @@ pub const win32 = struct {
             else => @panic("Invalid stdio fd"),
         };
     }
-
 };
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;

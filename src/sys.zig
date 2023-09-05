@@ -148,9 +148,12 @@ pub fn chdirOSPath(destination: bun.OSPathSlice) Maybe(void) {
     }
 
     if (comptime Environment.isWindows) {
-        if (kernel32.SetCurrentDirectory(destination) != 0) {
+        if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
+            log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), kernel32.GetLastError() });
             return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
         }
+
+        log("SetCurrentDirectory({}) = {d}", .{ bun.strings.fmtUTF16(destination), 0 });
 
         return Maybe(void).success;
     }
@@ -188,7 +191,7 @@ pub fn chdir(destination: anytype) Maybe(void) {
         }
 
         var wbuf: bun.MAX_WPATH = undefined;
-        return chdirOSPath(bun.strings.toWPath(&wbuf, destination));
+        return chdirOSPath(bun.strings.toWDirPath(&wbuf, destination));
     }
 
     return Maybe(void).todo;
@@ -232,7 +235,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
     var wbuf: bun.MAX_WPATH = undefined;
-    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
+    _ = kernel32.CreateDirectoryW(bun.strings.toWObjectDir(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
 }
@@ -299,6 +302,86 @@ pub fn getErrno(rc: anytype) bun.C.E {
 const O = std.os.O;
 const w = std.os.windows;
 
+pub fn openDirAtWindows(
+    dirFd: bun.FileDescriptor,
+    path: [:0]const u16,
+    iterable: bool,
+    no_follow: bool,
+) Maybe(bun.FileDescriptor) {
+    const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
+        w.SYNCHRONIZE | w.FILE_TRAVERSE;
+    const flags: u32 = if (iterable) base_flags | w.FILE_LIST_DIRECTORY else base_flags;
+
+    const path_len_bytes: u16 = @truncate(path.len * 2);
+    var nt_name = w.UNICODE_STRING{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(path.ptr),
+    };
+    var attr = w.OBJECT_ATTRIBUTES{
+        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path)) null else bun.fdcast(dirFd),
+        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    const open_reparse_point: w.DWORD = if (no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+    var fd: w.HANDLE = w.INVALID_HANDLE_VALUE;
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtCreateFile(
+        &fd,
+        flags,
+        &attr,
+        &io,
+        null,
+        0,
+        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
+        w.FILE_OPEN,
+        w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+        null,
+        0,
+    );
+
+    if (comptime Environment.allow_assert) {
+        log("NtCreateFile({d}, {}) = {d} (dir)", .{ dirFd, bun.strings.fmtUTF16(path), rc });
+    }
+
+    switch (windows.Win32Error.fromNTStatus(rc)) {
+        .SUCCESS => {
+            return JSC.Maybe(bun.FileDescriptor){
+                .result = bun.toFD(fd),
+            };
+        },
+        else => |code| {
+            if (code.toSystemErrno()) |sys_err| {
+                return .{
+                    .err = .{
+                        .errno = @truncate(@intFromEnum(sys_err)),
+                        .syscall = .open,
+                    },
+                };
+            }
+
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                    .syscall = .open,
+                },
+            };
+        },
+    }
+}
+
+pub noinline fn openDirAtWindowsA(
+    dirFd: bun.FileDescriptor,
+    path: []const u8,
+    iterable: bool,
+    no_follow: bool,
+) Maybe(bun.FileDescriptor) {
+    var wbuf: bun.MAX_WPATH = undefined;
+    return openDirAtWindows(dirFd, bun.strings.toWObjectDir(&wbuf, path), iterable, no_follow);
+}
 pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
 
@@ -368,6 +451,11 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mo
             null,
             0,
         );
+
+        if (comptime Environment.allow_assert) {
+            log("NtCreateFile({d}, {}) = {d} (file)", .{ dirfD, bun.strings.fmtUTF16(path), rc });
+        }
+
         switch (windows.Win32Error.fromNTStatus(rc)) {
             .SUCCESS => {
                 return JSC.Maybe(bun.FileDescriptor){
@@ -438,8 +526,12 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
+       if (flags & O.DIRECTORY != 0) {
+            return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
+        }
+
         var wbuf: bun.MAX_WPATH = undefined;
-        return openatWindows(dirfd, bun.strings.toWPath(&wbuf, file_path), flags);
+        return openatWindows(dirfd, bun.strings.toWObjectPath(&wbuf, file_path), flags);
     }
 
     return openatOSPath(dirfd, file_path, flags, perm);
@@ -447,11 +539,15 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
 
 pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        var wbuf:bun.MAX_WPATH = undefined;
-        return openatWindows(dirfd, bun.strings.toWPathNormalized(&wbuf, file_path), flags);
+         if (flags & O.DIRECTORY != 0) {
+            return openDirAtWindowsA(dirfd, file_path, false, flags & O.NOFOLLOW != 0);
+        }
+
+        var wbuf: bun.MAX_WPATH = undefined;
+        return openatWindows(dirfd, bun.strings.toWObjectPath(&wbuf, file_path), flags);
     }
 
-    return openatOSPath(dirfd, std.os.toPosixPath( file_path) catch return Maybe(bun.FileDescriptor){
+    return openatOSPath(dirfd, std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
         .err = .{
             .errno = @intFromEnum(bun.C.E.NOMEM),
             .syscall = .open,
@@ -463,7 +559,6 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
     // this is what open() does anyway.
     return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }
-
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.

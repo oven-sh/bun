@@ -14,29 +14,9 @@
 #undef _environ
 #undef environ
 
-// TODO: figure out why these symbols were not already defined
+// Some libraries need these symbols. Windows makes it 
 extern "C" char** environ = nullptr;
 extern "C" char** _environ = nullptr;
-
-// TODO: figure out why the stack check symbols are missing
-extern "C" void __stack_chk_fail() { abort(); }
-extern "C" void ___chkstk_ms() {}
-extern "C" size_t __stack_chk_guard = 0;
-
-extern "C" int windows_main(int argc, char** argv, char** envp);
-
-extern "C" int __main()
-{
-    environ = *__p__environ();
-// TODO: figure out why the stack check symbols are missing
-#ifdef BUN_DEBUG
-    __stack_chk_guard = 0xdeadbeefd00dfeed;
-#endif
-    _environ = environ;
-
-// this is a workaround for an infinite loop that happens if we call main directly
-    return windows_main(__argc, __argv, environ);
-}
 
 extern "C" int strncasecmp(const char* s1, const char* s2, size_t n)
 {

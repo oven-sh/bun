@@ -711,7 +711,7 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
-    while (href.len > 1 and (switch (href[href.len - 1])  {
+    while (href.len > 1 and (switch (href[href.len - 1]) {
         '/' => true,
         '\\' => true,
         else => false,
@@ -1488,34 +1488,80 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-        var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var path_to_use = utf8;
-        if (bun.strings.containsChar(utf8, '/')) {
-            @memcpy(renormalized[0..utf8.len], utf8);
-            for (renormalized[utf8.len..]) |*c| {
-                if (c.* == '/') {
-                    c.* = '\\';
-                }
-            }
-            path_to_use = renormalized[0..utf8.len];
-        }
+pub fn toWObjectPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (!std.fs.path.isAbsoluteWindows(utf8)) {
+        return toWPathNormalized(wbuf, utf8);
+    }
 
-        return toWPath(wbuf, path_to_use);
+    wbuf[0..4].* = [_]u16{ '\\', '?', '?', '\\' };
+    return wbuf[0..toWPathNormalized(wbuf[4..], utf8).len + 4:0];
+}
+
+// These are the same because they don't have rules like needing a trailing slash
+pub const toWObjectDir = toWObjectPath;
+
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_to_use = utf8;
+
+    if (bun.strings.containsChar(utf8, '/')) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    return toWPath(wbuf, path_to_use);
+}
+
+pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_to_use = utf8;
+
+    if (bun.strings.containsChar(utf8, '/')) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    return toWDirPath(wbuf, path_to_use);
 }
 
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, false);
+}
+
+pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, true);
+}
+
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
     std.debug.assert(wbuf.len > 0);
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
-        wbuf[0..wbuf.len -| 1],
+        wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool( add_trailing_lash)))],
     );
 
-    // TODO: error handling
-    // if (result.status == .surrogate) {
-    // }
+
+    if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
+        wbuf[result.count] = '\\';
+        result.count += 1;
+    }
+
     wbuf[result.count] = 0;
-    
+
     return wbuf[0..result.count :0];
 }
 
@@ -4055,6 +4101,18 @@ pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
     return formatUTF16Type([]align(1) const u16, slice_, writer);
 }
 
+pub const FormatUTF16 = struct {
+    buf: []const u16,
+    pub fn format(self: @This(), comptime _: []const u8, opts: anytype, writer: anytype) !void {
+        _ = opts;
+        try formatUTF16Type([]const u16, self.buf, writer);
+    }
+};
+
+pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
+    return FormatUTF16{ .buf = buf };
+}
+
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
@@ -4750,4 +4808,3 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
-

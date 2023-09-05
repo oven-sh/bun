@@ -321,7 +321,7 @@ pub fn getIfExistsLongestCommonPath(input: []const []const u8) ?[]const u8 {
 }
 
 pub fn longestCommonPathWindows(input: []const []const u8) []const u8 {
-    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepWin32);
+    return longestCommonPathGeneric(input, std.fs.path.sep_windows, isSepAny);
 }
 
 pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
@@ -463,10 +463,11 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    const normalized_from = if (from.len > 0 and from[0] == platform.separator()) brk: {
-        var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
-        relative_from_buf[0] = platform.separator();
-        break :brk relative_from_buf[0 .. path.len + 1];
+    const normalized_from = if (platform.isAbsolute(from)) brk: {
+        const leading_separator = platform.leadingSeparatorIndex(from) orelse break :brk from;
+        var path = normalizeStringBuf(from, relative_from_buf[leading_separator..], true, platform, true);
+        @memcpy(relative_from_buf[0..leading_separator], from[0..leading_separator]);
+        break :brk relative_from_buf[0 .. path.len + leading_separator];
     } else joinAbsStringBuf(
         Fs.FileSystem.instance.top_level_dir,
         &relative_from_buf,
@@ -614,7 +615,7 @@ pub const Platform = enum {
                 return isSepAny;
             },
             .windows => {
-                return isSepWin32;
+                return isSepAny;
             },
             .posix => {
                 return isSepPosix;
@@ -644,7 +645,7 @@ pub const Platform = enum {
                 return isSepAny(char);
             },
             .windows => {
-                return isSepWin32(char);
+                return isSepAny(char);
             },
             .posix => {
                 return isSepPosix(char);
@@ -655,7 +656,7 @@ pub const Platform = enum {
     pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
         return comptime switch (_platform) {
             .auto => _platform.resolve().trailingSeparator(),
-            .windows => ".\\".*,
+            .windows => "./".*,
             .posix, .loose => "./".*,
         };
     }
@@ -728,8 +729,7 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
 
     const is_absolute = _platform.isAbsolute(str);
 
-    const trailing_separator =
-        buf[buf.len - 1] == _platform.separator();
+    const trailing_separator = _platform.getLastSeparatorFunc()(str) == str.len - 1;
 
     if (is_absolute and trailing_separator)
         return normalizeStringBuf(str, buf, true, _platform, true);
@@ -956,7 +956,7 @@ pub fn isSepAny(char: u8) bool {
 }
 
 pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfScalar(u8, slice, std.fs.path.sep_windows);
+    return lastIndexOfSep(slice);
 }
 
 pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
@@ -975,7 +975,7 @@ pub fn lastIndexOfNonSeparatorPosix(slice: []const u8) ?u32 {
 }
 
 pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfAny(u8, slice, "/\\");
+    return lastIndexOfSep(slice);
 }
 
 pub fn normalizeStringLooseBuf(
@@ -1005,8 +1005,8 @@ pub fn normalizeStringWindows(
         str,
         buf,
         allow_above_root,
-        std.fs.path.sep_windows,
-        isSepWin32,
+        std.fs.path.sep_posix,
+        isSepAny,
         lastIndexOfSeparatorWindows,
         preserve_trailing_slash,
     );
@@ -1405,13 +1405,12 @@ test "longestCommonPath" {
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
 
-
 pub fn basename(path: []const u8) []const u8 {
     if (path.len == 0)
         return &[_]u8{};
 
     var end_index: usize = path.len - 1;
-    while (isSepAny( path[end_index])) {
+    while (isSepAny(path[end_index])) {
         if (end_index == 0)
             return &[_]u8{};
         end_index -= 1;
@@ -1435,7 +1434,7 @@ pub fn lastIndexOfSep(path: []const u8) ?usize {
         return null;
 
     var i: usize = path.len - 1;
-    if (isSepAny( path[i]))
+    if (isSepAny(path[i]))
         return i;
 
     while (i != 0) : (i -= 1) {
@@ -1445,4 +1444,42 @@ pub fn lastIndexOfSep(path: []const u8) ?usize {
     }
 
     return null;
+}
+
+pub fn nextDirname(path_: []const u8) ?[]const u8 {
+    var path = path_;
+    var root_prefix: []const u8 = "";
+    if (path.len > 3) {
+        // disk designator
+        if (path[1] == ':' and isSepAny(path[2])) {
+            root_prefix = path[0..3];
+        }
+
+        // TODO: unc path
+
+    }
+
+    if (path.len == 0)
+        return if (root_prefix.len > 0) root_prefix else null;
+
+    var end_index: usize = path.len - 1;
+    while (isSepAny(path[end_index])) {
+        if (end_index == 0)
+            return if (root_prefix.len > 0) root_prefix else null;
+        end_index -= 1;
+    }
+
+    while (!isSepAny(path[end_index])) {
+        if (end_index == 0)
+            return if (root_prefix.len > 0) root_prefix else null;
+        end_index -= 1;
+    }
+
+    if (end_index == 0 and isSepAny(path[0]))
+        return path[0..1];
+
+    if (end_index == 0)
+        return if (root_prefix.len > 0) root_prefix else null;
+
+    return path[0 .. end_index + 1];
 }

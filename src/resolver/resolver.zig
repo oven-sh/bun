@@ -2476,13 +2476,11 @@ pub const Resolver = struct {
             path[0..1];
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
 
-
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
 
         while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
             var result = try r.dir_cache.getOrPut(top);
-
 
             if (result.status != .unknown) {
                 top_parent = result;
@@ -2566,12 +2564,24 @@ pub const Resolver = struct {
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
 
-                _open_dir = std.fs.openIterableDirAbsoluteZ(
-                    sentinel,
-                    .{
-                        .no_follow = !follow_symlinks,
-                    },
-                );
+                if (comptime Environment.isPosix) {
+                    _open_dir = std.fs.openIterableDirAbsoluteZ(
+                        sentinel,
+                        .{
+                            .no_follow = !follow_symlinks,
+                        },
+                    );
+                } else if (comptime Environment.isWindows) {
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
+                    if (dirfd_result.throw()) {
+                        _open_dir = std.fs.IterableDir{ .dir = .{
+                            .fd = bun.fdcast(dirfd_result.result),
+                        } };
+                    } else |err| {
+                        _open_dir = err;
+                    }
+                }
+
                 bun.fs.debug("open({s}) = {any}", .{ sentinel, _open_dir });
                 // }
             }
@@ -3933,24 +3943,26 @@ pub const Dirname = struct {
         var path = path_;
         const root = brk: {
             if (Environment.isWindows) {
-                if (path.len > 1 and path[1] == ':' and switch(path[0]) {
-                    'A' ... 'Z', 'a' ... 'z' => true,
+                if (path.len > 1 and path[1] == ':' and switch (path[0]) {
+                    'A'...'Z', 'a'...'z' => true,
                     else => false,
                 }) {
-                    break :brk path[0 .. 2];
+                    break :brk path[0..2];
                 }
 
+                // TODO: UNC paths
+                // TODO: NT paths
                 break :brk "/c/";
             }
 
             break :brk "/";
         };
-        
+
         if (path.len == 0)
             return root;
 
         var end_index: usize = path.len - 1;
-        while (bun.path.isSepAny( path[end_index])) {
+        while (bun.path.isSepAny(path[end_index])) {
             if (end_index == 0)
                 return root;
             end_index -= 1;

@@ -1965,7 +1965,7 @@ pub const VirtualMachine = struct {
         try this.entry_point.generate(
             this.allocator,
             this.bun_watcher != null,
-            Fs.PathName.init(entry_path),
+            entry_path,
             main_file_name,
         );
         this.eventLoop().ensureWaker();

@@ -1691,8 +1691,11 @@ const TaskCallbackContext = union(Tag) {
 
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
-const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
-const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
+
+// Windows seems to stack overflow in debug builds due to the size of these allocations.
+const TaskChannel = sync.Channel(Task, .{ .Static = 4096 / (if (Environment.isWindows) 16 else 1) });
+const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 / (if (Environment.isWindows) 16 else 1) });
+
 const ThreadPool = bun.ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
@@ -5231,14 +5234,14 @@ pub const PackageManager = struct {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
-                    var dir = std.fs.openDirAbsolute(this_cwd, .{}) catch |err| {
+                    var dir = bun.openDirAbsolute(this_cwd) catch |err| {
                         Output.prettyErrorln("Error {s} accessing {s}", .{ @errorName(err), this_cwd });
                         Output.flush();
                         return err;
                     };
                     defer dir.close();
                     break :child dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
-                        if (std.fs.path.dirname(this_cwd)) |parent| {
+                        if (bun.path.nextDirname(this_cwd)) |parent| {
                             this_cwd = parent;
                             continue;
                         } else {
@@ -5252,8 +5255,8 @@ pub const PackageManager = struct {
             const child_cwd = this_cwd;
             // Check if this is a workspace; if so, use root package
             var found = false;
-            while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
-                var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
+            while (bun.path.nextDirname(this_cwd)) |parent| : (this_cwd = parent) {
+                var dir = bun.openDirAbsolute(parent) catch break;
                 defer dir.close();
                 const json_file = dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
                     continue;

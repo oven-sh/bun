@@ -241,16 +241,19 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.File{
-            .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
+        
+        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)){ 
+            .result => |fd| std.fs.File{ .handle = bun.fdcast( fd) },
+            .err => |err| {
                 if (auto_loaded) return;
-                Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                    @errorName(err),
+                Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+                    err,
                     config_path,
                 });
                 Global.exit(1);
-            },
+            }
         };
+
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;

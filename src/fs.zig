@@ -833,10 +833,10 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
-            const dirfd =  bun.sys.openA(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+            const dirfd = bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true);
             try dirfd.throw();
             return std.fs.Dir{
-                .fd = bun.fdcast( dirfd.result),
+                .fd = bun.fdcast(dirfd.result),
             };
         }
 
@@ -1391,7 +1391,7 @@ pub const PathName = struct {
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
             @intCast(@intFromBool(
-                !bun.path.isSepAny(this.dir[this.dir.len - 1])  and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
+                !bun.path.isSepAny(this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             )),
         )];
     }
@@ -1402,6 +1402,13 @@ pub const PathName = struct {
         var ext = path;
         var dir = path;
         var is_absolute = true;
+        const has_disk_designator = path.len > 2 and path[1] == ':' and switch (path[0]) {
+            'a'...'z', 'A'...'Z' => true,
+            else => false,
+        } and bun.path.isSepAny(path[2]);
+        if (has_disk_designator) {
+            path = path[2..];
+        }
 
         var _i = bun.path.lastIndexOfSep(path);
         while (_i) |i| {
@@ -1430,8 +1437,12 @@ pub const PathName = struct {
             dir = &([_]u8{});
         }
 
-        if (base.len > 1 and bun.path.isSepAny( base[base.len - 1])) {
+        if (base.len > 1 and bun.path.isSepAny(base[base.len - 1])) {
             base = base[0 .. base.len - 1];
+        }
+
+        if (!is_absolute and has_disk_designator) {
+            dir = _path[0 .. dir.len + 2];
         }
 
         return PathName{

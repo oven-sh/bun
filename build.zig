@@ -216,7 +216,7 @@ pub fn build_(b: *Build) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+    if (b.option([]const u8, "output-dir", "target to install to") orelse b.env_map.get("OUTPUT_DIR")) |output_dir_| {
         output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
@@ -290,7 +290,7 @@ pub fn build_(b: *Build) !void {
             }
         }
 
-        const is_canary = (std.os.getenvZ("BUN_CANARY") orelse "0")[0] == '1';
+        const is_canary = (b.env_map.get("BUN_CANARY") orelse "0")[0] == '1';
         break :brk .{
             .canary = is_canary,
             .sha = git_sha,
@@ -348,12 +348,12 @@ pub fn build_(b: *Build) !void {
         obj.addOptions("build_options", actual_build_options.step(b));
 
         obj.linkLibC();
-
+        obj.dll_export_fns = true;
         obj.strip = false;
-        obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
+        obj.subsystem = .Console;
         // Disable stack probing on x86 so we don't need to include compiler_rt
-        if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
+        if (target.getCpuArch().isX86() or target.isWindows()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
             // obj.emit_bin = .no_emit;

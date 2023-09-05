@@ -322,9 +322,11 @@ pub const Arguments = struct {
         } else {
             if (ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = std.os.getcwd(&secondbuf) catch return;
+                var cwd = bun.getcwd(&secondbuf) catch return;
+
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
+            
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -386,7 +388,7 @@ pub const Arguments = struct {
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         if (cmd == .TestCommand) {
@@ -1584,7 +1586,7 @@ pub const Command = struct {
                 break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
             } else {
                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&path_buf) catch return false;
+                const cwd = bun.getcwd(&path_buf) catch return false;
                 path_buf[cwd.len] = std.fs.path.sep;
                 var parts = [_]string{script_name_to_search};
                 file_path = resolve_path.joinAbsStringBuf(

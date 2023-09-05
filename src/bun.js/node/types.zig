@@ -2456,7 +2456,7 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir = bun.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
                     _ = Syscall.chdir(@as([:0]const u8, @ptrCast(JSC.VirtualMachine.get().bundler.fs.top_level_dir)));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };

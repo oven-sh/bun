@@ -1069,12 +1069,33 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
+pub fn getcwd(buf_: []u8) ![]u8 {
+    if (comptime !Environment.isWindows) {
+        return std.os.getcwd(buf_);
+    }
+
+    var temp: [MAX_PATH_BYTES ]u8 = undefined;
+    var temp_slice = try std.os.getcwd(&temp);
+    return path.normalizeBuf(temp_slice, buf_, .loose);
+}
+
+pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
+    var temp: [MAX_PATH_BYTES ]u8 = undefined;
+    var temp_slice = try getcwd(&temp);
+    return allocator.dupe(u8, temp_slice);
+}
+
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = fdcast(toFD(fd_));
+    if (comptime Environment.isWindows) {
+        var temp: [MAX_PATH_BYTES ]u8 = undefined;
+        var temp_slice = try std.os.getFdPath(fd, &temp);
+        return path.normalizeBuf(temp_slice, buf, .loose);
+    }
     if (comptime !Environment.isLinux) {
-        return std.os.getFdPath(fd, buf);
+        return try std.os.getFdPath(fd, buf);
     }
 
     if (needs_proc_self_workaround) {

@@ -1904,7 +1904,7 @@ pub const TransformOptions = struct {
 
         var cwd: string = "/";
         if (Environment.isWasi or Environment.isWindows) {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
         }
 
         var define = bun.StringHashMap(string).init(allocator);

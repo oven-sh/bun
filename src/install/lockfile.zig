@@ -903,7 +903,7 @@ pub const Printer = struct {
         var lockfile_path: stringZ = "";
 
         if (!std.fs.path.isAbsolute(path)) {
-            var cwd = try std.os.getcwd(&lockfile_path_buf1);
+            var cwd = try bun.getcwd(&lockfile_path_buf1);
             var parts = [_]string{path};
             var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
@@ -2981,7 +2981,7 @@ pub const Package = extern struct {
                             item.loc,
                             allocator,
                             "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                            .{ @errorName(err), input_path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                            .{ @errorName(err), input_path, bun.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
                         ) catch {};
                     },
                 }
@@ -3028,7 +3028,7 @@ pub const Package = extern struct {
                     0,
                     true,
                 ) catch |err| switch (err) {
-                    error.FileNotFound => {
+                    error.NOENT => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3038,7 +3038,7 @@ pub const Package = extern struct {
                         ) catch {};
                         continue;
                     },
-                    error.NotDir => {
+                    error.NOTDIR => {
                         log.addWarningFmt(
                             source,
                             loc,

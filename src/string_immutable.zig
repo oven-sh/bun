@@ -711,7 +711,11 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
-    while (href.len > 1 and href[href.len - 1] == '/') {
+    while (href.len > 1 and (switch (href[href.len - 1])  {
+        '/' => true,
+        '\\' => true,
+        else => false,
+    })) {
         href.len -= 1;
     }
 
@@ -1482,6 +1486,22 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     std.debug.assert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
+}
+
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+        var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_to_use = utf8;
+        if (bun.strings.containsChar(utf8, '/')) {
+            @memcpy(renormalized[0..utf8.len], utf8);
+            for (renormalized[utf8.len..]) |*c| {
+                if (c.* == '/') {
+                    c.* = '\\';
+                }
+            }
+            path_to_use = renormalized[0..utf8.len];
+        }
+
+        return toWPath(wbuf, path_to_use);
 }
 
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -4730,3 +4750,4 @@ pub fn concatIfNeeded(
     }
     std.debug.assert(remain.len == 0);
 }
+

@@ -110,14 +110,14 @@ pub const FileSystem = struct {
         comptime force: bool,
     ) !*FileSystem {
         const allocator = bun.fs_allocator;
-        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try std.process.getCwdAlloc(allocator));
+        var _top_level_dir = top_level_dir orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!std.fs.path.isSep(_top_level_dir[_top_level_dir.len - 1])) {
+        if (!bun.path.isSepAny(_top_level_dir[_top_level_dir.len - 1])) {
             const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
             bun.copy(u8, tld, _top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
+            tld[tld.len - 1] = '/';
             // if (!isBrowser) {
             //     allocator.free(_top_level_dir);
             // }
@@ -428,7 +428,7 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
-            .auto,
+            .loose,
         });
     }
 
@@ -436,7 +436,7 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
-            .auto,
+            .loose,
         });
     }
 
@@ -465,7 +465,7 @@ pub const FileSystem = struct {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
         return try allocator.dupe(u8, joined);
     }
@@ -474,7 +474,7 @@ pub const FileSystem = struct {
         const joined = path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
         return try allocator.dupeZ(u8, joined);
     }
@@ -483,12 +483,12 @@ pub const FileSystem = struct {
         return path_handler.joinAbsString(
             f.top_level_dir,
             parts,
-            .auto,
+            .loose,
         );
     }
 
     pub fn absBuf(f: *@This(), parts: anytype, buf: []u8) string {
-        return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .auto);
+        return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose);
     }
 
     pub fn joinAlloc(f: *@This(), allocator: std.mem.Allocator, parts: anytype) !string {
@@ -832,10 +832,11 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
         };
 
-        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            const dir = try std.os.open(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+        pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
+            const dirfd =  bun.sys.openA(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+            try dirfd.throw();
             return std.fs.Dir{
-                .fd = dir,
+                .fd = bun.fdcast( dirfd.result),
             };
         }
 
@@ -1390,7 +1391,7 @@ pub const PathName = struct {
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
             @intCast(@intFromBool(
-                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
+                !bun.path.isSepAny(this.dir[this.dir.len - 1])  and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             )),
         )];
     }
@@ -1402,7 +1403,7 @@ pub const PathName = struct {
         var dir = path;
         var is_absolute = true;
 
-        var _i = strings.lastIndexOfChar(path, '/');
+        var _i = bun.path.lastIndexOfSep(path);
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
@@ -1415,7 +1416,7 @@ pub const PathName = struct {
             // Ignore trailing slashes
             path = path[0..i];
 
-            _i = strings.lastIndexOfChar(path, '/');
+            _i = bun.path.lastIndexOfSep(path);
         }
 
         // Strip off the extension
@@ -1429,7 +1430,7 @@ pub const PathName = struct {
             dir = &([_]u8{});
         }
 
-        if (base.len > 1 and base[base.len - 1] == '/') {
+        if (base.len > 1 and bun.path.isSepAny( base[base.len - 1])) {
             base = base[0 .. base.len - 1];
         }
 

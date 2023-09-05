@@ -445,6 +445,26 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
     return openatOSPath(dirfd, file_path, flags, perm);
 }
 
+pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    if (comptime Environment.isWindows) {
+        var wbuf:bun.MAX_WPATH = undefined;
+        return openatWindows(dirfd, bun.strings.toWPathNormalized(&wbuf, file_path), flags);
+    }
+
+    return openatOSPath(dirfd, std.os.toPosixPath( file_path) catch return Maybe(bun.FileDescriptor){
+        .err = .{
+            .errno = @intFromEnum(bun.C.E.NOMEM),
+            .syscall = .open,
+        },
+    }, flags, perm);
+}
+
+pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    // this is what open() does anyway.
+    return openatA(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
+}
+
+
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);

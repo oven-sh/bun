@@ -580,8 +580,9 @@ pub const Platform = enum {
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsolute(path),
-            .loose, .posix => path.len > 0 and path[0] == '/',
+            .posix => path.len > 0 and path[0] == '/',
             .windows => std.fs.path.isAbsoluteWindows(path),
+            .loose => isAbsolute(.posix, path) or isAbsolute(.windows, path),
         };
     }
 
@@ -862,7 +863,7 @@ pub fn joinAbsStringBufZ(_cwd: []const u8, buf: []u8, _parts: anytype, comptime 
     return _joinAbsStringBuf(true, [:0]const u8, _cwd, buf, _parts, _platform);
 }
 
-inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
     var parts: []const []const u8 = _parts;
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
@@ -1402,4 +1403,46 @@ test "longestCommonPath" {
     const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
     _ = t.expect("/app/", longestCommonPath(&more), @src());
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
+}
+
+
+pub fn basename(path: []const u8) []const u8 {
+    if (path.len == 0)
+        return &[_]u8{};
+
+    var end_index: usize = path.len - 1;
+    while (isSepAny( path[end_index])) {
+        if (end_index == 0)
+            return &[_]u8{};
+        end_index -= 1;
+    }
+    var start_index: usize = end_index;
+    end_index += 1;
+    while (!isSepAny(path[start_index])) {
+        if (start_index == 0)
+            return path[0..end_index];
+        start_index -= 1;
+    }
+
+    return path[start_index + 1 .. end_index];
+}
+pub fn lastIndexOfSep(path: []const u8) ?usize {
+    if (comptime !bun.Environment.isWindows) {
+        return strings.lastIndexOfChar(path, '/');
+    }
+
+    if (path.len == 0)
+        return null;
+
+    var i: usize = path.len - 1;
+    if (isSepAny( path[i]))
+        return i;
+
+    while (i != 0) : (i -= 1) {
+        if (isSepAny(path[i])) {
+            return i;
+        }
+    }
+
+    return null;
 }

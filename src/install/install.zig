@@ -1021,7 +1021,7 @@ const PackageInstall = struct {
             step: Step,
 
             pub inline fn isPackageMissingFromCache(this: @This()) bool {
-                return this.err == error.FileNotFound and this.step == .opening_cache_dir;
+                return (this.err == error.FileNotFound or this.err == error.NOENT) and this.step == .opening_cache_dir;
             }
         },
         pending: void,
@@ -6037,7 +6037,7 @@ pub const PackageManager = struct {
                 var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var final_path: [:0]u8 = undefined;
                 if (cwd_.len > 0 and cwd_[0] == '.') {
-                    var cwd = try std.os.getcwd(&buf);
+                    var cwd = try bun.getcwd(&buf);
                     var parts = [_]string{cwd_};
                     var path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
                     buf2[path_.len] = 0;

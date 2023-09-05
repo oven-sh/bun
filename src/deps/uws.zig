@@ -2273,8 +2273,20 @@ extern fn us_socket_pair(
     fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
+extern fn us_socket_from_fd(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
 pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
     return SocketTCP{
         .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
+    };
+}
+
+pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
     };
 }

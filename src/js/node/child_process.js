@@ -1186,8 +1186,7 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
-      // Internal API: may change without warning.
-      onMessage: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
     });
     this.pid = this.#handle.pid;
 

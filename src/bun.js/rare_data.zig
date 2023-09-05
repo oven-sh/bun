@@ -11,6 +11,7 @@ const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const IPC = @import("./ipc.zig");
 const uws = @import("root").bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
@@ -322,7 +323,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 
     var opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    Subprocess.IPCSocket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }

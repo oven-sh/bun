@@ -201,8 +201,16 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
         return 0;
     }
 
+    return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+}
+
+
+struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifdef LIBUS_USE_LIBUV
+    return 0;
+#endif
     struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    us_poll_init(p1, fds[0], POLL_TYPE_SOCKET);
+    us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
@@ -212,7 +220,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
     s->low_prio_state = 0;
 
     /* We always use nodelay */
-    bsd_socket_nodelay(fds[0], 1);
+    bsd_socket_nodelay(fd, 1);
 
     us_internal_socket_context_link_socket(ctx, s);
 
@@ -222,6 +230,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
 
     return s;
 }
+
 
 /* Not shared with SSL */
 

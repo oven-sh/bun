@@ -14,6 +14,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = @import("../../../deps/uws.zig");
+const IPC = @import("../../ipc.zig");
 
 pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
@@ -63,7 +64,7 @@ pub const Subprocess = struct {
 
     ipc: IPCMode,
     // this is only ever accessed when `ipc` is not `none`
-    ipc_socket: IPCSocket = undefined,
+    ipc_socket: IPC.Socket = undefined,
     ipc_callback: JSC.Strong = .{},
     ipc_buffer: bun.ByteList,
 
@@ -71,8 +72,9 @@ pub const Subprocess = struct {
 
     pub const IPCMode = enum {
         none,
+        ///
+        bun,
         // json,
-        advanced, // "advanced" in node uses v8 serialize, so this wont be compatible
     };
 
     pub fn hasExited(this: *const Subprocess) bool {
@@ -81,7 +83,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .SeqCst);
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -91,7 +93,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -423,10 +425,6 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    /// This is used for Bun.spawn() IPC because otherwise we would have to copy the data once to get it to zig, then write it.
-    /// Returns `true` on success, `false` on failure + throws a JS error.
-    extern fn Bun__serializeJSValueForSubprocess(global: *JSC.JSGlobalObject, value: JSValue, fd: bun.FileDescriptor) bool;
-
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         if (this.ipc == .none) {
             global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
@@ -440,7 +438,7 @@ pub const Subprocess = struct {
 
         const value = callFrame.argument(0);
 
-        const success = Bun__serializeJSValueForSubprocess(
+        const success = IPC.serializeJSValueForSubprocess(
             global,
             value,
             this.ipc_socket.fd(),
@@ -1118,7 +1116,7 @@ pub const Subprocess = struct {
         var cmd_value = JSValue.zero;
         var detached = false;
         var args = args_;
-        var ipc = IPCMode.none;
+        var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
 
         {
@@ -1304,10 +1302,11 @@ pub const Subprocess = struct {
                     }
                 }
 
-                // TODO: We use this secret flag for IPC. see comment below.
-                if (args.get(globalThis, "onMessage")) |val| {
+                if (args.get(globalThis, "ipc")) |val| {
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
-                        ipc = .advanced;
+                        // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
+                        // but the only use case this has is doing interop with node.js IPC and other programs.
+                        ipc_mode = .bun;
                         ipc_callback = val.withAsyncContextIfNeeded(globalThis);
                     }
                 }
@@ -1389,12 +1388,6 @@ pub const Subprocess = struct {
             return .zero;
         };
 
-        env_array.append(allocator, null) catch {
-            globalThis.throw("out of memory", .{});
-            return .zero;
-        };
-        env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
-
         // IPC is currently implemented in a very limited way.
         //
         // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
@@ -1407,8 +1400,8 @@ pub const Subprocess = struct {
         // behavior, where this workaround suffices.
         //
         // When Bun.spawn() is given a `.onMessage` callback, it enables IPC as follows:
-        var socket: IPCSocket = undefined;
-        if (ipc != .none) {
+        var socket: IPC.Socket = undefined;
+        if (ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
                 return .zero;
@@ -1416,7 +1409,6 @@ pub const Subprocess = struct {
 
             env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
             env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
-            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_MODE=advanced");
 
             var fds: [2]uws.LIBUS_SOCKET_DESCRIPTOR = undefined;
             socket = uws.newSocketFromPair(
@@ -1431,6 +1423,12 @@ pub const Subprocess = struct {
             };
             actions.dup2(fds[1], 3) catch |err| return globalThis.handleError(err, "in posix_spawn");
         }
+
+        env_array.append(allocator, null) catch {
+            globalThis.throw("out of memory", .{});
+            return .zero;
+        };
+        env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
 
         const pid = brk: {
             defer {
@@ -1501,13 +1499,13 @@ pub const Subprocess = struct {
             .stderr = Readable.init(stdio[bun.STDERR_FD], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
-            .ipc = ipc,
+            .ipc = ipc_mode,
             // will be assigned in the block below
             .ipc_socket = socket,
             .ipc_buffer = bun.ByteList{},
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
         };
-        if (ipc != .none) {
+        if (ipc_mode != .none) {
             var ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
         }
@@ -1980,91 +1978,38 @@ pub const Subprocess = struct {
         return false;
     }
 
-    pub const IPCSocket = uws.NewSocketHandler(false);
-
-    pub const IPCHandler = struct {
-        // ?! are ALL of these needed tbh
-        pub fn onOpen(
-            _: *Subprocess,
-            _: IPCSocket,
-        ) void {}
-        pub fn onClose(
-            this: *Subprocess,
-            _: IPCSocket,
-            _: c_int,
-            _: ?*anyopaque,
-        ) void {
-            // uSocket is already freed so calling .close() again can segfault
-            log("onClose", .{});
-            this.ipc = .none;
-            std.debug.print("onClose\n", .{});
-        }
-        pub fn onData(
-            this: *Subprocess,
-            _: IPCSocket,
-            buf: []const u8,
-        ) void {
-            // log("onData", .{});
-            std.debug.print("onData: '{}'\n", .{std.fmt.fmtSliceHexLower(buf)});
-            if (this.ipc_buffer.len == 0) {
-                if (buf.len < 2) {
-                    _ = this.ipc_buffer.write(bun.default_allocator, buf) catch @panic("OOM");
-                    return;
-                }
-                // attempt to do everything without buffering
-                if (buf[0] != 1) {
-                    // incorrect format
-                    log("Invalid `type` byte {d}", .{buf[0]});
-                    this.disconnect();
-                    return;
-                }
-
-                const len = @as(u32, @intCast(buf[1]));
-                if (buf.len < len + 2) {
-                    // not enough data
-                    _ = this.ipc_buffer.write(bun.default_allocator, buf) catch @panic("OOM");
-                    return;
-                }
-
-                const off = 1 + @sizeOf(u32);
-                const message = buf[off .. off + len];
-                const deserialized = JSValue.deserialize(message, this.globalThis);
-
-                if (deserialized != .zero) {
-                    if (this.ipc_callback.get()) |cb| {
-                        log("Calling callback with data", .{});
-                        const result = cb.callWithThis(
-                            this.globalThis,
-                            this.this_jsvalue,
-                            &[_]JSValue{deserialized},
-                        );
-                        // TODO: this can throw
-                        if (result.isAnyError()) {
-                            this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
-                        }
+    pub fn handleIPCMessage(
+        this: *Subprocess,
+        message: IPC.DecodedIPCMessage,
+    ) void {
+        switch (message) {
+            // In future versions we can read this in order to detect version mismatches,
+            // or disable future optimizations if the subprocess is old.
+            .version => |v| {
+                IPC.log("Child IPC version is {d}", .{v});
+            },
+            .data => |data| {
+                IPC.log("Received IPC message from child", .{});
+                if (this.ipc_callback.get()) |cb| {
+                    const result = cb.callWithThis(
+                        this.globalThis,
+                        this.this_jsvalue,
+                        &[_]JSValue{data},
+                    );
+                    data.ensureStillAlive();
+                    if (result.isAnyError()) {
+                        this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
                     }
                 }
-                return;
-            }
+            },
         }
-        pub fn onWritable(
-            _: *Subprocess,
-            _: IPCSocket,
-        ) void {}
-        pub fn onTimeout(
-            _: *Subprocess,
-            _: IPCSocket,
-        ) void {}
-        pub fn onConnectError(
-            _: *Subprocess,
-            _: IPCSocket,
-            _: c_int,
-        ) void {
-            // I don't think this is possible to hit.
-        }
-        pub fn onEnd(
-            _: *Subprocess,
-            _: IPCSocket,
-        ) void {}
-    };
+    }
+
+    pub fn handleIPCClose(this: *Subprocess, _: IPC.Socket) void {
+        // uSocket is already freed so calling .close() on the socket can segfault
+        this.ipc = .none;
+        this.updateHasPendingActivity();
+    }
+
+    pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
 };

@@ -31,10 +31,10 @@ extern "C" bool Bun__serializeJSValueForSubprocess(JSGlobalObject* globalObject,
     auto serializedValue = serialized.releaseReturnValue();
     auto bytes = serializedValue.ptr()->wireBytes();
 
-    int8_t id = 1;
-    write(fd, &id, sizeof(int8_t));
-    size_t size = bytes.size();
-    write(fd, &size, sizeof(size_t));
+    uint8_t id = 2; // IPCMessageType.SerializedMessage
+    write(fd, &id, sizeof(uint8_t));
+    uint32_t size = bytes.size();
+    write(fd, &size, sizeof(uint32_t));
     write(fd, bytes.data(), size);
 
     RELEASE_AND_RETURN(scope, true);

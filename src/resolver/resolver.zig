@@ -1989,7 +1989,7 @@ pub const Resolver = struct {
         var rfs = &r.fs.fs;
         var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
-        var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+        var dir_entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
         var open_dir = std.fs.cwd().openIterableDir(dir_path, .{}) catch |err| {

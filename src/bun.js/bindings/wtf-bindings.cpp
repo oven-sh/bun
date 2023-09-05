@@ -10,6 +10,7 @@
 #endif
 
 #if !OS(WINDOWS)
+#include <stdatomic.h>
 
 #include <termios.h>
 static int orig_termios_fd = -1;
@@ -95,7 +96,7 @@ static void uv__tty_make_raw(struct termios* tio)
 
 extern "C" int Bun__ttySetMode(int fd, int mode)
 {
-    #if !OS(WINDOWS)
+#if !OS(WINDOWS)
     struct termios tmp;
     int expected;
     int rc;
@@ -159,10 +160,10 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         current_tty_mode = mode;
 
     return rc;
-    #else
+#else
     return 0;
-    
-    #endif
+
+#endif
 }
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)

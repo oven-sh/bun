@@ -254,7 +254,7 @@ set(IDENTIFIER_CACHE_FILES
 
 add_custom_command(
     OUTPUT ${BUN_OBJECT_FILE}
-    COMMAND "${ZIG_EXECUTABLE}" build obj -Doptimize=${CMAKE_BUILD_TYPE} -Doutput-dir=${CMAKE_CURRENT_SOURCE_DIR}/zig-out/lib -Dcpu=${CPU_TARGET}
+    COMMAND "${ZIG_EXECUTABLE}" build obj -Doptimize=${CMAKE_BUILD_TYPE} -Doutput-dir=${CMAKE_CURRENT_SOURCE_DIR}/zig-out/lib -Dcpu=${CPU_TARGET} -Dtarget=x86_64-windows-msvc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build.zig ${ZIG_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Building zig code"

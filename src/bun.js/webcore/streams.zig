@@ -3061,7 +3061,7 @@ pub fn ReadableStreamSource(
         close_handler: ?*const fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: JSValue = JSValue.zero,
-        globalThis: *JSGlobalObject = undefined,
+        globalThis: ?*JSGlobalObject = null,
 
         const This = @This();
         const ReadableStreamSourceType = @This();
@@ -3248,7 +3248,7 @@ pub fn ReadableStreamSource(
             fn onClose(ptr: *anyopaque) void {
                 JSC.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr);
-                _ = this.close_jsvalue.call(this.globalThis, &.{});
+                _ = this.close_jsvalue.call(this.globalThis.?, &.{});
                 //    this.closer
             }
 
@@ -3611,7 +3611,7 @@ pub const ByteStream = struct {
 
     pub fn setValue(this: *@This(), view: JSC.JSValue) void {
         JSC.markBinding(@src());
-        this.pending_value.set(this.parent().globalThis, view);
+        this.pending_value.set(this.parent().globalThis.?, view);
     }
 
     pub fn parent(this: *@This()) *Source {
@@ -4675,7 +4675,7 @@ pub const FileReader = struct {
     };
 
     pub inline fn globalThis(this: *FileReader) *JSC.JSGlobalObject {
-        return this.stored_global_this_ orelse @fieldParentPtr(Source, "context", this).globalThis;
+        return this.stored_global_this_ orelse @fieldParentPtr(Source, "context", this).globalThis.?;
     }
 
     const run_on_different_thread_size = bun.huge_allocator_threshold;

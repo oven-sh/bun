@@ -242,7 +242,7 @@ pub const ThreadPool = struct {
         }
 
         pub fn get(ctx: *BundleV2) *Worker {
-            var worker = ctx.graph.pool.getWorker(std.Thread.getCurrentId());
+            var worker = ctx.graph.pool.getWorker(std.Thread.getCurrentId()) catch unreachable;
             if (!worker.has_created) {
                 worker.create(ctx);
             }
@@ -627,7 +627,7 @@ pub const BundleV2 = struct {
                     this.graph.estimated_file_loader_count += 1;
                 }
 
-                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+                this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&task.task));
             }
         } else {
             out_source_index = Index.init(entry.value_ptr.*);
@@ -993,7 +993,7 @@ pub const BundleV2 = struct {
 
             _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
             this.graph.entry_points.append(allocator, source_index) catch unreachable;
-            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&task.task));
             this.graph.shadow_entry_point_range.len += 1;
         }
     }
@@ -1015,7 +1015,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points));
+        this.graph.pool.pool.?.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1353,7 +1353,7 @@ pub const BundleV2 = struct {
                 // The file could be on disk.
                 const source = &this.graph.input_files.items(.source)[load.source_index.get()];
                 if (source.path.isFile()) {
-                    this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
+                    this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
                     return;
                 }
 
@@ -1376,7 +1376,7 @@ pub const BundleV2 = struct {
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
-                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+                this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
@@ -1500,7 +1500,7 @@ pub const BundleV2 = struct {
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
-                            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+                            this.graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&task.task));
                         }
                     } else {
                         out_source_index = Index.init(existing.value_ptr.*);
@@ -1650,8 +1650,8 @@ pub const BundleV2 = struct {
         }
 
         defer {
-            if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
-                this.graph.pool.pool.threadpool_context = null;
+            if (this.graph.pool.pool.?.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
+                this.graph.pool.pool.?.threadpool_context = null;
             }
 
             ast_memory_allocator.pop();
@@ -1689,7 +1689,7 @@ pub const BundleV2 = struct {
                 this.graph.pool.workers_assignments.deinit();
             }
 
-            this.graph.pool.pool.wakeForIdleEvents();
+            this.graph.pool.pool.?.wakeForIdleEvents();
         }
 
         for (this.free_list.items) |free| {
@@ -1711,7 +1711,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
+        this.graph.pool.pool.?.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2184,7 +2184,7 @@ pub const BundleV2 = struct {
                         }
 
                         // schedule as early as possible
-                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
+                        graph.pool.pool.?.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
                         const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
                         if (loader.shouldCopyForBundling()) {
@@ -3724,7 +3724,7 @@ const LinkerContext = struct {
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
         _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .Monotonic);
-        this.parse_graph.pool.pool.schedule(batch);
+        this.parse_graph.pool.pool.?.schedule(batch);
     }
 
     pub fn markPendingTaskDone(this: *LinkerContext) void {
@@ -4657,7 +4657,7 @@ const LinkerContext = struct {
             // for CommonJS files, and is also necessary for other files if they are
             // imported using an import star statement.
             // Note: `do` will wait for all to finish before moving forward
-            try this.parse_graph.pool.pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
+            try this.parse_graph.pool.pool.?.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
         }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -6063,7 +6063,7 @@ const LinkerContext = struct {
                 .symbols = &c.graph.symbols,
             };
 
-            c.parse_graph.pool.pool.doPtr(
+            c.parse_graph.pool.pool.?.doPtr(
                 c.allocator,
                 &c.wait_group,
                 cross_chunk_dependencies,
@@ -8670,7 +8670,7 @@ const LinkerContext = struct {
             }
             wait_group.counter = @as(u32, @truncate(chunks.len));
             var ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+            try c.parse_graph.pool.pool.?.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
         if (c.source_maps.line_offset_tasks.len > 0) {
@@ -8719,7 +8719,7 @@ const LinkerContext = struct {
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
-                c.parse_graph.pool.pool.schedule(batch);
+                c.parse_graph.pool.pool.?.schedule(batch);
                 wait_group.wait();
             }
 
@@ -8737,7 +8737,7 @@ const LinkerContext = struct {
                 wait_group.init();
                 wait_group.counter = @as(u32, @truncate(chunks.len));
 
-                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
+                try c.parse_graph.pool.pool.?.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
             }
         }
 

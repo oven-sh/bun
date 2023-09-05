@@ -107,7 +107,6 @@ const {
   getProxyDetails,
   previewEntries,
   getConstructorName: internalGetConstructorName,
-  getExternalValue,
 } = require('./util');
 
 const customInspectSymbol = Symbol.for('nodejs.util.inspect.custom');
@@ -1080,7 +1079,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     } else {
       if (keys.length === 0 && protoProps === undefined) {
         if (isExternal(value)) {
-          const address = getExternalValue(value).toString(16);
+          const address = '0'; //getExternalValue(value).toString(16);
           return ctx.stylize(`[External: ${address}]`, 'special');
         }
         return `${getCtxStyle(value, constructor, tag)}{}`;
@@ -1142,8 +1141,8 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
         }
       } else {
         //! this is a non-standard behavior compared to Node's implementation
-        //! it optimizes the output by also collapsing indirect circular references
-        //! this is not known to cause any issues so far but this note is left here just in case
+        //  it optimizes the output by also collapsing indirect circular references
+        //  this is not known to cause any issues so far but this note is left here just in case
         const reference = ctx.stylize(`[Circular *${index}]`, 'special');
         //ctx.seen.pop(); //? uncommenting this line would allow more accurate display semantics but causes a ~2x slowdown
         return reference;
@@ -1981,7 +1980,7 @@ function formatWeakMap(ctx, value, recurseTimes) {
 function formatIterator(braces, ctx, value, recurseTimes) {
   const { 0: entries, 1: isKeyValue } = previewEntries(value, true);
   if (isKeyValue) {
-    // TODO: JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
+    // TODO(bun): JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
     // Mark entry iterators as such.
     braces[0] = RegExpPrototypeSymbolReplace(/ Iterator] {$/, braces[0], ' Entries] {');
     return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);

@@ -11,6 +11,7 @@ export default {
   // getStringWidth,
   stripVTControlCharacters: util.stripVTControlCharacters,
   // isZeroWidthCodePoint,
-  stylizeWithColor: util.stylizeWithColor, //! non-standard property, should this be kept? (not currently exposed)
-  stylizeWithHTML: util.stylizeWithHTML, //! non-standard property, should this be kept? (not currently exposed)
+  //! non-standard properties, should these be kept? (not currently exposed)
+  stylizeWithColor: util.stylizeWithColor,
+  stylizeWithHTML: util.stylizeWithHTML,
 };

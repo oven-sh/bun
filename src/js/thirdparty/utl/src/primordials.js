@@ -17,8 +17,7 @@ const createSafeIterator = (factory, next) => {
 };
 
 function getGetter(cls, getter) {
-  // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor
-  // doesn't work on built-ins like Typed Arrays.
+  // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor doesn't work on built-ins like Typed Arrays.
   return Function.prototype.call.bind(cls.prototype.__lookupGetter__(getter));
 }
 

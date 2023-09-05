@@ -1497,8 +1497,10 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresReverse = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
+        //  The callback need not and should not attempt to free the memory
+        //  pointed to by hostent; the ares library will free it when the
+        //  callback returns.
         var array = addr.toJSReponse(this.vm.allocator, prev_global, "");
-        defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);
@@ -2325,7 +2327,7 @@ pub const DNSResolver = struct {
             },
         };
 
-        var servers: [*c]c_ares.struct_ares_addr_port_node = undefined;
+        var servers: ?*c_ares.struct_ares_addr_port_node = null;
         const r = c_ares.ares_get_servers_ports(channel, &servers);
         if (r != c_ares.ARES_SUCCESS) {
             const err = c_ares.Error.get(r).?;
@@ -2338,21 +2340,21 @@ pub const DNSResolver = struct {
 
         var i: u32 = 0;
         var cur = servers;
-        while (cur != null) : ({
+        while (cur) |current| : ({
             i += 1;
-            cur = cur.*.next;
+            cur = current.next;
         }) {
             // Formatting reference: https://nodejs.org/api/dns.html#dnsgetservers
             // Brackets '[' and ']' consume 2 bytes, used for IPv6 format (e.g., '[2001:4860:4860::8888]:1053').
             // Port range is 6 bytes (e.g., ':65535').
             // Null terminator '\0' uses 1 byte.
             var buf: [INET6_ADDRSTRLEN + 2 + 6 + 1]u8 = undefined;
-            const family = cur.*.family;
+            const family = current.family;
 
             const ip = if (family == std.os.AF.INET6) blk: {
-                break :blk c_ares.ares_inet_ntop(family, &cur.*.addr.addr6, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
+                break :blk c_ares.ares_inet_ntop(family, &current.addr.addr6, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
             } else blk: {
-                break :blk c_ares.ares_inet_ntop(family, &cur.*.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
+                break :blk c_ares.ares_inet_ntop(family, &current.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
             };
             if (ip == null) {
                 globalThis.throwValue(globalThis.createErrorInstance(
@@ -2362,15 +2364,15 @@ pub const DNSResolver = struct {
                 return .zero;
             }
 
-            var port = cur.*.tcp_port;
+            var port = current.tcp_port;
             if (port == 0) {
-                port = cur.*.udp_port;
+                port = current.udp_port;
             }
             if (port == 0) {
                 port = IANA_DNS_PORT;
             }
 
-            const size = bun.len(bun.cast([*:0]u8, &buf));
+            const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
                 values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
             } else {

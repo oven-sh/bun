@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.1",
+  "version": "0.0.8",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -8,7 +8,7 @@
   },
   "main": "dist/extension.js",
   "devDependencies": {
-    "@types/vscode": "^1.81.0",
+    "@types/vscode": "^1.60.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
     "@vscode/vsce": "^2.20.1",
@@ -16,6 +16,43 @@
     "esbuild": "^0.19.2",
     "typescript": "^5.0.0"
   },
+  "description": "The Visual Studio Code extension for Bun.",
+  "displayName": "Bun for Visual Studio Code",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "galleryBanner": {
+    "color": "#3B3738",
+    "theme": "dark"
+  },
+  "homepage": "https://bun.sh/",
+  "icon": "assets/icon.png",
+  "keywords": [
+    "bun",
+    "node.js",
+    "javascript",
+    "typescript",
+    "vscode"
+  ],
+  "license": "MIT",
+  "publisher": "oven",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pretest": "bun run build",
+    "test": "node scripts/test.mjs",
+    "prepublish": "npm version patch && bun run build",
+    "publish": "cd extension && bunx vsce publish"
+  },
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "workspaces": [
+    "../bun-debug-adapter-protocol",
+    "../bun-inspector-protocol"
+  ],
   "activationEvents": [
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
@@ -44,18 +81,30 @@
     "configuration": {
       "title": "Bun",
       "properties": {
-        "bun.path": {
+        "bun.runtime": {
           "type": "string",
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
           "scope": "window",
           "default": null
+        },
+        "bun.debugTerminal.enabled": {
+          "type": "boolean",
+          "description": "If Bun should be added to the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.debugTerminal.stopOnEntry": {
+          "type": "boolean",
+          "description": "If Bun should stop on entry when used in the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": false
         }
       }
     },
     "commands": [
       {
         "command": "extension.bun.runFile",
-        "title": "Run Bun",
+        "title": "Run File",
         "shortTitle": "Run",
         "category": "Bun",
         "enablement": "!inDebugMode",
@@ -63,7 +112,7 @@
       },
       {
         "command": "extension.bun.debugFile",
-        "title": "Debug Bun",
+        "title": "Debug File",
         "shortTitle": "Debug",
         "category": "Bun",
         "enablement": "!inDebugMode",
@@ -178,7 +227,10 @@
                 "default": false
               },
               "watchMode": {
-                "type": ["boolean", "string"],
+                "type": [
+                  "boolean",
+                  "string"
+                ],
                 "description": "If the process should be restarted when files change.",
                 "enum": [
                   true,
@@ -228,7 +280,7 @@
     "jsonValidation": [
       {
         "fileMatch": "package.json",
-        "url": "assets/package.json"
+        "url": "./assets/package.json"
       }
     ],
     "customEditors": [
@@ -242,49 +294,6 @@
         ],
         "priority": "default"
       }
-    ],
-    "terminal": {
-      "profiles": [
-        {
-          "title": "Bun Terminal",
-          "id": "bun"
-        }
-      ]
-    }
-  },
-  "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun",
-  "engines": {
-    "vscode": "^1.81.0"
-  },
-  "extensionKind": [
-    "workspace"
-  ],
-  "galleryBanner": {
-    "color": "#C80000",
-    "theme": "dark"
-  },
-  "homepage": "https://bun.sh/",
-  "icon": "assets/icon.png",
-  "keywords": [
-    "bun",
-    "node.js",
-    "javascript",
-    "typescript",
-    "vscode"
-  ],
-  "license": "MIT",
-  "publisher": "oven",
-  "scripts": {
-    "build": "node scripts/build.mjs",
-    "test": "node scripts/test.mjs"
-  },
-  "workspaceTrust": {
-    "request": "never"
-  },
-  "workspaces": [
-    "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol",
-    "../bun-wasm"
-  ]
+    ]
+  }
 }

@@ -510,11 +510,20 @@ pub const Blob = struct {
         this.finalize();
     }
 
+    export fn Blob__getFileNameString(this: *Blob) callconv(.C) bun.String {
+        if (this.getFileName()) |filename| {
+            return bun.String.fromBytes(filename);
+        }
+
+        return bun.String.empty;
+    }
+
     comptime {
         _ = Blob__dupeFromJS;
         _ = Blob__destroy;
         _ = Blob__dupe;
         _ = Blob__setAsFile;
+        _ = Blob__getFileNameString;
     }
 
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {

@@ -1313,13 +1313,13 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        var target: *windows.HANDLE = undefined;
+        var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
             bun.fdcast(fd),
             process,
-            target,
+            &target,
             0,
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
@@ -1329,7 +1329,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
                 return err;
             }
         }
-        return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+        return Maybe(bun.FileDescriptor){ .result = bun.toFD(target.*) };
     }
 
     const out = std.c.dup(fd);

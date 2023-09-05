@@ -4427,6 +4427,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*h
         return GlobalObject::PromiseFunctions::CallbackJob__onResolve;
     } else if (handler == CallbackJob__onReject) {
         return GlobalObject::PromiseFunctions::CallbackJob__onReject;
+    } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
+    } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

@@ -646,7 +646,7 @@ pub const Crypto = struct {
             }
         }
 
-        return JSValue.jsNumberFromUint64(std.crypto.random.intRangeAtMost(u52, at_least, at_most));
+        return JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
     }
 
     pub fn randomUUIDWithoutTypeChecks(

@@ -6875,6 +6875,10 @@ pub const Macro = struct {
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
             defer resolver.opts.transform_options = old_transform_options;
+
+            // JSC needs to be initialized if building from CLI
+            JSC.initialize();
+
             var _vm = try JavaScript.VirtualMachine.init(.{
                 .allocator = default_allocator,
                 .args = resolver.opts.transform_options,

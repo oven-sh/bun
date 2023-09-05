@@ -453,8 +453,6 @@ pub const RunCommand = struct {
                         continue;
                     };
                 }
-                if (comptime Environment.isPosix)
-                    _ = bun.C.chmod(bun_node_dir ++ "/node", 0o777);
                 break;
             }
         }

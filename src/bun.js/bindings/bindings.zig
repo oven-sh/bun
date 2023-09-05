@@ -5454,10 +5454,19 @@ pub const URL = opaque {
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
     extern fn URL__getHref(*String) String;
     extern fn URL__getFileURLString(*String) String;
+    extern fn URL__getHrefJoin(*String, *String) String;
+
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
         var input = str;
         return URL__getHref(&input);
+    }
+
+    pub fn join(base: bun.String, relative: bun.String) String {
+        JSC.markBinding(@src());
+        var base_str = base;
+        var relative_str = relative;
+        return URL__getHrefJoin(&base_str, &relative_str);
     }
 
     pub fn fileURLFromString(str: bun.String) String {

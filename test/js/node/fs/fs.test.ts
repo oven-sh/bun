@@ -18,6 +18,7 @@ import fs, {
   rmSync,
   rmdir,
   rmdirSync,
+  renameSync,
   createReadStream,
   createWriteStream,
   promises,
@@ -2019,4 +2020,24 @@ it("BigIntStats", () => {
   expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
   expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
   expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+});
+
+it("test syscall errno, issue#4198", () => {
+  const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
+  expect(() => openSync(path, "r")).toThrow("No such file or directory");
+  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file number");
+  expect(() => readlinkSync(path)).toThrow("No such file or directory");
+  expect(() => realpathSync(path)).toThrow("No such file or directory");
+  expect(() => readFileSync(path)).toThrow("No such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => unlinkSync(path)).toThrow("No such file or directory");
+  expect(() => rmSync(path)).toThrow("No such file or directory");
+  expect(() => rmdirSync(path)).toThrow("No such file or directory");
+  expect(() => closeSync(2147483640)).toThrow("Bad file number");
+
+  mkdirSync(path);
+  expect(() => mkdirSync(path)).toThrow("File or folder exists");
+  expect(() => unlinkSync(path)).toThrow("Is a directory");
+  rmdirSync(path);
 });

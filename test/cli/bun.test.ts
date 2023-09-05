@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { spawnSync } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "node:os";
 import fs from "node:fs";
 
@@ -39,14 +39,14 @@ describe("bun", () => {
     test("revision generates version numbers correctly", () => {
       var { stdout, exitCode } = Bun.spawnSync({
         cmd: [bunExe(), "--version"],
-        env: {},
+        env: bunEnv,
         stderr: "inherit",
       });
       var version = stdout.toString().trim();
 
       var { stdout, exitCode } = Bun.spawnSync({
         cmd: [bunExe(), "--revision"],
-        env: {},
+        env: bunEnv,
         stderr: "inherit",
       });
       var revision = stdout.toString().trim();

@@ -2721,6 +2721,7 @@ pub const VirtualMachine = struct {
 
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const Watcher = HotReloader.Watcher;
+extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
@@ -2778,6 +2779,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     unreachable;
                 }
 
+                BunDebugger__willHotReload();
                 var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
 
                 that.* = this.*;

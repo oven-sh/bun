@@ -818,6 +818,16 @@ ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolveStream(JSC__JSGl
 
 #endif
 
+#pragma mark - Bun__BodyValueBufferer
+
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue Bun__TestScope__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);

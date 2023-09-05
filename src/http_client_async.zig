@@ -573,14 +573,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
 
-            if (comptime FeatureFlags.enable_keepalive) {
-                if (!client.disable_keepalive) {
-                    if (this.existingSocket(hostname, port)) |sock| {
-                        sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                        client.allow_retry = true;
-                        client.onOpen(comptime ssl, sock);
-                        return sock;
-                    }
+            if (client.isKeepAlivePossible()) {
+                if (this.existingSocket(hostname, port)) |sock| {
+                    sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    client.allow_retry = true;
+                    client.onOpen(comptime ssl, sock);
+                    return sock;
                 }
             }
 
@@ -1274,6 +1272,17 @@ pub fn deinit(this: *HTTPClient) void {
     }
 }
 
+pub fn isKeepAlivePossible(this: *HTTPClient) bool {
+    if (comptime FeatureFlags.enable_keepalive) {
+        // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
+        if (this.http_proxy != null and this.url.isHTTPS()) {
+            return false;
+        }
+        return !this.disable_keepalive;
+    }
+    return false;
+}
+
 const Stage = enum(u8) {
     pending,
     connect,
@@ -1508,8 +1517,6 @@ pub const AsyncHTTP = struct {
         this.timeout = timeout;
 
         if (http_proxy) |proxy| {
-            //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
-            this.client.disable_keepalive = this.url.isHTTPS();
             // Username between 0 and 4096 chars
             if (proxy.username.len > 0 and proxy.username.len < 4096) {
                 // Password between 0 and 4096 chars
@@ -1569,6 +1576,18 @@ pub const AsyncHTTP = struct {
             }
         }
         return this;
+    }
+
+    pub fn isKeepAlivePossible(this: *AsyncHTTP) bool {
+        if (comptime FeatureFlags.enable_keepalive) {
+            // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
+            if (this.http_proxy != null and this.url.isHTTPS()) {
+                return false;
+            }
+            // check state
+            if (this.state.allow_keepalive and !this.disable_keepalive) return true;
+        }
+        return false;
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
@@ -2018,7 +2037,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
             const headers_len = list.items.len;
             std.debug.assert(list.items.len == writer.context.items.len);
-            if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0) {
+            if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0 and !this.proxy_tunneling) {
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
@@ -2065,7 +2084,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
 
             if (has_sent_headers) {
-                this.state.request_stage = .body;
+                if (this.proxy_tunneling) {
+                    this.state.request_stage = .proxy_handshake;
+                } else {
+                    this.state.request_stage = .body;
+                }
                 std.debug.assert(
                     // we should have leftover data OR we use sendfile()
                     (this.state.original_request_body == .bytes and this.state.request_body.len > 0) or
@@ -2122,6 +2145,9 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .proxy_body => {
+            if (this.state.original_request_body != .bytes) {
+                @panic("sendfile is only supported without SSL. This code should never have been reached!");
+            }
             var proxy = this.proxy_tunnel orelse return;
 
             this.setTimeout(socket, 60);
@@ -2257,7 +2283,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     this.state.response_stage = .proxy_headers;
     this.state.request_stage = .proxy_headers;
-
+    this.state.request_sent_len = 0;
     this.onWritable(true, is_ssl, socket);
 }
 
@@ -2282,7 +2308,6 @@ fn retryProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
     this.startProxySendHeaders(is_ssl, socket);
 }
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    this.state.reset(this.allocator);
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     const proxy = ProxyTunnel.init(is_ssl, this, socket);
@@ -2658,7 +2683,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         if (is_done) {
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
-            if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
+            if (this.isKeepAlivePossible() and !socket.isClosed()) {
                 ctx.releaseSocket(
                     socket,
                     this.connected_url.hostname,

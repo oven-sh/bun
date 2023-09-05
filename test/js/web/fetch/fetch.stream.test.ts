@@ -90,7 +90,7 @@ describe("fetch() with streaming", () => {
         if (len <= 0) {
           throw new Error("Request length is 0");
         }
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await Bun.sleep(50);
       }
 
       expect(true).toBe(true);

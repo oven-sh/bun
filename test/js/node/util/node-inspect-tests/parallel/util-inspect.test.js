@@ -2897,8 +2897,6 @@ test('no assertion failures 3', () => {
     assert.strictEqual(out, expected);
   }
 
-  //! too flaky
-  //test.skip('advanced stacktrace tests', () =>
   {
     // TODO: don't care if invalid node internals get highlighted wrong
     // See: loaders.js if you want to fix
@@ -2958,7 +2956,7 @@ test('no assertion failures 3', () => {
     });
 
     // Check ESM
-    const encodedCwd = url.pathToFileURL(process.cwd());
+    //const encodedCwd = url.pathToFileURL(process.cwd());
     const sl = process.platform === 'win32' ? '\\' : '/';
 
     // Use a fake stack to verify the expected colored outcome.

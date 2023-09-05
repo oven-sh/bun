@@ -6,28 +6,29 @@ const {
   MapPrototypeKeys,
   SetPrototypeEntries,
   //SetPrototypeValues,
-} = require('./primordials');
+} = require("./primordials");
 
-const { isWeakMap, isWeakSet } = require('node:util/types');
+const { isWeakMap, isWeakSet } = require("node:util/types");
 
 const ALL_PROPERTIES = 0;
 const ONLY_ENUMERABLE = 2;
-const kPending = Symbol('kPending'); // state ID 0
-const kFulfilled = Symbol('kFulfilled'); // state ID 1
-const kRejected = Symbol('kRejected'); // state ID 2
+const kPending = Symbol("kPending"); // state ID 0
+const kFulfilled = Symbol("kFulfilled"); // state ID 1
+const kRejected = Symbol("kRejected"); // state ID 2
 
 function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   const desc = Object.getOwnPropertyDescriptors(a);
   const ret = [];
   for (const [k, v] of Object.entries(desc)) {
-    if (!/^(0|[1-9][0-9]*)$/.test(k) || (parseInt(k, 10) >= (2 ** 32 - 1))) { // Arrays are limited in size
-      if ((filter === ONLY_ENUMERABLE) && !v.enumerable) continue;
+    if (!/^(0|[1-9][0-9]*)$/.test(k) || parseInt(k, 10) >= 2 ** 32 - 1) {
+      // Arrays are limited in size
+      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
       ret.push(k);
     }
   }
   for (const s of Object.getOwnPropertySymbols(a)) {
     const v = Object.getOwnPropertyDescriptor(a, s);
-    if ((filter === ONLY_ENUMERABLE) && !v.enumerable) continue;
+    if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
     ret.push(s);
   }
   return ret;
@@ -46,7 +47,7 @@ export default {
     if (state !== $promiseStatePending) {
       return [
         state === $promiseStateRejected ? kRejected : kFulfilled,
-        $getPromiseInternalField(promise, $promiseFieldReactionsOrResult)
+        $getPromiseInternalField(promise, $promiseFieldReactionsOrResult),
       ];
     }
     return [kPending, undefined];
@@ -74,23 +75,22 @@ export default {
         if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(iteratedObject)), true];
         else if (kind === 1) return [ArrayFrom(MapPrototypeValues(iteratedObject)), false];
         else return [ArrayFrom(MapPrototypeKeys(iteratedObject)), false];
-      }
-      else if ($isSet(iteratedObject)) {
+      } else if ($isSet(iteratedObject)) {
         if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(SetPrototypeEntries(iteratedObject))), true];
         else return [ArrayFrom(iteratedObject), false];
       }
       // TODO(bun): This function is currently only called for Map and Set iterators
       // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
-      else throw new Error('previewEntries(): Invalid iterator received');
+      else throw new Error("previewEntries(): Invalid iterator received");
     }
     // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
     if (isWeakMap(val)) return [];
     if (isWeakSet(val)) return [];
-    else throw new Error('previewEntries(): Invalid object received');
+    else throw new Error("previewEntries(): Invalid object received");
   },
   getConstructorName(val) {
-    if (!val || typeof val !== 'object') {
-      throw new Error('Invalid object');
+    if (!val || typeof val !== "object") {
+      throw new Error("Invalid object");
     }
     if (val.constructor && val.constructor.name) {
       return val.constructor.name;
@@ -101,6 +101,6 @@ export default {
     if (m) {
       return m[1];
     }
-    return 'Object';
+    return "Object";
   },
 };

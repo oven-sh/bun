@@ -22,7 +22,7 @@ function getGetter(cls, getter) {
 }
 
 function getterCaller(getter) {
-  return (val) => {
+  return val => {
     return val.constructor.prototype.__lookupGetter__(getter).call(val);
   };
 }
@@ -32,12 +32,9 @@ function uncurryThis(func) {
 }
 
 const copyProps = (src, dest) => {
-  Array.prototype.forEach.call(Reflect.ownKeys(src), (key) => {
+  Array.prototype.forEach.call(Reflect.ownKeys(src), key => {
     if (!Reflect.getOwnPropertyDescriptor(dest, key)) {
-      Reflect.defineProperty(
-        dest,
-        key,
-        Reflect.getOwnPropertyDescriptor(src, key));
+      Reflect.defineProperty(dest, key, Reflect.getOwnPropertyDescriptor(src, key));
     }
   });
 };
@@ -47,18 +44,18 @@ const makeSafe = (unsafe, safe) => {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
-    Array.prototype.forEach.call(Reflect.ownKeys(unsafe.prototype), (key) => {
+    Array.prototype.forEach.call(Reflect.ownKeys(unsafe.prototype), key => {
       if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
         const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
         if (
-          typeof desc.value === 'function' &&
+          typeof desc.value === "function" &&
           desc.value.length === 0 &&
           Symbol.iterator in (Function.prototype.call.call(desc.value, dummy) || {})
         ) {
           const createIterator = uncurryThis(desc.value);
           next ??= uncurryThis(createIterator(dummy).next);
           const SafeIterator = createSafeIterator(createIterator, next);
-          desc.value = function() {
+          desc.value = function () {
             return new SafeIterator(this);
           };
         }
@@ -75,12 +72,12 @@ const makeSafe = (unsafe, safe) => {
 };
 
 const StringIterator = Function.prototype.call.bind(String.prototype[Symbol.iterator]);
-const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(''));
+const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
 
 function ErrorCaptureStackTrace(targetObject) {
   const stack = new Error().stack;
   // Remove the second line, which is this function
-  targetObject.stack = stack.replace(/.*\n.*/, '$1');
+  targetObject.stack = stack.replace(/.*\n.*/, "$1");
 }
 
 export default {
@@ -113,7 +110,7 @@ export default {
   FunctionPrototypeCall: Function.prototype.call.bind(Function.prototype.call),
   FunctionPrototypeToString: Function.prototype.call.bind(Function.prototype.toString),
   JSONStringify: JSON.stringify,
-  MapPrototypeGetSize: getGetter(Map, 'size'),
+  MapPrototypeGetSize: getGetter(Map, "size"),
   MapPrototypeEntries: Function.prototype.call.bind(Map.prototype.entries),
   MapPrototypeValues: Function.prototype.call.bind(Map.prototype.values),
   MapPrototypeKeys: Function.prototype.call.bind(Map.prototype.keys),
@@ -152,21 +149,24 @@ export default {
   RegExpPrototypeSymbolSplit: Function.prototype.call.bind(RegExp.prototype[Symbol.split]),
   RegExpPrototypeTest: Function.prototype.call.bind(RegExp.prototype.test),
   RegExpPrototypeToString: Function.prototype.call.bind(RegExp.prototype.toString),
-  SafeStringIterator: createSafeIterator(
-    StringIterator,
-    Function.prototype.call.bind(StringIteratorPrototype.next),
-  ),
+  SafeStringIterator: createSafeIterator(StringIterator, Function.prototype.call.bind(StringIteratorPrototype.next)),
   SafeMap: makeSafe(
     Map,
     class SafeMap extends Map {
-      constructor(i) { super(i); }
-    }),
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {
-      constructor(i) { super(i); }
-    }),
-  SetPrototypeGetSize: getGetter(Set, 'size'),
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: Function.prototype.call.bind(Set.prototype.entries),
   SetPrototypeValues: Function.prototype.call.bind(Set.prototype.values),
   String,
@@ -194,12 +194,18 @@ export default {
   SymbolIterator: Symbol.iterator,
   SymbolFor: Symbol.for,
   SymbolToStringTag: Symbol.toStringTag,
-  TypedArrayPrototypeGetLength: getGetter(Uint8Array, 'length'),
+  TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,
-  Uint8Array, Uint16Array, Uint32Array,
-  Int8Array, Int16Array, Int32Array,
-  Float32Array, Float64Array,
-  BigUint64Array, BigInt64Array,
+  Uint8Array,
+  Uint16Array,
+  Uint32Array,
+  Int8Array,
+  Int16Array,
+  Int32Array,
+  Float32Array,
+  Float64Array,
+  BigUint64Array,
+  BigInt64Array,
   uncurryThis,
 };

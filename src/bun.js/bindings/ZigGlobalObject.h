@@ -341,8 +341,11 @@ public:
 
         CallbackJob__onResolve,
         CallbackJob__onReject,
+
+        Bun__BodyValueBufferer__onRejectStream,
+        Bun__BodyValueBufferer__onResolveStream,
     };
-    static constexpr size_t promiseFunctionsSize = 22;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 

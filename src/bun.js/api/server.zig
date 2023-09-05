@@ -1170,6 +1170,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
+        // reference to the readable stream / byte_stream alive
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
 
         /// Used in errors
         pathname: bun.String = bun.String.empty,
@@ -1666,6 +1668,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 stream.unpipe();
             }
 
+            this.readable_stream_ref.deinit();
+
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
                 this.pathname = bun.String.empty;
@@ -2021,17 +2025,25 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const is_temporary = result.result.is_temporary;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.blob == .Blob);
+            }
+
             if (!is_temporary) {
                 this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
                 const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
-                const original_size = this.blob.Blob.size;
 
-                this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
-                    stat_size
-                else
-                    @min(original_size, stat_size);
+                if (this.blob == .Blob) {
+                    const original_size = this.blob.Blob.size;
+
+                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                        stat_size
+                    else
+                        @min(original_size, stat_size);
+                }
 
                 if (!this.flags.has_written_status)
                     this.flags.needs_content_range = true;
@@ -2040,7 +2052,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile = .{
                     .fd = bun.invalid_fd,
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                    .offset = this.blob.Blob.offset,
+                    .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
                     .auto_close = false,
                     .socket_fd = -999,
                 };
@@ -2586,24 +2598,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(byte_stream.pipe.ctx == null);
                                 std.debug.assert(this.byte_stream == null);
 
-                                stream.detach(this.server.globalThis);
-
                                 if (this.resp == null) {
-                                    byte_stream.parent().deinit();
+                                    // we don't have a response, so we can discard the stream
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
                                 const resp = this.resp.?;
-
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
-                                    byte_stream.parent().deinit();
                                     this.doRenderBlob();
+                                    // is safe to detach here because we're not going to receive any more data
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis) catch {
+                                    // Invalid Stream
+                                    this.renderMissing();
+                                    return;
+                                };
+                                // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                                stream.detachIfPossible(this.server.globalThis);
+
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 
@@ -2622,6 +2641,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 return;
                             },
                         }
+                    }
+
+                    if (lock.onReceiveValue != null or lock.task != null) {
+                        // someone else is waiting for the stream or waiting for `onStartStreaming`
+                        const readable = value.toReadableStream(this.server.globalThis);
+                        readable.ensureStillAlive();
+                        readable.protect();
+                        this.doRenderWithBody(value);
+                        return;
                     }
 
                     // when there's no stream, we need to
@@ -5585,7 +5613,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }
@@ -5655,7 +5683,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }

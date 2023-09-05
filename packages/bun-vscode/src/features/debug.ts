@@ -7,19 +7,23 @@ import { tmpdir } from "node:os";
 const debugConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "launch",
-  name: "Debug Bun",
+  name: "Debug File",
   program: "${file}",
+  cwd: "${workspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const runConfiguration: vscode.DebugConfiguration = {
   type: "bun",
   request: "launch",
-  name: "Run Bun",
+  name: "Run File",
   program: "${file}",
+  cwd: "${workspaceFolder}",
   noDebug: true,
   watchMode: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const attachConfiguration: vscode.DebugConfiguration = {
@@ -27,6 +31,8 @@ const attachConfiguration: vscode.DebugConfiguration = {
   request: "attach",
   name: "Attach Bun",
   url: "ws://localhost:6499/",
+  stopOnEntry: false,
+  internalConsoleOptions: "neverOpen",
 };
 
 const adapters = new Map<string, FileDebugSession>();
@@ -46,24 +52,8 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.registerTerminalProfileProvider("bun", new TerminalProfileProvider()),
+    vscode.window.onDidOpenTerminal(InjectDebugTerminal),
   );
-
-  const document = getActiveDocument();
-  if (isJavaScript(document?.languageId)) {
-    vscode.workspace.findFiles("bun.lockb", "node_modules", 1).then(files => {
-      const { terminalProfile } = new TerminalDebugSession();
-      const { options } = terminalProfile;
-      const terminal = vscode.window.createTerminal(options);
-
-      const focus = files.length > 0;
-      if (focus) {
-        terminal.show();
-      }
-
-      context.subscriptions.push(terminal);
-    });
-  }
 }
 
 function RunFileCommand(resource?: vscode.Uri): void {
@@ -73,6 +63,7 @@ function RunFileCommand(resource?: vscode.Uri): void {
       ...runConfiguration,
       noDebug: true,
       program: path,
+      runtime: getRuntime(resource),
     });
   }
 }
@@ -83,8 +74,48 @@ function DebugFileCommand(resource?: vscode.Uri): void {
     vscode.debug.startDebugging(undefined, {
       ...debugConfiguration,
       program: path,
+      runtime: getRuntime(resource),
     });
   }
+}
+
+function InjectDebugTerminal(terminal: vscode.Terminal): void {
+  const enabled = getConfig("debugTerminal.enabled");
+  if (enabled === false) {
+    return;
+  }
+
+  const { name, creationOptions } = terminal;
+  if (name !== "JavaScript Debug Terminal") {
+    return;
+  }
+
+  const { env } = creationOptions as vscode.TerminalOptions;
+  if (env["BUN_INSPECT"]) {
+    return;
+  }
+
+  const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
+  const query = stopOnEntry ? "break=1" : "wait=1";
+
+  const { adapter, signal } = new TerminalDebugSession();
+  const debug = vscode.window.createTerminal({
+    ...creationOptions,
+    name: "JavaScript Debug Terminal",
+    env: {
+      ...env,
+      "BUN_INSPECT": `${adapter.url}?${query}`,
+      "BUN_INSPECT_NOTIFY": `${signal.url}`,
+    },
+  });
+
+  debug.show();
+
+  // If the terminal is disposed too early, it will show a
+  // "Terminal has already been disposed" error prompt in the UI.
+  // Until a proper fix is found, we can just wait a bit before
+  // disposing the terminal.
+  setTimeout(() => terminal.dispose(), 100);
 }
 
 class TerminalProfileProvider implements vscode.TerminalProfileProvider {
@@ -113,10 +144,16 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
       target = debugConfiguration;
     }
 
+    // If the configuration is missing a default property, copy it from the template.
     for (const [key, value] of Object.entries(target)) {
       if (config[key] === undefined) {
         config[key] = value;
       }
+    }
+
+    // If no runtime is specified, get the path from the configuration.
+    if (request === "launch" && !config["runtime"]) {
+      config["runtime"] = getRuntime(folder);
     }
 
     return config;
@@ -152,6 +189,9 @@ class FileDebugSession extends DebugSession {
     this.adapter = new DebugAdapter(url);
     this.adapter.on("Adapter.response", response => this.sendResponse(response));
     this.adapter.on("Adapter.event", event => this.sendEvent(event));
+    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
+      this.sendRequest(command, args, 5000, () => {}),
+    );
 
     adapters.set(url, this);
   }
@@ -196,11 +236,6 @@ class TerminalDebugSession extends FileDebugSession {
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
   }
-
-  dispose(): void {
-    super.dispose();
-    this.signal.close();
-  }
 }
 
 function getActiveDocument(): vscode.TextDocument | undefined {
@@ -221,4 +256,16 @@ function isJavaScript(languageId?: string): boolean {
     languageId === "typescript" ||
     languageId === "typescriptreact"
   );
+}
+
+function getRuntime(scope?: vscode.ConfigurationScope): string {
+  const value = getConfig("runtime", scope);
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return "bun";
+}
+
+function getConfig<T>(path: string, scope?: vscode.ConfigurationScope): unknown {
+  return vscode.workspace.getConfiguration("bun", scope).get(path);
 }

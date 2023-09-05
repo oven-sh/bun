@@ -6,6 +6,9 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const { isArrayBufferView } = require("node:util/types");
 
+const constants = $processBindingConstants.fs;
+const { COPYFILE_EXCL } = constants;
+
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
   #watcher;
@@ -80,7 +83,13 @@ var access = function access(...args) {
     callbackify(fs.rmdirSync, args);
   },
   copyFile = function copyFile(...args) {
-    callbackify(fs.copyFileSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.copyFile(...args).then(result => callback(null, result), callback);
   },
   exists = function exists(...args) {
     callbackify(fs.existsSync, args);
@@ -1065,10 +1074,58 @@ Object.defineProperties(fs, {
 });
 
 // lol
+// @ts-ignore
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
+let lazy_cpSync = null;
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
+function cpSync(src, dest, options) {
+  if (!options) return fs.cpSync(src, dest);
+  if (typeof options !== "object") {
+    throw new TypeError("options must be an object");
+  }
+  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+    if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
+    return lazy_cpSync(src, dest, options);
+  }
+  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+}
+
+function cp(src, dest, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  promises.cp(src, dest, options).then(() => callback(), callback);
+}
+
+function _toUnixTimestamp(time, name = "time") {
+  if (typeof time === "string" && +time == time) {
+    return +time;
+  }
+  if (NumberIsFinite(time)) {
+    if (time < 0) {
+      return DateNow() / 1000;
+    }
+    return time;
+  }
+  if (isDate(time)) {
+    // Convert to 123.456 UNIX timestamp
+    return DatePrototypeGetTime(time) / 1000;
+  }
+  throw new TypeError(`Expected ${name} to be a number or Date`);
+}
+
 export default {
+  Dirent,
+  FSWatcher,
+  ReadStream,
+  Stats,
+  WriteStream,
+  _toUnixTimestamp,
   access,
   accessSync,
   appendFile,
@@ -1079,12 +1136,13 @@ export default {
   chownSync,
   close,
   closeSync,
-  constants: promises.constants,
+  constants,
   copyFile,
   copyFileSync,
+  cp,
+  cpSync,
   createReadStream,
   createWriteStream,
-  Dirent,
   exists,
   existsSync,
   fchmod,
@@ -1124,6 +1182,8 @@ export default {
   readdirSync,
   readlink,
   readlinkSync,
+  readv,
+  readvSync,
   realpath,
   realpathSync,
   rename,
@@ -1134,7 +1194,6 @@ export default {
   rmdirSync,
   stat,
   statSync,
-  Stats,
   symlink,
   symlinkSync,
   truncate,
@@ -1143,18 +1202,13 @@ export default {
   unlinkSync,
   utimes,
   utimesSync,
+  watch,
   write,
   writeFile,
   writeFileSync,
   writeSync,
-  WriteStream,
-  ReadStream,
-  watch,
-  FSWatcher,
   writev,
   writevSync,
-  readv,
-  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

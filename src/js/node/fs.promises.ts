@@ -89,11 +89,28 @@ function watch(
   };
 }
 
+let lazy_cp: any = null;
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
+function cp(src, dest, options) {
+  if (!options) return fs.cp(src, dest);
+  if (typeof options !== "object") {
+    throw new TypeError("options must be an object");
+  }
+  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+    if (!lazy_cp) lazy_cp = require("../internal/fs/cp-sync");
+    return lazy_cp!(src, dest, options);
+  }
+  return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+}
+
 export default {
   access: promisify(fs.accessSync),
   appendFile: promisify(fs.appendFileSync),
   close: promisify(fs.closeSync),
-  copyFile: promisify(fs.copyFileSync),
+  copyFile: fs.copyFile.bind(fs),
+  cp,
   exists: promisify(fs.existsSync),
   chown: promisify(fs.chownSync),
   chmod: promisify(fs.chmodSync),

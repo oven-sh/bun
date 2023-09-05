@@ -1119,6 +1119,8 @@ pub const InternalState = struct {
     }
 
     fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
+        log("Decompressing {d} bytes\n", .{buffer.len});
+        std.debug.assert(!body_out_str.owns(buffer));
         defer this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
@@ -1127,17 +1129,18 @@ pub const InternalState = struct {
 
         var reader: *Zlib.ZlibReaderArrayList = undefined;
         if (this.zlib_reader) |current_reader| {
+            std.debug.assert(current_reader.zlib.avail_in == 0);
             reader = current_reader;
             reader.zlib.next_in = buffer.ptr;
             reader.zlib.avail_in = @as(u32, @truncate(buffer.len));
 
-            reader.list = body_out_str.list;
             const initial = body_out_str.list.items.len;
             body_out_str.list.expandToCapacity();
             if (body_out_str.list.capacity == initial) {
                 try body_out_str.list.ensureUnusedCapacity(body_out_str.allocator, 4096);
                 body_out_str.list.expandToCapacity();
             }
+            reader.list = body_out_str.list;
             reader.zlib.next_out = &body_out_str.list.items[initial];
             reader.zlib.avail_out = @as(u32, @truncate(body_out_str.list.capacity - initial));
             // we reset the total out so we can track how much we decompressed this time
@@ -1152,9 +1155,9 @@ pub const InternalState = struct {
                     // TODO: add br support today we support gzip and deflate only
                     // zlib.MAX_WBITS = 15
                     // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                    // to (de-)compress zlib format, use wbits = zlib.MAX_WBITS
+                    // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
                     // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else -Zlib.MAX_WBITS,
+                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
                 },
             );
             this.zlib_reader = reader;
@@ -1217,7 +1220,7 @@ received_keep_alive: bool = false,
 
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
-
+disable_decompression: bool = false,
 state: InternalState = .{},
 
 result_callback: HTTPClientResult.Callback = undefined,
@@ -3038,19 +3041,25 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Content-Encoding") => {
-                if (strings.eqlComptime(header.value, "gzip")) {
-                    this.state.encoding = Encoding.gzip;
-                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                } else if (strings.eqlComptime(header.value, "deflate")) {
-                    this.state.encoding = Encoding.deflate;
-                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                if (!this.disable_decompression) {
+                    if (strings.eqlComptime(header.value, "gzip")) {
+                        this.state.encoding = Encoding.gzip;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    } else if (strings.eqlComptime(header.value, "deflate")) {
+                        this.state.encoding = Encoding.deflate;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    }
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
-                    this.state.transfer_encoding = Encoding.gzip;
+                    if (!this.disable_decompression) {
+                        this.state.transfer_encoding = Encoding.gzip;
+                    }
                 } else if (strings.eqlComptime(header.value, "deflate")) {
-                    this.state.transfer_encoding = Encoding.deflate;
+                    if (!this.disable_decompression) {
+                        this.state.transfer_encoding = Encoding.deflate;
+                    }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;
                 } else if (strings.eqlComptime(header.value, "chunked")) {

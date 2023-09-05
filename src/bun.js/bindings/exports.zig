@@ -3430,6 +3430,7 @@ pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;
 pub const HTTPSSLServerRequestContext = JSC.API.HTTPSServer.RequestContext;
 pub const HTTPDebugServerRequestContext = JSC.API.DebugHTTPServer.RequestContext;
 pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestContext;
+pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
     if (!is_bindgen) {
@@ -3458,5 +3459,6 @@ comptime {
         _ = ZigString__free_global;
 
         TestScope.shim.ref();
+        BodyValueBuffererContext.shim.ref();
     }
 }

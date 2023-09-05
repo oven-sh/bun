@@ -93,18 +93,25 @@ describe("fs.watchFile", () => {
       // as the actual stat()ing is done on another thread using a specialized linked list implementation
       // so we're testing that here, less so that stats will properly notify js, since that code is already known to be very threadsafe.
       const set = new Set<string>();
+      const { promise, resolve } = Promise.withResolvers();
       for (let i = 0; i < 1000; i++) {
         const file = path.join(testDir, i + ".txt");
         setTimeout(() => {
+          let first = true;
           fs.watchFile(file, { interval: 500 }, (curr, prev) => {
             set.add(file);
+            if (first) {
+              first = false;
+              setTimeout(() => {
+                fs.unwatchFile(file);
+
+                if (set.size === 1000) resolve();
+              }, Math.random() * 2000);
+            }
           });
-          setTimeout(() => {
-            fs.unwatchFile(file);
-          }, Math.random() * 2000);
         }, Math.random() * 2000);
       }
-      await Bun.sleep(5000);
+      await promise;
 
       expect(set.size).toBe(1000);
     } finally {

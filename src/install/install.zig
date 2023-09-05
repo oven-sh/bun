@@ -1625,7 +1625,7 @@ pub const PackageManager = struct {
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
     // progress bar stuff when not stack allocated
-    root_progress_node: *std.Progress.Node = undefined,
+    root_progress_node: ?*std.Progress.Node = null,
     root_download_node: std.Progress.Node = undefined,
 
     to_remove: []const UpdateRequest = &[_]UpdateRequest{},
@@ -5364,7 +5364,7 @@ pub const PackageManager = struct {
             manager.progress = Progress{};
             manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             manager.root_progress_node = manager.progress.start("", 0);
-            manager.root_download_node = manager.root_progress_node.start(ProgressStrings.download(), 0);
+            manager.root_download_node = manager.root_progress_node.?.start(ProgressStrings.download(), 0);
         } else {
             manager.options.log_level = .default_no_progress;
         }
@@ -7140,14 +7140,13 @@ pub const PackageManager = struct {
             );
         }
 
-        var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
         const options = &this.options;
         var progress = &this.progress;
 
         if (comptime log_level.showProgress()) {
-            root_node = progress.start("", 0);
+            var root_node: *Progress.Node = progress.start("", 0);
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             download_node = root_node.start(ProgressStrings.download(), 0);
 

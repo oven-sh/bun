@@ -3767,6 +3767,24 @@ declare module "bun" {
          */
         error?: Errorlike,
       ): void | Promise<void>;
+
+      /**
+       * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
+       * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
+       * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+       *
+       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+       *
+       * Currently, this is only compatible with processes that are other `bun` instances.
+       */
+      ipc?(
+        message: any,
+        /**
+         * The {@link Subprocess} that sent the message
+         */
+        subprocess: Subprocess<In, Out, Err>,
+      ): void;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -3894,6 +3912,20 @@ declare module "bun" {
      * This method will tell Bun to not wait for this process to exit before shutting down.
      */
     unref(): void;
+
+    /**
+     * Send a message to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option, and is another instance of `bun`.
+     *
+     * Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+     */
+    send(message: any): void;
+
+    /**
+     * Disconnect the IPC channel to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option.
+     */
+    disconnect(): void;
   }
 
   /**

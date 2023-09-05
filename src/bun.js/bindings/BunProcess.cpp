@@ -21,13 +21,11 @@
 #include <dlfcn.h>
 #include <sys/ioctl.h>
 #include <termios.h>
-#else 
+#else
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
 #endif
-
-
 
 #pragma mark - Node.js Process
 
@@ -145,7 +143,7 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
 
     if (!GetConsoleScreenBufferInfo(handle, &csbi))
         return false;
-    
+
     *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     return true;
@@ -290,20 +288,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    #if OS(WINDOWS)
+#if OS(WINDOWS)
     CString utf8 = filename.utf8();
     HMODULE handle = LoadLibraryA(utf8.data());
-    #else
+#else
     CString utf8 = filename.utf8();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    #endif
+#endif
 
     if (!handle) {
-        #if OS(WINDOWS)
-        WTF::String msg = makeString("LoadLibraryA failed with error code: "_s , GetLastError());
-        #else
+#if OS(WINDOWS)
+        WTF::String msg = makeString("LoadLibraryA failed with error code: "_s, GetLastError());
+#else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
-        #endif
+#endif
         JSC::throwTypeError(globalObject, scope, msg);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -322,26 +320,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);
-    #if OS(WINDOWS)
-        #define dlsym GetProcAddress
-    #endif
+#if OS(WINDOWS)
+#define dlsym GetProcAddress
+#endif
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
         JSC::EncodedJSValue)>(
         dlsym(handle, "napi_register_module_v1"));
 
-    #if OS(WINDOWS)
-        #undef dlsym
-    #endif
+#if OS(WINDOWS)
+#undef dlsym
+#endif
 
     if (!napi_register_module_v1) {
-        #if OS(WINDOWS)
-            FreeLibrary(handle);
-        #else
-            dlclose(handle);
-        #endif
+#if OS(WINDOWS)
+        FreeLibrary(handle);
+#else
+        dlclose(handle);
+#endif
         JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -352,8 +350,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    #if !OS(WINDOWS)
-    
+#if !OS(WINDOWS)
+
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
         umask(currentMask);
@@ -386,7 +384,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
-#else 
+#else
     return JSC::JSValue::encode(JSC::jsNumber(0));
 #endif
 }
@@ -763,10 +761,9 @@ void Process::emitSignalEvent(int signalNumber)
     MarkedArgumentBuffer args;
     args.append(jsNumber(signalNumber));
     wrapped().emitForBindings(signalNameIdentifier, args);
-#else 
+#else
     UNUSED_PARAM(signalNumber);
 #endif
-
 }
 
 Process::~Process()
@@ -1051,7 +1048,7 @@ static JSValue constructPpid(VM& vm, JSObject* processObject)
 {
 #if OS(WINDOWS)
     return jsUndefined();
-#else 
+#else
     return jsNumber(getppid());
 #endif
 }
@@ -1151,7 +1148,6 @@ static int getgid()
     return 0;
 }
 #endif
-
 
 JSC_DEFINE_HOST_FUNCTION(Process_functiongetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1365,7 +1361,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     }
 #endif
 
-
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
     Structure* cpuUsageStructure = process->cpuUsageStructure.getInitializedOnMainThread(process);
@@ -1505,7 +1500,7 @@ err:
     return EINVAL;
 #elif OS(WINDOWS)
     return uv_resident_set_memory(rss);
-#else 
+#else
 #error "Unknown platform"
 #endif
 }
@@ -1725,8 +1720,8 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     ZigString str;
     Bun__Process__getTitle(globalObject, &str);
     return JSValue::encode(Zig::toJSStringValue(str, globalObject));
-#else 
-    auto &vm = globalObject->vm();
+#else
+    auto& vm = globalObject->vm();
     char title[1024];
     if (uv_get_process_title(title, sizeof(title)) != 0) {
         return JSValue::encode(jsString(vm, String("bun"_s)));
@@ -1747,16 +1742,16 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle,
     if (!thisObject || !jsString) {
         return false;
     }
-    #if !OS(WINDOWS)
-        ZigString str = Zig::toZigString(jsString, globalObject);
-        Bun__Process__setTitle(globalObject, &str);
-        return true;
-    #else
-        WTF::String str = jsString->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        CString cstr = str.utf8();
-        return uv_set_process_title(cstr.data()) == 0;
-    #endif
+#if !OS(WINDOWS)
+    ZigString str = Zig::toZigString(jsString, globalObject);
+    Bun__Process__setTitle(globalObject, &str);
+    return true;
+#else
+    WTF::String str = jsString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    CString cstr = str.utf8();
+    return uv_set_process_title(cstr.data()) == 0;
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
@@ -1808,7 +1803,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-
     JSC::JSValue signalValue = callFrame->argument(1);
 #if !OS(WINDOWS)
     int signal = SIGTERM;
@@ -1833,9 +1827,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     }
 
     int result = kill(pid, signal);
-#else 
+#else
     int signal = 1;
-     if (signalValue.isNumber()) {
+    if (signalValue.isNumber()) {
         signal = signalValue.toInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (signalValue.isString()) {
@@ -1924,7 +1918,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
 @end
 */
 
-#include "Process.lut.h"
+#include "BunProcess.lut.h"
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
     CREATE_METHOD_TABLE(Process) };
 

@@ -4,7 +4,7 @@ import path from "path";
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently
 // so we have to do this the gigantic array way
-export function fmtCPPString(str: string) {
+export function fmtCPPString(str: string, nullTerminated: boolean = true) {
   const normalized = str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
@@ -21,8 +21,9 @@ export function fmtCPPString(str: string) {
       .split("")
       .map(a => a.charCodeAt(0))
       .join(",") +
+    (nullTerminated ? ",0" : "") +
     "}";
-  return [chars, normalized.length];
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
 }
 
 export function declareASCIILiteral(name: string, value: string) {

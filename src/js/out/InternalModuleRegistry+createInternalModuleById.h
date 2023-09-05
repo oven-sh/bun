@@ -183,5 +183,8 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::ThirdpartyWS: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "ws"_s, "thirdparty/ws.js"_s, InternalModuleRegistryConstants::ThirdpartyWSCode, "builtin://thirdparty/ws"_s);
     }
+    default: {
+        __builtin_unreachable();
+    }
   }
 }

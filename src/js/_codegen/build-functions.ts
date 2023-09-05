@@ -6,7 +6,7 @@ import { cap, fmtCPPString, low } from "./helpers";
 import { spawn } from "bun";
 
 async function createStaticHashtables() {
-  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp", "src/bun.js/bindings/BunObject.cpp"];
+  const STATIC_HASH_TABLES = ["src/bun.js/bindings/BunProcess.cpp", "src/bun.js/bindings/BunObject.cpp"];
   console.time("Creating static hash tables...");
   const create_hash_table = path.join(import.meta.dir, "../../../src/bun.js/scripts/create_hash_table");
   if (!create_hash_table) {
@@ -303,7 +303,7 @@ for (const { basename, functions } of files) {
   bundledCPP += `/* ${basename}.ts */\n`;
   const lowerBasename = low(basename);
   for (const fn of functions) {
-    const [code, count] = fmtCPPString(fn.source);
+    const [code, count] = fmtCPPString(fn.source, true);
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;

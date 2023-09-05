@@ -318,6 +318,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     }`;
       })
       .join("\n    ")}
+    default: {
+        __builtin_unreachable();
+    }
   }
 }
 `,

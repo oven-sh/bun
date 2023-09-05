@@ -369,8 +369,17 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect({s}, {d})", .{ host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            var host_ = allocator.dupeZ(u8, host) catch return null;
-            defer allocator.free(host_);
+
+            var host_: ?[*:0]u8 = brk: {
+                // getaddrinfo expects `node` to be null if localhost
+                if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
+                    break :brk null;
+                }
+
+                break :brk allocator.dupeZ(u8, host) catch return null;
+            };
+
+            defer if (host_) |host__| allocator.free(host__[0..host.len]);
 
             var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };

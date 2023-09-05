@@ -792,6 +792,36 @@ pub const Fetch = struct {
                 return;
             }
 
+            if (this.readable_stream_ref.get()) |readable| {
+                if (readable.ptr == .Bytes) {
+                    readable.ptr.Bytes.size_hint = this.getSizeHint();
+                    // body can be marked as used but we still need to pipe the data
+                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                    const chunk = scheduled_response_buffer.items;
+
+                    if (this.result.has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.initConst(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+
+                        // clean for reuse later
+                        this.scheduled_response_buffer.reset();
+                    } else {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                    return;
+                }
+            }
+
             if (this.response.get()) |response_js| {
                 if (response_js.as(Response)) |response| {
                     const body = response.body;
@@ -852,33 +882,6 @@ pub const Fetch = struct {
 
                             if (old == .Locked) {
                                 old.resolve(&response.body.value, this.global_this);
-                            }
-                        }
-                    } else if (this.readable_stream_ref.get()) |readable| {
-                        if (readable.ptr == .Bytes) {
-                            readable.ptr.Bytes.size_hint = this.getSizeHint();
-                            // body can be marked as used but we still need to pipe the data
-                            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-
-                            const chunk = scheduled_response_buffer.items;
-
-                            if (this.result.has_more) {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
-
-                                // clean for reuse later
-                                this.scheduled_response_buffer.reset();
-                            } else {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary_and_done = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
                             }
                         }
                     }

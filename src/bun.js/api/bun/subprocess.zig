@@ -1044,7 +1044,7 @@ pub const Subprocess = struct {
         defer arena.deinit();
         var allocator = arena.allocator();
 
-        var env: [*:null]?[*:0]const u8 = undefined;
+        var env: ?[*:null]?[*:0]const u8 = null;
 
         var override_env = false;
         var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
@@ -1349,7 +1349,7 @@ pub const Subprocess = struct {
                 }
             }
 
-            break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
+            break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env.?)) {
                 .err => |err| return err.toJSC(globalThis),
                 .result => |pid_| pid_,
             };

@@ -631,7 +631,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
         hash: u64 = 0,
         cache: @This().CacheConfig = @This().CacheConfig{},
         head: CAresLookup(cares_type, type_name),
-        tail: *CAresLookup(cares_type, type_name) = undefined,
+        tail: ?*CAresLookup(cares_type, type_name) = null,
 
         pub fn init(
             cache: DNSResolver.LookupCacheHit(@This()),
@@ -675,12 +675,12 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
         pub const PendingCacheKey = struct {
             hash: u64,
             len: u16,
-            lookup: *request_type = undefined,
+            lookup: ?*request_type = null,
 
             pub fn append(this: *PendingCacheKey, cares_lookup: *CAresLookup(cares_type, type_name)) void {
-                var tail = this.lookup.tail;
+                var tail = this.lookup.?.tail.?;
                 tail.next = cares_lookup;
-                this.lookup.tail = cares_lookup;
+                this.lookup.?.tail = cares_lookup;
             }
 
             pub fn init(name: []const u8) PendingCacheKey {
@@ -690,7 +690,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
                 return PendingCacheKey{
                     .hash = hash,
                     .len = @as(u16, @truncate(name.len)),
-                    .lookup = undefined,
+                    .lookup = null,
                 };
             }
         };
@@ -728,7 +728,7 @@ pub const GetHostByAddrInfoRequest = struct {
     hash: u64 = 0,
     cache: @This().CacheConfig = @This().CacheConfig{},
     head: CAresReverse,
-    tail: *CAresReverse = undefined,
+    tail: ?*CAresReverse = null,
 
     pub fn init(
         cache: DNSResolver.LookupCacheHit(@This()),
@@ -772,12 +772,12 @@ pub const GetHostByAddrInfoRequest = struct {
     pub const PendingCacheKey = struct {
         hash: u64,
         len: u16,
-        lookup: *request_type = undefined,
+        lookup: ?*request_type = null,
 
         pub fn append(this: *PendingCacheKey, cares_lookup: *CAresReverse) void {
-            var tail = this.lookup.tail;
+            var tail = this.lookup.?.tail.?;
             tail.next = cares_lookup;
-            this.lookup.tail = cares_lookup;
+            this.lookup.?.tail = cares_lookup;
         }
 
         pub fn init(name: []const u8) PendingCacheKey {
@@ -787,7 +787,7 @@ pub const GetHostByAddrInfoRequest = struct {
             return PendingCacheKey{
                 .hash = hash,
                 .len = @as(u16, @truncate(name.len)),
-                .lookup = undefined,
+                .lookup = null,
             };
         }
     };
@@ -820,7 +820,7 @@ pub const GetAddrInfoRequest = struct {
     hash: u64 = 0,
     cache: CacheConfig = CacheConfig{},
     head: DNSLookup,
-    tail: *DNSLookup = undefined,
+    tail: ?*DNSLookup = null,
     task: bun.ThreadPool.Task = undefined,
 
     pub fn init(
@@ -871,19 +871,19 @@ pub const GetAddrInfoRequest = struct {
     pub const PendingCacheKey = struct {
         hash: u64,
         len: u16,
-        lookup: *GetAddrInfoRequest = undefined,
+        lookup: ?*GetAddrInfoRequest = null,
 
         pub fn append(this: *PendingCacheKey, dns_lookup: *DNSLookup) void {
-            var tail = this.lookup.tail;
+            var tail = this.lookup.?.tail.?;
             tail.next = dns_lookup;
-            this.lookup.tail = dns_lookup;
+            this.lookup.?.tail = dns_lookup;
         }
 
         pub fn init(query: GetAddrInfo) PendingCacheKey {
             return PendingCacheKey{
                 .hash = query.hash(),
                 .len = @as(u16, @truncate(query.name.len)),
-                .lookup = undefined,
+                .lookup = null,
             };
         }
     };
@@ -902,7 +902,7 @@ pub const GetAddrInfoRequest = struct {
 
         if (this.resolver_for_caching) |resolver| {
             if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, .{ .addrinfo = addr_info });
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis.?, status, .{ .addrinfo = addr_info });
                 return;
             }
         }
@@ -999,7 +999,7 @@ pub const GetAddrInfoRequest = struct {
                     // }
 
                     if (this.cache.pending_cache) {
-                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, any);
+                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis.?, 0, any);
                         return;
                     }
                 }
@@ -1041,7 +1041,7 @@ pub const GetAddrInfoRequest = struct {
 pub const CAresReverse = struct {
     const log = Output.scoped(@This(), true);
 
-    globalThis: *JSC.JSGlobalObject = undefined,
+    globalThis: ?*JSC.JSGlobalObject = null,
     promise: JSC.JSPromise.Strong,
     poll_ref: JSC.PollRef,
     allocated: bool = false,
@@ -1059,7 +1059,7 @@ pub const CAresReverse = struct {
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
             const error_value = globalThis.createErrorInstance("reverse failed: {s}", .{err.label()});
             error_value.put(
                 globalThis,
@@ -1073,7 +1073,7 @@ pub const CAresReverse = struct {
         }
         if (result == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
             const error_value = globalThis.createErrorInstance("reverse failed: No results", .{});
             error_value.put(
                 globalThis,
@@ -1086,25 +1086,25 @@ pub const CAresReverse = struct {
             return;
         }
         var node = result.?;
-        const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, "");
+        const array = node.toJSReponse(this.globalThis.?.allocator(), this.globalThis.?, "");
         this.onComplete(array);
         return;
     }
 
     pub fn onComplete(this: *@This(), result: JSC.JSValue) void {
         var promise = this.promise;
-        var globalThis = this.globalThis;
+        var globalThis = this.globalThis.?;
         this.promise = .{};
         promise.resolve(globalThis, result);
         this.deinit();
     }
 
     pub fn deinit(this: *@This()) void {
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+        this.poll_ref.unrefOnNextTick(this.globalThis.?.bunVM());
         bun.default_allocator.free(this.name);
 
         if (this.allocated)
-            this.globalThis.allocator().destroy(this);
+            this.globalThis.?.allocator().destroy(this);
     }
 };
 
@@ -1112,7 +1112,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
     return struct {
         const log = Output.scoped(@This(), true);
 
-        globalThis: *JSC.JSGlobalObject = undefined,
+        globalThis: ?*JSC.JSGlobalObject = null,
         promise: JSC.JSPromise.Strong,
         poll_ref: JSC.PollRef,
         allocated: bool = false,
@@ -1130,7 +1130,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
             if (err_) |err| {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
+                var globalThis = this.globalThis.?;
                 const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, err.label() });
                 error_value.put(
                     globalThis,
@@ -1144,7 +1144,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
             if (result == null) {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
+                var globalThis = this.globalThis.?;
                 const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
                 error_value.put(
                     globalThis,
@@ -1157,25 +1157,25 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 return;
             }
             var node = result.?;
-            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, type_name);
+            const array = node.toJSReponse(this.globalThis.?.allocator(), this.globalThis.?, type_name);
             this.onComplete(array);
             return;
         }
 
         pub fn onComplete(this: *@This(), result: JSC.JSValue) void {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
             this.promise = .{};
             promise.resolve(globalThis, result);
             this.deinit();
         }
 
         pub fn deinit(this: *@This()) void {
-            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.?.bunVM());
             bun.default_allocator.free(this.name);
 
             if (this.allocated)
-                this.globalThis.allocator().destroy(this);
+                this.globalThis.?.allocator().destroy(this);
         }
     };
 }
@@ -1183,7 +1183,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 pub const DNSLookup = struct {
     const log = Output.scoped(.DNSLookup, true);
 
-    globalThis: *JSC.JSGlobalObject = undefined,
+    globalThis: ?*JSC.JSGlobalObject = null,
     promise: JSC.JSPromise.Strong,
     allocated: bool = false,
     next: ?*DNSLookup = null,
@@ -1204,14 +1204,14 @@ pub const DNSLookup = struct {
     }
 
     pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
-        const array = result.toJS(this.globalThis).?;
+        const array = result.toJS(this.globalThis.?).?;
         this.onCompleteWithArray(array);
     }
 
     pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
         if (c_ares.Error.initEAI(status)) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
@@ -1238,7 +1238,7 @@ pub const DNSLookup = struct {
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
             const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
             error_value.put(
                 globalThis,
@@ -1253,7 +1253,7 @@ pub const DNSLookup = struct {
 
         if (result == null or result.?.node == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            var globalThis = this.globalThis.?;
             const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{"No results"});
             error_value.put(
                 globalThis,
@@ -1270,13 +1270,13 @@ pub const DNSLookup = struct {
     }
 
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
-        const array = result.toJSArray(this.globalThis.allocator(), this.globalThis);
+        const array = result.toJSArray(this.globalThis.?.allocator(), this.globalThis.?);
         this.onCompleteWithArray(array);
     }
 
     pub fn onCompleteWithArray(this: *DNSLookup, result: JSC.JSValue) void {
         var promise = this.promise;
-        var globalThis = this.globalThis;
+        var globalThis = this.globalThis.?;
         this.promise = .{};
 
         promise.resolve(globalThis, result);
@@ -1284,9 +1284,9 @@ pub const DNSLookup = struct {
     }
 
     pub fn deinit(this: *DNSLookup) void {
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+        this.poll_ref.unrefOnNextTick(this.globalThis.?.bunVM());
         if (this.allocated)
-            this.globalThis.allocator().destroy(this);
+            this.globalThis.?.allocator().destroy(this);
     }
 };
 
@@ -1357,9 +1357,9 @@ pub const DNSResolver = struct {
         const key = this.getKey(index, cache_name, request_type);
 
         var addr = result orelse {
-            var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
-            key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.?.head.next;
+            key.lookup.?.head.processResolve(err, timeout, null);
+            bun.default_allocator.destroy(key.lookup.?);
 
             while (pending) |value| {
                 pending = value.next;
@@ -1368,18 +1368,18 @@ pub const DNSResolver = struct {
             return;
         };
 
-        var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
-        var prev_global = key.lookup.head.globalThis;
+        var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.?.head.next;
+        var prev_global = key.lookup.?.head.globalThis.?;
         var array = addr.toJSReponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
         array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        key.lookup.?.head.onComplete(array);
+        bun.default_allocator.destroy(key.lookup.?);
 
         array.ensureStillAlive();
 
         while (pending) |value| {
-            var new_global = value.globalThis;
+            var new_global = value.globalThis.?;
             if (prev_global != new_global) {
                 array = addr.toJSReponse(this.vm.allocator, new_global, lookup_name);
                 prev_global = new_global;
@@ -1398,9 +1398,9 @@ pub const DNSResolver = struct {
         const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
 
         var addr = result orelse {
-            var pending: ?*DNSLookup = key.lookup.head.next;
-            key.lookup.head.processGetAddrInfo(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            var pending: ?*DNSLookup = key.lookup.?.head.next;
+            key.lookup.?.head.processGetAddrInfo(err, timeout, null);
+            bun.default_allocator.destroy(key.lookup.?);
 
             while (pending) |value| {
                 pending = value.next;
@@ -1409,19 +1409,19 @@ pub const DNSResolver = struct {
             return;
         };
 
-        var pending: ?*DNSLookup = key.lookup.head.next;
-        var prev_global = key.lookup.head.globalThis;
+        var pending: ?*DNSLookup = key.lookup.?.head.next;
+        var prev_global = key.lookup.?.head.globalThis.?;
         var array = addr.toJSArray(this.vm.allocator, prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
-        key.lookup.head.onCompleteWithArray(array);
-        bun.default_allocator.destroy(key.lookup);
+        key.lookup.?.head.onCompleteWithArray(array);
+        bun.default_allocator.destroy(key.lookup.?);
 
         array.ensureStillAlive();
         // std.c.addrinfo
 
         while (pending) |value| {
-            var new_global = value.globalThis;
+            var new_global = value.globalThis.?;
             if (prev_global != new_global) {
                 array = addr.toJSArray(this.vm.allocator, new_global);
                 prev_global = new_global;
@@ -1440,10 +1440,10 @@ pub const DNSResolver = struct {
         const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
 
         var array = result.toJS(globalObject) orelse {
-            var pending: ?*DNSLookup = key.lookup.head.next;
-            var head = key.lookup.head;
+            var pending: ?*DNSLookup = key.lookup.?.head.next;
+            var head = key.lookup.?.head;
             head.processGetAddrInfoNative(err, null);
-            bun.default_allocator.destroy(key.lookup);
+            bun.default_allocator.destroy(key.lookup.?);
 
             while (pending) |value| {
                 pending = value.next;
@@ -1452,20 +1452,20 @@ pub const DNSResolver = struct {
 
             return;
         };
-        var pending: ?*DNSLookup = key.lookup.head.next;
-        var prev_global = key.lookup.head.globalThis;
+        var pending: ?*DNSLookup = key.lookup.?.head.next;
+        var prev_global = key.lookup.?.head.globalThis;
 
         {
             array.ensureStillAlive();
-            key.lookup.head.onCompleteWithArray(array);
-            bun.default_allocator.destroy(key.lookup);
+            key.lookup.?.head.onCompleteWithArray(array);
+            bun.default_allocator.destroy(key.lookup.?);
             array.ensureStillAlive();
         }
 
         // std.c.addrinfo
 
         while (pending) |value| {
-            var new_global = value.globalThis;
+            var new_global = value.globalThis.?;
             pending = value.next;
             if (prev_global != new_global) {
                 array = result.toJS(new_global).?;
@@ -1484,9 +1484,9 @@ pub const DNSResolver = struct {
         const key = this.getKey(index, "pending_addr_cache_crares", GetHostByAddrInfoRequest);
 
         var addr = result orelse {
-            var pending: ?*CAresReverse = key.lookup.head.next;
-            key.lookup.head.processResolve(err, timeout, null);
-            bun.default_allocator.destroy(key.lookup);
+            var pending: ?*CAresReverse = key.lookup.?.head.next;
+            key.lookup.?.head.processResolve(err, timeout, null);
+            bun.default_allocator.destroy(key.lookup.?);
 
             while (pending) |value| {
                 pending = value.next;
@@ -1495,20 +1495,20 @@ pub const DNSResolver = struct {
             return;
         };
 
-        var pending: ?*CAresReverse = key.lookup.head.next;
-        var prev_global = key.lookup.head.globalThis;
+        var pending: ?*CAresReverse = key.lookup.?.head.next;
+        var prev_global = key.lookup.?.head.globalThis.?;
         //  The callback need not and should not attempt to free the memory
         //  pointed to by hostent; the ares library will free it when the
         //  callback returns.
         var array = addr.toJSReponse(this.vm.allocator, prev_global, "");
         array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
+        key.lookup.?.head.onComplete(array);
+        bun.default_allocator.destroy(key.lookup.?);
 
         array.ensureStillAlive();
 
         while (pending) |value| {
-            var new_global = value.globalThis;
+            var new_global = value.globalThis.?;
             if (prev_global != new_global) {
                 array = addr.toJSReponse(this.vm.allocator, new_global, "");
                 prev_global = new_global;
@@ -1850,7 +1850,7 @@ pub const DNSResolver = struct {
             "pending_addr_cache_crares",
         ) catch unreachable;
 
-        const promise = request.tail.promise.value();
+        const promise = request.tail.?.promise.value();
         channel.getHostByAddr(
             ip,
             GetHostByAddrInfoRequest,
@@ -2241,7 +2241,7 @@ pub const DNSResolver = struct {
             globalThis,
             cache_name,
         ) catch unreachable;
-        const promise = request.tail.promise.value();
+        const promise = request.tail.?.promise.value();
 
         channel.resolve(
             name,
@@ -2289,7 +2289,7 @@ pub const DNSResolver = struct {
             globalThis,
             "pending_host_cache_cares",
         ) catch unreachable;
-        const promise = request.tail.promise.value();
+        const promise = request.tail.?.promise.value();
 
         channel.getAddrInfo(
             query.name,

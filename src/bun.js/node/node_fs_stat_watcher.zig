@@ -31,6 +31,40 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
     }
 }
 
+/// TODO: Remove when std.time.Instant.since is fixed. it has an integer overflow bug
+pub fn stdTimeInstantSince(self: std.time.Instant, earlier: std.time.Instant) u64 {
+    if (Environment.isWindows) {
+        // We don't need to cache QPF as it's internally just a memory read to KUSER_SHARED_DATA
+        // (a read-only page of info updated and mapped by the kernel to all processes):
+        // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-kuser_shared_data
+        // https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntexapi_x/kuser_shared_data/index.htm
+        const qpc = self.timestamp - earlier.timestamp;
+        const qpf = std.os.windows.QueryPerformanceFrequency();
+
+        // 10Mhz (1 qpc tick every 100ns) is a common enough QPF value that we can optimize on it.
+        // https://github.com/microsoft/STL/blob/785143a0c73f030238ef618890fd4d6ae2b3a3a0/stl/inc/chrono#L694-L701
+        const common_qpf = 10_000_000;
+        if (qpf == common_qpf) {
+            return qpc * (std.time.ns_per_s / common_qpf);
+        }
+
+        // Convert to ns using fixed point.
+        const scale = @as(u64, std.time.ns_per_s << 32) / @as(u32, @intCast(qpf));
+        const result = (@as(u96, qpc) * scale) >> 32;
+        return @as(u64, @truncate(result));
+    }
+
+    // WASI timestamps are directly in nanoseconds
+    // if (std.builtin.os.tag == .wasi and !std.builtin.link_libc) {
+    //     return self.timestamp - earlier.timestamp;
+    // }
+
+    // Convert timespec diff to ns
+    const seconds = @as(u64, @intCast(self.timestamp.tv_sec - earlier.timestamp.tv_sec));
+    const elapsed = @as(u64, @intCast(seconds)) * std.time.ns_per_s + @as(u64, @intCast(self.timestamp.tv_nsec));
+    return elapsed - @as(u64, @intCast(earlier.timestamp.tv_nsec));
+}
+
 /// This is a singleton struct that contains the timer used to schedule restat calls.
 pub const StatWatcherScheduler = struct {
     timer: ?*uws.Timer = null,
@@ -109,7 +143,7 @@ pub const StatWatcherScheduler = struct {
             }
         }
 
-        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 -| 500)) {
+        if (stdTimeInstantSince(now, prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 -| 500)) {
             prev.last_check = now;
             prev.restat();
         }
@@ -128,7 +162,7 @@ pub const StatWatcherScheduler = struct {
                 }
                 continue;
             }
-            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
+            if (stdTimeInstantSince(now, c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
                 c.last_check = now;
                 c.restat();
             }
@@ -308,7 +342,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) callconv(.C) bool {
-        return !this.closed;
+        return !this.closed or this.used_by_scheduler_thread;
     }
 
     /// Stops file watching but does not free the instance.

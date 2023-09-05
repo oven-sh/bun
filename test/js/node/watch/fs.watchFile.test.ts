@@ -83,4 +83,32 @@ describe("fs.watchFile", () => {
 
     expect(typeof entries[0][0].mtimeMs === "bigint").toBe(true);
   });
+
+  test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {
+    const EventEmitter = require("events");
+    let defaultMaxListeners = EventEmitter.defaultMaxListeners;
+    try {
+      EventEmitter.defaultMaxListeners = 1000;
+      // This tests StatWatcher's scheduler for add/remove race conditions,
+      // as the actual stat()ing is done on another thread using a specialized linked list implementation
+      // so we're testing that here, less so that stats will properly notify js, since that code is already known to be very threadsafe.
+      const set = new Set<string>();
+      for (let i = 0; i < 1000; i++) {
+        const file = path.join(testDir, i + ".txt");
+        setTimeout(() => {
+          fs.watchFile(file, { interval: 500 }, (curr, prev) => {
+            set.add(file);
+          });
+          setTimeout(() => {
+            fs.unwatchFile(file);
+          }, Math.random() * 2000);
+        }, Math.random() * 2000);
+      }
+      await Bun.sleep(5000);
+
+      expect(set.size).toBe(1000);
+    } finally {
+      EventEmitter.defaultMaxListeners = defaultMaxListeners;
+    }
+  }, 20000);
 });

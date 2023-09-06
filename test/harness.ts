@@ -103,9 +103,15 @@ export function tempDirWithFiles(basename: string, files: Record<string, string 
   return dir;
 }
 
-export function bunRun(file: string, env?: Record<string, string>) {
+export function bunRun(
+  file: string,
+  env?: Record<string, string>,
+  params?: {
+    flags?: string[];
+  },
+) {
   var path = require("path");
-  const result = Bun.spawnSync([bunExe(), file], {
+  const result = Bun.spawnSync([bunExe(), ...(params?.flags ?? []), file], {
     cwd: path.dirname(file),
     env: {
       ...bunEnv,
@@ -115,6 +121,7 @@ export function bunRun(file: string, env?: Record<string, string>) {
   });
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
   return {
+    code: result.exitCode,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
@@ -150,6 +157,7 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
 
   return {
+    code: result.exitCode,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };

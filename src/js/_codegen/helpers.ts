@@ -5,13 +5,7 @@ import path from "path";
 // Combining string literals didn't support constexpr apparently
 // so we have to do this the gigantic array way
 export function fmtCPPString(str: string, nullTerminated: boolean = true) {
-  const normalized = str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(/\?/g, "\\?");
+  const normalized = str + "\n";
 
   var remain = normalized;
 

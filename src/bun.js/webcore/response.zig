@@ -1022,7 +1022,8 @@ pub const Fetch = struct {
             if (this.check_server_identity.get()) |check_server_identity| {
                 if (certificate_info.cert.len > 0) {
                     var cert = certificate_info.cert;
-                    if (BoringSSL.d2i_X509(null, &cert.ptr, @intCast(cert.len))) |x509| {
+                    var cert_ptr = cert.ptr;
+                    if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
                         const js_cert = X509.toJS(x509, globalObject);

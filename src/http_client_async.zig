@@ -904,7 +904,8 @@ pub fn onCertError(
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
                     var cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
-                    const result_size = BoringSSL.i2d_X509(x509, &cert.ptr);
+                    var cert_ptr = cert.ptr;
+                    const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     std.debug.assert(result_size == cert_size);
 
                     var hostname = client.hostname orelse client.url.hostname;

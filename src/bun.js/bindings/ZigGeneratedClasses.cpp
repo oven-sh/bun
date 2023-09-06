@@ -14211,7 +14211,7 @@ JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__writevSyncCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeJSFSPrototype, JSNodeJSFSPrototype::Base);
 
-static const HashTableValue JSNodeJSFSPrototypeTableValues[85] = {
+static const HashTableValue JSNodeJSFSPrototypeTableValues[87] = {
     { "access"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessCallback, 3 } },
     { "accessSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessSyncCallback, 2 } },
     { "appendFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileCallback, 4 } },
@@ -21950,7 +21950,7 @@ JSC_DECLARE_HOST_FUNCTION(StatWatcherPrototype__unrefCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatWatcherPrototype, JSStatWatcherPrototype::Base);
 
-static const HashTableValue JSStatWatcherPrototypeTableValues[] = {
+static const HashTableValue JSStatWatcherPrototypeTableValues[3] = {
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, StatWatcherPrototype__closeCallback, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, StatWatcherPrototype__refCallback, 0 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, StatWatcherPrototype__unrefCallback, 0 } }

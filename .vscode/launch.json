@@ -124,13 +124,19 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "${file}", "${file}"],
-      "cwd": "${fileDirname}",
+      "args": ["run", "./node_modules/next/dist/bin/next", "dev"],
+      "cwd": "/Users/dave/app-5",
       "env": {
         "FORCE_COLOR": "1",
         "NODE_ENV": "development"
       },
       "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "attach",
+      "name": "Attach",
+      "pid": "${command:pickMyProcess}" // use ${command:pickProcess} to pick other users' processes
     },
     {
       "type": "lldb",

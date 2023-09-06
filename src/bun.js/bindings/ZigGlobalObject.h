@@ -385,6 +385,10 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
+    // This is set when doing `require('module')._resolveFilename = ...`
+    // a hack used by Next.js to inject their versions of webpack and react
+    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+
     mutable WriteBarrier<Unknown> m_nextTickQueue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
     mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;

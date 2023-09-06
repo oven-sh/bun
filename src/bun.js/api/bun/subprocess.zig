@@ -442,7 +442,6 @@ pub const Subprocess = struct {
             value,
             this.ipc_socket.fd(),
         );
-        log("serializeJSValueForSubprocess {s}", .{if (success) "success" else "failed"});
         if (!success) return .zero;
 
         return JSC.JSValue.jsUndefined();
@@ -1718,6 +1717,7 @@ pub const Subprocess = struct {
         globalThis: *JSC.JSGlobalObject,
         this_jsvalue: JSC.JSValue,
     ) void {
+        log("onExit {d}, code={d}", .{ this.pid, this.exit_code.? });
         defer this.updateHasPendingActivity();
         this_jsvalue.ensureStillAlive();
         this.has_waitpid_task = false;

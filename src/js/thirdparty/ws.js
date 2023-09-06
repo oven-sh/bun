@@ -712,6 +712,14 @@ class BunWebSocketMocked extends EventEmitter {
   get onopen() {
     return this.#onopen;
   }
+
+  addEventListener(type, listener, options) {
+    this.on(type, listener);
+  }
+
+  removeEventListener(type, listener) {
+    this.off(type, listener);
+  }
 }
 
 class WebSocketServer extends EventEmitter {

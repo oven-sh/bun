@@ -970,6 +970,7 @@ function checkExecSyncError(ret, args, cmd) {
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
 let _hasWarnedDisconnect = false;
+let lame = 0;
 class ChildProcess extends EventEmitter {
   #handle;
   #exited = false;
@@ -1168,9 +1169,9 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = bunStdio;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
-      stdin: bunStdio[0],
-      stdout: bunStdio[1],
-      stderr: bunStdio[2],
+      stdin: lame === 1 ? "inherit" : bunStdio[0],
+      stdout: lame === 1 ? "inherit" : bunStdio[1],
+      stderr: lame === 1 ? "inherit" : bunStdio[2],
       cwd: options.cwd || undefined,
       env: env || process.env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,

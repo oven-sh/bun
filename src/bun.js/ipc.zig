@@ -157,7 +157,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                             return;
                         },
                         error.InvalidFormat => {
-                            log("Invalid IPC message format", .{});
+                            Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                             this.handleIPCClose(socket);
                             socket.close(0, null);
                             return;
@@ -187,7 +187,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        log("Invalid IPC message format", .{});
+                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         this.handleIPCClose(socket);
                         socket.close(0, null);
                         return;

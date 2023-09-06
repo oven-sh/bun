@@ -1392,6 +1392,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
+            if (this.detached) return;
 
             const authorized = if (success == 1) true else false;
 

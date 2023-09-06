@@ -529,14 +529,14 @@ pub const EventLoop = struct {
             this.virtual_machine.event_loop_handle.?.tick();
         }
     }
-
-    pub fn drainMicrotasksWithVM(this: *EventLoop, vm: *JSC.VM) void {
-        vm.drainMicrotasks();
+    extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
+    fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
+        JSC__JSGlobalObject__drainMicrotasks(globalObject);
         this.drainDeferredTasks();
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
-        this.drainMicrotasksWithVM(this.global.vm());
+        this.drainMicrotasksWithGlobal(this.global);
     }
 
     pub fn ensureAliveForOneTick(this: *EventLoop) void {
@@ -666,7 +666,7 @@ pub const EventLoop = struct {
             }
 
             global_vm.releaseWeakRefs();
-            this.drainMicrotasksWithVM(global_vm);
+            this.drainMicrotasksWithGlobal(global);
         }
 
         this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
@@ -824,13 +824,14 @@ pub const EventLoop = struct {
 
         this.processGCTimer();
 
-        var global_vm = ctx.global.vm();
+        var global = ctx.global;
+        var global_vm = global.vm();
         while (true) {
             while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();
-                this.drainMicrotasksWithVM(global_vm);
+                this.drainMicrotasksWithGlobal(global);
                 this.tickConcurrent();
                 if (this.tasks.count > 0) continue;
             }

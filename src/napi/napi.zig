@@ -1323,7 +1323,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
     }
 
     pub fn finalize(opaq: *anyopaque) void {

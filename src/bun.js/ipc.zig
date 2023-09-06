@@ -123,6 +123,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
             log("onClose\n", .{});
             this.handleIPCClose(socket);
         }
+        // extern fn getpid() i32;
         pub fn onData(
             this: *Context,
             socket: Socket,
@@ -130,6 +131,10 @@ pub fn NewIPCHandler(comptime Context: type) type {
         ) void {
             var data = data_;
             log("onData {}", .{std.fmt.fmtSliceHexLower(data)});
+
+            // if (comptime Context == bun.JSC.VirtualMachine.IPCInstance) {
+            //     logDataOnly("{d} -> '{}'", .{ getpid(), std.fmt.fmtSliceHexLower(data) });
+            // }
 
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.

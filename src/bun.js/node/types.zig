@@ -2480,7 +2480,6 @@ pub const Process = struct {
         }
 
         vm.onExit();
-        std.debug.print("IT CLOSED\n", .{});
         bun.Global.exit(code);
     }
 

@@ -22,7 +22,7 @@ ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.8
 
-FROM bitnami/minideb:bullseye as bun-base
+FROM bitnami/minideb:bookworm as bun-base
 
 RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
 

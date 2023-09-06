@@ -1717,7 +1717,7 @@ pub const Subprocess = struct {
         globalThis: *JSC.JSGlobalObject,
         this_jsvalue: JSC.JSValue,
     ) void {
-        log("onExit {d}, code={d}", .{ this.pid, this.exit_code.? });
+        log("onExit {d}, code={d}", .{ this.pid, if (this.exit_code) |e| @as(i32, @intCast(e)) else -1 });
         defer this.updateHasPendingActivity();
         this_jsvalue.ensureStillAlive();
         this.has_waitpid_task = false;

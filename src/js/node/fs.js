@@ -824,7 +824,7 @@ var WriteStreamClass;
 WriteStream = (function (InternalWriteStream) {
   WriteStreamClass = InternalWriteStream;
   Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
-    value: "WritesStream",
+    value: "WriteStream",
     enumerable: false,
   });
 

@@ -2282,7 +2282,6 @@ pub const HardcodedModule = enum {
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
         .{
-            .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "bun", HardcodedModule.bun },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },

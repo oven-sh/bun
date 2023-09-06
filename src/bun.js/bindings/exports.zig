@@ -1042,7 +1042,7 @@ pub const ZigConsoleClient = struct {
         flush: bool,
         ordered_properties: bool = false,
         quote_strings: bool = false,
-        max_depth: u16 = 4,
+        max_depth: u16 = 8,
     };
 
     pub fn format(
@@ -1426,22 +1426,22 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
-                // if (js_type.canGet()) {
-                //     // Attempt to get custom formatter
-                //     if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
-                //         if (callback_value.isCallable(globalThis.vm())) {
-                //             return .{
-                //                 .tag = .{
-                //                     .CustomFormattedObject = .{
-                //                         .function = callback_value,
-                //                         .this = value,
-                //                     },
-                //                 },
-                //                 .cell = js_type,
-                //             };
-                //         }
-                //     }
-                // }
+                if (js_type.canGet()) {
+                    // Attempt to get custom formatter
+                    if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                        if (callback_value.isCallable(globalThis.vm())) {
+                            return .{
+                                .tag = .{
+                                    .CustomFormattedObject = .{
+                                        .function = callback_value,
+                                        .this = value,
+                                    },
+                                },
+                                .cell = js_type,
+                            };
+                        }
+                    }
+                }
 
                 if (js_type == .DOMWrapper) {
                     return .{

@@ -72,7 +72,6 @@ pub const Subprocess = struct {
 
     pub const IPCMode = enum {
         none,
-        ///
         bun,
         // json,
     };
@@ -1099,11 +1098,10 @@ pub const Subprocess = struct {
 
         var cwd = jsc_vm.bundler.fs.top_level_dir;
 
-        var stdio = [4]Stdio{
+        var stdio = [3]Stdio{
             .{ .ignore = {} },
             .{ .pipe = null },
             .{ .inherit = {} },
-            .{ .ignore = {} },
         };
 
         if (comptime is_sync) {

@@ -1,3 +1,5 @@
+import { Dirent } from "fs";
+
 // Hardcoded module "node:fs/promises"
 const constants = $processBindingConstants.fs;
 
@@ -105,17 +107,35 @@ function cp(src, dest, options) {
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
 
-function opendir(dir: string) {
-  // TODO: actually implement this 💀
-  const loser = fs.readdirSync(dir, { withFileTypes: true });
-
-  return {
-    async *[Symbol.asyncIterator]() {
-      for (const dirent of loser) {
-        yield dirent;
-      }
-    },
-  };
+// TODO: implement this in native code using a Dir Iterator 💀
+// This is currently stubbed for Next.js support.
+class Dir {
+  #entries: Dirent[];
+  constructor(e: Dirent[]) {
+    this.#entries = e;
+  }
+  readSync() {
+    return this.#entries.shift() ?? null;
+  }
+  read(c) {
+    if (c) process.nextTick(c, null, this.readSync());
+    return Promise.resolve(this.readSync());
+  }
+  closeSync() {}
+  close(c) {
+    if (c) process.nextTick(c);
+    return Promise.resolve();
+  }
+  *[Symbol.asyncIterator]() {
+    var next;
+    while ((next = this.readSync())) {
+      yield next;
+    }
+  }
+}
+async function opendir(dir: string) {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  return new Dir(entries);
 }
 
 export default {

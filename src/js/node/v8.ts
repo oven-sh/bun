@@ -1,7 +1,7 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("$shared");
-const jsc = require("bun:jsc");
+const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -32,21 +32,23 @@ function getHeapSnapshot() {
   notimpl("getHeapSnapshot");
 }
 function getHeapStatistics() {
+  const stats = jsc.heapStats();
+  // this is not very correct
   return {
-    total_heap_size: 5996544,
-    total_heap_size_executable: 524288,
-    total_physical_size: 5242880,
-    total_available_size: 4341660264,
-    used_heap_size: 4470944,
-    heap_size_limit: 4345298944,
-    malloced_memory: 262320,
-    peak_malloced_memory: 571392,
+    total_heap_size: stats.heapCapacity,
+    total_heap_size_executable: 0,
+    total_physical_size: stats.heapSize,
+    total_available_size: stats.heapCapacity,
+    used_heap_size: stats.heapSize,
+    heap_size_limit: stats.heapCapacity,
+    malloced_memory: stats.heapSize,
+    peak_malloced_memory: 0,
     does_zap_garbage: 0,
-    number_of_native_contexts: 2,
+    number_of_native_contexts: 1,
     number_of_detached_contexts: 0,
-    total_global_handles_size: 8192,
-    used_global_handles_size: 3488,
-    external_memory: 2136251,
+    total_global_handles_size: 0,
+    used_global_handles_size: 0,
+    external_memory: 0,
   };
 }
 function getHeapSpaceStatistics() {

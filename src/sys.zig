@@ -512,7 +512,8 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
-        log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
+        if (comptime Environment.allow_assert)
+            log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
 
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
@@ -531,7 +532,8 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSlice, flags
 
     while (true) {
         const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
-        log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
+        if (comptime Environment.allow_assert)
+            log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
             .INTR => continue,

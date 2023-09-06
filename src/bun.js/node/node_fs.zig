@@ -3558,12 +3558,10 @@ pub const NodeFS = struct {
         _ = flavor;
         const ret = Maybe(Return.CopyFile);
 
-
         // TODO: do we need to fchown?
         if (comptime Environment.isMac) {
-
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             var src = args.src.sliceZ(&src_buf);
             var dest = args.dest.sliceZ(&dest_buf);
@@ -3634,9 +3632,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isLinux) {
-
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var src = args.src.sliceZ(&src_buf);
             var dest = args.dest.sliceZ(&dest_buf);
 
@@ -3729,8 +3726,8 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo;
             }
 
-        var src_buf: bun.MAX_WPATH = undefined;
-        var dest_buf: bun.MAX_WPATH = undefined;
+            var src_buf: bun.MAX_WPATH = undefined;
+            var dest_buf: bun.MAX_WPATH = undefined;
             var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.slice());
             var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.slice());
             if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {

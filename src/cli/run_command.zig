@@ -911,9 +911,9 @@ pub const RunCommand = struct {
                     }
 
                     var file_path = script_name_to_search;
-var must_normalize = false;
+                    var must_normalize = false;
                     const file_: anyerror!std.fs.File = brk: {
-                        if (std.fs.path.isAbsolute( script_name_to_search)) {
+                        if (std.fs.path.isAbsolute(script_name_to_search)) {
                             must_normalize = Environment.isWindows;
                             break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {

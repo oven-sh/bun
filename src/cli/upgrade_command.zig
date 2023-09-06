@@ -636,7 +636,6 @@ pub const UpgradeCommand = struct {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Global.exit(1);
                     }
-
                 }
             }
             {
@@ -749,15 +748,13 @@ pub const UpgradeCommand = struct {
                     // This is because Windows locks the executable while it's running.
 
                     // var tmpname = try std.fmt.allocPrint(ctx.allocator, "{s}.old.exe", .{target_filename});
-                    
-                    
 
                 } else {
                     C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                        Global.exit(1);
+                    };
                 }
             }
 

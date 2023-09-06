@@ -72,7 +72,7 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
     return result;
 }
 
-inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
+pub inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
     for (name) |c| {
         switch (c) {
             '"',

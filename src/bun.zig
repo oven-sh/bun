@@ -534,6 +534,15 @@ pub fn clone(val: anytype, allocator: std.mem.Allocator) !@TypeOf(val) {
 }
 pub const StringBuilder = @import("./string_builder.zig");
 
+/// This is wrong! Avoid using this!
+/// Any use of this should be replaced with the type itself to the optional type.
+/// The undefind is unspecified value, cant be compared to anything include itself.
+/// In Debug mode,
+/// Zig writes 0xaa bytes to undefined memory.
+/// This is to catch bugs early, and to help detect use of undefined memory in a debugger.
+///   However, this behavior is only an implementation feature, not a language semantic,
+///   so it is not guaranteed to be *observable* to code.
+/// ref: https://ziglang.org/documentation/master/#undefined
 pub fn assertDefined(val: anytype) void {
     if (comptime !Environment.allow_assert) return;
     const Type = @TypeOf(val);

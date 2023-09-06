@@ -1854,7 +1854,7 @@ pub const E = struct {
 
         pub fn put(self: *Object, allocator: std.mem.Allocator, key: string, expr: Expr) !void {
             if (asProperty(self, key)) |query| {
-                self.properties.ptr[query.i].value = expr;
+                self.properties.ptr.?[query.i].value = expr;
             } else {
                 try self.properties.push(allocator, .{
                     .key = Expr.init(E.String, E.String.init(key), expr.loc),
@@ -3215,7 +3215,7 @@ pub const Expr = struct {
                 return null;
             }
             defer this.index += 1;
-            return this.array.items.ptr[this.index];
+            return this.array.items.ptr.?[this.index];
         }
     };
 

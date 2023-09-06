@@ -559,10 +559,10 @@ pub const RequireOrImportMeta = struct {
         const Fn = fn (*anyopaque, u32, bool) RequireOrImportMeta;
 
         ctx: ?*anyopaque = null,
-        callback: *const Fn = undefined,
+        callback: ?*const Fn = null,
 
         pub fn call(self: Callback, id: u32, was_unwrapped_require: bool) RequireOrImportMeta {
-            return self.callback(self.ctx.?, id, was_unwrapped_require);
+            return self.callback.?(self.ctx.?, id, was_unwrapped_require);
         }
 
         pub fn init(

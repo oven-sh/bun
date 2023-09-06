@@ -365,12 +365,12 @@ const AsyncIO = @import("root").bun.AsyncIO;
 
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
-    gc_timer: *uws.Timer = undefined,
+    gc_timer: ?*uws.Timer = null,
     gc_last_heap_size: usize = 0,
     gc_last_heap_size_on_repeating_timer: usize = 0,
     heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
     gc_timer_state: GCTimerState = GCTimerState.pending,
-    gc_repeating_timer: *uws.Timer = undefined,
+    gc_repeating_timer: ?*uws.Timer = null,
     gc_timer_interval: i32 = 0,
     gc_repeating_timer_fast: bool = true,
 
@@ -387,13 +387,13 @@ pub const GarbageCollectionController = struct {
                 }
             } else |_| {}
         }
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+        this.gc_repeating_timer.?.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
         this.gc_timer_interval = gc_timer_interval;
     }
 
     pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
         this.gc_timer_state = .scheduled;
-        this.gc_timer.set(this, onGCTimer, 16, 0);
+        this.gc_timer.?.set(this, onGCTimer, 16, 0);
     }
 
     pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
@@ -419,11 +419,11 @@ pub const GarbageCollectionController = struct {
     pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.EnumLiteral)) void {
         if (setting == .fast and !this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = true;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+            this.gc_repeating_timer.?.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         } else if (setting == .slow and this.gc_repeating_timer_fast) {
             this.gc_repeating_timer_fast = false;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
+            this.gc_repeating_timer.?.set(this, onGCRepeatingTimer, 30_000, 30_000);
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         }
     }

@@ -1405,7 +1405,7 @@ pub const Chunk = struct {
                 // Use the line to compute the column
                 var original_column = loc.start - @as(i32, @intCast(line.byte_offset_to_start_of_line));
                 if (line.columns_for_non_ascii.len > 0 and original_column >= @as(i32, @intCast(line.byte_offset_to_first_non_ascii))) {
-                    original_column = line.columns_for_non_ascii.ptr[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
+                    original_column = line.columns_for_non_ascii.ptr.?[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
                 }
 
                 b.updateGeneratedLineAndColumn(output);

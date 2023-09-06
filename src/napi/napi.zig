@@ -702,7 +702,7 @@ pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
     var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
     var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
     const len = @min(array_buffer.len, @as(u32, @truncate(byte_length)));
-    @memcpy(array_buffer.ptr[0..len], data[0..len]);
+    @memcpy(array_buffer.ptr.?[0..len], data[0..len]);
     result.* = JSValue.c(typed_array);
     return .ok;
 }
@@ -759,7 +759,7 @@ pub export fn napi_get_typedarray_info(
 
     // TODO: handle detached
     if (data != null)
-        data.?.* = array_buffer.ptr;
+        data.?.* = array_buffer.ptr.?;
 
     if (length != null)
         length.?.* = array_buffer.len;
@@ -1054,7 +1054,7 @@ pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaqu
     var buffer = JSC.JSValue.createBufferFromLength(env, length);
     if (length > 0) {
         if (data) |ptr| {
-            ptr.* = buffer.asArrayBuffer(env).?.ptr;
+            ptr.* = buffer.asArrayBuffer(env).?.ptr.?;
         }
     }
     result.* = buffer;
@@ -1089,7 +1089,7 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
         return .arraybuffer_expected;
     };
 
-    data.* = array_buf.ptr;
+    data.* = array_buf.ptr.?;
     length.* = array_buf.byte_len;
     return .ok;
 }

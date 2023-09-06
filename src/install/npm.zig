@@ -1103,8 +1103,8 @@ pub const PackageManifest = struct {
                                     switch (obj.properties.len) {
                                         0 => {},
                                         1 => {
-                                            const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
-                                            const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
+                                            const bin_name = obj.properties.ptr.?[0].key.?.asString(allocator) orelse break :bin;
+                                            const value = obj.properties.ptr.?[0].value.?.asString(allocator) orelse break :bin;
 
                                             package_version.bin = .{
                                                 .tag = .named_file,

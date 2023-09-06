@@ -2534,7 +2534,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn readableSlice(this: *@This()) []const u8 {
-            return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
+            return this.buffer.ptr.?[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
         pub fn onWritable(this: *@This(), write_offset_: c_ulong, _: *UWSResponse) callconv(.C) bool {
@@ -3760,16 +3760,16 @@ pub const AutoSizer = struct {
 
     pub fn resize(this: *AutoSizer, size: usize) ![]u8 {
         const available = this.buffer.cap - this.buffer.len;
-        if (available >= size) return this.buffer.ptr[this.buffer.len..this.buffer.cap][0..size];
+        if (available >= size) return this.buffer.ptr.?[this.buffer.len..this.buffer.cap][0..size];
         const to_grow = size -| available;
         if (to_grow + @as(usize, this.buffer.cap) > this.max)
-            return this.buffer.ptr[this.buffer.len..this.buffer.cap];
+            return this.buffer.ptr.?[this.buffer.len..this.buffer.cap];
 
         var list = this.buffer.listManaged(this.allocator);
         const prev_len = list.items.len;
         try list.ensureTotalCapacity(to_grow + @as(usize, this.buffer.cap));
         this.buffer.update(list);
-        return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
+        return this.buffer.ptr.?[prev_len..@as(usize, this.buffer.cap)];
     }
 };
 

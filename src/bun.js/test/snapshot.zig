@@ -153,8 +153,8 @@ pub const Snapshots = struct {
 
         if (export_default.data == .e_call) {
             const function_call = export_default.data.e_call;
-            if (function_call.args.len == 2 and function_call.args.ptr[0].data == .e_function) {
-                const arg_function_stmts = function_call.args.ptr[0].data.e_function.func.body.stmts;
+            if (function_call.args.len == 2 and function_call.args.ptr.?[0].data == .e_function) {
+                const arg_function_stmts = function_call.args.ptr.?[0].data.e_function.func.body.stmts;
                 for (arg_function_stmts) |stmt| {
                     switch (stmt.data) {
                         .s_expr => |expr| {

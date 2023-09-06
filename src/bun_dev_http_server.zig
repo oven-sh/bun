@@ -103,7 +103,7 @@ const PosixRequestContext = struct {
     conn: std.net.Stream,
     allocator: std.mem.Allocator,
     arena: ThreadlocalArena,
-    req_body_node: *RequestDataPool.Node = undefined,
+    req_body_node: ?*RequestDataPool.Node = null,
     log: logger.Log,
     bundler: *Bundler,
     keep_alive: bool = true,
@@ -1252,7 +1252,7 @@ const PosixRequestContext = struct {
         const CacheSet = @import("./cache.zig").Set;
         threadlocal var websocket_printer: JSPrinter.BufferWriter = undefined;
         pub fn handle(self: *WebsocketHandler) void {
-            var req_body = self.ctx.req_body_node;
+            var req_body = self.ctx.req_body_node.?;
             defer {
                 js_ast.Stmt.Data.Store.reset();
                 js_ast.Expr.Data.Store.reset();
@@ -3045,7 +3045,7 @@ pub const Server = struct {
 
         defer {
             if (!req_ctx.controlled) {
-                req_ctx.req_body_node.release();
+                req_ctx.req_body_node.?.release();
                 req_ctx.arena.deinit();
             }
         }

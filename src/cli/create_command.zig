@@ -1167,7 +1167,7 @@ pub const CreateCommand = struct {
                     // "bun.macros.react-relay.graphql"
                     if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
                         // "graphql" is the only valid one for now, so anything else in this object is invalid.
-                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
+                        bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr.?[0].value.?.data.e_object;
                         needs_bun_macros_prop = false;
                         needs_bun_prop = false;
                         needs.bun_macro_relay = false;
@@ -1339,7 +1339,7 @@ pub const CreateCommand = struct {
                     var i: usize = 0;
                     var property_i: usize = 0;
                     while (i < package_json_expr.data.e_object.properties.len) : (i += 1) {
-                        const property: js_ast.G.Property = package_json_expr.data.e_object.properties.ptr[i];
+                        const property: js_ast.G.Property = package_json_expr.data.e_object.properties.ptr.?[i];
                         const key = property.key.?.asString(ctx.allocator).?;
 
                         if (strings.eqlComptime(key, "scripts")) {
@@ -1378,7 +1378,7 @@ pub const CreateCommand = struct {
                         }
 
                         if (key.len == 0 or !strings.eqlComptime(key, "bun-create")) {
-                            package_json_expr.data.e_object.properties.ptr[property_i] = property;
+                            package_json_expr.data.e_object.properties.ptr.?[property_i] = property;
                             property_i += 1;
                             continue;
                         }
@@ -1452,7 +1452,7 @@ pub const CreateCommand = struct {
                             }
                         }
                     }
-                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
+                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr.?[0..property_i]);
                 }
 
                 var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);

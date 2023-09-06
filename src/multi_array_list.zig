@@ -19,7 +19,7 @@ const testing = std.testing;
 /// `.items(.<field_name>)` to obtain a slice of field values.
 pub fn MultiArrayList(comptime S: type) type {
     return struct {
-        bytes: [*]align(@alignOf(S)) u8 = undefined,
+        bytes: ?[*]align(@alignOf(S)) u8 = null,
         len: usize = 0,
         capacity: usize = 0,
 
@@ -131,7 +131,7 @@ pub fn MultiArrayList(comptime S: type) type {
                 .len = self.len,
                 .capacity = self.capacity,
             };
-            var ptr: [*]u8 = self.bytes;
+            var ptr: [*]u8 = self.bytes.?;
             for (sizes.bytes, 0..) |field_size, i| {
                 result.ptrs[sizes.fields[i]] = ptr;
                 ptr += field_size * self.capacity;
@@ -467,7 +467,7 @@ pub fn MultiArrayList(comptime S: type) type {
         }
 
         fn allocatedBytes(self: Self) []align(@alignOf(S)) u8 {
-            return self.bytes[0..capacityInBytes(self.capacity)];
+            return self.bytes.?[0..capacityInBytes(self.capacity)];
         }
 
         pub fn zero(this: *Self) void {

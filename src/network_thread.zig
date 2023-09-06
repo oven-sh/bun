@@ -14,7 +14,7 @@ const Environment = bun.Environment;
 const Lock = @import("./lock.zig").Lock;
 
 /// Single-thread in this pool
-io: *AsyncIO = undefined,
+io: ?*AsyncIO = null,
 thread: std.Thread = undefined,
 waker: AsyncIO.Waker = undefined,
 queued_tasks_mutex: Lock = Lock.init(),
@@ -141,7 +141,7 @@ fn processEvents_(this: *@This()) !void {
             start = std.time.nanoTimestamp();
         }
         Output.flush();
-        this.io.wait(this, queueEvents);
+        this.io.?.wait(this, queueEvents);
         if (comptime Environment.isDebug) {
             var end = std.time.nanoTimestamp();
             log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start)))});

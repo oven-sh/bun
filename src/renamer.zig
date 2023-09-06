@@ -518,7 +518,7 @@ pub const NumberRenamer = struct {
         if (inner.cap <= new_len) {
             const prev_cap = inner.len;
             inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
-            const to_write = inner.ptr[prev_cap..inner.cap];
+            const to_write = inner.ptr.?[prev_cap..inner.cap];
             @memset(std.mem.sliceAsBytes(to_write), 0);
         }
         inner.len = new_len;
@@ -615,7 +615,7 @@ pub const NumberRenamer = struct {
 
         // Ignore function argument scopes
         if (scope.kind == .function_args and scope.children.len == 1) {
-            scope = scope.children.ptr[0];
+            scope = scope.children.ptr.?[0];
             std.debug.assert(scope.kind == .function_body);
         }
 
@@ -632,9 +632,9 @@ pub const NumberRenamer = struct {
             }
 
             if (scope.children.len == 1) {
-                scope = scope.children.ptr[0];
+                scope = scope.children.ptr.?[0];
                 if (scope.kind == .function_args and scope.children.len == 1) {
-                    scope = scope.children.ptr[0];
+                    scope = scope.children.ptr.?[0];
                     std.debug.assert(scope.kind == .function_body);
                 }
             } else {

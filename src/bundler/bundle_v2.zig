@@ -3179,7 +3179,7 @@ const LinkerGraph = struct {
             .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
         };
 
-        js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr[part_id].declared_symbols, &ctx, Iterator.next);
+        js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr.?[part_id].declared_symbols, &ctx, Iterator.next);
 
         return part_id;
     }
@@ -4212,7 +4212,7 @@ const LinkerContext = struct {
             @panic("Internal error: expected at least one part for lazy export");
         }
 
-        var part: *js_ast.Part = &parts.ptr[1];
+        var part: *js_ast.Part = &parts.ptr.?[1];
 
         if (part.stmts.len == 0) {
             @panic("Internal error: expected at least one statement in the lazy export");
@@ -4278,8 +4278,8 @@ const LinkerContext = struct {
                         // end up actually being used at this point (since import binding hasn't
                         // happened yet). So we need to wait until after tree shaking happens.
                         const generated = try this.generateNamedExportInFile(source_index, module_ref, name, name);
-                        parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
-                        parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
+                        parts.ptr.?[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                        parts.ptr.?[generated[1]].stmts[0] = Stmt.alloc(
                             S.Local,
                             S.Local{
                                 .is_export = true,
@@ -4315,8 +4315,8 @@ const LinkerContext = struct {
                         ) catch unreachable,
                         "default",
                     );
-                    parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
-                    parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
+                    parts.ptr.?[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                    parts.ptr.?[generated[1]].stmts[0] = Stmt.alloc(
                         S.ExportDefault,
                         S.ExportDefault{
                             .default_name = .{
@@ -7961,7 +7961,7 @@ const LinkerContext = struct {
                             stmt.data.s_local.is_export = false;
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
                             std.debug.assert(stmt.data.s_local.decls.len == 1);
-                            const decl = stmt.data.s_local.decls.ptr[0];
+                            const decl = stmt.data.s_local.decls.ptr.?[0];
                             if (decl.value) |decl_value| {
                                 stmt = Stmt.alloc(
                                     S.SExpr,

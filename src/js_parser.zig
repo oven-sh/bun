@@ -1104,7 +1104,7 @@ pub const ImportScanner = struct {
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
                     if (st.was_ts_import_equals and !st.is_export and st.decls.len > 0) {
-                        var decl = st.decls.ptr[0];
+                        var decl = st.decls.ptr.?[0];
 
                         // Skip to the underlying reference
                         var value = decl.value;
@@ -1760,9 +1760,9 @@ pub const SideEffects = enum(u1) {
                 // Omit everything except the identifiers
 
                 // common case: single var foo = blah, don't need to allocate
-                if (local.decls.len == 1 and local.decls.ptr[0].binding.data == .b_identifier) {
-                    const prev = local.decls.ptr[0];
-                    stmt.data.s_local.decls.ptr[0] = G.Decl{ .binding = prev.binding };
+                if (local.decls.len == 1 and local.decls.ptr.?[0].binding.data == .b_identifier) {
+                    const prev = local.decls.ptr.?[0];
+                    stmt.data.s_local.decls.ptr.?[0] = G.Decl{ .binding = prev.binding };
                     return true;
                 }
 
@@ -3970,7 +3970,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args.ptr[0].data) {
+                    switch (e.args.ptr.?[0].data) {
                         .e_null, .e_undefined => {
                             // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
@@ -4001,7 +4001,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args.ptr[0].knownPrimitive()) {
+                    switch (e.args.ptr.?[0].knownPrimitive()) {
                         .null, .undefined, .boolean, .number, .string => {
                             // "new Date('')" is pure
                             // "new Date(0)" is pure
@@ -4029,7 +4029,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args.ptr[0].data) {
+                    switch (e.args.ptr.?[0].data) {
                         .e_array, .e_null, .e_undefined => {
                             // "new Set([a, b, c])" is pure
                             // "new Set(null)" is pure
@@ -4065,7 +4065,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args.ptr[0].knownPrimitive()) {
+                    switch (e.args.ptr.?[0].knownPrimitive()) {
                         .null, .undefined, .boolean, .number, .string => {
                             // "new Response('')" is pure
                             // "new Response(0)" is pure
@@ -4107,7 +4107,7 @@ pub const KnownGlobal = enum {
                 }
 
                 if (n == 1) {
-                    switch (e.args.ptr[0].data) {
+                    switch (e.args.ptr.?[0].data) {
                         .e_null, .e_undefined => {
                             // "new Map(null)" is pure
                             // "new Map(void 0)" is pure
@@ -5016,7 +5016,7 @@ fn NewParser_(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr.?[0].data) == .e_string) {
                                     _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
@@ -5408,7 +5408,7 @@ fn NewParser_(
                     },
                     .s_local => |local| {
                         if (local.decls.len > 0) {
-                            var first: *Decl = &local.decls.ptr[0];
+                            var first: *Decl = &local.decls.ptr.?[0];
                             if (first.value) |*value| {
                                 if (first.binding.data == .b_identifier) {
                                     break :brk value;
@@ -6416,7 +6416,7 @@ fn NewParser_(
                     var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
                     var is_spread = false;
                     for (ex.items.slice(), 0..) |_, i| {
-                        var item = ex.items.ptr[i];
+                        var item = ex.items.ptr.?[i];
                         if (item.data == .e_spread) {
                             is_spread = true;
                             item = item.data.e_spread.value;
@@ -14461,15 +14461,15 @@ fn NewParser_(
                             const jsx_props = e_.properties.slice();
                             for (jsx_props, 0..) |property, i| {
                                 if (property.kind != .spread) {
-                                    e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                    e_.properties.ptr.?[i].key = p.visitExpr(e_.properties.ptr.?[i].key.?);
                                 }
 
                                 if (property.value != null) {
-                                    e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
+                                    e_.properties.ptr.?[i].value = p.visitExpr(e_.properties.ptr.?[i].value.?);
                                 }
 
                                 if (property.initializer != null) {
-                                    e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                    e_.properties.ptr.?[i].initializer = p.visitExpr(e_.properties.ptr.?[i].initializer.?);
                                 }
                             }
 
@@ -14553,9 +14553,9 @@ fn NewParser_(
                                         var last_child: u32 = 0;
                                         var children = e_.children.slice()[0..children_count];
                                         for (children) |child| {
-                                            e_.children.ptr[last_child] = p.visitExpr(child);
+                                            e_.children.ptr.?[last_child] = p.visitExpr(child);
                                             // if tree-shaking removes the element, we must also remove it here.
-                                            last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
+                                            last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr.?[last_child].data != .e_missing)));
                                         }
                                         e_.children.len = last_child;
                                     }
@@ -14582,7 +14582,7 @@ fn NewParser_(
                                         1 => {
                                             props.append(allocator, G.Property{
                                                 .key = children_key,
-                                                .value = e_.children.ptr[0],
+                                                .value = e_.children.ptr.?[0],
                                             }) catch unreachable;
                                         },
                                         else => {
@@ -15346,9 +15346,9 @@ fn NewParser_(
                         e_.index.data == .e_number and
                         e_.index.data.e_number.value == 0.0 and
                         e_.optional_chain == null and
-                        target.data.e_array.items.ptr[0].canBeInlinedFromPropertyAccess())
+                        target.data.e_array.items.ptr.?[0].canBeInlinedFromPropertyAccess())
                     {
-                        return target.data.e_array.items.ptr[0];
+                        return target.data.e_array.items.ptr.?[0];
                     }
                     // Create an error for assigning to an import namespace when bundling. Even
                     // though this is a run-time error, we make it a compile-time error when
@@ -17076,7 +17076,7 @@ fn NewParser_(
                                 !identifier_opts.is_delete_target and
                                 identifier_opts.assign_target == .none and !identifier_opts.is_call_target)
                             {
-                                const prop: G.Property = obj.properties.ptr[0];
+                                const prop: G.Property = obj.properties.ptr.?[0];
                                 if (prop.value != null and
                                     prop.flags.count() == 0 and
                                     prop.key != null and
@@ -17884,7 +17884,7 @@ fn NewParser_(
                             // Lower for-in variable initializers in case the output is used in strict mode
                             var local = data.init.data.s_local;
                             if (local.decls.len == 1) {
-                                var decl: *G.Decl = &local.decls.ptr[0];
+                                var decl: *G.Decl = &local.decls.ptr.?[0];
                                 if (decl.binding.data == .b_identifier) {
                                     if (decl.value) |val| {
                                         stmts.append(
@@ -18760,7 +18760,7 @@ fn NewParser_(
                                         if (is_constructor) constructor_function = func;
 
                                         for (func.func.args, 0..) |arg, i| {
-                                            for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
+                                            for (arg.ts_decorators.ptr.?[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(i)) }, arg_decorator.loc);
@@ -20272,7 +20272,7 @@ fn NewParser_(
             p.scopes_in_order.items[scope_index] = null;
             // Remove the last child from the parent scope
             const last = parent.children.len - 1;
-            if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
+            if (comptime Environment.allow_assert) assert(parent.children.ptr.?[last] == to_flatten);
             parent.children.len -|= 1;
 
             for (to_flatten.children.slice()) |item| {
@@ -20441,7 +20441,7 @@ fn NewParser_(
                         }
                     }
 
-                    commonjs_wrapper.data.e_call.args.ptr[0] = p.newExpr(
+                    commonjs_wrapper.data.e_call.args.ptr.?[0] = p.newExpr(
                         E.Function{ .func = G.Fn{
                             .name = null,
                             .open_parens_loc = logger.Loc.Empty,
@@ -20460,7 +20460,7 @@ fn NewParser_(
                             sourcefile_name = sourcefile_name[end..];
                         }
                     }
-                    commonjs_wrapper.data.e_call.args.ptr[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
+                    commonjs_wrapper.data.e_call.args.ptr.?[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
 
                     new_stmts_list[imports_list.len] = p.s(
                         S.ExportDefault{

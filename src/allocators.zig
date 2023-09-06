@@ -195,7 +195,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         allocator: Allocator,
         mutex: Mutex = Mutex.init(),
-        head: *OverflowBlock = undefined,
+        head: ?*OverflowBlock = null,
         tail: OverflowBlock = OverflowBlock{},
         backing_buf: [count]ValueType = undefined,
         used: u32 = 0,
@@ -230,12 +230,12 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         fn appendOverflow(self: *Self, value: ValueType) !*ValueType {
             instance.used += 1;
-            return self.head.append(value) catch brk: {
+            return self.head.?.append(value) catch brk: {
                 var new_block = try self.allocator.create(OverflowBlock);
                 new_block.* = OverflowBlock{};
                 new_block.prev = self.head;
                 self.head = new_block;
-                break :brk self.head.append(value);
+                break :brk self.head.?.append(value);
             };
         }
 

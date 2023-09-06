@@ -394,7 +394,7 @@ pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
 pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
-    ptr: [*]u8 = undefined,
+    ptr: ?[*]u8 = null,
     offset: u32 = 0,
     len: u32 = 0,
     byte_len: u32 = 0,
@@ -586,7 +586,7 @@ pub const ArrayBuffer = extern struct {
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
-        return this.ptr[this.offset .. this.offset + this.byte_len];
+        return this.ptr.?[this.offset .. this.offset + this.byte_len];
     }
 
     /// The equivalent of

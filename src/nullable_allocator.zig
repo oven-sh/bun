@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// A nullable allocator the same size as `std.mem.Allocator`.
 pub const NullableAllocator = struct {
-    ptr: *anyopaque = undefined,
+    ptr: ?*anyopaque = null,
     // Utilize the null pointer optimization on the vtable instead of
     // the regular ptr because some allocator implementations might tag their
     // `ptr` property.
@@ -20,7 +20,7 @@ pub const NullableAllocator = struct {
     }
 
     pub inline fn get(this: @This()) ?std.mem.Allocator {
-        return if (this.vtable) |vt| std.mem.Allocator{ .ptr = this.ptr, .vtable = vt } else null;
+        return if (this.vtable) |vt| std.mem.Allocator{ .ptr = this.ptr.?, .vtable = vt } else null;
     }
 };
 

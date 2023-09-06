@@ -345,6 +345,61 @@ pub const Handle = extern struct {
         file = 17,
     };
 };
+
+fn HandleMixin(comptime Type: type) type {
+    return struct {
+        pub fn getData(this: *const Type, comptime DataType: type) ?*DataType {
+            return @ptrCast(uv_handle_get_data(@ptrCast(this)));
+        }
+        pub fn getLoop(this: *const Type) *Loop {
+            return uv_handle_get_loop(@ptrCast(this));
+        }
+        pub fn setData(handle: *Type, ptr: ?*anyopaque) void {
+            uv_handle_set_data(@ptrCast(handle), ptr);
+        }
+        pub fn close(this: *Type, cb: uv_close_cb) void {
+            uv_close(@ptrCast(this), @ptrCast(cb));
+        }
+
+        pub fn hasRef(this: *const Type) bool {
+            return uv_has_ref(@ptrCast(this)) != 0;
+        }
+
+        pub fn ref(this: *Type) void {
+            uv_ref(@ptrCast(this));
+        }
+
+        pub fn unref(this: *Type) void {
+            uv_unref(@ptrCast(this));
+        }
+
+        pub fn isClosing(this: *const Type) bool {
+            return uv_is_closing(@ptrCast(this)) != 0;
+        }
+
+        pub fn isActive(this: *const Type) bool {
+            return uv_is_active(@ptrCast(this)) != 0;
+        }
+    };
+}
+
+// https://docs.libuv.org/en/v1.x/request.html
+fn ReqMixin(comptime Type: type) type {
+    return struct {
+        pub fn getData(this: *const Type, comptime DataType: type) ?*DataType {
+            return @ptrCast(uv_req_get_data(@ptrCast(this)));
+        }
+        pub fn loop(this: *const Type) *Loop {
+            return uv_handle_get_loop(@ptrCast(this));
+        }
+        pub fn setData(handle: *Type, ptr: ?*anyopaque) void {
+            uv_req_set_data(@ptrCast(handle), ptr);
+        }
+        pub fn cancel(this: *Type) void {
+            uv_cancel(@ptrCast(this));
+        }
+    };
+}
 pub const uv_handle_t = Handle;
 const union_unnamed_375 = extern union {
     fd: c_int,
@@ -421,6 +476,20 @@ pub const struct_uv_async_s = extern struct {
     async_req: struct_uv_req_s,
     async_cb: uv_async_cb,
     async_sent: u8,
+
+    pub usingnamespace HandleMixin(@This());
+
+    pub fn init(this: *@This(), loop: *Loop, callback: uv_async_cb) void {
+        @memset(std.mem.asBytes(this), 0);
+
+        if (uv_async_init(loop, @ptrCast(this), callback) != 0) {
+            @panic("internal error: uv_async_init failed");
+        }
+    }
+
+    pub fn send(this: *@This()) void {
+        _ = uv_async_send(this);
+    }
 };
 pub const uv_async_t = struct_uv_async_s;
 pub const Loop = extern struct {
@@ -440,7 +509,7 @@ pub const Loop = extern struct {
     idle_handles: [*c]uv_idle_t,
     next_prepare_handle: *uv_prepare_t,
     next_check_handle: *uv_check_t,
-    next_idle_handle: [*c]uv_idle_t,
+    next_idle_handle: *uv_idle_t,
     poll_peer_sockets: [4]SOCKET,
     active_tcp_streams: c_uint,
     active_udp_streams: c_uint,
@@ -489,8 +558,7 @@ pub const Loop = extern struct {
     }
 
     pub fn wakeup(this: *Loop) void {
-        _ = this;
-        bun.uws.Loop.get().wakeup();
+        this.wq_async.send();
     }
 
     pub fn refConcurrently(this: *Loop) void {
@@ -728,9 +796,9 @@ const union_unnamed_380 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_alloc_cb = ?*const fn ([*c]uv_handle_t, usize, [*c]uv_buf_t) callconv(.C) void;
+pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, [*]uv_buf_t) callconv(.C) void;
 pub const uv_stream_t = struct_uv_stream_s;
-pub const uv_read_cb = ?*const fn ([*c]uv_stream_t, isize, [*]const uv_buf_t) callconv(.C) void;
+pub const uv_read_cb = ?*const fn (*uv_stream_t, isize, [*]const uv_buf_t) callconv(.C) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -776,7 +844,7 @@ pub const struct_uv_shutdown_s = extern struct {
     reserved: [6]?*anyopaque,
     u: union_unnamed_386,
     next_req: [*c]struct_uv_req_s,
-    handle: [*c]uv_stream_t,
+    handle: *uv_stream_t,
     cb: uv_shutdown_cb,
 };
 pub const uv_shutdown_t = struct_uv_shutdown_s;
@@ -1003,8 +1071,8 @@ pub const struct_uv_write_s = extern struct {
     u: union_unnamed_412,
     next_req: [*c]struct_uv_req_s,
     cb: uv_write_cb,
-    send_handle: [*c]uv_stream_t,
-    handle: [*c]uv_stream_t,
+    send_handle: *uv_stream_t,
+    handle: *uv_stream_t,
     coalesced: c_int,
     write_buffer: uv_buf_t,
     event_handle: HANDLE,
@@ -1138,7 +1206,10 @@ pub const struct_uv_poll_s = extern struct {
     mask_events_1: u8,
     mask_events_2: u8,
     events: u8,
+
+    pub usingnamespace HandleMixin(@This());
 };
+pub const Poll = struct_uv_poll_s;
 const union_unnamed_424 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
@@ -1359,7 +1430,7 @@ pub const struct_uv_connect_s = extern struct {
     u: union_unnamed_441,
     next_req: [*c]struct_uv_req_s,
     cb: uv_connect_cb,
-    handle: [*c]uv_stream_t,
+    handle: *uv_stream_t,
 };
 const struct_unnamed_445 = extern struct {
     overlapped: OVERLAPPED,
@@ -1383,7 +1454,7 @@ pub const struct_uv_udp_send_s = extern struct {
     reserved: [6]?*anyopaque,
     u: union_unnamed_444,
     next_req: [*c]struct_uv_req_s,
-    handle: [*c]uv_udp_t,
+    handle: *uv_udp_t,
     cb: uv_udp_send_cb,
 };
 const struct_unnamed_448 = extern struct {
@@ -1470,6 +1541,8 @@ pub const struct_uv_work_s = extern struct {
     work_cb: uv_work_cb,
     after_work_cb: uv_after_work_cb,
     work_req: struct_uv__work,
+
+    pub usingnamespace ReqMixin(@This());
 };
 const struct_unnamed_458 = extern struct {
     overlapped: OVERLAPPED,
@@ -1499,6 +1572,8 @@ pub const struct_uv_random_s = extern struct {
     buflen: usize,
     cb: uv_random_cb,
     work_req: struct_uv__work,
+
+    pub usingnamespace ReqMixin(@This());
 };
 pub const struct_uv_env_item_s = extern struct {
     name: [*]u8,
@@ -1658,13 +1733,13 @@ pub extern fn uv_strerror(err: c_int) [*]const u8;
 pub extern fn uv_strerror_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
 pub extern fn uv_err_name(err: c_int) [*]const u8;
 pub extern fn uv_err_name_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
-pub extern fn uv_shutdown(req: [*c]uv_shutdown_t, handle: [*c]uv_stream_t, cb: uv_shutdown_cb) c_int;
+pub extern fn uv_shutdown(req: [*c]uv_shutdown_t, handle: *uv_stream_t, cb: uv_shutdown_cb) c_int;
 pub extern fn uv_handle_size(@"type": uv_handle_type) usize;
-pub extern fn uv_handle_get_type(handle: [*c]const uv_handle_t) uv_handle_type;
+pub extern fn uv_handle_get_type(handle: *const uv_handle_t) uv_handle_type;
 pub extern fn uv_handle_type_name(@"type": uv_handle_type) [*]const u8;
-pub extern fn uv_handle_get_data(handle: [*c]const uv_handle_t) ?*anyopaque;
-pub extern fn uv_handle_get_loop(handle: [*c]const uv_handle_t) *uv_loop_t;
-pub extern fn uv_handle_set_data(handle: [*c]uv_handle_t, data: ?*anyopaque) void;
+pub extern fn uv_handle_get_data(handle: *const uv_handle_t) ?*anyopaque;
+pub extern fn uv_handle_get_loop(handle: *const uv_handle_t) *uv_loop_t;
+pub extern fn uv_handle_set_data(handle: *uv_handle_t, data: ?*anyopaque) void;
 pub extern fn uv_req_size(@"type": uv_req_type) usize;
 pub extern fn uv_req_get_data(req: [*c]const uv_req_t) ?*anyopaque;
 pub extern fn uv_req_set_data(req: [*c]uv_req_t, data: ?*anyopaque) void;
@@ -1674,10 +1749,10 @@ pub extern fn uv_is_active(handle: *const uv_handle_t) c_int;
 pub extern fn uv_walk(loop: *uv_loop_t, walk_cb: uv_walk_cb, arg: ?*anyopaque) void;
 pub extern fn uv_print_all_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
 pub extern fn uv_print_active_handles(loop: *uv_loop_t, stream: [*c]FILE) void;
-pub extern fn uv_close(handle: [*c]uv_handle_t, close_cb: uv_close_cb) void;
-pub extern fn uv_send_buffer_size(handle: [*c]uv_handle_t, value: [*c]c_int) c_int;
-pub extern fn uv_recv_buffer_size(handle: [*c]uv_handle_t, value: [*c]c_int) c_int;
-pub extern fn uv_fileno(handle: [*c]const uv_handle_t, fd: [*c]uv_os_fd_t) c_int;
+pub extern fn uv_close(handle: *uv_handle_t, close_cb: uv_close_cb) void;
+pub extern fn uv_send_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
+pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
+pub extern fn uv_fileno(handle: *const uv_handle_t, fd: [*c]uv_os_fd_t) c_int;
 pub extern fn uv_buf_init(base: [*]u8, len: c_uint) uv_buf_t;
 pub extern fn uv_pipe(fds: [*c]uv_file, read_flags: c_int, write_flags: c_int) c_int;
 pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*c]uv_os_sock_t, flags0: c_int, flags1: c_int) c_int;
@@ -1686,27 +1761,27 @@ pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connecti
 pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) c_int;
 pub extern fn uv_read_start([*c]uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) c_int;
 pub extern fn uv_read_stop([*c]uv_stream_t) c_int;
-pub extern fn uv_write(req: [*c]uv_write_t, handle: [*c]uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) c_int;
-pub extern fn uv_write2(req: [*c]uv_write_t, handle: [*c]uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: [*c]uv_stream_t, cb: uv_write_cb) c_int;
-pub extern fn uv_try_write(handle: [*c]uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) c_int;
-pub extern fn uv_try_write2(handle: [*c]uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: [*c]uv_stream_t) c_int;
-pub extern fn uv_is_readable(handle: [*c]const uv_stream_t) c_int;
-pub extern fn uv_is_writable(handle: [*c]const uv_stream_t) c_int;
-pub extern fn uv_stream_set_blocking(handle: [*c]uv_stream_t, blocking: c_int) c_int;
-pub extern fn uv_is_closing(handle: [*c]const uv_handle_t) c_int;
-pub extern fn uv_tcp_init(*uv_loop_t, handle: [*c]uv_tcp_t) c_int;
-pub extern fn uv_tcp_init_ex(*uv_loop_t, handle: [*c]uv_tcp_t, flags: c_uint) c_int;
-pub extern fn uv_tcp_open(handle: [*c]uv_tcp_t, sock: uv_os_sock_t) c_int;
-pub extern fn uv_tcp_nodelay(handle: [*c]uv_tcp_t, enable: c_int) c_int;
-pub extern fn uv_tcp_keepalive(handle: [*c]uv_tcp_t, enable: c_int, delay: c_uint) c_int;
-pub extern fn uv_tcp_simultaneous_accepts(handle: [*c]uv_tcp_t, enable: c_int) c_int;
+pub extern fn uv_write(req: [*c]uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) c_int;
+pub extern fn uv_write2(req: [*c]uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t, cb: uv_write_cb) c_int;
+pub extern fn uv_try_write(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) c_int;
+pub extern fn uv_try_write2(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t) c_int;
+pub extern fn uv_is_readable(handle: *const uv_stream_t) c_int;
+pub extern fn uv_is_writable(handle: *const uv_stream_t) c_int;
+pub extern fn uv_stream_set_blocking(handle: *uv_stream_t, blocking: c_int) c_int;
+pub extern fn uv_is_closing(handle: *const uv_handle_t) c_int;
+pub extern fn uv_tcp_init(*uv_loop_t, handle: *uv_tcp_t) c_int;
+pub extern fn uv_tcp_init_ex(*uv_loop_t, handle: *uv_tcp_t, flags: c_uint) c_int;
+pub extern fn uv_tcp_open(handle: *uv_tcp_t, sock: uv_os_sock_t) c_int;
+pub extern fn uv_tcp_nodelay(handle: *uv_tcp_t, enable: c_int) c_int;
+pub extern fn uv_tcp_keepalive(handle: *uv_tcp_t, enable: c_int, delay: c_uint) c_int;
+pub extern fn uv_tcp_simultaneous_accepts(handle: *uv_tcp_t, enable: c_int) c_int;
 pub const UV_TCP_IPV6ONLY: c_int = 1;
 pub const enum_uv_tcp_flags = c_uint;
-pub extern fn uv_tcp_bind(handle: [*c]uv_tcp_t, addr: [*c]const sockaddr, flags: c_uint) c_int;
-pub extern fn uv_tcp_getsockname(handle: [*c]const uv_tcp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
-pub extern fn uv_tcp_getpeername(handle: [*c]const uv_tcp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
-pub extern fn uv_tcp_close_reset(handle: [*c]uv_tcp_t, close_cb: uv_close_cb) c_int;
-pub extern fn uv_tcp_connect(req: [*c]uv_connect_t, handle: [*c]uv_tcp_t, addr: [*c]const sockaddr, cb: uv_connect_cb) c_int;
+pub extern fn uv_tcp_bind(handle: *uv_tcp_t, addr: [*c]const sockaddr, flags: c_uint) c_int;
+pub extern fn uv_tcp_getsockname(handle: *const uv_tcp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
+pub extern fn uv_tcp_getpeername(handle: *const uv_tcp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
+pub extern fn uv_tcp_close_reset(handle: *uv_tcp_t, close_cb: uv_close_cb) c_int;
+pub extern fn uv_tcp_connect(req: [*c]uv_connect_t, handle: *uv_tcp_t, addr: [*c]const sockaddr, cb: uv_connect_cb) c_int;
 pub const UV_UDP_IPV6ONLY: c_int = 1;
 pub const UV_UDP_PARTIAL: c_int = 2;
 pub const UV_UDP_REUSEADDR: c_int = 4;
@@ -1715,27 +1790,27 @@ pub const UV_UDP_MMSG_FREE: c_int = 16;
 pub const UV_UDP_LINUX_RECVERR: c_int = 32;
 pub const UV_UDP_RECVMMSG: c_int = 256;
 pub const enum_uv_udp_flags = c_uint;
-pub extern fn uv_udp_init(*uv_loop_t, handle: [*c]uv_udp_t) c_int;
-pub extern fn uv_udp_init_ex(*uv_loop_t, handle: [*c]uv_udp_t, flags: c_uint) c_int;
-pub extern fn uv_udp_open(handle: [*c]uv_udp_t, sock: uv_os_sock_t) c_int;
-pub extern fn uv_udp_bind(handle: [*c]uv_udp_t, addr: [*c]const sockaddr, flags: c_uint) c_int;
-pub extern fn uv_udp_connect(handle: [*c]uv_udp_t, addr: [*c]const sockaddr) c_int;
-pub extern fn uv_udp_getpeername(handle: [*c]const uv_udp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
-pub extern fn uv_udp_getsockname(handle: [*c]const uv_udp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
-pub extern fn uv_udp_set_membership(handle: [*c]uv_udp_t, multicast_addr: [*]const u8, interface_addr: [*]const u8, membership: uv_membership) c_int;
-pub extern fn uv_udp_set_source_membership(handle: [*c]uv_udp_t, multicast_addr: [*]const u8, interface_addr: [*]const u8, source_addr: [*]const u8, membership: uv_membership) c_int;
-pub extern fn uv_udp_set_multicast_loop(handle: [*c]uv_udp_t, on: c_int) c_int;
-pub extern fn uv_udp_set_multicast_ttl(handle: [*c]uv_udp_t, ttl: c_int) c_int;
-pub extern fn uv_udp_set_multicast_interface(handle: [*c]uv_udp_t, interface_addr: [*]const u8) c_int;
-pub extern fn uv_udp_set_broadcast(handle: [*c]uv_udp_t, on: c_int) c_int;
-pub extern fn uv_udp_set_ttl(handle: [*c]uv_udp_t, ttl: c_int) c_int;
-pub extern fn uv_udp_send(req: [*c]uv_udp_send_t, handle: [*c]uv_udp_t, bufs: [*]const uv_buf_t, nbufs: c_uint, addr: [*c]const sockaddr, send_cb: uv_udp_send_cb) c_int;
-pub extern fn uv_udp_try_send(handle: [*c]uv_udp_t, bufs: [*]const uv_buf_t, nbufs: c_uint, addr: [*c]const sockaddr) c_int;
-pub extern fn uv_udp_recv_start(handle: [*c]uv_udp_t, alloc_cb: uv_alloc_cb, recv_cb: uv_udp_recv_cb) c_int;
-pub extern fn uv_udp_using_recvmmsg(handle: [*c]const uv_udp_t) c_int;
-pub extern fn uv_udp_recv_stop(handle: [*c]uv_udp_t) c_int;
-pub extern fn uv_udp_get_send_queue_size(handle: [*c]const uv_udp_t) usize;
-pub extern fn uv_udp_get_send_queue_count(handle: [*c]const uv_udp_t) usize;
+pub extern fn uv_udp_init(*uv_loop_t, handle: *uv_udp_t) c_int;
+pub extern fn uv_udp_init_ex(*uv_loop_t, handle: *uv_udp_t, flags: c_uint) c_int;
+pub extern fn uv_udp_open(handle: *uv_udp_t, sock: uv_os_sock_t) c_int;
+pub extern fn uv_udp_bind(handle: *uv_udp_t, addr: [*c]const sockaddr, flags: c_uint) c_int;
+pub extern fn uv_udp_connect(handle: *uv_udp_t, addr: [*c]const sockaddr) c_int;
+pub extern fn uv_udp_getpeername(handle: *const uv_udp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
+pub extern fn uv_udp_getsockname(handle: *const uv_udp_t, name: [*c]sockaddr, namelen: [*c]c_int) c_int;
+pub extern fn uv_udp_set_membership(handle: *uv_udp_t, multicast_addr: [*]const u8, interface_addr: [*]const u8, membership: uv_membership) c_int;
+pub extern fn uv_udp_set_source_membership(handle: *uv_udp_t, multicast_addr: [*]const u8, interface_addr: [*]const u8, source_addr: [*]const u8, membership: uv_membership) c_int;
+pub extern fn uv_udp_set_multicast_loop(handle: *uv_udp_t, on: c_int) c_int;
+pub extern fn uv_udp_set_multicast_ttl(handle: *uv_udp_t, ttl: c_int) c_int;
+pub extern fn uv_udp_set_multicast_interface(handle: *uv_udp_t, interface_addr: [*]const u8) c_int;
+pub extern fn uv_udp_set_broadcast(handle: *uv_udp_t, on: c_int) c_int;
+pub extern fn uv_udp_set_ttl(handle: *uv_udp_t, ttl: c_int) c_int;
+pub extern fn uv_udp_send(req: [*c]uv_udp_send_t, handle: *uv_udp_t, bufs: [*]const uv_buf_t, nbufs: c_uint, addr: [*c]const sockaddr, send_cb: uv_udp_send_cb) c_int;
+pub extern fn uv_udp_try_send(handle: *uv_udp_t, bufs: [*]const uv_buf_t, nbufs: c_uint, addr: [*c]const sockaddr) c_int;
+pub extern fn uv_udp_recv_start(handle: *uv_udp_t, alloc_cb: uv_alloc_cb, recv_cb: uv_udp_recv_cb) c_int;
+pub extern fn uv_udp_using_recvmmsg(handle: *const uv_udp_t) c_int;
+pub extern fn uv_udp_recv_stop(handle: *uv_udp_t) c_int;
+pub extern fn uv_udp_get_send_queue_size(handle: *const uv_udp_t) usize;
+pub extern fn uv_udp_get_send_queue_count(handle: *const uv_udp_t) usize;
 pub const UV_TTY_MODE_NORMAL: c_int = 0;
 pub const UV_TTY_MODE_RAW: c_int = 1;
 pub const UV_TTY_MODE_IO: c_int = 2;
@@ -1754,23 +1829,23 @@ pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
 const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *uv_pipe_t, ipc: c_int) c_int;
 pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) c_int;
-pub extern fn uv_pipe_bind(handle: [*c]uv_pipe_t, name: [*]const u8) c_int;
-pub extern fn uv_pipe_bind2(handle: [*c]uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
-pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: [*c]uv_pipe_t, name: [*]const u8, cb: uv_connect_cb) void;
-pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: [*c]uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) c_int;
-pub extern fn uv_pipe_getsockname(handle: [*c]const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_pipe_getpeername(handle: [*c]const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_pipe_pending_instances(handle: [*c]uv_pipe_t, count: c_int) void;
-pub extern fn uv_pipe_pending_count(handle: [*c]uv_pipe_t) c_int;
-pub extern fn uv_pipe_pending_type(handle: [*c]uv_pipe_t) uv_handle_type;
-pub extern fn uv_pipe_chmod(handle: [*c]uv_pipe_t, flags: c_int) c_int;
+pub extern fn uv_pipe_bind(handle: *uv_pipe_t, name: [*]const u8) c_int;
+pub extern fn uv_pipe_bind2(handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
+pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, cb: uv_connect_cb) void;
+pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) c_int;
+pub extern fn uv_pipe_getsockname(handle: *const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_pipe_getpeername(handle: *const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_pipe_pending_instances(handle: *uv_pipe_t, count: c_int) void;
+pub extern fn uv_pipe_pending_count(handle: *uv_pipe_t) c_int;
+pub extern fn uv_pipe_pending_type(handle: *uv_pipe_t) uv_handle_type;
+pub extern fn uv_pipe_chmod(handle: *uv_pipe_t, flags: c_int) c_int;
 pub const UV_READABLE: c_int = 1;
 pub const UV_WRITABLE: c_int = 2;
 pub const UV_DISCONNECT: c_int = 4;
 pub const UV_PRIORITIZED: c_int = 8;
 pub const enum_uv_poll_event = c_uint;
 pub extern fn uv_poll_init(loop: *uv_loop_t, handle: *uv_poll_t, fd: c_int) c_int;
-pub extern fn uv_poll_init_socket(loop: *uv_loop_t, handle: [*c]uv_poll_t, socket: uv_os_sock_t) c_int;
+pub extern fn uv_poll_init_socket(loop: *uv_loop_t, handle: *uv_poll_t, socket: uv_os_sock_t) c_int;
 pub extern fn uv_poll_start(handle: *uv_poll_t, events: c_int, cb: uv_poll_cb) c_int;
 pub extern fn uv_poll_stop(handle: *uv_poll_t) c_int;
 pub extern fn uv_prepare_init(*uv_loop_t, prepare: *uv_prepare_t) c_int;
@@ -1782,15 +1857,15 @@ pub extern fn uv_check_stop(check: *uv_check_t) c_int;
 pub extern fn uv_idle_init(*uv_loop_t, idle: [*c]uv_idle_t) c_int;
 pub extern fn uv_idle_start(idle: [*c]uv_idle_t, cb: uv_idle_cb) c_int;
 pub extern fn uv_idle_stop(idle: [*c]uv_idle_t) c_int;
-pub extern fn uv_async_init(*uv_loop_t, @"async": [*c]uv_async_t, async_cb: uv_async_cb) c_int;
-pub extern fn uv_async_send(@"async": [*c]uv_async_t) c_int;
-pub extern fn uv_timer_init(*uv_loop_t, handle: [*c]uv_timer_t) c_int;
-pub extern fn uv_timer_start(handle: [*c]uv_timer_t, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
-pub extern fn uv_timer_stop(handle: [*c]uv_timer_t) c_int;
-pub extern fn uv_timer_again(handle: [*c]uv_timer_t) c_int;
-pub extern fn uv_timer_set_repeat(handle: [*c]uv_timer_t, repeat: u64) void;
-pub extern fn uv_timer_get_repeat(handle: [*c]const uv_timer_t) u64;
-pub extern fn uv_timer_get_due_in(handle: [*c]const uv_timer_t) u64;
+pub extern fn uv_async_init(*uv_loop_t, @"async": *uv_async_t, async_cb: uv_async_cb) c_int;
+pub extern fn uv_async_send(@"async": *uv_async_t) c_int;
+pub extern fn uv_timer_init(*uv_loop_t, handle: *uv_timer_t) c_int;
+pub extern fn uv_timer_start(handle: *uv_timer_t, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
+pub extern fn uv_timer_stop(handle: *uv_timer_t) c_int;
+pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
+pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
+pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
+pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
 // pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: [*c]uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*]const u8, service: [*]const u8, hints: [*c]const struct_addrinfo) c_int;
 // pub extern fn uv_freeaddrinfo(ai: [*c]struct_addrinfo) void;
 // pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
@@ -1833,7 +1908,7 @@ pub const UV_PROCESS_WINDOWS_HIDE: c_int = 16;
 pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
 pub const enum_uv_process_flags = c_uint;
-pub extern fn uv_spawn(loop: *uv_loop_t, handle: [*c]uv_process_t, options: [*c]const uv_process_options_t) c_int;
+pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: [*c]const uv_process_options_t) c_int;
 pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) c_int;
 pub extern fn uv_kill(pid: c_int, signum: c_int) c_int;
 pub extern fn uv_process_get_pid([*c]const uv_process_t) uv_pid_t;
@@ -1986,23 +2061,23 @@ pub extern fn uv_fs_statfs(loop: *uv_loop_t, req: *uv_fs_t, path: [*]const u8, c
 pub const UV_RENAME: c_int = 1;
 pub const UV_CHANGE: c_int = 2;
 pub const enum_uv_fs_event = c_uint;
-pub extern fn uv_fs_poll_init(loop: *uv_loop_t, handle: [*c]uv_fs_poll_t) c_int;
-pub extern fn uv_fs_poll_start(handle: [*c]uv_fs_poll_t, poll_cb: uv_fs_poll_cb, path: [*]const u8, interval: c_uint) c_int;
-pub extern fn uv_fs_poll_stop(handle: [*c]uv_fs_poll_t) c_int;
-pub extern fn uv_fs_poll_getpath(handle: [*c]uv_fs_poll_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_signal_init(loop: *uv_loop_t, handle: [*c]uv_signal_t) c_int;
-pub extern fn uv_signal_start(handle: [*c]uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
-pub extern fn uv_signal_start_oneshot(handle: [*c]uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
-pub extern fn uv_signal_stop(handle: [*c]uv_signal_t) c_int;
+pub extern fn uv_fs_poll_init(loop: *uv_loop_t, handle: *uv_fs_poll_t) c_int;
+pub extern fn uv_fs_poll_start(handle: *uv_fs_poll_t, poll_cb: uv_fs_poll_cb, path: [*]const u8, interval: c_uint) c_int;
+pub extern fn uv_fs_poll_stop(handle: *uv_fs_poll_t) c_int;
+pub extern fn uv_fs_poll_getpath(handle: *uv_fs_poll_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_signal_init(loop: *uv_loop_t, handle: *uv_signal_t) c_int;
+pub extern fn uv_signal_start(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
+pub extern fn uv_signal_start_oneshot(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
+pub extern fn uv_signal_stop(handle: *uv_signal_t) c_int;
 pub extern fn uv_loadavg(avg: [*c]f64) void;
 pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
 pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 pub const enum_uv_fs_event_flags = c_uint;
-pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: [*c]uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_start(handle: [*c]uv_fs_event_t, cb: uv_fs_event_cb, path: [*]const u8, flags: c_uint) c_int;
-pub extern fn uv_fs_event_stop(handle: [*c]uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_getpath(handle: [*c]uv_fs_event_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) c_int;
+pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*]const u8, flags: c_uint) c_int;
+pub extern fn uv_fs_event_stop(handle: *uv_fs_event_t) c_int;
+pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_ip4_addr(ip: [*]const u8, port: c_int, addr: [*c]sockaddr_in) c_int;
 pub extern fn uv_ip6_addr(ip: [*]const u8, port: c_int, addr: ?*sockaddr_in6) c_int;
 pub extern fn uv_ip4_name(src: [*c]const sockaddr_in, dst: [*]u8, size: usize) c_int;
@@ -2028,12 +2103,12 @@ pub extern fn uv_dlopen(filename: [*]const u8, lib: [*c]uv_lib_t) c_int;
 pub extern fn uv_dlclose(lib: [*c]uv_lib_t) void;
 pub extern fn uv_dlsym(lib: [*c]uv_lib_t, name: [*]const u8, ptr: [*c]?*anyopaque) c_int;
 pub extern fn uv_dlerror(lib: [*c]const uv_lib_t) [*]const u8;
-// pub extern fn uv_mutex_init(handle: [*c]uv_mutex_t) c_int;
-// pub extern fn uv_mutex_init_recursive(handle: [*c]uv_mutex_t) c_int;
-// pub extern fn uv_mutex_destroy(handle: [*c]uv_mutex_t) void;
-// pub extern fn uv_mutex_lock(handle: [*c]uv_mutex_t) void;
-// pub extern fn uv_mutex_trylock(handle: [*c]uv_mutex_t) c_int;
-// pub extern fn uv_mutex_unlock(handle: [*c]uv_mutex_t) void;
+// pub extern fn uv_mutex_init(handle: *uv_mutex_t) c_int;
+// pub extern fn uv_mutex_init_recursive(handle: *uv_mutex_t) c_int;
+// pub extern fn uv_mutex_destroy(handle: *uv_mutex_t) void;
+// pub extern fn uv_mutex_lock(handle: *uv_mutex_t) void;
+// pub extern fn uv_mutex_trylock(handle: *uv_mutex_t) c_int;
+// pub extern fn uv_mutex_unlock(handle: *uv_mutex_t) void;
 // pub extern fn uv_rwlock_init(rwlock: [*c]uv_rwlock_t) c_int;
 // pub extern fn uv_rwlock_destroy(rwlock: [*c]uv_rwlock_t) void;
 // pub extern fn uv_rwlock_rdlock(rwlock: [*c]uv_rwlock_t) void;

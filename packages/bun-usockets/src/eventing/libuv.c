@@ -198,7 +198,7 @@ void us_loop_free(struct us_loop_t *loop) {
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
 
-  uv_run(loop->uv_loop, UV_RUN_DEFAULT);
+  uv_run(loop->uv_loop, UV_RUN_NOWAIT);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

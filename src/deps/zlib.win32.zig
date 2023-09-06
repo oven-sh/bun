@@ -11,12 +11,12 @@ const Bytef = [*]u8;
 const Byte = u8;
 const uInt = c_uint;
 const uLong = c_ulong;
- const z_size_t = usize;
- const intf = ReturnCode;
- const uIntf = uInt;
- const uLongf = uLong;
- const voidpc = ?*const anyopaque;
- const voidp = ?*anyopaque;
+const z_size_t = usize;
+const intf = ReturnCode;
+const uIntf = uInt;
+const uLongf = uLong;
+const voidpc = ?*const anyopaque;
+const voidp = ?*anyopaque;
 pub const alloc_func = ?*const fn (voidpf, uInt, uInt) callconv(.C) voidpf;
 pub const free_func = ?*const fn (voidpf, voidpf) callconv(.C) void;
 pub const z_alloc_func = alloc_func;
@@ -33,7 +33,7 @@ pub const struct_z_stream_s = extern struct {
     internal_state: ?*struct_internal_state,
     alloc_func: alloc_func,
     free_func: free_func,
-    @"user_data": voidpf,
+    user_data: voidpf,
     data_type: DataType,
     adler: uLong,
     reserved: uLong,
@@ -205,7 +205,6 @@ pub const zStream_struct = struct_z_stream_s;
 pub const gz_header_s = struct_gz_header_s;
 pub const gzFile_s = struct_gzFile_s;
 
-
-pub const DataType = @import("./zlib-shared.zig").DataType;
-pub const FlushValue = @import("./zlib-shared.zig").FlushValue;
-pub const ReturnCode = @import("./zlib-shared.zig").ReturnCode;
+pub const DataType = @import("./zlib.shared.zig").DataType;
+pub const FlushValue = @import("./zlib.shared.zig").FlushValue;
+pub const ReturnCode = @import("./zlib.shared.zig").ReturnCode;

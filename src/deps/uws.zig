@@ -2279,6 +2279,10 @@ pub const UVLoop = extern struct {
         us_wakeup_loop(this);
     }
 
+    pub fn tickWithTimeout(this: *UVLoop, _: i64) void {
+        us_loop_run(this);
+    }
+
     pub fn create(comptime Handler: anytype) *UVLoop {
         return us_create_loop(
             null,

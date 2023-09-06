@@ -1348,14 +1348,13 @@ pub fn exists(path: []const u8) bool {
             return system.access(path, 0) == 0;
         }
 
-
-        return system.access(&(std.os.toPosixPath(path) catch return false) , 0) == 0;
+        return system.access(&(std.os.toPosixPath(path) catch return false), 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
         var wbuf: bun.MAX_WPATH = undefined;
         const path_to_use = bun.strings.toWPath(&wbuf, path);
-        return  kernel32.GetFileAttributesW(path_to_use.ptr) != os.windows.INVALID_FILE_ATTRIBUTES;
+        return kernel32.GetFileAttributesW(path_to_use.ptr) != os.windows.INVALID_FILE_ATTRIBUTES;
     }
 
     @compileError("TODO: existsOSPath");

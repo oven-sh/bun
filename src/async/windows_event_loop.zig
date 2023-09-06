@@ -8,6 +8,9 @@ const uv = bun.windows.libuv;
 pub const Loop = uv.Loop;
 
 pub const KeepAlive = struct {
+    // handle.init zeroes the memory
+    handle: uv.uv_async_t = undefined,
+
     status: Status = .inactive,
 
     const log = Output.scoped(.KeepAlive, false);
@@ -15,32 +18,41 @@ pub const KeepAlive = struct {
     const Status = enum { active, inactive, done };
 
     pub inline fn isActive(this: KeepAlive) bool {
+        if (comptime Environment.allow_assert) {
+            if (this.status == .active) {
+                std.debug.assert(this.handle.isActive());
+            }
+        }
         return this.status == .active;
     }
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *KeepAlive) void {
-        this.unref(JSC.VirtualMachine.get());
+        if (this.status == .active) {
+            this.unref(JSC.VirtualMachine.get());
+            this.handle.close(null);
+        }
+
         this.status = .done;
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *KeepAlive, loop: *Loop) void {
+        _ = loop;
         if (this.status != .active)
             return;
 
         this.status = .inactive;
-        // this is probably frowned on
-        loop.active_handles -= 1;
+        this.handle.close(null);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *KeepAlive, loop: *Loop) void {
-        if (this.status != .inactive)
+        if (this.status != .active)
             return;
 
         this.status = .active;
-        loop.active_handles += 1;
+        this.handle.init(loop, null);
     }
 
     pub fn init() KeepAlive {
@@ -49,34 +61,38 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.active_handles -= 1;
+        this.handle.unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.active_handles -= 1;
+        this.handle.unref();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.pending_unref_counter +|= 1;
+        this.handle.unref();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
+        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
+        this.handle.unref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -84,7 +100,8 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.event_loop_handle.?.active_handles += 1;
+        this.handle.init(vm.event_loop_handle.?, null);
+        this.handle.ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -92,7 +109,8 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        vm.event_loop_handle.?.active_handles += 1;
+        this.handle.init(vm.event_loop_handle.?, null);
+        this.handle.ref();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {

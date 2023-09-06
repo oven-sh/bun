@@ -1676,7 +1676,7 @@ pub const CacheLevel = struct {
     use_last_modified: bool,
 };
 const AsyncIO = bun.AsyncIO;
-const Waker = AsyncIO.Waker;
+const Waker = bun.AsyncIO.Waker;
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:

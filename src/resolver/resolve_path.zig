@@ -921,19 +921,17 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
-            var outdir = temp_buf[0 .. i + 1];
-             if (_platform == .windows or _platform == .loose) {
-                for (outdir) |*c| {
-                    if (c.* == '\\') {
-                        c.* = '/';
-                    }
+        var outdir = temp_buf[0 .. i + 1];
+        if (_platform == .windows or _platform == .loose) {
+            for (outdir) |*c| {
+                if (c.* == '\\') {
+                    c.* = '/';
                 }
             }
-
-            break :brk outdir;
         }
-    else
-        "/";
+
+        break :brk outdir;
+    } else "/";
 
     const result = normalizeStringBuf(
         temp_buf[leading_separator.len..out],

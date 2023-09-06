@@ -69,8 +69,6 @@ const zStream_struct = @import("zlib-internal").zStream_struct;
 const z_stream = @import("zlib-internal").z_stream;
 const z_streamp = @import("zlib-internal").z_streamp;
 
-
-
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
 //     uInt     avail_in;  /* number of bytes available at next_in */
@@ -92,7 +90,6 @@ const z_streamp = @import("zlib-internal").z_streamp;
 //     uLong   adler;      /* Adler-32 or CRC-32 value of the uncompressed data */
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
-
 
 const DataType = @import("zlib-internal").DataType;
 const FlushValue = @import("zlib-internal").FlushValue;
@@ -815,7 +812,7 @@ pub const ZlibCompressorArrayList = struct {
             ReturnCode.Ok => {
                 try zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len));
                 zlib_reader.list_ptr.* = zlib_reader.list;
-                zlib_reader.zlib.avail_out =  @truncate(zlib_reader.list.capacity);
+                zlib_reader.zlib.avail_out = @truncate(zlib_reader.list.capacity);
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;
 
                 return zlib_reader;

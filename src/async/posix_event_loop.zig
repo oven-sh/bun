@@ -839,3 +839,5 @@ pub const FilePoll = struct {
         return JSC.Maybe(void).success;
     }
 };
+
+pub const Waker = @import("io").Waker;

@@ -1742,11 +1742,9 @@ const WindowsStat = extern struct {
         return this.atim;
     }
 
-     pub fn birthtime(this: *const WindowsStat) std.c.timespec {
+    pub fn birthtime(this: *const WindowsStat) std.c.timespec {
         return this.atim;
     }
-
-
 };
 
 pub const Stat = if (Environment.isPosix) std.os.Stat else WindowsStat;

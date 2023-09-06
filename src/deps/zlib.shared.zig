@@ -1,4 +1,3 @@
-
 // #define Z_BINARY   0
 // #define Z_TEXT     1
 // #define Z_ASCII    Z_TEXT   /* for compatibility with 1.2.2 and earlier */

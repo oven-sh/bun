@@ -413,50 +413,19 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                // on SSL we need to do wait for the handshake
-                if (comptime ssl == false) {
-                    const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
-                    if (active.get(HTTPClient)) |client| {
-                        return client.onOpen(comptime ssl, socket);
-                    }
+                const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+                if (active.get(HTTPClient)) |client| {
+                    return client.onOpen(comptime ssl, socket);
+                }
 
-                    if (active.get(PooledSocket)) |pooled| {
-                        std.debug.assert(context().pending_sockets.put(pooled));
-                    }
+                if (active.get(PooledSocket)) |pooled| {
+                    std.debug.assert(context().pending_sockets.put(pooled));
+                }
 
-                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
-                    socket.close(0, null);
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(false);
-                    }
-                } else {
-                    const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
-                    if (active.get(HTTPClient)) |client| {
-                        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
-                        if (!ssl_ptr.isInitFinished()) {
-                            var _hostname = client.hostname orelse client.url.hostname;
-                            if (client.http_proxy) |proxy| {
-                                _hostname = proxy.hostname;
-                            }
-
-                            var hostname: [:0]const u8 = "";
-                            var hostname_needs_free = false;
-                            if (!strings.isIPAddress(_hostname)) {
-                                if (_hostname.len < temp_hostname.len) {
-                                    @memcpy(temp_hostname[0.._hostname.len], _hostname);
-                                    temp_hostname[_hostname.len] = 0;
-                                    hostname = temp_hostname[0.._hostname.len :0];
-                                } else {
-                                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
-                                    hostname_needs_free = true;
-                                }
-                            }
-
-                            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
-
-                            ssl_ptr.configureHTTPClient(hostname);
-                        }
-                    }
+                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                socket.close(0, null);
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(false);
                 }
             }
             pub fn onHandshake(
@@ -484,7 +453,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                                 return;
                             }
                         }
-                        return client.onOpen(comptime ssl, socket);
+                        return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
                         return client.onConnectError(
@@ -670,6 +639,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
+                    if (comptime ssl) {
+                        client.firstCall(comptime ssl, sock);
+                    }
                     return sock;
                 }
             }
@@ -867,9 +839,11 @@ var temp_hostname: [8096]u8 = undefined;
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 
-fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ![]const u8 {
+/// converts IP string to canonicalized IP string
+/// return null when the IP is invalid
+fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
     if (addr_str.len >= INET6_ADDRSTRLEN) {
-        return error.Invalid;
+        return null;
     }
     var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
     // we need a null terminated string as input
@@ -881,42 +855,31 @@ fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ![]con
     if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
         af = std.os.AF.INET6;
         if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
-            return error.Invalid;
+            return null;
         }
     }
     // ip_addr will contain the null-terminated string of the cannonicalized IP
     if (c_ares.ares_inet_ntop(af, &ip_std_text, outIP, outIP.len) == null) {
-        return error.Invalid;
+        return null;
     }
     // use the null-terminated size to return the string
     const size = bun.len(bun.cast([*:0]u8, outIP));
     return outIP[0..size];
 }
 
-fn ipv4ToString(ipv4Bytes: *[4]u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ![]const u8 {
-    var ipv4String: [16]u8 = undefined;
-    return try canonicalizeIP(try std.fmt.bufPrint(&ipv4String, "{}.{}.{}.{}", .{ ipv4Bytes[0], ipv4Bytes[1], ipv4Bytes[2], ipv4Bytes[3] }), outIP);
-}
-
-const hexChars = "0123456789ABCDEF";
-fn ipv6ToString(ipv6Bytes: *[16]u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ![]const u8 {
-    var index: usize = 0;
-    bun.copy(u8, outIP, ipv6Bytes);
-    outIP[ipv6Bytes.len] = 0;
-
-    for (ipv6Bytes, 0..) |byte, i| {
-        if (i > 0 and i % 2 == 0) {
-            outIP[index] = ':'; // Add a colon every 2 bytes
-            index += 1;
-        }
-        outIP[index] = hexChars[byte >> 4];
-        index += 1;
-        outIP[index] = hexChars[byte & 0x0F];
-        index += 1;
+/// converts ASN1_OCTET_STRING to canonicalized IP string
+/// return null when the IP is invalid
+fn ip2String(ip: *BoringSSL.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
+    const af: c_int = if (ip.length == 4) std.os.AF.INET else std.os.AF.INET6;
+    if (c_ares.ares_inet_ntop(af, ip.data, outIP, outIP.len) == null) {
+        return null;
     }
 
-    return try canonicalizeIP(outIP[0..index], outIP);
+    // use the null-terminated size to return the string
+    const size = bun.len(bun.cast([*:0]u8, outIP));
+    return outIP[0..size];
 }
+
 pub fn onCertError(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -937,8 +900,7 @@ pub fn onCertError(
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
                     var cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
-                    var buffer_ptr = @as([*c]u8, cert.ptr);
-                    const result_size = BoringSSL.i2d_X509(x509, &buffer_ptr);
+                    const result_size = BoringSSL.i2d_X509(x509, &cert.ptr);
                     std.debug.assert(result_size == cert_size);
 
                     var hostname = client.hostname orelse client.url.hostname;
@@ -979,9 +941,11 @@ pub fn onCertError(
                             }
 
                             if (strings.isIPAddress(hostname)) {
+                                // we safely ensure buffer size with max len + 1
                                 var canonicalIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
                                 var certIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-                                var host_ip = canonicalizeIP(hostname, &canonicalIPBuf) catch hostname;
+                                // we try to canonicalize the IP before comparing
+                                var host_ip = canonicalizeIP(hostname, &canonicalIPBuf) orelse hostname;
 
                                 if (BoringSSL.X509V3_EXT_d2i(ext)) |names_| {
                                     const names: *BoringSSL.struct_stack_st_GENERAL_NAME = bun.cast(*BoringSSL.struct_stack_st_GENERAL_NAME, names_);
@@ -990,19 +954,9 @@ pub fn onCertError(
                                         const gen = BoringSSL.sk_GENERAL_NAME_value(names, i);
                                         if (gen) |name| {
                                             if (name.name_type == .GEN_IPADD) {
-                                                const ip = name.d.ip;
-                                                const bytes = ip.data;
-                                                if (ip.length == 4) {
-                                                    if (ipv4ToString(bytes[0..4], &certIPBuf) catch null) |cert_ip| {
-                                                        if (strings.eql(host_ip, cert_ip)) {
-                                                            return true;
-                                                        }
-                                                    }
-                                                } else if (ip.length == 16) {
-                                                    if (ipv6ToString(bytes[0..16], &certIPBuf) catch null) |cert_ip| {
-                                                        if (strings.eql(host_ip, cert_ip)) {
-                                                            return true;
-                                                        }
+                                                if (ip2String(name.d.ip, &certIPBuf)) |cert_ip| {
+                                                    if (strings.eql(host_ip, cert_ip)) {
+                                                        return true;
                                                     }
                                                 }
                                             }
@@ -1064,6 +1018,41 @@ pub fn onOpen(
         return;
     }
 
+    if (comptime is_ssl) {
+        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        if (!ssl_ptr.isInitFinished()) {
+            var _hostname = client.hostname orelse client.url.hostname;
+            if (client.http_proxy) |proxy| {
+                _hostname = proxy.hostname;
+            }
+
+            var hostname: [:0]const u8 = "";
+            var hostname_needs_free = false;
+            if (!strings.isIPAddress(_hostname)) {
+                if (_hostname.len < temp_hostname.len) {
+                    @memcpy(temp_hostname[0.._hostname.len], _hostname);
+                    temp_hostname[_hostname.len] = 0;
+                    hostname = temp_hostname[0.._hostname.len :0];
+                } else {
+                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                    hostname_needs_free = true;
+                }
+            }
+
+            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
+
+            ssl_ptr.configureHTTPClient(hostname);
+        }
+    } else {
+        client.firstCall(is_ssl, socket);
+    }
+}
+
+pub fn firstCall(
+    client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }

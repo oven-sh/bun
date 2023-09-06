@@ -30,6 +30,7 @@ function listen(server: Server): Promise<URL> {
 
 describe("node:http", () => {
   describe("createServer", async () => {
+    
     it("hello world", async () => {
       try {
         var server = createServer((req, res) => {
@@ -807,6 +808,8 @@ describe("node:http", () => {
         done();
       } catch (error) {
         done(error);
+      } finally {
+        server.close();
       }
     });
   });
@@ -823,20 +826,12 @@ describe("node:http", () => {
         });
       } catch (err) {
         done(err);
+      } finally {
+        server.close();
       }
     });
   });
-  test("should not decompress gzip, issue#4397", async () => {
-    const { promise, resolve } = Promise.withResolvers();
-    request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
-      res.on("data", function cb(chunk) {
-        resolve(chunk);
-        res.off("data", cb);
-      });
-    }).end();
-    const chunk = await promise;
-    expect(chunk.toString()).not.toContain("<html");
-  });
+  
   test("test unix socket server", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {
@@ -850,6 +845,18 @@ describe("node:http", () => {
       res.end();
     });
 
+    test("should not decompress gzip, issue#4397", async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+        res.on("data", function cb(chunk) {
+          resolve(chunk);
+          res.off("data", cb);
+        });
+      }).end();
+      const chunk = await promise;
+      expect(chunk.toString()).not.toContain("<html");
+    });
+
     server.listen(socketPath, () => {
       // TODO: unix socket is not implemented in fetch.
       const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
@@ -858,6 +865,8 @@ describe("node:http", () => {
         done();
       } catch (err) {
         done(err);
+      } finally {
+        server.close();
       }
     });
   });

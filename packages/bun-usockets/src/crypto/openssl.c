@@ -164,6 +164,7 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
 struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s, int is_client, char *ip, int ip_length) {
 
     struct us_internal_ssl_socket_context_t *context = (struct us_internal_ssl_socket_context_t *) us_socket_context(0, &s->s);
+    
 
     struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *) loop->data.ssl_data;
@@ -186,7 +187,9 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
     struct us_internal_ssl_socket_t * result = (struct us_internal_ssl_socket_t *) context->on_open(s, is_client, ip, ip_length);
 
     // Hello Message!
-    if(context->pending_handshake) {    
+    // always handshake after open if on_handshake is set
+    if(context->on_handshake || context->pending_handshake) {
+        context->pending_handshake = 1;
         us_internal_ssl_handshake(s, context->on_handshake, context->handshake_data);
     }
     
@@ -219,7 +222,7 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, void (*on_han
 
    if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
         context->pending_handshake = 0;
-        context->on_handshake = NULL;
+        // context->on_handshake = NULL;
         context->handshake_data = NULL;
     
         struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
@@ -237,7 +240,7 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, void (*on_han
         // as far as I know these are the only errors we want to handle
         if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
             context->pending_handshake = 0;
-            context->on_handshake = NULL;
+            // context->on_handshake = NULL;
             context->handshake_data = NULL;
     
             struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
@@ -263,7 +266,7 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s, void (*on_han
         }
     } else {
         context->pending_handshake = 0;
-        context->on_handshake = NULL;
+        // context->on_handshake = NULL;
         context->handshake_data = NULL;
 
 

@@ -1022,8 +1022,7 @@ pub const Fetch = struct {
             if (this.check_server_identity.get()) |check_server_identity| {
                 if (certificate_info.cert.len > 0) {
                     var cert = certificate_info.cert;
-                    var buffer_ptr = @as([*c]const u8, cert.ptr);
-                    if (BoringSSL.d2i_X509(null, &buffer_ptr, @intCast(cert.len))) |x509| {
+                    if (BoringSSL.d2i_X509(null, &cert.ptr, @intCast(cert.len))) |x509| {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
                         const js_cert = X509.toJS(x509, globalObject);
@@ -1671,17 +1670,22 @@ pub const Fetch = struct {
                                 disable_keepalive = decompress.to(i32) == 0;
                             }
                         }
-                        if (options.get(ctx, "rejectUnauthorized")) |reject| {
-                            if (reject.isBoolean()) {
-                                reject_unauthorized = reject.asBoolean();
-                            } else if (reject.isNumber()) {
-                                reject_unauthorized = reject.to(i32) != 0;
-                            }
-                        }
 
-                        if (options.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
-                            if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
-                                check_server_identity = checkServerIdentity;
+                        if (options.get(ctx, "tls")) |tls| {
+                            if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
+                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                                    if (reject.isBoolean()) {
+                                        reject_unauthorized = reject.asBoolean();
+                                    } else if (reject.isNumber()) {
+                                        reject_unauthorized = reject.to(i32) != 0;
+                                    }
+                                }
+
+                                if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                                    if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                        check_server_identity = checkServerIdentity;
+                                    }
+                                }
                             }
                         }
 
@@ -1860,17 +1864,21 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(ctx, "rejectUnauthorized")) |reject| {
-                            if (reject.isBoolean()) {
-                                reject_unauthorized = reject.asBoolean();
-                            } else if (reject.isNumber()) {
-                                reject_unauthorized = reject.to(i32) != 0;
-                            }
-                        }
+                        if (options.get(ctx, "tls")) |tls| {
+                            if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
+                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                                    if (reject.isBoolean()) {
+                                        reject_unauthorized = reject.asBoolean();
+                                    } else if (reject.isNumber()) {
+                                        reject_unauthorized = reject.to(i32) != 0;
+                                    }
+                                }
 
-                        if (options.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
-                            if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
-                                check_server_identity = checkServerIdentity;
+                                if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                                    if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                        check_server_identity = checkServerIdentity;
+                                    }
+                                }
                             }
                         }
 

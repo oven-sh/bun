@@ -122,75 +122,67 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
-    pub fn tryHTTPS(url: string) ?string {
+    /// If `url` doesn't use HTTPS, attempt to download using HTTPS first.
+    /// If that fails, download using `url`s protocol. We do this because
+    /// HTTPS is faster and will work anyway for most use cases,
+    /// so we should try it first.
+    pub fn download_try_https_first(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        log: *logger.Log,
+        cache_dir: std.fs.Dir,
+        task_id: u64,
+        name: string,
+        url: string,
+    ) !std.fs.Dir {
+        // final_path_buf is used as scratch memory here to avoid allocation.
+        // It's overwritten later, but not in download.
+        if (convert_to_https(url, &final_path_buf)) |https| {
+            if (download(allocator, env, log, cache_dir, task_id, name, https)) |dir|
+                return dir
+            else |_| {}
+        }
+
+        return download(allocator, env, log, cache_dir, task_id, name, url);
+    }
+
+    /// Attempts to convert a url to https, returning null if it already is.
+    /// Returns slice of `scratch`.
+    fn convert_to_https(url: []const u8, scratch: []u8) ?[]const u8 {
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            @memcpy(final_path_buf[0.."https".len], "https");
-            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+            @memcpy(scratch[0.."https".len], "https");
+            bun.copy(u8, scratch["https".len..], url["ssh".len..]);
+            return scratch[0..(url.len - "ssh".len + "https".len)];
         }
         if (Dependency.isSCPLikePath(url)) {
-            @memcpy(final_path_buf[0.."https://".len], "https://");
-            var rest = final_path_buf["https://".len..];
+            @memcpy(scratch[0.."https://".len], "https://");
+            var rest = scratch["https://".len..];
             bun.copy(u8, rest, url);
-            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
-            return final_path_buf[0..(url.len + "https://".len)];
+            return scratch[0..(url.len + "https://".len)];
         }
         return null;
     }
 
-    /// Parses `url`, converting to a schema Git will accept.
-    pub fn normalize_to_git_url(url: []const u8) []const u8 {
-        //npm: <protocol>://[<user>[:<password>]@]<hostname>[:<port>][:][/]<path>[#<commit-ish> | #semver:<semver>]
-
-        // GIT_URL <= (SSH / GIT / HTTP / FTP / FILE) PATH_TO_REPO
-
-        // SSH <= SSH_URL / SSH_SCP
-        // SSH_URL <= "ssh://" (USER "@")? HOST (":" PORT)? "/"
-        // SSH_SCP <= (USER "@") HOST ":"
-
-        // GIT <= "git://" HOST (":" PORT)? "/"
-        // HTTPS <= "http" "s"? "://" (":" PORT)? "/"
-        // FTP <= "ftp" "s"? "://" HOST (":" PORT) "/"
-        // FILE <= "file://" / "/"
-
-        // USER <= IDENT
-        // HOST <= IDENT ("." IDENT )*
-        // PORT <= [0-9]+ ("." [0-9]+)*
-        // PATH_TO_REPO <= (IDENT "/")* IDENT ".git"
-        // IDENT <= [a-z  A-Z  0-9  _]+
-
-        const protocol: ?[]const u8 = if (strings.hasPrefixComptime(url, "ssh://"))
-            "ssh://"
-        else if (strings.hasPrefixComptime(url, "http://"))
-            "http://"
-        else if (strings.hasPrefixComptime(url, "https://"))
-            "https://"
-        else if (strings.hasPrefixComptime(url, "ftp://"))
-            "ftp://"
-        else if (strings.hasPrefixComptime(url, "ftps://"))
-            "ftps://"
+    /// Git doesn't like the colon between the domain and path to repo,
+    /// so we have to replace it. Caller owns returned memory, unless
+    /// it's null.
+    ///
+    /// E.g `ssh://git@example.com:repo.git` -> `ssh://git@example.com/repo.git`
+    fn remove_scp_url_colon(allocator: std.mem.Allocator, url: []const u8) !?[]const u8 {
+        const protocol_len = if (std.mem.indexOf(u8, url, "://")) |idx|
+            idx + "://".len
         else
-            null;
+            0;
 
-        var len = url.len;
-        var buf: []u8 = if (protocol == null) blk: {
-            // Add a protocol if it's missing.
-            @memcpy(final_path_buf[0.."https://".len], "https://");
-            len += "https://".len;
-            break :blk final_path_buf["https://".len..];
-        } else &final_path_buf;
-
-        bun.copy(u8, buf, url);
-
-        {
-            const without_protocol = if (protocol) |p| buf[p.len..] else buf;
-            if (Dependency.isSCPLikePath(without_protocol)) {
-                if (strings.indexOfChar(without_protocol, ':')) |colon| without_protocol[colon] = '/';
+        if (Dependency.isSCPLikePath(url[protocol_len..])) {
+            if (strings.indexOfChar(url[protocol_len..], ':')) |colon_offset| {
+                const result = try allocator.dupe(u8, url);
+                result[protocol_len + colon_offset] = '/';
+                return result[0..url.len];
             }
         }
 
-        std.debug.print("\nBEFORE_URL: {s}\nAFTER__URL: {s}\n", .{ url, final_path_buf[0..len] });
-        return final_path_buf[0..len];
+        return null;
     }
 
     pub fn download(
@@ -220,13 +212,15 @@ pub const Repository = extern struct {
             break :fetch dir;
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
+            // TODO: this should really be handled in the URL/dependency parsing stage.
+            const git_url = try remove_scp_url_colon(allocator, url) orelse url;
 
             _ = exec(allocator, env, cache_dir, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
                 "--bare",
-                url,
+                git_url,
                 folder_name,
             }) catch |err| {
                 log.addErrorFmtWithNote(
@@ -236,7 +230,7 @@ pub const Repository = extern struct {
                     "\"git clone\" for \"{s}\" failed",
                     .{name},
                     "tried to clone url: \"{s}\"",
-                    .{url},
+                    .{git_url},
                 ) catch unreachable;
                 return err;
             };

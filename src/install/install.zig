@@ -633,14 +633,14 @@ const Task = struct {
                 const name = this.request.git_clone.name.slice();
                 const url = this.request.git_clone.url.slice();
 
-                const dir = Repository.download(
+                const dir = Repository.download_try_https_first(
                     manager.allocator,
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory().dir,
                     this.id,
                     name,
-                    Repository.normalize_to_git_url(url),
+                    url,
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;

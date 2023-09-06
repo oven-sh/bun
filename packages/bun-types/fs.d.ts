@@ -3930,7 +3930,30 @@ declare module "fs" {
      */
     recursive?: boolean;
   }
-
+  /**
+   * Class: fs.StatWatcher
+   * Extends `EventEmitter`
+   * A successful call to {@link watchFile} method will return a new fs.StatWatcher object.
+   */
+  export interface StatWatcher extends EventEmitter {
+    /**
+     * When called, requests that the Node.js event loop _not_ exit so long as the `fs.StatWatcher` is active. Calling `watcher.ref()` multiple times will have
+     * no effect.
+     *
+     * By default, all `fs.StatWatcher` objects are "ref'ed", making it normally
+     * unnecessary to call `watcher.ref()` unless `watcher.unref()` had been
+     * called previously.
+     */
+    ref(): this;
+    /**
+     * When called, the active `fs.StatWatcher` object will not require the Node.js
+     * event loop to remain active. If there is no other activity keeping the
+     * event loop running, the process may exit before the `fs.StatWatcher` object's
+     * callback is invoked. Calling `watcher.unref()` multiple times will have
+     * no effect.
+     */
+    unref(): this;
+  }
   export interface FSWatcher extends EventEmitter {
     /**
      * Stop watching for changes on the given `fs.FSWatcher`. Once stopped, the `fs.FSWatcher` object is no longer usable.
@@ -4067,6 +4090,153 @@ declare module "fs" {
     filename: PathLike,
     listener?: WatchListener<string>,
   ): FSWatcher;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each
+   * time the file is accessed.
+   *
+   * The `options` argument may be omitted. If provided, it should be an object. The`options` object may contain a boolean named `persistent` that indicates
+   * whether the process should continue to run as long as files are being watched.
+   * The `options` object may specify an `interval` property indicating how often the
+   * target should be polled in milliseconds.
+   *
+   * The `listener` gets two arguments the current stat object and the previous
+   * stat object:
+   *
+   * ```js
+   * import { watchFile } from 'fs';
+   *
+   * watchFile('message.text', (curr, prev) => {
+   *   console.log(`the current mtime is: ${curr.mtime}`);
+   *   console.log(`the previous mtime was: ${prev.mtime}`);
+   * });
+   * ```
+   *
+   * These stat objects are instances of `fs.Stat`. If the `bigint` option is `true`,
+   * the numeric values in these objects are specified as `BigInt`s.
+   *
+   * To be notified when the file was modified, not just accessed, it is necessary
+   * to compare `curr.mtimeMs` and `prev.mtimeMs`.
+   *
+   * When an `fs.watchFile` operation results in an `ENOENT` error, it
+   * will invoke the listener once, with all the fields zeroed (or, for dates, the
+   * Unix Epoch). If the file is created later on, the listener will be called
+   * again, with the latest stat objects. This is a change in functionality since
+   * v0.10.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile` and`fs.unwatchFile`. `fs.watch` should be used instead of `fs.watchFile` and`fs.unwatchFile` when possible.
+   *
+   * When a file being watched by `fs.watchFile()` disappears and reappears,
+   * then the contents of `previous` in the second callback event (the file's
+   * reappearance) will be the same as the contents of `previous` in the first
+   * callback event (its disappearance).
+   *
+   * This happens when:
+   *
+   * * the file is deleted, followed by a restore
+   * * the file is renamed and then renamed a second time back to its original name
+   * @since v0.1.31
+   */
+  export interface WatchFileOptions {
+    bigint?: boolean | undefined;
+    persistent?: boolean | undefined;
+    interval?: number | undefined;
+  }
+  export type StatsListener = (current: Stats, previous: Stats) => void;
+  export type BigIntStatsListener = (
+    current: BigIntStats,
+    previous: BigIntStats,
+  ) => void;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each
+   * time the file is accessed.
+   *
+   * The `options` argument may be omitted. If provided, it should be an object. The`options` object may contain a boolean named `persistent` that indicates
+   * whether the process should continue to run as long as files are being watched.
+   * The `options` object may specify an `interval` property indicating how often the
+   * target should be polled in milliseconds.
+   *
+   * The `listener` gets two arguments the current stat object and the previous
+   * stat object:
+   *
+   * ```js
+   * import { watchFile } from 'node:fs';
+   *
+   * watchFile('message.text', (curr, prev) => {
+   *   console.log(`the current mtime is: ${curr.mtime}`);
+   *   console.log(`the previous mtime was: ${prev.mtime}`);
+   * });
+   * ```
+   *
+   * These stat objects are instances of `fs.Stat`. If the `bigint` option is `true`,
+   * the numeric values in these objects are specified as `BigInt`s.
+   *
+   * To be notified when the file was modified, not just accessed, it is necessary
+   * to compare `curr.mtimeMs` and `prev.mtimeMs`.
+   *
+   * When an `fs.watchFile` operation results in an `ENOENT` error, it
+   * will invoke the listener once, with all the fields zeroed (or, for dates, the
+   * Unix Epoch). If the file is created later on, the listener will be called
+   * again, with the latest stat objects. This is a change in functionality since
+   * v0.10.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile` and`fs.unwatchFile`. `fs.watch` should be used instead of `fs.watchFile` and`fs.unwatchFile` when possible.
+   *
+   * When a file being watched by `fs.watchFile()` disappears and reappears,
+   * then the contents of `previous` in the second callback event (the file's
+   * reappearance) will be the same as the contents of `previous` in the first
+   * callback event (its disappearance).
+   *
+   * This happens when:
+   *
+   * * the file is deleted, followed by a restore
+   * * the file is renamed and then renamed a second time back to its original name
+   */
+  export function watchFile(
+    filename: PathLike,
+    options:
+      | (WatchFileOptions & {
+          bigint?: false | undefined;
+        })
+      | undefined,
+    listener: StatsListener,
+  ): StatWatcher;
+  export function watchFile(
+    filename: PathLike,
+    options:
+      | (WatchFileOptions & {
+          bigint: true;
+        })
+      | undefined,
+    listener: BigIntStatsListener,
+  ): StatWatcher;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each time the file is accessed.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   */
+  export function watchFile(
+    filename: PathLike,
+    listener: StatsListener,
+  ): StatWatcher;
+  /**
+   * Stop watching for changes on `filename`. If `listener` is specified, only that
+   * particular listener is removed. Otherwise, _all_ listeners are removed,
+   * effectively stopping watching of `filename`.
+   *
+   * Calling `fs.unwatchFile()` with a filename that is not being watched is a
+   * no-op, not an error.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile()` and`fs.unwatchFile()`. `fs.watch()` should be used instead of `fs.watchFile()`and `fs.unwatchFile()` when possible.
+   * @since v0.1.31
+   * @param listener Optional, a listener previously attached using `fs.watchFile()`
+   */
+  export function unwatchFile(
+    filename: PathLike,
+    listener?: StatsListener,
+  ): void;
+  export function unwatchFile(
+    filename: PathLike,
+    listener?: BigIntStatsListener,
+  ): void;
   interface CopyOptionsBase {
     /**
      * Dereference symlinks

@@ -10,6 +10,7 @@ const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -31,6 +32,8 @@ file_polls_: ?*JSC.FilePoll.Store = null,
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 mime_types: ?bun.HTTP.MimeType.Map = null,
+
+node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     if (this.hot_map == null) {
@@ -313,4 +316,11 @@ pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSR
     }
 
     return &rare.global_dns_data.?.resolver;
+}
+
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *StatWatcherScheduler {
+    return rare.node_fs_stat_watcher_scheduler orelse {
+        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
+        return rare.node_fs_stat_watcher_scheduler.?;
+    };
 }

@@ -4114,12 +4114,16 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.unlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlink)));
         if (@TypeOf(NodeJSFS.unlinkSync) != CallbackType)
             @compileLog("Expected NodeJSFS.unlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlinkSync)));
+        if (@TypeOf(NodeJSFS.unwatchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.unwatchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unwatchFile)));
         if (@TypeOf(NodeJSFS.utimes) != CallbackType)
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
         if (@TypeOf(NodeJSFS.watch) != CallbackType)
             @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
+        if (@TypeOf(NodeJSFS.watchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.watchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watchFile)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -4210,9 +4214,11 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.truncateSync, .{ .name = "NodeJSFSPrototype__truncateSync" });
             @export(NodeJSFS.unlink, .{ .name = "NodeJSFSPrototype__unlink" });
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
+            @export(NodeJSFS.unwatchFile, .{ .name = "NodeJSFSPrototype__unwatchFile" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
             @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
+            @export(NodeJSFS.watchFile, .{ .name = "NodeJSFSPrototype__watchFile" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -5641,6 +5647,94 @@ pub const JSServerWebSocket = struct {
         }
     }
 };
+pub const JSStatWatcher = struct {
+    const StatWatcher = Classes.StatWatcher;
+    const GetterType = fn (*StatWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*StatWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*StatWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*StatWatcher {
+        JSC.markBinding(@src());
+        return StatWatcher__fromJS(value);
+    }
+
+    extern fn StatWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `StatWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `StatWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of StatWatcher
+    pub fn toJS(this: *StatWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = StatWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(StatWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return StatWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of StatWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*StatWatcher) bool {
+        JSC.markBinding(@src());
+        return StatWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *StatWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(StatWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn StatWatcher__fromJS(JSC.JSValue) ?*StatWatcher;
+    extern fn StatWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn StatWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*StatWatcher) JSC.JSValue;
+
+    extern fn StatWatcher__dangerouslySetPtr(JSC.JSValue, ?*StatWatcher) bool;
+
+    comptime {
+        if (@TypeOf(StatWatcher.finalize) != (fn (*StatWatcher) callconv(.C) void)) {
+            @compileLog("StatWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(StatWatcher.doClose) != CallbackType)
+            @compileLog("Expected StatWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doClose)));
+        if (@TypeOf(StatWatcher.doRef) != CallbackType)
+            @compileLog("Expected StatWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doRef)));
+        if (@TypeOf(StatWatcher.doUnref) != CallbackType)
+            @compileLog("Expected StatWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(StatWatcher.doClose, .{ .name = "StatWatcherPrototype__doClose" });
+            @export(StatWatcher.doRef, .{ .name = "StatWatcherPrototype__doRef" });
+            @export(StatWatcher.doUnref, .{ .name = "StatWatcherPrototype__doUnref" });
+            @export(StatWatcher.finalize, .{ .name = "StatWatcherClass__finalize" });
+            @export(StatWatcher.hasPendingActivity, .{ .name = "StatWatcher__hasPendingActivity" });
+        }
+    }
+};
 pub const JSStats = struct {
     const Stats = Classes.Stats;
     const GetterType = fn (*Stats, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -6932,6 +7026,7 @@ comptime {
     _ = JSSHA512;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSStatWatcher;
     _ = JSStats;
     _ = JSSubprocess;
     _ = JSTCPSocket;

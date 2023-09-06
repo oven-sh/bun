@@ -299,6 +299,8 @@ pub const NodeJSFS = struct {
     }
 
     pub const watch = callSync(.watch);
+    pub const watchFile = callSync(.watchFile);
+    pub const unwatchFile = callSync(.unwatchFile);
 
     // Not implemented yet:
     const notimpl = fdatasync;

@@ -1573,9 +1573,9 @@ pub const Command = struct {
                 break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
             } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
                 const file_pathZ = brk2: {
-                        @memcpy(script_name_buf[0..file_path.len], file_path);
-                        script_name_buf[file_path.len] = 0;
-                        break :brk2 script_name_buf[0..file_path.len :0];
+                    @memcpy(script_name_buf[0..file_path.len], file_path);
+                    script_name_buf[file_path.len] = 0;
+                    break :brk2 script_name_buf[0..file_path.len :0];
                 };
 
                 break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });

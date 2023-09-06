@@ -1,8 +1,8 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-{% callout %}
-**Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
+## macOS and Linux
 
+{% callout %}
 **Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 {% /callout %}
 
@@ -31,6 +31,20 @@ $ proto install bun
 ```
 
 {% /codetabs %}
+
+## Windows
+
+Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+
+- `bun <file>`
+- `bun run <file>`
+
+The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+
+- `bun test`
+- `bun install/add/remove`
+- `bun link/unlink`
+- `bun build`
 
 ## Upgrading
 

@@ -162,10 +162,11 @@ pub const Fs = struct {
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd > 0) {
-                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, bun.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
+                file_handle = std.fs.File{
+                    .handle = bun.fdcast(bun.sys.openat(dirname_fd, bun.path.basename(path), std.os.O.RDONLY).unwrap() catch |err| brk: {
                     switch (err) {
-                        error.FileNotFound => {
-                            const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+                        error.NOENT => {
+                            const handle = try bun.sys.open(path, std.os.O.RDONLY).unwrap();
                             Output.prettyErrorln(
                                 "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
@@ -174,6 +175,7 @@ pub const Fs = struct {
                         },
                         else => return err,
                     }
+                    })
                 };
             } else {
                 const result = bun.sys.openatA(dirname_fd, path, std.os.O.RDONLY, 0);

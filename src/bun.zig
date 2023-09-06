@@ -777,7 +777,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
         try res.throw();
         return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res.result) } };
     } else {
-        const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
+        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwarp();
         return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }
@@ -788,7 +788,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
         try res.throw();
         return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res.result) } };
     } else {
-        const fd = try std.os.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
+        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwrap();
         return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }
@@ -799,8 +799,8 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         try res.throw();
         return std.fs.Dir{ .fd = fdcast(res.result) };
     } else {
-        const fd = try std.os.openatZ(invalid_fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
-        return std.fs.Dir{ .fd = fd };
+        const fd = try sys.open( path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwrap();
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;

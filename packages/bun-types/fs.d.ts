@@ -4067,6 +4067,96 @@ declare module "fs" {
     filename: PathLike,
     listener?: WatchListener<string>,
   ): FSWatcher;
+  interface CopyOptionsBase {
+    /**
+     * Dereference symlinks
+     * @default false
+     */
+    dereference?: boolean;
+    /**
+     * When `force` is `false`, and the destination
+     * exists, throw an error.
+     * @default false
+     */
+    errorOnExist?: boolean;
+    /**
+     * Overwrite existing file or directory. _The copy
+     * operation will ignore errors if you set this to false and the destination
+     * exists. Use the `errorOnExist` option to change this behavior.
+     * @default true
+     */
+    force?: boolean;
+    /**
+     * Modifiers for copy operation. See `mode` flag of {@link copyFileSync()}
+     */
+    mode?: number;
+    /**
+     * When `true` timestamps from `source` will
+     * be preserved.
+     * @default false
+     */
+    preserveTimestamps?: boolean;
+    /**
+     * Copy directories recursively.
+     * @default false
+     */
+    recursive?: boolean;
+    /**
+     * When true, path resolution for symlinks will be skipped
+     * @default false
+     */
+    verbatimSymlinks?: boolean;
+  }
+  export interface CopyOptions extends CopyOptionsBase {
+    /**
+     * Function to filter copied files/directories. Return
+     * `true` to copy the item, `false` to ignore it.
+     */
+    filter?(source: string, destination: string): boolean | Promise<boolean>;
+  }
+  export interface CopySyncOptions extends CopyOptionsBase {
+    /**
+     * Function to filter copied files/directories. Return
+     * `true` to copy the item, `false` to ignore it.
+     */
+    filter?(source: string, destination: string): boolean;
+  }
+  /**
+   * Asynchronously copies the entire directory structure from `src` to `dest`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   */
+  export function cp(
+    source: string | URL,
+    destination: string | URL,
+    callback: (error: ErrnoException | null) => void,
+  ): void;
+  export function cp(
+    source: string | URL,
+    destination: string | URL,
+    options: CopyOptions,
+    callback: (error: ErrnoException | null) => void,
+  ): void;
+  /**
+   * Synchronously copies the entire directory structure from `src` to `dest`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   */
+  export function cpSync(
+    source: string | URL,
+    destination: string | URL,
+    options?: CopySyncOptions,
+  ): void;
 }
 
 declare module "node:fs" {

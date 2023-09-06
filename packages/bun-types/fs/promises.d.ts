@@ -780,6 +780,22 @@ declare module "fs/promises" {
   ):
     | AsyncIterable<FileChangeInfo<string>>
     | AsyncIterable<FileChangeInfo<Buffer>>;
+  /**
+   * Asynchronously copies the entire directory structure from `source` to `destination`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   * @return Fulfills with `undefined` upon success.
+   */
+  function cp(
+    source: string | URL,
+    destination: string | URL,
+    options?: CopyOptions,
+  ): Promise<void>;
 }
 
 declare module "node:fs/promises" {

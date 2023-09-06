@@ -226,7 +226,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     this->putDirect(
         vm,
         JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, JSValue()),
+        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, jsUndefined()),
         PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
     this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
 }

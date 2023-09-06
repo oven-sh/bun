@@ -149,8 +149,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     void* m_sinkPtr;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onPull;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onClose;
+    mutable WriteBarrier<JSC::Unknown> m_onPull;
+    mutable WriteBarrier<JSC::Unknown> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
 
     JSReadableArrayBufferSinkController(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
@@ -296,8 +296,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     void* m_sinkPtr;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onPull;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onClose;
+    mutable WriteBarrier<JSC::Unknown> m_onPull;
+    mutable WriteBarrier<JSC::Unknown> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
 
     JSReadableFileSinkController(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
@@ -443,8 +443,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     void* m_sinkPtr;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onPull;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onClose;
+    mutable WriteBarrier<JSC::Unknown> m_onPull;
+    mutable WriteBarrier<JSC::Unknown> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
 
     JSReadableHTTPResponseSinkController(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
@@ -590,8 +590,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     void* m_sinkPtr;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onPull;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_onClose;
+    mutable WriteBarrier<JSC::Unknown> m_onPull;
+    mutable WriteBarrier<JSC::Unknown> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
 
     JSReadableHTTPSResponseSinkController(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)

@@ -201,9 +201,8 @@ interface BunLazyModules {
     callback: any;
   };
   "async_hooks": {
-    get: typeof import("./builtins/AsyncContext").getAsyncContext;
-    set: typeof import("./builtins/AsyncContext").setAsyncContext;
     cleanupLater: () => void;
+    setAsyncHooksEnabled: (enabled: boolean) => void;
   };
   "worker_threads": [
     //

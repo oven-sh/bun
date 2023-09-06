@@ -1426,22 +1426,22 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
-                if (js_type.canGet()) {
-                    // Attempt to get custom formatter
-                    if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
-                        if (callback_value.isCallable(globalThis.vm())) {
-                            return .{
-                                .tag = .{
-                                    .CustomFormattedObject = .{
-                                        .function = callback_value,
-                                        .this = value,
-                                    },
-                                },
-                                .cell = js_type,
-                            };
-                        }
-                    }
-                }
+                // if (js_type.canGet()) {
+                //     // Attempt to get custom formatter
+                //     if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                //         if (callback_value.isCallable(globalThis.vm())) {
+                //             return .{
+                //                 .tag = .{
+                //                     .CustomFormattedObject = .{
+                //                         .function = callback_value,
+                //                         .this = value,
+                //                     },
+                //                 },
+                //                 .cell = js_type,
+                //             };
+                //         }
+                //     }
+                // }
 
                 if (js_type == .DOMWrapper) {
                     return .{

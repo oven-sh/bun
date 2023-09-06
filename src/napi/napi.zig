@@ -1215,7 +1215,6 @@ pub const ThreadSafeFunction = struct {
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.EventLoop,
-    concurrent_task: JSC.ConcurrentTask = .{},
     concurrent_finalizer_task: JSC.ConcurrentTask = .{},
 
     env: napi_env,

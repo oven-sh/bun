@@ -239,7 +239,9 @@
     "xstring": "cpp",
     "xtree": "cpp",
     "xutility": "cpp",
-    "string.h": "c"
+    "string.h": "c",
+    "zutil.h": "c",
+    "gzguts.h": "c"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

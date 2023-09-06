@@ -4,6 +4,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const strings = bun.strings;
+const windows = bun.windows;
 const string = bun.string;
 const AsyncIO = @import("root").bun.AsyncIO;
 const JSC = @import("root").bun.JSC;
@@ -3545,13 +3546,16 @@ pub const NodeFS = struct {
         _ = flavor;
         const ret = Maybe(Return.CopyFile);
 
-        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var src = args.src.sliceZ(&src_buf);
-        var dest = args.dest.sliceZ(&dest_buf);
 
         // TODO: do we need to fchown?
         if (comptime Environment.isMac) {
+
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            var src = args.src.sliceZ(&src_buf);
+            var dest = args.dest.sliceZ(&dest_buf);
+
             if (args.mode.isForceClone()) {
                 // https://www.manpagez.com/man/2/clonefile/
                 return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
@@ -3618,6 +3622,12 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isLinux) {
+
+        var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src = args.src.sliceZ(&src_buf);
+            var dest = args.dest.sliceZ(&dest_buf);
+
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if (args.mode.isForceClone()) {
                 return Maybe(Return.CopyFile).todo;
@@ -3696,6 +3706,24 @@ pub const NodeFS = struct {
                     if (written == 0) break;
                     wrote +|= written;
                     size -|= written;
+                }
+            }
+
+            return ret.success;
+        }
+
+        if (comptime Environment.isWindows) {
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile).todo;
+            }
+
+        var src_buf: bun.MAX_WPATH = undefined;
+        var dest_buf: bun.MAX_WPATH = undefined;
+            var src = strings.toWPathNormalizeAutoExtend(&src_buf, args.src.slice());
+            var dest = strings.toWPathNormalizeAutoExtend(&dest_buf, args.dest.slice());
+            if (windows.CopyFileW(src.ptr, dest.ptr, if (args.mode.shouldntOverwrite()) 1 else 0) == windows.FALSE) {
+                if (ret.errnoSysP(0, .copyfile, args.src.slice())) |rest| {
+                    return rest;
                 }
             }
 

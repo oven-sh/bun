@@ -845,6 +845,8 @@ pub const PosixLoop = extern struct {
         return us_wakeup_loop(this);
     }
 
+    pub const wake = wakeup;
+
     pub fn tick(this: *PosixLoop) void {
         us_loop_run_bun_tick(this, 0);
     }
@@ -2279,6 +2281,8 @@ pub const UVLoop = extern struct {
         us_wakeup_loop(this);
     }
 
+    pub const wake = wakeup;
+
     pub fn tickWithTimeout(this: *UVLoop, _: i64) void {
         us_loop_run(this);
     }
@@ -2297,6 +2301,10 @@ pub const UVLoop = extern struct {
         us_loop_run(this);
     }
     pub const tick = run;
+
+    pub fn wait(this: *UVLoop) void {
+        us_loop_run(this);
+    }
 
     pub fn inc(this: *UVLoop) void {
         this.uv_loop.inc();

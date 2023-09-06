@@ -1164,7 +1164,7 @@ pub const BundleV2 = struct {
             thread.detach();
         } else {
             BundleThread.instance.queue.push(completion);
-            BundleThread.instance.waker.wake() catch {};
+            BundleThread.instance.waker.wake();
         }
 
         completion.poll_ref.ref(globalThis.bunVM());
@@ -1567,7 +1567,7 @@ pub const BundleV2 = struct {
             if (any) {
                 bun.Mimalloc.mi_collect(false);
             }
-            _ = instance.waker.wait() catch 0;
+            _ = instance.waker.wait();
         }
     }
 

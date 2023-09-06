@@ -522,7 +522,7 @@ pub const Waker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn wait(this: Waker) !usize {
+    pub fn wait(this: Waker) usize {
         bun.JSC.markBinding(@src());
         var events = zeroed;
 
@@ -536,11 +536,12 @@ pub const Waker = struct {
             null,
         );
 
-        if (count < 0) {
-            return asError(std.c.getErrno(count));
-        }
+        // we are not going to realistically handle these errors
+        // if (count < 0) {
+        //     return asError(std.c.getErrno(count));
+        // }
 
-        return @as(usize, @intCast(count));
+        return @as(usize, @intCast(@max(count, 0)));
     }
 
     extern fn io_darwin_create_machport(

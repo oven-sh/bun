@@ -1621,6 +1621,14 @@ pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
+pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (std.fs.path.isAbsoluteWindows(utf8)) {
+        return toExtendedPathNormalized(wbuf, utf8);
+    }
+
+    return toWPathNormalized(wbuf, utf8);
+}
+
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
     var path_to_use = utf8;

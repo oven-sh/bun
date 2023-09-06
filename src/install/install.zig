@@ -1190,8 +1190,6 @@ const PackageInstall = struct {
                     if (comptime Environment.isPosix) {
                         const stat = infile.stat() catch continue;
                         _ = C.fchmod(outfile.handle, stat.mode);
-                    } else {
-                        bun.todo(@src(), {});
                     }
 
                     bun.copyFile(infile.handle, outfile.handle) catch |err| {
@@ -1682,7 +1680,7 @@ pub const CacheLevel = struct {
     use_last_modified: bool,
 };
 const AsyncIO = bun.AsyncIO;
-const Waker = bun.AsyncIO.Waker;
+const Waker = if (Environment.isPosix) bun.AsyncIO.Waker else *bun.uws.UVLoop;
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
@@ -1795,13 +1793,13 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.waiter.wake() catch {};
+        this.waiter.wake();
     }
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
         bun.Mimalloc.mi_collect(false);
-        _ = this.waiter.wait() catch 0;
+        this.waiter.wait();
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -5362,7 +5360,7 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
-            .waiter = try Waker.init(ctx.allocator),
+            .waiter = if (Environment.isPosix) try Waker.init(ctx.allocator) else bun.uws.Loop.get(),
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -5439,7 +5437,7 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .waiter = try Waker.init(allocator),
+            .waiter = if (Environment.isPosix) try Waker.init(allocator) else bun.uws.Loop.get(),
         };
         manager.lockfile = try allocator.create(Lockfile);
 

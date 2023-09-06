@@ -711,11 +711,12 @@ pub const FileSystem = struct {
                 var new_buf: bun.MAX_WPATH = undefined;
                 this.close();
                 const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
-                const new = if (std.fs.path.isAbsoluteWindows(name)) 
-                bun.strings.toExtendedPathNormalized(&existing_buf, name) else
-                 bun.strings.toWPathNormalized(&existing_buf, name);
+                const new = if (std.fs.path.isAbsoluteWindows(name))
+                    bun.strings.toExtendedPathNormalized(&existing_buf, name)
+                else
+                    bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{strings.fmtUTF16(existing), strings.fmtUTF16( new)});
+                    debug("moveFileExW({s}, {s})", .{ strings.fmtUTF16(existing), strings.fmtUTF16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {

@@ -911,10 +911,11 @@ pub const RunCommand = struct {
                     }
 
                     var file_path = script_name_to_search;
-
-                    const file_: std.fs.File.OpenError!std.fs.File = brk: {
-                        if (script_name_to_search[0] == std.fs.path.sep) {
-                            break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
+var must_normalize = false;
+                    const file_: anyerror!std.fs.File = brk: {
+                        if (std.fs.path.isAbsolute( script_name_to_search)) {
+                            must_normalize = Environment.isWindows;
+                            break :brk bun.openFile(script_name_to_search, .{ .mode = .read_only });
                         } else {
                             const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
                             path_buf[cwd.len] = std.fs.path.sep_posix;
@@ -928,7 +929,7 @@ pub const RunCommand = struct {
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;
                             var file_pathZ = path_buf2[0..file_path.len :0];
-                            break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
+                            break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                         }
                     };
 
@@ -970,7 +971,13 @@ pub const RunCommand = struct {
                     }
 
                     Global.configureAllocator(.{ .long_running = true });
-                    Run.boot(ctx, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                    var out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
+                    if (must_normalize) {
+                        if (comptime Environment.isWindows) {
+                            std.mem.replaceScalar(u8, out_path, std.fs.path.sep_windows, std.fs.path.sep_posix);
+                        }
+                    }
+                    Run.boot(ctx, out_path) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {

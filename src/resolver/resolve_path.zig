@@ -463,11 +463,10 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    const normalized_from = if (platform.isAbsolute(from)) brk: {
-        const leading_separator = platform.leadingSeparatorIndex(from) orelse break :brk from;
-        var path = normalizeStringBuf(from, relative_from_buf[leading_separator..], true, platform, true);
-        @memcpy(relative_from_buf[0..leading_separator], from[0..leading_separator]);
-        break :brk relative_from_buf[0 .. path.len + leading_separator];
+    const normalized_from = if (from.len > 0 and from[0] == platform.separator()) brk: {
+        var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
+        relative_from_buf[0] = platform.separator();
+        break :brk relative_from_buf[0 .. path.len + 1];
     } else joinAbsStringBuf(
         Fs.FileSystem.instance.top_level_dir,
         &relative_from_buf,

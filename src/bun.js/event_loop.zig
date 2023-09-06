@@ -347,6 +347,10 @@ pub const ConcurrentTask = struct {
         return created;
     }
 
+    pub fn createFrom(task: anytype) *ConcurrentTask {
+        return create(Task.init(task));
+    }
+
     pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
         return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
     }

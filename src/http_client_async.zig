@@ -356,15 +356,19 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn init(this: *@This()) !void {
-            var opts: uws.us_bun_socket_context_options_t = .{
-                // we request the cert so we load root certs and can verify it
-                .request_cert = 1,
-                // we manually abort the connection if the hostname doesn't match
-                .reject_unauthorized = 0,
-            };
-            this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
+                var opts: uws.us_bun_socket_context_options_t = .{
+                    // we request the cert so we load root certs and can verify it
+                    .request_cert = 1,
+                    // we manually abort the connection if the hostname doesn't match
+                    .reject_unauthorized = 0,
+                };
+                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+
                 this.sslCtx().setup();
+            } else {
+                var opts: uws.us_socket_context_options_t = .{};
+                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             }
 
             HTTPSocket.configure(

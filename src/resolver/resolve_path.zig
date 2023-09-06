@@ -920,8 +920,18 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         out += part.len;
     }
 
-    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
-        temp_buf[0 .. i + 1]
+    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
+            var outdir = temp_buf[0 .. i + 1];
+             if (_platform == .windows or _platform == .loose) {
+                for (outdir) |*c| {
+                    if (c.* == '\\') {
+                        c.* = '/';
+                    }
+                }
+            }
+
+            break :brk outdir;
+        }
     else
         "/";
 

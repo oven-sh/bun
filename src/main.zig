@@ -11,7 +11,8 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr
 
 const CrashReporter = @import("./crash_reporter.zig");
 
-extern "C" var _environ: ?*anyopaque;
+pub extern "C" var _environ: ?*anyopaque;
+pub extern "C" var environ: ?*anyopaque;
 
 pub fn main() void {
     const bun = @import("root").bun;
@@ -21,7 +22,7 @@ pub fn main() void {
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
     if (comptime Environment.isWindows) {
-        std.c.environ = @ptrCast(std.os.environ.ptr);
+        environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
     }
 

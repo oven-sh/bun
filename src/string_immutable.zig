@@ -1488,7 +1488,7 @@ pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     return buf[0..encode_into_result.written :0];
 }
 
-pub fn toWObjectPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
     }
@@ -1498,7 +1498,7 @@ pub fn toWObjectPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 // These are the same because they don't have rules like needing a trailing slash
-pub const toWObjectDir = toWObjectPath;
+pub const toNTDir = toNTPath;
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;

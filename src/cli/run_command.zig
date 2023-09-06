@@ -917,13 +917,13 @@ pub const RunCommand = struct {
                             break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
                         } else {
                             const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                            path_buf[cwd.len] = std.fs.path.sep;
+                            path_buf[cwd.len] = std.fs.path.sep_posix;
                             var parts = [_]string{script_name_to_search};
                             file_path = resolve_path.joinAbsStringBuf(
                                 path_buf[0 .. cwd.len + 1],
                                 &path_buf2,
                                 &parts,
-                                .auto,
+                                .loose,
                             );
                             if (file_path.len == 0) break :possibly_open_with_bun_js;
                             path_buf2[file_path.len] = 0;

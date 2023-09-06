@@ -235,7 +235,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
     var wbuf: bun.MAX_WPATH = undefined;
-    _ = kernel32.CreateDirectoryW(bun.strings.toWObjectDir(&wbuf, file_path).ptr, null);
+    _ = kernel32.CreateDirectoryW(bun.strings.toNTDir(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
 }
@@ -380,7 +380,7 @@ pub noinline fn openDirAtWindowsA(
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
     var wbuf: bun.MAX_WPATH = undefined;
-    return openDirAtWindows(dirFd, bun.strings.toWObjectDir(&wbuf, path), iterable, no_follow);
+    return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
 pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
@@ -531,7 +531,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mod
         }
 
         var wbuf: bun.MAX_WPATH = undefined;
-        return openatWindows(dirfd, bun.strings.toWObjectPath(&wbuf, file_path), flags);
+        return openatWindows(dirfd, bun.strings.toNTPath(&wbuf, file_path), flags);
     }
 
     return openatOSPath(dirfd, file_path, flags, perm);
@@ -544,7 +544,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
         }
 
         var wbuf: bun.MAX_WPATH = undefined;
-        return openatWindows(dirfd, bun.strings.toWObjectPath(&wbuf, file_path), flags);
+        return openatWindows(dirfd, bun.strings.toNTPath(&wbuf, file_path), flags);
     }
 
     return openatOSPath(dirfd, std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
@@ -1342,6 +1342,25 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn exists(path: []const u8) bool {
+    if (comptime Environment.isPosix) {
+        if (comptime @inComptime()) {
+            return system.access(path, 0) == 0;
+        }
+
+
+        return system.access(&(std.os.toPosixPath(path) catch return false) , 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.MAX_WPATH = undefined;
+        const path_to_use = bun.strings.toWPath(&wbuf, path);
+        return  kernel32.GetFileAttributesW(path_to_use.ptr) != os.windows.INVALID_FILE_ATTRIBUTES;
+    }
+
+    @compileError("TODO: existsOSPath");
+}
+
 pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isPosix) {
         return bun.is_executable_fileZ(path);
@@ -1350,7 +1369,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSlice) bool {
     if (comptime Environment.isWindows) {
         var out: windows.DWORD = 8;
         const rc = kernel32.GetBinaryTypeW(path, &out);
-        log("GetBinaryTypeW({}) = {d}", .{ bun.String.init(path), out });
+        log("GetBinaryTypeW({}) = {d}", .{ bun.strings.fmtUTF16(path), out });
 
         if (rc == windows.FALSE) {
             return false;

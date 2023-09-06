@@ -155,6 +155,7 @@ const BunDebugHolder = struct {
 };
 
 fn dumpSource(specifier: string, printer: anytype) !void {
+    if (comptime Environment.isWindows) return;
     if (BunDebugHolder.dir == null) {
         BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
         BunDebugHolder.lock = bun.Lock.init();

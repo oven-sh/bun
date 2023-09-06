@@ -516,7 +516,7 @@ const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/fil
     test(`works with ${protocol} fetch using ${url}`, async () => {
       const server = protocol === "http" ? http_server : https_server;
       const server_url = `${protocol}://${server?.hostname}:${server?.port}`;
-      const res = await fetch(`${server_url}${url}`, { tls: { rejectUnauthorized: false }});
+      const res = await fetch(`${server_url}${url}`, { tls: { rejectUnauthorized: false } });
       let calls = 0;
       const rw = new HTMLRewriter();
       rw.on("h1", {

@@ -30,7 +30,6 @@ function listen(server: Server): Promise<URL> {
 
 describe("node:http", () => {
   describe("createServer", async () => {
-    
     it("hello world", async () => {
       try {
         var server = createServer((req, res) => {
@@ -831,7 +830,7 @@ describe("node:http", () => {
       }
     });
   });
-  
+
   test("test unix socket server", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {

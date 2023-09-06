@@ -1405,10 +1405,19 @@ pub const PathName = struct {
         var _i = strings.lastIndexOfChar(path, '/');
         while (_i) |i| {
             // Stop if we found a non-trailing slash
+            // - "foo/index.js" => { dir: "foo", base: "index.js" }
+            // - "/foo" => { dir: "/", base: "foo" }
+            // - "/foo/" => { dir: "/", base: "foo/" }
+            // - "/foo/bar" => { dir: "/foo", base: "bar" }
+            // - "/foo/bar/" => { dir: "/foo", base: "bar/" }
             if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
-                dir = path[0..i];
                 is_absolute = false;
+                if (i == 0) {
+                    dir = path[0 .. i + 1];
+                } else {
+                    dir = path[0..i];
+                }
                 break;
             }
 
@@ -1428,16 +1437,21 @@ pub const PathName = struct {
         if (is_absolute) {
             dir = &([_]u8{});
         }
-
         if (base.len > 1 and base[base.len - 1] == '/') {
             base = base[0 .. base.len - 1];
         }
+
+        const filename = switch (dir.len) {
+            0 => _path,
+            1 => _path[dir.len..],
+            else => _path[dir.len + 1 ..],
+        };
 
         return PathName{
             .dir = dir,
             .base = base,
             .ext = ext,
-            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
+            .filename = filename,
         };
     }
 };

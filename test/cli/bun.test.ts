@@ -79,4 +79,38 @@ describe("bun", () => {
       }
     });
   });
+
+  test("test bun . in different path, issue#4516", () => {
+    function expectSuccess(cwd: string, path: string) {
+      fs.writeFileSync(path, "console.log('Bun!')");
+      const p = Bun.spawnSync({
+        cmd: [bunExe(), "."],
+        cwd: cwd,
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      expect(p.exitCode).toBe(0);
+    }
+    // Run `bun .` in /tmp
+    {
+      const cwd = tmpdir();
+      const path = `${cwd}/index.ts`;
+      try {
+        expectSuccess(cwd, path);
+      } finally {
+        fs.unlinkSync(path);
+      }
+    }
+    // Run `bun .` in /tmp/xxx
+    {
+      const cwd = `${tmpdir()}/bun-cli-test-${Date.now()}`;
+      fs.mkdirSync(cwd);
+      const path = `${cwd}/index.ts`;
+      try {
+        expectSuccess(cwd, path);
+      } finally {
+        fs.rmSync(cwd, { recursive: true });
+      }
+    }
+  });
 });

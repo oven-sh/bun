@@ -864,7 +864,7 @@ pub const Map = struct {
 
         var iter_ = this.map.iterator();
         while (iter_.next()) |entry| {
-            try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.*));
+            try env_map.put(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.*));
         }
 
         return env_map;

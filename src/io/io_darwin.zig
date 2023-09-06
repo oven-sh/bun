@@ -512,7 +512,7 @@ pub const Waker = struct {
 
     const zeroed = std.mem.zeroes([16]Kevent64);
 
-    pub fn wake(this: *Waker) !void {
+    pub fn wake(this: *Waker) void {
         bun.JSC.markBinding(@src());
 
         if (io_darwin_schedule_wakeup(this.machport)) {
@@ -522,11 +522,11 @@ pub const Waker = struct {
         this.has_pending_wake = true;
     }
 
-    pub fn wait(this: Waker) usize {
+    pub fn wait(this: Waker) void {
         bun.JSC.markBinding(@src());
         var events = zeroed;
 
-        const count = std.os.system.kevent64(
+        _ = std.os.system.kevent64(
             this.kq,
             &events,
             0,
@@ -535,13 +535,6 @@ pub const Waker = struct {
             0,
             null,
         );
-
-        // we are not going to realistically handle these errors
-        // if (count < 0) {
-        //     return asError(std.c.getErrno(count));
-        // }
-
-        return @as(usize, @intCast(@max(count, 0)));
     }
 
     extern fn io_darwin_create_machport(

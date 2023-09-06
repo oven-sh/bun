@@ -183,7 +183,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
     if (filename.len > 0)
         file = bun.openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.NOENT, error.PERM, error.INVAL => LoadFromDiskResult{ .not_found = {} },
+                error.ENOENT, error.EPERM, error.EINVAL => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
         };
@@ -3031,7 +3031,7 @@ pub const Package = extern struct {
                     0,
                     true,
                 ) catch |err| switch (err) {
-                    error.NOENT => {
+                    error.ENOENT => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3041,7 +3041,7 @@ pub const Package = extern struct {
                         ) catch {};
                         continue;
                     },
-                    error.NOTDIR => {
+                    error.ENOTDIR => {
                         log.addWarningFmt(
                             source,
                             loc,

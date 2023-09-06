@@ -997,7 +997,7 @@ const PackageInstall = struct {
             step: Step,
 
             pub inline fn isPackageMissingFromCache(this: @This()) bool {
-                return (this.err == error.FileNotFound or this.err == error.NOENT) and this.step == .opening_cache_dir;
+                return (this.err == error.FileNotFound or this.err == error.ENOENT) and this.step == .opening_cache_dir;
             }
         },
         pending: void,
@@ -1309,7 +1309,12 @@ const PackageInstall = struct {
                                     }
                                 }
                             } else {
-                                try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                                try bun.sys.linkat(
+                                    entry.dir.dir.fd,
+                                    entry.basename,
+                                    destination_dir_.dir.fd,
+                                    entry.path,
+                                ).unwrap();
                             }
 
                             real_file_count += 1;
@@ -1604,11 +1609,11 @@ const PackageInstall = struct {
                     return result;
                 } else |err| {
                     switch (err) {
-                        error.NotSameFileSystem => {
+                        error.ENXIO => {
                             supported_method = .copyfile;
                             supported_method_to_use = .copyfile;
                         },
-                        error.NOENT, error.FileNotFound => return Result{
+                        error.ENOENT => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
                         },
                         else => return Result{

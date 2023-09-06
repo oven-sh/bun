@@ -658,7 +658,7 @@ pub const FileSystem = struct {
                 std.debug.assert(this.fd != bun.invalid_fd);
                 std.debug.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, std.fs.cwd(), name);
+                try C.moveFileZWithHandle(bun.fdcast(this.fd), bun.fdcast(this.dir_fd), from_name, std.fs.cwd().fd, name);
                 this.close();
             }
 
@@ -917,14 +917,13 @@ pub const FileSystem = struct {
             const dirfd = if (Environment.isWindows)
                 bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, true, true)
             else
-                bun.sys.openAtA(
-                    std.fs.cwd().fd,
+                bun.sys.openA(
                     unsafe_dir_string,
                     std.os.O.DIRECTORY,
+                    0,
                 );
-            try dirfd.throw();
             return std.fs.Dir{
-                .fd = bun.fdcast(dirfd.result),
+                .fd = bun.fdcast(try dirfd.unwrap()),
             };
         }
 

@@ -242,21 +242,21 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
 pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
     if (comptime Environment.isMac) {
-        return Maybe(void).errnoSysP(system.mkdir(std.os.toPosixPath(file_path) catch return Maybe(void){
+        return Maybe(void).errnoSysP(system.mkdir(&(std.os.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
                 .errno = @intFromEnum(bun.C.E.NOMEM),
                 .syscall = .open,
             },
-        }, flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isLinux) {
-        return Maybe(void).errnoSysP(linux.mkdir(std.os.toPosixPath(file_path) catch return Maybe(void){
+        return Maybe(void).errnoSysP(linux.mkdir(&(std.os.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
                 .errno = @intFromEnum(bun.C.E.NOMEM),
                 .syscall = .open,
             },
-        }, flags), .mkdir, file_path) orelse Maybe(void).success;
+        }), flags), .mkdir, file_path) orelse Maybe(void).success;
     }
 
     var wbuf: bun.MAX_WPATH = undefined;
@@ -572,12 +572,17 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
         return openatWindows(dirfd, bun.strings.toNTPath(&wbuf, file_path), flags);
     }
 
-    return openatOSPath(dirfd, std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
-        .err = .{
-            .errno = @intFromEnum(bun.C.E.NOMEM),
-            .syscall = .open,
-        },
-    }, flags, perm);
+    return openatOSPath(
+        dirfd,
+        &(std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .syscall = .open,
+            },
+        }),
+        flags,
+        perm,
+    );
 }
 
 pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1369,10 +1374,6 @@ pub fn existsOSPath(path: bun.OSPathSlice) bool {
 
 pub fn exists(path: []const u8) bool {
     if (comptime Environment.isPosix) {
-        if (comptime @inComptime()) {
-            return system.access(path, 0) == 0;
-        }
-
         return system.access(&(std.os.toPosixPath(path) catch return false), 0) == 0;
     }
 
@@ -1420,7 +1421,9 @@ pub fn isExecutableFilePath(path: anytype) bool {
         switch (Type) {
             *[*:0]const u8, *[*:0]u8, [*:0]const u8, [*:0]u8 => return bun.is_executable_fileZ(path),
             [:0]const u8, [:0]u8 => return bun.is_executable_fileZ(path.ptr),
-            []const u8, []u8 => return bun.is_executable_fileZ(&(std.os.toPosixPath(path) catch return false)),
+            []const u8, []u8 => return bun.is_executable_fileZ(
+                &(std.os.toPosixPath(path) catch return false),
+            ),
             else => @compileError("TODO: isExecutableFilePath"),
         }
     }
@@ -1490,4 +1493,28 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
 
     const out = std.c.dup(fd);
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+}
+
+pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun.FileDescriptor, dest_name: []const u8) Maybe(void) {
+    return Maybe(void).errnoSysP(
+        std.c.linkat(
+            @intCast(dir_fd),
+            &(std.os.toPosixPath(basename) catch return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .syscall = .open,
+                },
+            }),
+            @intCast(dest_dir_fd),
+            &(std.os.toPosixPath(dest_name) catch return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .syscall = .open,
+                },
+            }),
+            0,
+        ),
+        .link,
+        basename,
+    ) orelse Maybe(void).success;
 }

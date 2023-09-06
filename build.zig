@@ -52,6 +52,18 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
 
     step.addModule("async_io", io);
 
+    step.addModule("zlib-internal", brk: {
+        if (target.isWindows()) {
+            break :brk b.createModule(.{
+                .source_file = FileSource.relative("src/deps/zlib.win32.zig")
+            });
+        }
+
+        break :brk b.createModule(.{
+            .source_file = FileSource.relative("src/deps/zlib.posix.zig")
+        });
+    });
+
     var async_: *Module = brk: {
         if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
             break :brk b.createModule(.{

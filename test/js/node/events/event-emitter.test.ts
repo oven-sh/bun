@@ -54,6 +54,18 @@ describe("node:events", () => {
     emitter.emit("hey", 2);
   });
 
+  /// https://github.com/oven-sh/bun/issues/4518
+  test("once removes the listener afterwards", async () => {
+    const emitter = new EventEmitter();
+    process.nextTick(() => {
+      emitter.emit("hey", 1);
+    });
+    const promise = EventEmitter.once(emitter, "hey");
+    expect(emitter.listenerCount("hey")).toBe(1);
+    await promise;
+    expect(emitter.listenerCount("hey")).toBe(0);
+  });
+
   // TODO: extensive events.on tests
   // test("on", () => {
   //   const emitter = new EventEmitter();

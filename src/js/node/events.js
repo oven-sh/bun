@@ -348,9 +348,10 @@ function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
 
 function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   if (typeof emitter.on === "function") {
-    emitter.on(name, listener);
+    if (flags.once) emitter.once(name, listener);
+    else emitter.on(name, listener);
   } else {
-    emitter.addEventListener(name, listener);
+    emitter.addEventListener(name, listener, flags);
   }
 }
 

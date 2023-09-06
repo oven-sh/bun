@@ -23,6 +23,10 @@ pub const UNICODE_STRING = windows.UNICODE_STRING;
 pub const NTSTATUS = windows.NTSTATUS;
 pub const NT_SUCCESS = windows.NT_SUCCESS;
 pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
+pub const MOVEFILE_COPY_ALLOWED = 0x2;
+pub const MOVEFILE_REPLACE_EXISTING = 0x1;
+pub const MOVEFILE_WRITE_THROUGH = 0x8;
+
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
 pub const kernel32 = windows.kernel32;
@@ -2906,6 +2910,13 @@ pub const Win32Error = enum(u16) {
 
     pub fn get() Win32Error {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
+    }
+
+    pub fn throw(this: @This()) !void {
+        if (this == .SUCCESS) return;
+        if (this.toSystemErrno()) |err| {
+            return err.toError();
+        }
     }
 
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {

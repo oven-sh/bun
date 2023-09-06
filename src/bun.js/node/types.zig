@@ -89,6 +89,11 @@ pub fn Maybe(comptime ResultType: type) type {
             }
         }
 
+        pub fn unwrap(this: @This()) !ReturnType {
+            try this.throw();
+            return this.result;
+        }
+
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             switch (this) {
                 .err => |e| {

@@ -849,9 +849,15 @@ const PackageInstall = struct {
             .symlink = true,
         });
 
+        pub const windows = BackendSupport.initDefault(false, .{
+            .hardlink = true,
+            .copyfile = true,
+        });
+
         pub inline fn isSupported(this: Method) bool {
             if (comptime Environment.isMac) return macOS.get(this);
             if (comptime Environment.isLinux) return linux.get(this);
+            if (comptime Environment.isWindows) return windows.get(this);
 
             return false;
         }
@@ -1604,7 +1610,7 @@ const PackageInstall = struct {
                             supported_method = .copyfile;
                             supported_method_to_use = .copyfile;
                         },
-                        error.FileNotFound => return Result{
+                        error.NOENT, error.FileNotFound => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
                         },
                         else => return Result{
@@ -2910,7 +2916,7 @@ pub const PackageManager = struct {
             );
         }
 
-        try tmpfile.promote(tmpname, std.fs.cwd().fd, "yarn.lock");
+        try tmpfile.promoteToCWD(tmpname, "yarn.lock");
     }
 
     pub fn isRootDependency(this: *const PackageManager, id: DependencyID) bool {
@@ -3740,7 +3746,7 @@ pub const PackageManager = struct {
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.map.get("HOME")) |dir| {
+        if (env.map.get(bun.DotEnv.home_env)) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
@@ -4521,7 +4527,7 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     ".bun",
@@ -7249,7 +7255,7 @@ pub const PackageManager = struct {
         const cwd = std.fs.cwd();
         var node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
-            (if (comptime Environment.isWindows) std.os.mkdiratW(cwd.fd, bun.strings.w("node_modules"), 0) else cwd.makeDirZ("node_modules")) catch |err| {
+            bun.sys.mkdir("node_modules", 0).throw() catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -7308,7 +7314,7 @@ pub const PackageManager = struct {
                 // We use this file descriptor to know where to put it.
                 installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
                     // Avoid extra mkdir() syscall
-                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    try cwd.makePath(node_modules.relative_path);
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
 

@@ -235,7 +235,32 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
     var wbuf: bun.MAX_WPATH = undefined;
-    _ = kernel32.CreateDirectoryW(bun.strings.toNTDir(&wbuf, file_path).ptr, null);
+    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
+
+    return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
+}
+
+pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
+    if (comptime Environment.isMac) {
+        return Maybe(void).errnoSysP(system.mkdir(std.os.toPosixPath(file_path) catch return Maybe(void){
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .syscall = .open,
+            },
+        }, flags), .mkdir, file_path) orelse Maybe(void).success;
+    }
+
+    if (comptime Environment.isLinux) {
+        return Maybe(void).errnoSysP(linux.mkdir(std.os.toPosixPath(file_path) catch return Maybe(void){
+            .err = .{
+                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .syscall = .open,
+            },
+        }, flags), .mkdir, file_path) orelse Maybe(void).success;
+    }
+
+    var wbuf: bun.MAX_WPATH = undefined;
+    _ = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
 
     return Maybe(void).errnoSysP(0, .mkdir, file_path) orelse Maybe(void).success;
 }
@@ -386,7 +411,6 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mo
     const nonblock = flags & O.NONBLOCK != 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
-
     if (flags & O.RDWR != 0) {
         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
     } else if (flags & O.WRONLY != 0) {
@@ -431,6 +455,7 @@ pub fn openatWindows(dirfD: bun.FileDescriptor, path: []const u16, flags: bun.Mo
             if (flags & O.EXCL != 0) {
                 break :blk w.FILE_CREATE;
             }
+            break :blk w.FILE_OPEN_IF;
         }
         break :blk w.FILE_OPEN;
     };

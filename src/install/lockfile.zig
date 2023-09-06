@@ -181,9 +181,9 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
     var file = std.io.getStdIn();
 
     if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
+        file = bun.openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
+                error.NOENT, error.PERM, error.INVAL => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
         };
@@ -1455,7 +1455,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     var tmpfile = FileSystem.RealFS.Tmpfile{};
     var secret: [32]u8 = undefined;
     std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
-    var base64_bytes: [64]u8 = undefined;
+    var base64_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
     const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
@@ -1486,7 +1486,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         );
     }
 
-    tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
+    tmpfile.promoteToCWD(tmpname, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
         Global.crash();
@@ -2453,7 +2453,7 @@ pub const Package = extern struct {
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var file = std.fs.cwd().openFile(Path.join(
+                                var file = bun.openFileZ(Path.joinZ(
                                     &[_]string{ path, "package.json" },
                                     .auto,
                                 ), .{ .mode = .read_only }) catch break :brk false;
@@ -2858,6 +2858,7 @@ pub const Package = extern struct {
             const paths = [_]string{ path, "package.json" };
             break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
+        // TODO: windows
         var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
         defer workspace_file.close();
 
@@ -3072,12 +3073,11 @@ pub const Package = extern struct {
                     );
 
                     if (entry.cache.fd == 0) {
-                        entry.cache.fd = bun.toFD(std.os.openatZ(
-                            std.fs.cwd().fd,
+                        entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
                             0,
-                        ) catch continue);
+                        ).unwrap() catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;

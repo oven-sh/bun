@@ -821,7 +821,11 @@ threadlocal var join_buf: [4096]u8 = undefined;
 pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, _platform);
 }
-
+pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    var joined = joinStringBuf(join_buf[0 .. join_buf.len - 1], _parts, _platform);
+    join_buf[joined.len] = 0;
+    return join_buf[0..joined.len :0];
+}
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
         var alloc = std.heap.FixedBufferAllocator.init(buf);

@@ -350,7 +350,7 @@ pub const Loader = struct {
         }
         this.did_load_process = true;
 
-        if (this.map.get("HOME")) |home_folder| {
+        if (this.map.get(bun.DotEnv.home_env)) |home_folder| {
             Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
         } else if (this.map.get("USER")) |home_folder| {
             Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
@@ -1121,3 +1121,5 @@ test "DotEnv Loader - copyForDefine" {
     try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.data, "example.com");
     try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 }
+
+pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";

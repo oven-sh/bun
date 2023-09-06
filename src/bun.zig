@@ -740,6 +740,19 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
+pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
+    var flags: Mode = 0;
+    switch (open_flags.mode) {
+        .read_only => flags |= std.os.O.RDONLY,
+        .write_only => flags |= std.os.O.WRONLY,
+        .read_write => flags |= std.os.O.RDWR,
+    }
+
+    const res = sys.open(pathZ, flags, 0);
+    try res.throw();
+    return std.fs.File{ .handle = fdcast(res.result) };
+}
+
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
     if (comptime Environment.isWindows) {
         const res = sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false);
@@ -747,6 +760,17 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
         return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res.result) } };
     } else {
         const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
+        return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+    }
+}
+
+pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
+    if (comptime Environment.isWindows) {
+        const res = sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false);
+        try res.throw();
+        return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res.result) } };
+    } else {
+        const fd = try std.os.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
         return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }

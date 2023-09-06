@@ -928,7 +928,7 @@ pub const Fetch = struct {
             }
 
             var ref = this.promise;
-            const promise_value = ref.value();
+            const promise_value = ref.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();

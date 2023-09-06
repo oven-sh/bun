@@ -1181,7 +1181,7 @@ extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStrea
 
 // initializeNextTickQueue
 #define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_INITIALIZENEXTTICKQUEUE 1
-extern const char* const s_processObjectInternalsInitializeNextTickQueueCode;
+extern const char* s_processObjectInternalsInitializeNextTickQueueCode;
 extern const int s_processObjectInternalsInitializeNextTickQueueCodeLength;
 extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;

@@ -94,6 +94,10 @@ pub const AsyncReaddirTask = struct {
         var node_fs = NodeFS{};
         this.result = node_fs.readdir(this.args, .promise);
 
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
@@ -371,6 +375,10 @@ pub const AsyncReadFileTask = struct {
         var node_fs = NodeFS{};
         this.result = node_fs.readFile(this.args, .promise);
 
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
@@ -460,6 +468,10 @@ pub const AsyncCopyFileTask = struct {
 
         var node_fs = NodeFS{};
         this.result = node_fs.copyFile(this.args, .promise);
+
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
 
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }

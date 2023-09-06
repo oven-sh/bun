@@ -2737,6 +2737,7 @@ pub const VirtualMachine = struct {
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+    extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
@@ -2767,6 +2768,7 @@ pub const VirtualMachine = struct {
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
+                Process__emitDisconnectEvent(global);
             }
             uws.us_socket_context_free(0, this.uws_context);
             bun.default_allocator.destroy(this);

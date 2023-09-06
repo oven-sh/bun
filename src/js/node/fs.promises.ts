@@ -1,4 +1,4 @@
-import { Dirent } from "fs";
+import type { Dirent } from "fs";
 
 // Hardcoded module "node:fs/promises"
 const constants = $processBindingConstants.fs;

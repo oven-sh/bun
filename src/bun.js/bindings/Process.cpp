@@ -757,6 +757,20 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsBoolean(Bun__GlobalObject__hasIPC(process->globalObject())));
+}
+JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    return false;
+}
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -1737,6 +1751,17 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 }
 
+extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    auto ident = Identifier::fromString(vm, "disconnect"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        process->wrapped().emit(ident, args);
+    }
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                    Function 1
@@ -1749,6 +1774,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
+  connected                        processConnected                         CustomAccessor
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor

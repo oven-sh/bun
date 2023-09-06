@@ -245,6 +245,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSServerWebSocket::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSServerWebSocket::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSStatWatcher.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSStatWatcher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSStatWatcher::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSStats.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSStats::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -338,6 +344,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSSHA512.visit(visitor);  visitor.append(thisObject->m_JSSHA512SetterValue);
       thisObject->m_JSSHA512_256.visit(visitor);  visitor.append(thisObject->m_JSSHA512_256SetterValue);
       thisObject->m_JSServerWebSocket.visit(visitor);  visitor.append(thisObject->m_JSServerWebSocketSetterValue);
+      thisObject->m_JSStatWatcher.visit(visitor);  visitor.append(thisObject->m_JSStatWatcherSetterValue);
       thisObject->m_JSStats.visit(visitor);  visitor.append(thisObject->m_JSStatsSetterValue);
       thisObject->m_JSSubprocess.visit(visitor);  visitor.append(thisObject->m_JSSubprocessSetterValue);
       thisObject->m_JSTCPSocket.visit(visitor);  visitor.append(thisObject->m_JSTCPSocketSetterValue);

@@ -298,6 +298,8 @@ public:
         return m_processEnvObject.getInitializedOnMainThread(this);
     }
 
+    void drainMicrotasks();
+
     void handleRejectedPromises();
     void initGeneratedLazyClasses();
 
@@ -365,6 +367,8 @@ public:
         return func;
     }
 
+    bool asyncHooksNeedsCleanup = false;
+
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
      *
@@ -401,6 +405,7 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_JSURLSearchParamsSetterValue;
     mutable JSC::WriteBarrier<JSC::Unknown> m_JSWebSocketSetterValue;
     mutable JSC::WriteBarrier<JSC::Unknown> m_JSWorkerSetterValue;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_nextTickQueue;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_JSBunDebuggerValue;
     mutable JSC::WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];

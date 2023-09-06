@@ -244,6 +244,12 @@ JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getIni
   JSC::LazyClassStructure m_JSServerWebSocket;
   bool hasJSServerWebSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSServerWebSocketSetterValue;
+JSC::Structure* JSStatWatcherStructure() { return m_JSStatWatcher.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSStatWatcherConstructor() { return m_JSStatWatcher.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSStatWatcherPrototype() { return m_JSStatWatcher.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSStatWatcher;
+  bool hasJSStatWatcherSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSStatWatcherSetterValue;
 JSC::Structure* JSStatsStructure() { return m_JSStats.getInitializedOnMainThread(this); }
         JSC::JSObject* JSStatsConstructor() { return m_JSStats.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSStatsPrototype() { return m_JSStats.prototypeInitializedOnMainThread(this); }

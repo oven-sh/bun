@@ -531,6 +531,26 @@ describe("fetch", () => {
     expect(response2.status).toBe(200);
     expect(await response2.text()).toBe("0");
   });
+
+  it("should work with ipv6 localhost", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Pass!");
+      },
+    });
+
+    let res = await fetch(`http://[::1]:${server.port}`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[::]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0:0:0:0:0:0:0:1]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0000:0000:0000:0000:0000:0000:0000:0001]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {

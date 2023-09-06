@@ -3182,7 +3182,7 @@ pub const Arguments = struct {
 
     pub const UnwatchFile = void;
     pub const Watch = JSC.Node.FSWatcher.Arguments;
-    pub const WatchFile = void;
+    pub const WatchFile = JSC.Node.StatWatcher.Arguments;
     pub const Fsync = struct {
         fd: FileDescriptor,
 
@@ -3367,7 +3367,7 @@ const Return = struct {
     pub const Unlink = void;
     pub const UnwatchFile = void;
     pub const Watch = JSC.JSValue;
-    pub const WatchFile = void;
+    pub const WatchFile = JSC.JSValue;
     pub const Utimes = void;
 
     pub const Chown = void;
@@ -5251,6 +5251,25 @@ pub const NodeFS = struct {
         }
 
         return Maybe(Return.Unlink).todo;
+    }
+    pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
+        std.debug.assert(flavor == .sync);
+
+        if (comptime Environment.isWindows) {
+            args.global_this.throwTODO("watch is not supported on Windows yet");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        }
+
+        const watcher = args.createStatWatcher() catch |err| {
+            var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            defer bun.default_allocator.free(buf);
+            args.global_this.throwValue((JSC.SystemError{
+                .message = bun.String.init(buf),
+                .path = bun.String.init(args.path.slice()),
+            }).toErrorInstance(args.global_this));
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        };
+        return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
         return Maybe(Return.UnwatchFile).todo;

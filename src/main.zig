@@ -19,7 +19,7 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
-    if (comptime Environment.isRelease)
+    if (comptime Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
     if (comptime Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);

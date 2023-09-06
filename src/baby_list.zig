@@ -153,8 +153,9 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn list(this: ListType) std.ArrayListUnmanaged(Type) {
+            const items = if (this.ptr) |ptr| ptr[0..this.len] else @as([]Type, &.{});
             return std.ArrayListUnmanaged(Type){
-                .items = this.ptr.?[0..this.len],
+                .items = items,
                 .capacity = this.cap,
             };
         }

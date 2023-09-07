@@ -1350,10 +1350,6 @@ pub const InternalState = struct {
             reader.deinit();
         }
 
-        // if we are holding a cloned_metadata we need to deinit it
-        // this should never happen because we should always return the metadata to the user
-        std.debug.assert(this.cloned_metadata == null);
-        // just in case we check and free to avoid leaks
         if (this.cloned_metadata != null) {
             this.cloned_metadata.?.deinit(allocator);
             this.cloned_metadata = null;
@@ -2900,10 +2896,6 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
-
-    this.state.reset(this.allocator);
-    this.proxy_tunneling = false;
-
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;
@@ -2911,6 +2903,9 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 
     const callback = this.result_callback;
     const result = this.toResult();
+    this.state.reset(this.allocator);
+    this.proxy_tunneling = false;
+
     callback.run(result);
 }
 

@@ -3340,6 +3340,11 @@ describe("Git URLs", () => {
       commit_sha: null,
     },
     {
+      url: "ssh://git@github.com:mishoo/UglifyJS.git",
+      expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
+      commit_sha: null,
+    },
+    {
       url: "github.com:mishoo/UglifyJS.git",
       expected_out_url: "git+ssh://github.com:mishoo/UglifyJS.git",
       commit_sha: null,
@@ -3349,11 +3354,11 @@ describe("Git URLs", () => {
       expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
       commit_sha: null,
     },
-    // {
-    //   url: "git://git@github.com/mishoo/UglifyJS.git",
-    //   expected_out_url: null,
-    //   commit_sha: null,
-    // },
+    {
+      url: "git://github.com/mishoo/UglifyJS.git",
+      expected_out_url: "github:mishoo/UglifyJS",
+      commit_sha: null,
+    },
     {
       url: "git+https://git@github.com/mishoo/UglifyJS.git#v3.14.1",
       expected_out_url: "git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
@@ -3395,7 +3400,7 @@ describe("Git URLs", () => {
       expect(stdout).toBeDefined();
       let out = await new Response(stdout).text();
       out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, ""); // remove timings
-      if (dep.commit_sha === null) out = out.replace(/(\.git)#[a-f0-9]+/, "$1"); // remove commit SHA
+      if (dep.commit_sha === null) out = out.replace(/(\.git)?#[a-f0-9]+/, "$1"); // remove commit SHA
 
       const expected_out_url = dep.expected_out_url === null ? dep.url : dep.expected_out_url;
       expect(out.split(/\r?\n/)).toEqual([

@@ -179,7 +179,7 @@ static const struct HashTableValue processObjectTableValues[62] = {
    { "mainModule"_s, ((static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::Builtin|PropertyAttribute::Accessor|PropertyAttribute::Function)) & ~PropertyAttribute::Function) | PropertyAttribute::Builtin, NoIntrinsic, { HashTableValue::BuiltinGeneratorType, processObjectMainModuleCodeGenerator, 0 } },
    { "memoryUsage"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructMemoryUsage } },
    { "moduleLoadList"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, Process_stubEmptyArray } },
-   { "nextTick"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_functionNextTick, 1 } },
+   { "nextTick"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructProcessNextTickFn } },
    { "openStdin"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_functionOpenStdin, 0 } },
    { "pid"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructPid } },
    { "platform"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructPlatform } },

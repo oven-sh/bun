@@ -47,6 +47,7 @@ pub const Classes = struct {
     pub const BuildMessage = JSC.BuildMessage;
     pub const ResolveMessage = JSC.ResolveMessage;
     pub const FSWatcher = JSC.Node.FSWatcher;
+    pub const StatWatcher = JSC.Node.StatWatcher;
     pub const HTTPServer = JSC.API.HTTPServer;
     pub const HTTPSServer = JSC.API.HTTPSServer;
     pub const DebugHTTPServer = JSC.API.DebugHTTPServer;

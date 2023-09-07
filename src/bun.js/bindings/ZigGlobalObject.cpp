@@ -130,6 +130,7 @@
 #endif
 
 #include "BunObject.h"
+#include "JSNextTickQueue.h"
 
 using namespace Bun;
 
@@ -294,7 +295,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 }
 
 extern "C" void* Bun__getVM();
-extern "C" JSGlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 
 // Error.captureStackTrace may cause computeErrorInfo to be called twice
 // Rather than figure out the plumbing in JSC, we just skip the next call
@@ -432,6 +433,44 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
     return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
+static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObject);
+
+static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
+{
+    auto* globalObject = Bun__getDefaultGlobal();
+    if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
+        auto* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueueValue);
+        resetOnEachMicrotaskTick(vm, globalObject);
+        queue->drain(vm, globalObject);
+    }
+}
+
+static void cleanupAsyncHooksData(JSC::VM& vm)
+{
+    auto* globalObject = Bun__getDefaultGlobal();
+    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+    globalObject->asyncHooksNeedsCleanup = false;
+    if (!globalObject->m_nextTickQueue) {
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+        checkIfNextTickWasCalledDuringMicrotask(vm);
+    } else {
+        vm.setOnEachMicrotaskTick(nullptr);
+    }
+}
+
+static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    if (globalObject->asyncHooksNeedsCleanup) {
+        vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    } else {
+        if (globalObject->m_nextTickQueue) {
+            vm.setOnEachMicrotaskTick(nullptr);
+        } else {
+            vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+        }
+    }
+}
+
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -478,6 +517,16 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfo);
 
     JSC::gcProtect(globalObject);
+
+    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
+        auto* globalObject = Bun__getDefaultGlobal();
+        if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
+            resetOnEachMicrotaskTick(vm, globalObject);
+            Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
+            queue->drain(vm, globalObject);
+            return;
+        }
+    });
 
     vm.ref();
     return globalObject;
@@ -1115,6 +1164,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
@@ -1166,6 +1226,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
@@ -1182,6 +1253,17 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
 
     JSC::JSValue num = callFrame->argument(0);
 
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
     return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
 }
 
@@ -1197,6 +1279,17 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     }
 
     JSC::JSValue num = callFrame->argument(0);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
 }
@@ -1393,12 +1486,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallback, (JSC::JSGlobalObject * globalObject, 
     return JSC::JSValue::encode(JSC::call(globalObject, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
 }
 
-static void cleanupAsyncHooksData(JSC::VM& vm)
-{
-    vm.setOnEachMicrotaskTick(nullptr);
-    Bun__getDefaultGlobal()->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
-}
-
 // $lazy("async_hooks").cleanupLater
 JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1406,7 +1493,9 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalOb
     // - nobody else uses setOnEachMicrotaskTick
     // - this is called by js if we set async context in a way we may not clear it
     // - AsyncLocalStorage.prototype.run cleans up after itself and does not call this cb
-    globalObject->vm().setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    global->asyncHooksNeedsCleanup = true;
+    resetOnEachMicrotaskTick(globalObject->vm(), global);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -3955,6 +4044,23 @@ extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* g
 #endif
 }
 
+void GlobalObject::drainMicrotasks()
+{
+    auto& vm = this->vm();
+    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
+        Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
+        queue->drain(vm, this);
+        return;
+    }
+
+    vm.drainMicrotasks();
+}
+
+extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
+{
+    globalObject->drainMicrotasks();
+}
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -4007,6 +4113,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
     visitor.append(thisObject->m_JSWebSocketSetterValue);
     visitor.append(thisObject->m_JSWorkerSetterValue);
+
+    visitor.append(thisObject->m_nextTickQueue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

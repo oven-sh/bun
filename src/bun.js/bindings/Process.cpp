@@ -19,6 +19,7 @@
 #include <termios.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include "JSNextTickQueue.h"
 
 #pragma mark - Node.js Process
 
@@ -160,63 +161,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     return JSC::JSValue::encode(jsBoolean(true));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto argCount = callFrame->argumentCount();
-    if (argCount == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "nextTick requires 1 argument (a function)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    JSC::JSValue job = callFrame->uncheckedArgument(0);
-
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "nextTick expects a function"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
-    JSC::JSValue asyncContextValue = globalObject->m_asyncContextData.get()->getInternalField(0);
-
-    switch (callFrame->argumentCount()) {
-    case 1: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, JSC::JSValue {}, JSC::JSValue {});
-        break;
-    }
-    case 2: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), JSC::JSValue {});
-        break;
-    }
-    case 3: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2));
-        break;
-    }
-    default: {
-        JSC::JSArray* args = JSC::constructEmptyArray(globalObject, nullptr, argCount - 1);
-        if (UNLIKELY(!args)) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        for (unsigned i = 1; i < argCount; i++) {
-            args->putDirectIndex(globalObject, i - 1, callFrame->uncheckedArgument(i));
-        }
-
-        global->queueMicrotask(
-            global->performMicrotaskVariadicFunction(), job, args, asyncContextValue, JSC::JSValue {});
-
-        break;
-    }
-    }
-
-    return JSC::JSValue::encode(jsUndefined());
-}
-
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -279,7 +223,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -1533,6 +1477,42 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
     return memoryUsage;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSValue arg0 = callFrame->argument(0);
+    Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    globalObject->vm().drainMicrotasks();
+    return JSValue::encode(jsUndefined());
+}
+
+static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+{
+    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue nextTickQueueObject;
+    if (!globalObject->m_nextTickQueue) {
+        Bun::JSNextTickQueue* queue = Bun::JSNextTickQueue::create(globalObject);
+        globalObject->m_nextTickQueue.set(vm, globalObject, queue);
+        nextTickQueueObject = queue;
+    } else {
+        nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+    }
+
+    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
+    args.append(nextTickQueueObject);
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
+
+    return JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+}
+
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
     // {
@@ -1742,7 +1722,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
-  nextTick                         Process_functionNextTick                 Function 1
+  nextTick                         constructProcessNextTickFn               PropertyCallback
   openStdin                        Process_functionOpenStdin                Function 0
   pid                              constructPid                             PropertyCallback
   platform                         constructPlatform                        PropertyCallback

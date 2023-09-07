@@ -354,7 +354,7 @@ When these are changed, run:
 $ make js
 ```
 
-In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
+In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
 
 ## Release build
 

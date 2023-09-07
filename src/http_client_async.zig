@@ -24,12 +24,14 @@ const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = bun.AsyncIO;
 const ThreadPool = bun.ThreadPool;
-const BoringSSL = bun.BoringSSL;
 pub const NetworkThread = @import("./network_thread.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
+const BoringSSL = bun.BoringSSL;
+const X509 = @import("./bun.js/api/bun/x509.zig");
+const c_ares = @import("./deps/c_ares.zig");
 
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
 const uws = bun.uws;
@@ -64,17 +66,20 @@ pub const Signals = struct {
     header_progress: ?*std.atomic.Atomic(bool) = null,
     body_streaming: ?*std.atomic.Atomic(bool) = null,
     aborted: ?*std.atomic.Atomic(bool) = null,
+    cert_errors: ?*std.atomic.Atomic(bool) = null,
 
     pub const Store = struct {
         header_progress: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
         body_streaming: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        cert_errors: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         pub fn to(this: *Store) Signals {
             return .{
                 .header_progress = &this.header_progress,
                 .body_streaming = &this.body_streaming,
                 .aborted = &this.aborted,
+                .cert_errors = &this.cert_errors,
             };
         }
     };
@@ -303,6 +308,12 @@ const ProxyTunnel = struct {
     }
 };
 
+pub const HTTPCertError = struct {
+    error_no: i32 = 0,
+    code: [:0]const u8 = "",
+    reason: [:0]const u8 = "",
+};
+
 fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
         const pool_size = 64;
@@ -345,10 +356,19 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn init(this: *@This()) !void {
-            var opts: uws.us_socket_context_options_t = .{};
-            this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
+                var opts: uws.us_bun_socket_context_options_t = .{
+                    // we request the cert so we load root certs and can verify it
+                    .request_cert = 1,
+                    // we manually abort the connection if the hostname doesn't match
+                    .reject_unauthorized = 0,
+                };
+                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+
                 this.sslCtx().setup();
+            } else {
+                var opts: uws.us_socket_context_options_t = .{};
+                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             }
 
             HTTPSocket.configure(
@@ -400,6 +420,51 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
                     return client.onOpen(comptime ssl, socket);
+                }
+
+                if (active.get(PooledSocket)) |pooled| {
+                    std.debug.assert(context().pending_sockets.put(pooled));
+                }
+
+                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                socket.close(0, null);
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(false);
+                }
+            }
+            pub fn onHandshake(
+                ptr: *anyopaque,
+                socket: HTTPSocket,
+                success: i32,
+                ssl_error: uws.us_bun_verify_error_t,
+            ) void {
+                const authorized = if (success == 1) true else false;
+
+                const handshake_error = HTTPCertError{
+                    .error_no = ssl_error.error_no,
+                    .code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code) :0],
+                    .reason = if (ssl_error.code == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason) :0],
+                };
+                log("onHandshake(0x{}) authorized: {} error: {s}", .{ bun.fmt.hexIntUpper(@intFromPtr(socket.socket)), authorized, handshake_error.code });
+
+                const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
+                if (active.get(HTTPClient)) |client| {
+                    if (authorized) {
+                        // we only call onCertError if error is not 0
+                        if (handshake_error.error_no != 0) {
+                            // if onCertError returns false, we dont call open this means that the connection was rejected
+                            if (!client.onCertError(comptime ssl, socket, handshake_error)) {
+                                return;
+                            }
+                        }
+                        return client.firstCall(comptime ssl, socket);
+                    } else {
+                        // if authorized it self is false, this means that the connection was rejected
+                        return client.onConnectError(
+                            comptime ssl,
+                            socket,
+                        );
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -578,6 +643,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
+                    if (comptime ssl) {
+                        client.firstCall(comptime ssl, sock);
+                    }
                     return sock;
                 }
             }
@@ -773,6 +841,167 @@ pub const HTTPThread = struct {
 const log = Output.scoped(.fetch, false);
 
 var temp_hostname: [8096]u8 = undefined;
+
+const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
+
+/// converts IP string to canonicalized IP string
+/// return null when the IP is invalid
+fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
+    if (addr_str.len >= INET6_ADDRSTRLEN) {
+        return null;
+    }
+    var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+    // we need a null terminated string as input
+    bun.copy(u8, outIP, addr_str);
+    outIP[addr_str.len] = 0;
+
+    var af: c_int = std.os.AF.INET;
+    // get the standard text representation of the IP
+    if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
+        af = std.os.AF.INET6;
+        if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
+            return null;
+        }
+    }
+    // ip_addr will contain the null-terminated string of the cannonicalized IP
+    if (c_ares.ares_inet_ntop(af, &ip_std_text, outIP, outIP.len) == null) {
+        return null;
+    }
+    // use the null-terminated size to return the string
+    const size = bun.len(bun.cast([*:0]u8, outIP));
+    return outIP[0..size];
+}
+
+/// converts ASN1_OCTET_STRING to canonicalized IP string
+/// return null when the IP is invalid
+fn ip2String(ip: *BoringSSL.ASN1_OCTET_STRING, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[]const u8 {
+    const af: c_int = if (ip.length == 4) std.os.AF.INET else std.os.AF.INET6;
+    if (c_ares.ares_inet_ntop(af, ip.data, outIP, outIP.len) == null) {
+        return null;
+    }
+
+    // use the null-terminated size to return the string
+    const size = bun.len(bun.cast([*:0]u8, outIP));
+    return outIP[0..size];
+}
+
+pub fn onCertError(
+    client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    certError: HTTPCertError,
+) bool {
+    if (comptime is_ssl == false) {
+        @panic("onCertError called on non-ssl socket");
+    }
+    if (client.reject_unauthorized) {
+        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        if (BoringSSL.SSL_get_peer_cert_chain(ssl_ptr)) |cert_chain| {
+            if (BoringSSL.sk_X509_value(cert_chain, 0)) |x509| {
+
+                // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
+                // this is the slow path
+                if (client.signals.get(.cert_errors)) {
+                    // clone the relevant data
+                    const cert_size = BoringSSL.i2d_X509(x509, null);
+                    var cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
+                    var cert_ptr = cert.ptr;
+                    const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
+                    std.debug.assert(result_size == cert_size);
+
+                    var hostname = client.hostname orelse client.url.hostname;
+                    if (client.http_proxy) |proxy| {
+                        hostname = proxy.hostname;
+                    }
+
+                    client.state.certificate_info = .{
+                        .cert = cert,
+                        .hostname = bun.default_allocator.dupe(u8, hostname) catch @panic("OOM"),
+                        .cert_error = .{
+                            .error_no = certError.error_no,
+                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch @panic("OOM"),
+                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch @panic("OOM"),
+                        },
+                    };
+
+                    // we inform the user that the cert is invalid
+                    client.progressUpdate(true, &http_thread.https_context, socket);
+                    // continue until we are aborted or not
+                    return true;
+                } else {
+                    // we check with native code if the cert is valid
+                    // fast path
+
+                    const index = BoringSSL.X509_get_ext_by_NID(x509, BoringSSL.NID_subject_alt_name, -1);
+                    if (index >= 0) {
+                        // we can check hostname
+                        if (BoringSSL.X509_get_ext(x509, index)) |ext| {
+                            const method = BoringSSL.X509V3_EXT_get(ext);
+                            if (method != BoringSSL.X509V3_EXT_get_nid(BoringSSL.NID_subject_alt_name)) {
+                                client.fail(error.ERR_TLS_CERT_ALTNAME_INVALID);
+                                return false;
+                            }
+                            var hostname = client.hostname orelse client.url.hostname;
+                            if (client.http_proxy) |proxy| {
+                                hostname = proxy.hostname;
+                            }
+
+                            if (strings.isIPAddress(hostname)) {
+                                // we safely ensure buffer size with max len + 1
+                                var canonicalIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+                                var certIPBuf: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+                                // we try to canonicalize the IP before comparing
+                                var host_ip = canonicalizeIP(hostname, &canonicalIPBuf) orelse hostname;
+
+                                if (BoringSSL.X509V3_EXT_d2i(ext)) |names_| {
+                                    const names: *BoringSSL.struct_stack_st_GENERAL_NAME = bun.cast(*BoringSSL.struct_stack_st_GENERAL_NAME, names_);
+                                    defer BoringSSL.sk_GENERAL_NAME_pop_free(names, BoringSSL.sk_GENERAL_NAME_free);
+                                    for (0..BoringSSL.sk_GENERAL_NAME_num(names)) |i| {
+                                        const gen = BoringSSL.sk_GENERAL_NAME_value(names, i);
+                                        if (gen) |name| {
+                                            if (name.name_type == .GEN_IPADD) {
+                                                if (ip2String(name.d.ip, &certIPBuf)) |cert_ip| {
+                                                    if (strings.eql(host_ip, cert_ip)) {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (BoringSSL.X509V3_EXT_d2i(ext)) |names_| {
+                                    const names: *BoringSSL.struct_stack_st_GENERAL_NAME = bun.cast(*BoringSSL.struct_stack_st_GENERAL_NAME, names_);
+                                    defer BoringSSL.sk_GENERAL_NAME_pop_free(names, BoringSSL.sk_GENERAL_NAME_free);
+                                    for (0..BoringSSL.sk_GENERAL_NAME_num(names)) |i| {
+                                        const gen = BoringSSL.sk_GENERAL_NAME_value(names, i);
+                                        if (gen) |name| {
+                                            if (name.name_type == .GEN_DNS) {
+                                                const dnsName = name.d.dNSName;
+                                                var dnsNameSlice = dnsName.data[0..@as(usize, @intCast(dnsName.length))];
+                                                if (X509.isSafeAltName(dnsNameSlice, false)) {
+                                                    if (strings.eql(dnsNameSlice, hostname)) {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // SSL error so we fail the connection
+        client.fail(error.ERR_TLS_CERT_ALTNAME_INVALID);
+        return false;
+    }
+    // we allow the connection to continue anyway
+    return true;
+}
+
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -796,8 +1025,8 @@ pub fn onOpen(
     }
 
     if (comptime is_ssl) {
-        var ssl: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
-        if (!ssl.isInitFinished()) {
+        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
                 _hostname = proxy.hostname;
@@ -818,10 +1047,18 @@ pub fn onOpen(
 
             defer if (hostname_needs_free) bun.default_allocator.free(hostname);
 
-            ssl.configureHTTPClient(hostname);
+            ssl_ptr.configureHTTPClient(hostname);
         }
+    } else {
+        client.firstCall(is_ssl, socket);
     }
+}
 
+pub fn firstCall(
+    client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -1015,6 +1252,18 @@ pub const HTTPStage = enum {
     proxy_body,
 };
 
+pub const CertificateInfo = struct {
+    cert: []const u8,
+    cert_error: HTTPCertError,
+    hostname: []const u8,
+    pub fn deinit(this: *const CertificateInfo, allocator: std.mem.Allocator) void {
+        allocator.free(this.cert);
+        allocator.free(this.cert_error.code);
+        allocator.free(this.cert_error.reason);
+        allocator.free(this.hostname);
+    }
+};
+
 pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     /// pending response is the temporary storage for the response headers, url and status code
@@ -1047,6 +1296,7 @@ pub const InternalState = struct {
     fail: anyerror = error.NoError,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
+    certificate_info: ?CertificateInfo = null,
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
         return .{
@@ -1084,12 +1334,19 @@ pub const InternalState = struct {
             this.cloned_metadata = null;
         }
 
+        // if exists we own this info
+        if (this.certificate_info) |info| {
+            this.certificate_info = null;
+            info.deinit(bun.default_allocator);
+        }
+
         this.* = .{
             .body_out_str = body_msg,
             .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
             .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
             .original_request_body = .{ .bytes = "" },
             .request_body = "",
+            .certificate_info = null,
         };
     }
 
@@ -1237,6 +1494,7 @@ proxy_tunnel: ?ProxyTunnel = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
+reject_unauthorized: bool = true,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -2608,6 +2866,10 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
+
+    this.state.reset(this.allocator);
+    this.proxy_tunneling = false;
+
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;
@@ -2615,9 +2877,6 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 
     const callback = this.result_callback;
     const result = this.toResult();
-    this.state.reset(this.allocator);
-    this.proxy_tunneling = false;
-
     callback.run(result);
 }
 
@@ -2668,7 +2927,10 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
-        const is_done = this.state.isDone();
+        var out_str = this.state.body_out_str.?;
+        var body = out_str.*;
+        const result = this.toResult();
+        const is_done = !result.has_more;
 
         if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
@@ -2676,9 +2938,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 
         log("progressUpdate {}", .{is_done});
 
-        var out_str = this.state.body_out_str.?;
-        var body = out_str.*;
-        const result = this.toResult();
         const callback = this.result_callback;
 
         if (is_done) {
@@ -2729,6 +2988,7 @@ pub const HTTPClientResult = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
     redirected: bool = false,
+    certificate_info: ?CertificateInfo = null,
 
     pub const BodySize = union(enum) {
         total_received: usize,
@@ -2783,7 +3043,13 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .{ .content_length = content_length }
     else
         .{ .unknown = {} };
-    if (this.state.cloned_metadata) |metadata| {
+
+    var certificate_info: ?CertificateInfo = null;
+    if (this.state.certificate_info) |info| {
+        // transfer owner ship of the certificate info here
+        this.state.certificate_info = null;
+        certificate_info = info;
+    } else if (this.state.cloned_metadata) |metadata| {
         // transfer owner ship of the metadata here
         this.state.cloned_metadata = null;
         return HTTPClientResult{
@@ -2791,16 +3057,20 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .body = this.state.body_out_str,
             .redirected = this.remaining_redirect_count != default_redirect_count,
             .fail = this.state.fail,
+            // check if we are reporting cert errors, do not have a fail state and we are not done
             .has_more = this.state.fail == error.NoError and !this.state.isDone(),
             .body_size = body_size,
+            .certificate_info = null,
         };
     }
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .metadata = null,
         .fail = this.state.fail,
-        .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+        // check if we are reporting cert errors, do not have a fail state and we are not done
+        .has_more = certificate_info != null or (this.state.fail == error.NoError and !this.state.isDone()),
         .body_size = body_size,
+        .certificate_info = certificate_info,
     };
 }
 

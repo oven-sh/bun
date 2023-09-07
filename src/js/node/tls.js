@@ -197,7 +197,7 @@ function checkServerIdentity(hostname, cert) {
     let error = new Error(`ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: ${reason}`);
     error.name = "ERR_TLS_CERT_ALTNAME_INVALID";
     error.reason = reason;
-    error.host = host;
+    error.host = hostname;
     error.cert = cert;
     return error;
   }

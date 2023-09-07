@@ -1429,12 +1429,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t offset = 0;
-    uint32_t length = castedThis->length();
-    uint32_t byteLength = length;
+    uint32_t start = 0;
+    uint32_t end = castedThis->length();
+    uint32_t byteLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    if (length == 0)
+    if (end == 0)
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
 
     size_t argsCount = callFrame->argumentCount();
@@ -1444,7 +1444,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     JSC::JSValue arg3 = callFrame->argument(2);
 
     if (argsCount == 0)
-        return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+        return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
         encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
@@ -1460,17 +1460,16 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
             return JSC::JSValue::encode(jsUndefined());
         }
 
-        offset = static_cast<uint32_t>(istart);
-        length = (length > offset) ? (length - offset) : 0;
+        start = static_cast<uint32_t>(istart);
     }
 
     if (!arg3.isUndefined()) {
         // length is end
-        length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
+        end = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     }
 
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+    return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end > start ? end - start : 0, encoding);
 }
 
 // DOMJIT makes it slower! TODO: investigate why

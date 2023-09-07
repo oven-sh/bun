@@ -4444,19 +4444,14 @@ pub const PackageManager = struct {
 
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{
-                    "bin",
-                };
+                var parts = [_]string{"bin"};
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             if (bun.getenvZ("XDG_CACHE_HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var parts = [_]string{
-                    "bun",
-                    "bin",
-                };
+                var parts = [_]string{ "bun", "bin" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }

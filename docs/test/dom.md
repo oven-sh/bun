@@ -55,7 +55,7 @@ Let's run this test with `bun test`:
 
 ```bash
 $ bun test
-bun test v0.x.y
+bun test v1.x
 
 dom.test.ts:
 ✓ dom test [0.82ms]

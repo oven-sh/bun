@@ -161,19 +161,14 @@ If you aren't a TypeScript user, you can create a [`jsconfig.json`](https://code
 
 ## CommonJS
 
-Bun has native support for CommonJS modules (added in Bun v0.6.5). ES Modules are the recommended module format, but CommonJS modules are still widely used in the Node.js ecosystem. Bun supports both module formats, so that existing CommonJS packages can be used.
+Bun has native support for CommonJS modules. ES Modules are the recommended module format, but CommonJS modules are still widely used in the Node.js ecosystem. Bun supports both module formats.
 
-In Bun's JavaScript runtime, `require` can be used by both ES Modules and CommonJS modules.
-
-In Bun, you can `require()` ESM modules from CommonJS modules.
+In Bun's JavaScript runtime, `require` can be used by both ES Modules and CommonJS modules. If the target module is an ES Module, `require` returns the module namespace object (equivalent to `import * as`). If the target module is a CommonJS module, `require` returns the `module.exports` object (as in Node.js).
 
 | Module Type | `require()`      | `import * as`                                                           |
 | ----------- | ---------------- | ----------------------------------------------------------------------- |
 | ES Module   | Module Namespace | Module Namespace                                                        |
 | CommonJS    | module.exports   | `default` is `module.exports`, keys of module.exports are named exports |
-
-If the target module is an ES Module, `require` returns the module namespace object (equivalent to `import * as`).
-If the target module is a CommonJS module, `require` returns the `module.exports` object.
 
 ### What is a CommonJS module?
 
@@ -202,17 +197,8 @@ const myStuff = require("./my-commonjs.cjs");
 ### Importing ESM from CommonJS
 
 ```ts
-// this works in Bun v0.6.5+
-// It does not work in Node.js
+// this works in Bun but not Node.js
 const { stuff } = require("./my-esm.mjs");
-```
-
-### Importing CommonJS from CommonJS
-
-You can `require()` CommonJS modules from CommonJS modules.
-
-```ts
-const { stuff } = require("./my-commonjs.cjs");
 ```
 
 #### Top-level await
@@ -228,11 +214,17 @@ import("./my-esm.js").then(({ stuff }) => {
 const { stuff } = require("./my-esm.js");
 ```
 
-#### Low-level details of CommonJS interop in Bun
+{% details summary="Low-level details of CommonJS interop in Bun" %}
 
-Bun's JavaScript runtime has native support for CommonJS as of Bun v0.6.5.
+Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
 
-When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
+### Importing CommonJS from CommonJS
+
+You can `require()` CommonJS modules from CommonJS modules.
+
+```ts
+const { stuff } = require("./my-commonjs.cjs");
+```
 
 ```js
 (function (module, exports, require) {
@@ -245,3 +237,5 @@ When Bun's JavaScript transpiler detects usages of `module.exports`, it treats t
 Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and keys of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object).
 
 When using Bun's bundler, this works differently. The bundler will wrap the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
+
+{% /details %}

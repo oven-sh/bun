@@ -1,5 +1,5 @@
 {% callout %}
-`Worker` support was added in Bun v0.7.0.
+**🚧** — The `Worker` API is still experimental and should not be considered ready for production.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.

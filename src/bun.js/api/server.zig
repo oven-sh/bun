@@ -5421,12 +5421,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return;
         }
 
-        extern fn getpid() u32;
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
             if (socket == null) {
                 return this.onListenFailed();
             }
-            std.debug.print("a server was done on : {d} from pid={d}\n", .{ socket.?.getLocalPort(), getpid() });
 
             this.listener = socket;
             this.vm.event_loop_handle = uws.Loop.get();

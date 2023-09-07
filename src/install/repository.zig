@@ -167,7 +167,7 @@ pub const Repository = extern struct {
     /// so we have to replace it. Caller owns returned memory, unless
     /// it's null.
     ///
-    /// E.g `ssh://git@example.com:repo.git` -> `ssh://git@example.com/repo.git`
+    /// E.g `git+ssh://git@example.com:repo.git` -> `git+ssh://git@example.com/repo.git`
     fn remove_scp_url_colon(allocator: std.mem.Allocator, url: []const u8) !?[]const u8 {
         const protocol_len = if (std.mem.indexOf(u8, url, "://")) |idx|
             idx + "://".len
@@ -178,7 +178,7 @@ pub const Repository = extern struct {
             if (strings.indexOfChar(url[protocol_len..], ':')) |colon_offset| {
                 const result = try allocator.dupe(u8, url);
                 result[protocol_len + colon_offset] = '/';
-                return result[0..url.len];
+                return result;
             }
         }
 
@@ -212,8 +212,14 @@ pub const Repository = extern struct {
             break :fetch dir;
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
+
+            var free_url = false;
             // TODO: this should really be handled in the URL/dependency parsing stage.
-            const git_url = try remove_scp_url_colon(allocator, url) orelse url;
+            const git_url: []const u8 = if (try remove_scp_url_colon(allocator, url)) |mem| blk: {
+                free_url = true;
+                break :blk mem;
+            } else url;
+            defer if (free_url) allocator.free(git_url);
 
             _ = exec(allocator, env, cache_dir, &[_]string{
                 "git",

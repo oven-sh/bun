@@ -259,7 +259,7 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
             \\
-            \\Learn more about these at https://bun.sh/docs/install/utilities
+            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
             \\
         , .{});
 

@@ -861,6 +861,7 @@ pub const HelpCommand = struct {
         "@evan/duckdb",
         "@zarfjs/zarf",
         "zod",
+        "tailwindcss",
     };
 
     pub const packages_to_x_filler = [_]string{
@@ -869,6 +870,8 @@ pub const HelpCommand = struct {
         "vite",
         "prisma",
         "nuxi",
+        "prettier",
+        "eslint",
     };
 
     pub const packages_to_create_filler = [_]string{
@@ -876,6 +879,7 @@ pub const HelpCommand = struct {
         "vite",
         "astro",
         "svelte",
+        "elysia",
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
@@ -884,6 +888,7 @@ pub const HelpCommand = struct {
             \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
             \\  <b><magenta>test<r>                           Run unit tests with Bun
             \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
+            // \\  <b><magenta>repl<r>                               Start a REPL session with Bun
             \\
             \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
             \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
@@ -918,8 +923,8 @@ pub const HelpCommand = struct {
             packages_to_x_filler[package_x_i],
             packages_to_create_filler[package_create_i],
             packages_to_add_filler[package_add_i],
-            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_remove_filler[package_remove_i],
+            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
         };
 
         switch (reason) {

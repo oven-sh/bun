@@ -246,6 +246,64 @@ pub const Linker = struct {
                         }
                     }
 
+                    if (comptime is_bun) {
+                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
+                            import_record.path.text = replacement.path;
+                            import_record.tag = replacement.tag;
+                            if (replacement.tag != .none) {
+                                externals.append(record_index) catch unreachable;
+                                continue;
+                            }
+                        }
+                        if (strings.startsWith(import_record.path.text, "node:")) {
+                            // if a module is not found here, it is not found at all
+                            // so we can just disable it
+                            had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
+
+                            if (had_resolve_errors) return error.ResolveMessage;
+                            continue;
+                        }
+
+                        // if (strings.eqlComptime(import_record.path.text, "process")) {
+                        //     import_record.path.text = "node:process";
+                        //     externals.append(record_index) catch unreachable;
+                        //     continue;
+                        // }
+
+                        // TODO: this is technical debt
+                        if (linker.options.rewrite_jest_for_tests) {
+                            if (strings.eqlComptime(
+                                import_record.path.text,
+                                "@jest/globals",
+                            ) or strings.eqlComptime(
+                                import_record.path.text,
+                                "vitest",
+                            )) {
+                                import_record.path.namespace = "bun";
+                                import_record.tag = .bun_test;
+                                import_record.path.text = "test";
+                                continue;
+                            }
+                        }
+
+                        if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                            import_record.path.namespace = "bun";
+
+                            if (strings.eqlComptime(import_record.path.text, "test")) {
+                                import_record.tag = .bun_test;
+                            }
+
+                            // don't link bun
+                            continue;
+                        }
+
+                        // Resolve dynamic imports lazily for perf
+                        if (import_record.kind == .dynamic) {
+                            continue;
+                        }
+                    }
+
                     if (linker.plugin_runner) |runner| {
                         if (PluginRunner.couldBePlugin(import_record.path.text)) {
                             if (runner.onResolve(

@@ -1210,14 +1210,14 @@ pub const ModuleLoader = struct {
 
             // We _must_ link because:
             // - node_modules bundle won't be properly
-            // try jsc_vm.bundler.linker.link(
-            //     path,
-            //     &parse_result,
-            //     jsc_vm.origin,
-            //     .absolute_path,
-            //     false,
-            //     true,
-            // );
+            try jsc_vm.bundler.linker.link(
+                path,
+                &parse_result,
+                jsc_vm.origin,
+                .absolute_path,
+                false,
+                true,
+            );
             this.parse_result = parse_result;
 
             var printer = VirtualMachine.source_code_printer.?.*;
@@ -1567,14 +1567,14 @@ pub const ModuleLoader = struct {
 
                 // We _must_ link because:
                 // - node_modules bundle won't be properly
-                // try jsc_vm.bundler.linker.link(
-                //     path,
-                //     &parse_result,
-                //     jsc_vm.origin,
-                //     .absolute_path,
-                //     false,
-                //     true,
-                // );
+                try jsc_vm.bundler.linker.link(
+                    path,
+                    &parse_result,
+                    jsc_vm.origin,
+                    .absolute_path,
+                    false,
+                    true,
+                );
 
                 if (parse_result.pending_imports.len > 0) {
                     if (promise_ptr == null) {

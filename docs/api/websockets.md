@@ -15,10 +15,10 @@ Internally Bun's WebSocket implementation is built on [uWebSockets](https://gith
 ## Connect to a WebSocket server
 
 {% callout %}
-**🚧** — The `WebSocket` class should not be considered ready for production.
+**🚧** — The `WebSocket` client still does not pass the full [Autobahn test suite](https://github.com/crossbario/autobahn-testsuite) and should not be considered ready for production.
 {% /callout %}
 
-Bun implements the `WebSocket` class. Create an instance of this class to connect to a WebSocket, like you would in the browser.
+Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
 ```ts
 const socket = new WebSocket("ws://localhost:3000");

@@ -218,9 +218,7 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp",
-    "internal.h": "c",
-    "libusockets.h": "c"
+    "codecvt": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

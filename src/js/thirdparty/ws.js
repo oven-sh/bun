@@ -716,9 +716,9 @@ class BunWebSocketMocked extends EventEmitter {
   // TODO: implement this more proper
   addEventListener(type, listener, options) {
     if (type === "message") {
-      this.on(type, data => {
-        listener({ data });
-      });
+      const l = data => listener({ data });
+      l.listener = listener;
+      this.on(type, l);
       return;
     }
     this.on(type, listener);

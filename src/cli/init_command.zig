@@ -221,7 +221,7 @@ pub const InitCommand = struct {
         };
 
         if (!auto_yes) {
-            Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
+            Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults.\n<d>Press ^C anytime to quit<r>\n\n", .{});
             Output.flush();
 
             fields.name = try normalizePackageName(alloc, try prompt(

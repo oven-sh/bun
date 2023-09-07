@@ -208,26 +208,6 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
-                if (json.get("dev")) |expr| {
-                    if (expr.get("disableBunJS")) |disable| {
-                        this.ctx.debug.fallback_only = disable.asBool() orelse false;
-                    }
-
-                    if (expr.get("logLevel")) |expr2| {
-                        try this.loadLogLevel(expr2);
-                    }
-
-                    if (expr.get("port")) |port| {
-                        try this.expect(port, .e_number);
-                        this.bunfig.port = port.data.e_number.toU16();
-                        if (this.bunfig.port.? == 0) {
-                            this.bunfig.port = 3000;
-                        }
-                    }
-                }
-            }
-
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
@@ -501,7 +481,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
@@ -623,7 +603,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand => {
+                .AutoCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{

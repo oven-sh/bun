@@ -11,7 +11,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["create", "--help"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
@@ -124,19 +124,13 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "./node_modules/next/dist/bin/next", "dev"],
-      "cwd": "/Users/dave/app-5",
+      "args": ["run", "${file}", "${file}"],
+      "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
         "NODE_ENV": "development"
       },
       "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "attach",
-      "name": "Attach",
-      "pid": "${command:pickMyProcess}" // use ${command:pickProcess} to pick other users' processes
     },
     {
       "type": "lldb",

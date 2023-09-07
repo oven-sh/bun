@@ -2486,6 +2486,10 @@ pub const HardcodedModule = enum {
             .{ "_stream_wrap", .{ .path = "stream" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
             .{ "_tls_common", .{ .path = "tls" } },
+
+            .{ "next/dist/compiled/ws", .{ .path = "ws" } },
+            .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
+            .{ "next/dist/compiled/undici", .{ .path = "undici" } },
         };
 
         const bun_extra_alias_kvs = .{

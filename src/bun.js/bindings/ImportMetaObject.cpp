@@ -458,10 +458,16 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::StringView path;
-        if (url.protocolIs("file"_s)) {
-            path = url.fileSystemPath();
+
+        if (url.isValid()) {
+
+            if (url.protocolIs("file"_s)) {
+                path = url.fileSystemPath();
+            } else {
+                path = url.path();
+            }
         } else {
-            path = url.path();
+            path = meta->url;
         }
 
         JSFunction* value = jsCast<JSFunction*>(Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path.toString()));
@@ -479,10 +485,12 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::StringView dirname;
 
-        if (url.protocolIs("file"_s)) {
-            dirname = url.fileSystemPath();
-        } else {
-            dirname = url.path();
+        if (url.isValid()) {
+            if (url.protocolIs("file"_s)) {
+                dirname = url.fileSystemPath();
+            } else {
+                dirname = url.path();
+            }
         }
 
         if (dirname.endsWith("/"_s)) {
@@ -498,35 +506,39 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::StringView path;
-        if (url.protocolIs("file"_s)) {
-            path = url.fileSystemPath();
+
+        if (!url.isValid()) {
+            path = meta->url;
         } else {
-            path = url.path();
+            if (url.protocolIs("file"_s)) {
+                path = url.fileSystemPath();
+            } else {
+                path = url.path();
+            }
         }
 
-        WTF::StringView filename;
+        WTF::String filename;
 
         if (path.endsWith("/"_s)) {
-            filename = path.substring(path.reverseFind('/', path.length() - 2) + 1);
+            filename = path.substring(path.reverseFind('/', path.length() - 2) + 1).toString();
         } else {
-            filename = path.substring(path.reverseFind('/') + 1);
+            filename = path.substring(path.reverseFind('/') + 1).toString();
         }
 
-        init.set(jsString(init.vm, filename.toString()));
+        init.set(jsString(init.vm, filename));
     });
     this->pathProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
         WTF::URL url = meta->url.startsWith('/') ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
-        WTF::StringView path;
 
-        if (url.protocolIs("file"_s)) {
-            path = url.fileSystemPath();
+        if (!url.isValid()) {
+            init.set(jsString(init.vm, meta->url));
+        } else if (url.protocolIs("file"_s)) {
+            init.set(jsString(init.vm, url.fileSystemPath()));
         } else {
-            path = url.path();
+            init.set(jsString(init.vm, url.path()));
         }
-
-        init.set(jsString(init.vm, path.toString()));
     });
 }
 

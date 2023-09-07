@@ -351,11 +351,11 @@ pub const FSWatcher = struct {
             // already aborted?
             if (s.aborted()) {
                 // safely abort next tick
-                var current_task: FSWatchTask = .{
+                this.current_task = .{
                     .ctx = this,
                 };
-                current_task.append("", .abort, false);
-                current_task.enqueue();
+                this.current_task.append("", .abort, false);
+                this.current_task.enqueue();
             } else {
                 // watch for abortion
                 this.signal = s.listen(FSWatcher, this, FSWatcher.emitAbort);
@@ -587,7 +587,10 @@ pub const FSWatcher = struct {
 
         errdefer ctx.deinit();
 
-        ctx.path_watcher = try PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx));
+        ctx.path_watcher = if (args.signal == null or !args.signal.?.aborted())
+            try PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))
+        else
+            null;
         ctx.initJS(args.listener);
         return ctx;
     }

@@ -6932,7 +6932,7 @@ pub const PackageManager = struct {
                                 const path_str = Path.joinAbsString(
                                     bun.getFdPath(bun.toFD(this.node_modules_folder.dir.fd), &path_buf) catch unreachable,
                                     &[_]string{destination_dir_subpath},
-                                    .posix,
+                                    .auto,
                                 );
 
                                 scripts.enqueueFromPackageJSON(

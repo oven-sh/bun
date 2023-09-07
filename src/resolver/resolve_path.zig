@@ -821,9 +821,15 @@ pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, _platform);
 }
 pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    var joined = joinStringBuf(join_buf[0 .. join_buf.len - 1], _parts, _platform);
-    join_buf[joined.len] = 0;
-    return join_buf[0..joined.len :0];
+    return joinZBuf(&join_buf, _parts, _platform);
+}
+
+pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    var joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
+    std.debug.assert(bun.isSliceInBuffer(joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
 }
 pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
     if (FeatureFlags.use_std_path_join) {
@@ -1441,20 +1447,7 @@ pub fn lastIndexOfSep(path: []const u8) ?usize {
         return strings.lastIndexOfChar(path, '/');
     }
 
-    if (path.len == 0)
-        return null;
-
-    var i: usize = path.len - 1;
-    if (isSepAny(path[i]))
-        return i;
-
-    while (i != 0) : (i -= 1) {
-        if (isSepAny(path[i])) {
-            return i;
-        }
-    }
-
-    return null;
+    return std.mem.lastIndexOfAny(u8, path, "/\\");
 }
 
 pub fn nextDirname(path_: []const u8) ?[]const u8 {

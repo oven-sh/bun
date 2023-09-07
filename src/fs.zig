@@ -375,6 +375,8 @@ pub const FileSystem = struct {
 
         pub const Cache = struct {
             symlink: PathString = PathString.empty,
+            /// Too much code expects this to be 0
+            /// don't make it bun.invalid_fd
             fd: StoredFileDescriptorType = 0,
             kind: Kind = .file,
         };

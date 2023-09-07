@@ -1901,9 +1901,13 @@ pub const Package = extern struct {
             subpath: [:0]const u8,
             cwd: string,
         ) !void {
-            var pkg_dir = try bun.openDir(node_modules, subpath);
-            defer pkg_dir.close();
-            const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
+            var json_file_fd = try bun.sys.openat(
+                bun.toFD(node_modules.fd),
+                bun.path.joinZ([_]string{ subpath, "package.json" }, .auto),
+                std.os.O.RDONLY,
+                0,
+            ).unwrap();
+            const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
             defer json_file.close();
             const json_stat_size = try json_file.getEndPos();
             const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
@@ -2453,10 +2457,14 @@ pub const Package = extern struct {
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var file = bun.openFileZ(Path.joinZ(
+                                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var package_json_path = Path.joinZBuf(
+                                    &local_buf,
                                     &[_]string{ path, "package.json" },
                                     .auto,
-                                ), .{ .mode = .read_only }) catch break :brk false;
+                                );
+                                var file = try bun.openFileZ(package_json_path, .{ .mode = .read_only });
+
                                 defer file.close();
                                 const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
                                 defer allocator.free(bytes);
@@ -2667,20 +2675,21 @@ pub const Package = extern struct {
                 }
             } else {
                 const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(
-                    String,
-                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    break :brk Path.relative(
                         FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
+                        Path.joinAbsStringBuf(
                             FileSystem.instance.top_level_dir,
+                            &buf2,
                             &[_]string{
                                 source.path.name.dir,
                                 workspace,
                             },
                             .posix,
                         ),
-                    ),
-                );
+                    );
+                });
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(path.len() > 0);
                     std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
@@ -2858,8 +2867,13 @@ pub const Package = extern struct {
             const paths = [_]string{ path, "package.json" };
             break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
+
         // TODO: windows
-        var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
+        var workspace_file = dir.openFile(path_to_use, .{ .mode = .read_only }) catch |err| {
+            debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
+            return err;
+        };
+
         defer workspace_file.close();
 
         const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
@@ -2877,6 +2891,7 @@ pub const Package = extern struct {
             .name = name_to_copy[0..workspace_json.found_name.len],
             .path = path_to_use,
         };
+        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
         if (workspace_json.has_found_version) {
             const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
             const result = Semver.Version.parse(version);
@@ -3075,13 +3090,13 @@ pub const Package = extern struct {
                     if (entry.cache.fd == 0) {
                         entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
+                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
                             0,
                         ).unwrap() catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
-                    std.debug.assert(dir_fd != 0); // kind() should've opened
+                    std.debug.assert(dir_fd != bun.invalid_fd); // kind() should've opened
                     defer fallback.fixed_buffer_allocator.reset();
 
                     const workspace_entry = processWorkspaceName(

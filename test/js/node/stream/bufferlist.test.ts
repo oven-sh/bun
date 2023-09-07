@@ -38,7 +38,9 @@ it("should fail on .concat() with invalid items", () => {
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
-  list.concat(42);
+  expect(() => {
+    list.concat(42);
+  }).toThrow(TypeError);
 });
 
 it("should fail on .concat() buffer overflow", () => {
@@ -61,7 +63,7 @@ it("should work with .consume() on strings", () => {
   // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
-  expect(() => list.consume()).toThrow();
+  expect(list.consume(42, true)).toBe("");
   expect(list.push("foo")).toBeUndefined();
   expect(list.push("bar")).toBeUndefined();
   expect(list.push("baz")).toBeUndefined();
@@ -80,7 +82,7 @@ it("should work with .consume() on buffers", () => {
   // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
-  expect(() => list.consume()).toThrow();
+  expect(list.consume(42, false)).toEqual(new Uint8Array());
   expect(list.push(makeUint8Array("foo"))).toBeUndefined();
   expect(list.push(makeUint8Array("bar"))).toBeUndefined();
   expect(list.push(makeUint8Array("baz"))).toBeUndefined();
@@ -103,21 +105,26 @@ it("should fail on .consume() with invalid items", () => {
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
   expect(list.length).toBe(1);
-  expect(list.consume(0, false)).toEqual("");
-  expect(list.consume(1, false)).toEqual("f");
-  expect(list.consume(2, true)).toBe("oo");
+  expect(list.consume(0, false)).toEqual(new Uint8Array([]));
+  expect(() => {
+    list.consume(1, false);
+  }).toThrow(TypeError);
+  expect(list.consume(3, true)).toBe("foo");
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("bar"))).toBeUndefined();
   expect(list.length).toBe(1);
-  expect(list.consume(0, true).byteLength).toEqual(0);
-  expect(list.consume(1, true)[0]).toEqual(98);
+  expect(list.consume(0, true)).toEqual("");
+  expect(() => {
+    list.consume(1, true);
+  }).toThrow(TypeError);
+  expect(list.consume(3, false)).toEqual(new Uint8Array([98, 97, 114]));
 });
 
 it("should work with .first()", () => {
   // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
-  expect(() => list.first()).toThrow();
+  expect(list.first()).toBeUndefined();
   const item = {};
   expect(list.push(item)).toBeUndefined();
   expect(list.length).toBe(1);

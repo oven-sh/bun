@@ -11,7 +11,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "bun-debug",
-      "args": ["create", "--help"],
+      "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
@@ -307,11 +307,9 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${fileDirname}",
+      "cwd": "/Users/jarred/Build/worky",
       "console": "internalConsole",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
-      }
+      "env": {}
     },
 
     {

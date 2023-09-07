@@ -447,9 +447,7 @@ declare module "bun:ffi" {
     ["callback"]: FFIType.pointer; // for now
   }
 
-  export type FFITypeOrString =
-    | FFIType
-    | keyof FFITypeStringToType;
+  export type FFITypeOrString = FFIType | keyof FFITypeStringToType;
 
   interface FFIFunction {
     /**
@@ -549,7 +547,9 @@ declare module "bun:ffi" {
   //  */
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
-  export interface Library<Fns extends Readonly<Record<string, Narrow<FFIFunction>>>> {
+  export interface Library<
+    Fns extends Readonly<Record<string, Narrow<FFIFunction>>>,
+  > {
     symbols: ConvertFns<Fns>;
 
     /**
@@ -584,7 +584,9 @@ declare module "bun:ffi" {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
-        : [unknown] extends [Fns[K]["args"]] ? [] : never
+        : [unknown] extends [Fns[K]["args"]]
+        ? []
+        : never
     ) => [unknown] extends [Fns[K]["returns"]]
       ? void
       : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
@@ -759,7 +761,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -772,7 +774,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -785,7 +787,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -798,7 +800,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -811,7 +813,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -824,7 +826,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -837,7 +839,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -850,7 +852,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -863,7 +865,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -876,7 +878,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -889,7 +891,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *
@@ -902,7 +904,7 @@ declare module "bun:ffi" {
     /**
      * The read function behaves similarly to DataView,
      * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
-     * 
+     *
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      *

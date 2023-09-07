@@ -3325,54 +3325,93 @@ describe("Git URLs", () => {
   // at least one gitlab url
   const dependencyURLs = [
     {
+      name: "uglify-js",
       url: "git+https://git@github.com/mishoo/UglifyJS.git",
-      expected_out_url: null, // expects the same url as above
+      expected_out_url: null,
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "git+http://git@github.com/mishoo/UglifyJS.git",
       expected_out_url: null,
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
       expected_out_url: null,
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "ssh://git@github.com:mishoo/UglifyJS.git",
       expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "github.com:mishoo/UglifyJS.git",
       expected_out_url: "git+ssh://github.com:mishoo/UglifyJS.git",
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "git@github.com:mishoo/UglifyJS.git",
       expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "git://github.com/mishoo/UglifyJS.git",
       expected_out_url: "github:mishoo/UglifyJS",
       commit_sha: null,
     },
     {
+      name: "uglify-js",
       url: "git+https://git@github.com/mishoo/UglifyJS.git#v3.14.1",
-      expected_out_url: "git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+      expected_out_url: "git+https://git@github.com/mishoo/UglifyJS.git",
       commit_sha: "e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
     },
     {
+      name: "uglify-js",
       url: "git+ssh://git@github.com:mishoo/UglifyJS.git#v3.14.1",
-      expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+      expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
       commit_sha: "e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+    },
+    {
+      name: "@gitlab-examples/semantic-release-npm",
+      url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      expected_out_url: null,
+      commit_sha: null,
+    },
+    {
+      name: "@gitlab-examples/semantic-release-npm",
+      url: "ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      expected_out_url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      commit_sha: null,
+    },
+    {
+      name: "@gitlab-examples/semantic-release-npm",
+      url: "git+https://gitlab.com/gitlab-examples/semantic-release-npm.git",
+      expected_out_url: null,
+      commit_sha: null,
+    },
+    {
+      name: "@gitlab-examples/semantic-release-npm",
+      url: "git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      expected_out_url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      commit_sha: null,
+    },
+    {
+      name: "@gitlab-examples/semantic-release-npm",
+      url: "git@gitlab.com:gitlab-examples/semantic-release-npm.git#v1.1.0",
+      expected_out_url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
+      commit_sha: "50adc75612bf25b1c8d8ab9917037e211effe827",
     },
   ];
 
   for (const dep of dependencyURLs) {
-    it(`should handle Git URL dependency (${dep.url})`, async () => {
+    it(`should handle Git dependency (${dep.url})`, async () => {
       const urls: string[] = [];
       setHandler(dummyRegistry(urls));
       await writeFile(
@@ -3381,7 +3420,7 @@ describe("Git URLs", () => {
           name: "Foo",
           version: "0.0.1",
           dependencies: {
-            "uglify-js": dep.url,
+            [dep.name]: dep.url,
           },
         }),
       );
@@ -3400,11 +3439,13 @@ describe("Git URLs", () => {
       expect(stdout).toBeDefined();
       let out = await new Response(stdout).text();
       out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, ""); // remove timings
-      if (dep.commit_sha === null) out = out.replace(/(\.git)?#[a-f0-9]+/, "$1"); // remove commit SHA
+      
+      const has_sha = dep.commit_sha !== null;
+      if (!has_sha) out = out.replace(/(\.git)?#[a-f0-9]+/, "$1"); // remove commit SHA
 
       const expected_out_url = dep.expected_out_url === null ? dep.url : dep.expected_out_url;
       expect(out.split(/\r?\n/)).toEqual([
-        ` + uglify-js@${expected_out_url}`,
+        ` + ${dep.name}@${expected_out_url}${has_sha ? ('#' + dep.commit_sha) : ""}`,
         "",
         " 1 packages installed",
       ]);
@@ -3412,32 +3453,17 @@ describe("Git URLs", () => {
       expect(urls.sort()).toBeEmpty();
       expect(requested).toBe(0);
 
-      expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
-      expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
-      expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      const modules = await readdirSorted(join(package_dir, "node_modules"));
+      expect(modules).toContain(dep.name.split("/")[0]); // if the package is in a sub-dir only look for the root
+      expect(modules).toContain(".cache");
 
       const cache = await readdirSorted(join(package_dir, "node_modules", ".cache"));
       expect(cache).not.toBeEmpty();
-      if (dep.commit_sha !== null) expect(cache).toContain(`@G@${dep.commit_sha}`);
-
-      expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
-        ".bun-tag",
-        ".gitattributes",
-        ".github",
-        ".gitignore",
-        "CONTRIBUTING.md",
-        "LICENSE",
-        "README.md",
-        "bin",
-        "lib",
-        "package.json",
-        "test",
-        "tools",
-      ]);
-      const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
-      expect(package_json.name).toBe("uglify-js");
+      if (has_sha) expect(cache).toContain(`@G@${dep.commit_sha}`);
+      expect(await readdirSorted(join(package_dir, "node_modules", dep.name))).toContain("package.json");
+      
+      const package_json = await file(join(package_dir, "node_modules", dep.name, "package.json")).json();
+      expect(package_json.name).toBe(dep.name);
       await access(join(package_dir, "bun.lockb"));
     }, 20000);
   }

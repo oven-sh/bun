@@ -818,7 +818,7 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn isActive(this: *const Loop) bool {
-        return this.active > 0 or this.num_polls > 0;
+        return this.active > 0;
     }
 
     pub fn unrefCount(this: *PosixLoop, count: i32) void {

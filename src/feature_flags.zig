@@ -23,6 +23,8 @@ pub const bundle_node_modules = true;
 
 pub const tracing = true;
 
+pub const minify_javascript_string_length = false;
+
 pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
@@ -104,7 +106,7 @@ pub const disable_lolhtml = false;
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
 /// "localhost" fails to connect.
-pub const hardcode_localhost_to_127_0_0_1 = true;
+pub const hardcode_localhost_to_127_0_0_1 = false;
 
 /// React doesn't do anything with jsxs
 /// If the "jsxs" import is development, "jsxs" isn't supported
@@ -112,4 +114,65 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
 
-pub const use_simdutf = !@import("bun").JSC.is_bindgen;
+pub const use_simdutf = @import("root").bun.Environment.isNative and !@import("root").bun.JSC.is_bindgen;
+
+pub const inline_properties_in_transpiler = true;
+
+pub const same_target_becomes_destructuring = true;
+
+pub const react_server_components = true;
+
+pub const help_catch_memory_issues = @import("root").bun.Environment.allow_assert;
+
+/// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
+///
+/// Though, not exactly the same.
+///
+/// There are two scenarios where this kicks in:
+///
+/// 1) You import a CommonJS module using ESM.
+///
+/// Semantically, CommonJS expects us to wrap everything in a closure. That
+/// bloats the code. We want to make the generated code as small as we can.
+///
+/// To avoid that, we attempt to unwrap the CommonJS module into ESM.
+///
+/// But, we can't always do that. When you have cyclical require() or directly
+/// mutate exported bindings, we can't unwrap it.
+///
+/// However, in the simple case, where you do something like
+///
+///     exports.foo = 123;
+///     exports.bar = 456;
+///
+/// We can unwrap it into
+///
+///    export const foo = 123;
+///    export const bar = 456;
+///
+/// 2) You import a CommonJS module using CommonJS.
+///
+/// This is a bit more complicated. We want to avoid the closure wrapper, but
+/// it's really difficult to track down all the places where you mutate the
+/// exports object. `require.cache` makes it even more complicated.
+/// So, we just wrap the entire module in a closure.
+///
+/// But what if we previously unwrapped it?
+///
+/// In that case, we wrap it again in the printer.
+pub const unwrap_commonjs_to_esm = true;
+
+pub const boundary_based_chunking = true;
+
+/// https://sentry.engineering/blog/the-case-for-debug-ids
+/// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
+/// https://github.com/source-map/source-map-rfc/pull/20
+pub const source_map_debug_id = true;
+
+pub const alignment_tweak = false;
+
+pub const export_star_redirect = false;
+
+pub const streaming_file_uploads_for_http_client = true;
+
+pub const concurrent_transpiler = true;

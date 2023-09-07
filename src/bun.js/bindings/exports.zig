@@ -1,14 +1,14 @@
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
 const JS = @import("../javascript.zig");
 const JSBase = @import("../base.zig");
 const ZigURL = @import("../../url.zig").URL;
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const std = @import("std");
 const Shimmer = @import("./shimmer.zig").Shimmer;
-const strings = @import("bun").strings;
+const strings = @import("root").bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -24,11 +24,12 @@ const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
 const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
-const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+
 const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
+const String = bun.String;
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -39,8 +40,13 @@ pub const ZigGlobalObject = extern struct {
     pub const namespace = shim.namespace;
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ class_ref, count, console });
+    pub fn create(
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+        worker_ptr: ?*anyopaque,
+    ) *JSGlobalObject {
+        var global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -53,16 +59,16 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }
 
-    pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
+    pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
         return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
         JSC.markBinding(@src());
         @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
@@ -112,11 +118,11 @@ pub const ErrorCode = enum(ErrorCodeInt) {
     _,
 
     pub inline fn from(code: anyerror) ErrorCode {
-        return @intToEnum(ErrorCode, @errorToInt(code));
+        return @as(ErrorCode, @enumFromInt(@intFromError(code)));
     }
 
-    pub const ParserError = @enumToInt(ErrorCode.from(error.ParserError));
-    pub const JSErrorObject = @enumToInt(ErrorCode.from(error.JSErrorObject));
+    pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
+    pub const JSErrorObject = @intFromEnum(ErrorCode.from(error.JSErrorObject));
 
     pub const Type = ErrorCodeInt;
 };
@@ -128,20 +134,6 @@ pub const ZigErrorType = extern struct {
 
     code: ErrorCode,
     ptr: ?*anyopaque,
-
-    pub fn isPrivateData(ptr: ?*anyopaque) callconv(.C) bool {
-        return JSBase.JSPrivateDataPtr.isValidPtr(ptr);
-    }
-
-    pub const Export = shim.exportFunctions(.{
-        .isPrivateData = isPrivateData,
-    });
-
-    comptime {
-        @export(isPrivateData, .{
-            .name = Export[0].symbol_name,
-        });
-    }
 };
 
 pub const NodePath = JSC.Node.Path;
@@ -202,35 +194,25 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
-    specifier: ZigString,
-    source_code: ZigString,
-    source_url: ZigString,
-    hash: u32,
+    specifier: bun.String = bun.String.empty,
+    source_code: bun.String = bun.String.empty,
+    source_url: ZigString = ZigString.Empty,
+    commonjs_exports: ?[*]ZigString = null,
+    commonjs_exports_len: u32 = 0,
 
-    allocator: ?*anyopaque,
+    hash: u32 = 0,
+
+    allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
 
-    pub const Tag = enum(u64) {
-        javascript = 0,
-        wasm = 1,
-        object = 2,
-        file = 3,
-
-        @"node:buffer" = 1024,
-        @"node:process" = 1025,
-        @"node:events" = 1026,
-        @"node:string_decoder" = 1027,
-        @"node:module" = 1028,
-        @"node:tty" = 1029,
-        @"node:util/types" = 1030,
-    };
+    pub const Tag = @import("../../js/out/ResolvedSourceTag.zig").ResolvedSourceTag;
 };
 
 const Mimalloc = @import("../../allocators/mimalloc.zig");
 
 export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
-    var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
+    var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
     var ptr = ZigString.init(raw[0..len]).slice().ptr;
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
@@ -241,24 +223,12 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var untagged = @intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr));
+    var untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     // we must untag the string pointer
     Mimalloc.mi_free(untagged);
-}
-
-export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {
-    var globals = JSC.VirtualMachine.getAPIGlobals();
-    count.* = globals.len;
-    return globals.ptr;
-}
-
-export fn Zig__getAPIConstructors(count: *usize, ctx: *JSGlobalObject) [*]const JSValue {
-    var globals = JSC.VirtualMachine.getAPIConstructors(ctx);
-    count.* = globals.len;
-    return globals.ptr;
 }
 
 pub const JSErrorCode = enum(u8) {
@@ -434,7 +404,7 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]ZigString,
+    source_lines_ptr: [*c]bun.String,
     source_lines_numbers: [*c]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
@@ -452,23 +422,24 @@ pub const ZigStackTrace = extern struct {
         {
             var source_lines_iter = this.sourceLineIterator();
 
-            var source_line_len: usize = 0;
-            var count: usize = 0;
-            while (source_lines_iter.next()) |source| {
-                count += 1;
-                source_line_len += source.text.len;
-            }
+            var source_line_len = source_lines_iter.getLength();
 
-            if (count > 0 and source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, count);
+            if (source_line_len > 0) {
+                var source_lines = try allocator.alloc(Api.SourceLine, @as(usize, @intCast(@max(source_lines_iter.i + 1, 0))));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
                 var i: usize = 0;
                 while (source_lines_iter.next()) |source| {
-                    bun.copy(u8, remain_buf, source.text);
-                    const copied_line = remain_buf[0..source.text.len];
-                    remain_buf = remain_buf[source.text.len..];
+                    const text = source.text.slice();
+                    defer source.text.deinit();
+                    bun.copy(
+                        u8,
+                        remain_buf,
+                        text,
+                    );
+                    const copied_line = remain_buf[0..text.len];
+                    remain_buf = remain_buf[text.len..];
                     source_lines[i] = .{ .text = copied_line, .line = source.line };
                     i += 1;
                 }
@@ -504,8 +475,17 @@ pub const ZigStackTrace = extern struct {
 
         pub const SourceLine = struct {
             line: i32,
-            text: string,
+            text: ZigString.Slice,
         };
+
+        pub fn getLength(this: *SourceLineIterator) usize {
+            var count: usize = 0;
+            for (this.trace.source_lines_ptr[0..@as(usize, @intCast(this.i + 1))]) |*line| {
+                count += line.length();
+            }
+
+            return count;
+        }
 
         pub fn untilLast(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 1) return null;
@@ -515,10 +495,10 @@ pub const ZigStackTrace = extern struct {
         pub fn next(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 0) return null;
 
-            const source_line = this.trace.source_lines_ptr[@intCast(usize, this.i)];
+            const source_line = this.trace.source_lines_ptr[@as(usize, @intCast(this.i))];
             const result = SourceLine{
-                .line = this.trace.source_lines_numbers[@intCast(usize, this.i)],
-                .text = source_line.slice(),
+                .line = this.trace.source_lines_numbers[@as(usize, @intCast(this.i))],
+                .text = source_line.toUTF8(bun.default_allocator),
             };
             this.i -= 1;
             return result;
@@ -532,33 +512,40 @@ pub const ZigStackTrace = extern struct {
                 i = j;
             }
         }
-        return SourceLineIterator{ .trace = this, .i = @intCast(i16, i) };
+        return SourceLineIterator{ .trace = this, .i = @as(i16, @intCast(i)) };
     }
 };
 
 pub const ZigStackFrame = extern struct {
-    function_name: ZigString,
-    source_url: ZigString,
+    function_name: String,
+    source_url: String,
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    pub fn deinit(this: *ZigStackFrame) void {
+        this.function_name.deref();
+        this.source_url.deref();
+    }
+
     pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = comptime std.mem.zeroes(Api.StackFrame);
-        if (this.function_name.len > 0) {
-            frame.function_name = try allocator.dupe(u8, this.function_name.slice());
+        if (!this.function_name.isEmpty()) {
+            var slicer = this.function_name.toUTF8(allocator);
+            defer slicer.deinit();
+            frame.function_name = (try slicer.clone(allocator)).slice();
         }
 
-        if (this.source_url.len > 0) {
+        if (!this.source_url.isEmpty()) {
             frame.file = try std.fmt.allocPrint(allocator, "{any}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position.source_offset = this.position.source_offset;
 
         // For remapped code, we add 1 to the line number
-        frame.position.line = this.position.line + @as(i32, @boolToInt(this.remapped));
+        frame.position.line = this.position.line + @as(i32, @intFromBool(this.remapped));
 
         frame.position.line_start = this.position.line_start;
         frame.position.line_stop = this.position.line_stop;
@@ -566,13 +553,13 @@ pub const ZigStackFrame = extern struct {
         frame.position.column_stop = this.position.column_stop;
         frame.position.expression_start = this.position.expression_start;
         frame.position.expression_stop = this.position.expression_stop;
-        frame.scope = @intToEnum(Api.StackFrameScope, @enumToInt(this.code_type));
+        frame.scope = @as(Api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
 
         return frame;
     }
 
     pub const SourceURLFormatter = struct {
-        source_url: ZigString,
+        source_url: bun.String,
         position: ZigStackFramePosition,
         enable_color: bool,
         origin: ?*const ZigURL,
@@ -584,7 +571,9 @@ pub const ZigStackFrame = extern struct {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
 
-            var source_slice = this.source_url.slice();
+            var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+            var source_slice = source_slice_.slice();
+            defer source_slice_.deinit();
 
             if (!this.remapped) {
                 if (this.origin) |origin| {
@@ -643,12 +632,12 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const NameFormatter = struct {
-        function_name: ZigString,
+        function_name: String,
         code_type: ZigStackFrameCode,
         enable_color: bool,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const name = this.function_name.slice();
+            const name = this.function_name;
 
             switch (this.code_type) {
                 .Eval => {
@@ -658,26 +647,26 @@ pub const ZigStackFrame = extern struct {
                     // try writer.writeAll("(esm)");
                 },
                 .Function => {
-                    if (name.len > 0) {
+                    if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{s}<r>", true), .{name});
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
                         } else {
-                            try std.fmt.format(writer, "{s}", .{name});
+                            try std.fmt.format(writer, "{}", .{name});
                         }
                     }
                 },
                 .Global => {
-                    if (name.len > 0) {
-                        try std.fmt.format(writer, "globalThis {s}", .{name});
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
                         try writer.writeAll("globalThis");
                     }
                 },
                 .Wasm => {
-                    try std.fmt.format(writer, "WASM {s}", .{name});
+                    try std.fmt.format(writer, "WASM {}", .{name});
                 },
                 .Constructor => {
-                    try std.fmt.format(writer, "new {s}", .{name});
+                    try std.fmt.format(writer, "new {}", .{name});
                 },
                 else => {},
             }
@@ -685,9 +674,9 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = ZigString{ .ptr = "", .len = 0 },
+        .function_name = String.empty,
         .code_type = ZigStackFrameCode.None,
-        .source_url = ZigString{ .ptr = "", .len = 0 },
+        .source_url = String.empty,
         .position = ZigStackFramePosition.Invalid,
     };
 
@@ -740,14 +729,14 @@ pub const ZigException = extern struct {
     /// SystemError only
     errno: c_int = 0,
     /// SystemError only
-    syscall: ZigString = ZigString.Empty,
+    syscall: String = String.empty,
     /// SystemError only
-    system_code: ZigString = ZigString.Empty,
+    system_code: String = String.empty,
     /// SystemError only
-    path: ZigString = ZigString.Empty,
+    path: String = String.empty,
 
-    name: ZigString,
-    message: ZigString,
+    name: String,
+    message: String,
     stack: ZigStackTrace,
 
     exception: ?*anyopaque,
@@ -755,6 +744,19 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub fn deinit(this: *ZigException) void {
+        this.syscall.deref();
+        this.system_code.deref();
+        this.path.deref();
+
+        this.name.deref();
+        this.message.deref();
+
+        for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
+            frame.deinit();
+        }
+    }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -764,7 +766,7 @@ pub const ZigException = extern struct {
         const frame_count = 32;
         pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
-        source_lines: [source_lines_count]ZigString,
+        source_lines: [source_lines_count]String,
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
@@ -772,18 +774,18 @@ pub const ZigException = extern struct {
         pub const Zero: Holder = Holder{
             .frames = brk: {
                 var _frames: [frame_count]ZigStackFrame = undefined;
-                std.mem.set(ZigStackFrame, &_frames, ZigStackFrame.Zero);
+                @memset(&_frames, ZigStackFrame.Zero);
                 break :brk _frames;
             },
             .source_line_numbers = brk: {
                 var lines: [source_lines_count]i32 = undefined;
-                std.mem.set(i32, &lines, -1);
+                @memset(&lines, -1);
                 break :brk lines;
             },
 
             .source_lines = brk: {
-                var lines: [source_lines_count]ZigString = undefined;
-                std.mem.set(ZigString, &lines, ZigString.Empty);
+                var lines: [source_lines_count]String = undefined;
+                @memset(&lines, String.empty);
                 break :brk lines;
             },
             .zig_exception = undefined,
@@ -794,13 +796,17 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
+        pub fn deinit(this: *Holder) void {
+            this.zigException().deinit();
+        }
+
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @intToEnum(JSErrorCode, 255),
+                    .code = @as(JSErrorCode, @enumFromInt(255)),
                     .runtime_type = JSRuntimeType.Nothing,
-                    .name = ZigString.Empty,
-                    .message = ZigString.Empty,
+                    .name = String.empty,
+                    .message = String.empty,
                     .exception = null,
                     .stack = ZigStackTrace{
                         .source_lines_ptr = &this.source_lines,
@@ -828,13 +834,18 @@ pub const ZigException = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
-        const _name: string = @field(this, "name").slice();
-        const message: string = @field(this, "message").slice();
+        const name_slice = @field(this, "name").toUTF8(bun.default_allocator);
+        const message_slice = @field(this, "message").toUTF8(bun.default_allocator);
+
+        const _name = name_slice.slice();
+        defer name_slice.deinit();
+        const message = message_slice.slice();
+        defer message_slice.deinit();
 
         var is_empty = true;
         var api_exception = Api.JsException{
-            .runtime_type = @enumToInt(this.runtime_type),
-            .code = @enumToInt(this.code),
+            .runtime_type = @intFromEnum(this.runtime_type),
+            .code = @intFromEnum(this.code),
         };
 
         if (_name.len > 0) {
@@ -863,6 +874,7 @@ pub const ZigException = extern struct {
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
+pub const ErrorableString = Errorable(bun.String);
 
 pub const ZigConsoleClient = struct {
     pub const shim = Shimmer("Zig", "ConsoleClient", @This());
@@ -912,6 +924,9 @@ pub const ZigConsoleClient = struct {
         _,
     };
 
+    var stderr_mutex: bun.Lock = bun.Lock.init();
+    var stdout_mutex: bun.Lock = bun.Lock.init();
+
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
         //console_: ZigConsoleClient.Type,
@@ -928,6 +943,21 @@ pub const ZigConsoleClient = struct {
         }
 
         var console = global.bunVM().console;
+
+        // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
+        // We do this the slightly annoying way to avoid assigning a pointer
+        if (level == .Warning or level == .Error or message_type == .Assert) {
+            stderr_mutex.lock();
+        } else {
+            stdout_mutex.lock();
+        }
+        defer {
+            if (level == .Warning or level == .Error or message_type == .Assert) {
+                stderr_mutex.unlock();
+            } else {
+                stdout_mutex.unlock();
+            }
+        }
 
         if (message_type == .Clear) {
             Output.resetTerminal();
@@ -978,7 +1008,7 @@ pub const ZigConsoleClient = struct {
 
         if (message_type == .Trace) {
             writeTrace(Writer, writer, global);
-            buffered_writer.flush() catch unreachable;
+            buffered_writer.flush() catch {};
         }
     }
 
@@ -1012,6 +1042,7 @@ pub const ZigConsoleClient = struct {
         flush: bool,
         ordered_properties: bool = false,
         quote_strings: bool = false,
+        max_depth: u16 = 8,
     };
 
     pub fn format(
@@ -1039,6 +1070,7 @@ pub const ZigConsoleClient = struct {
                 .globalThis = global,
                 .ordered_properties = options.ordered_properties,
                 .quote_strings = options.quote_strings,
+                .max_depth = options.max_depth,
             };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
@@ -1133,7 +1165,7 @@ pub const ZigConsoleClient = struct {
 
                 tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                    tag.tag = .StringPossiblyFormatted;
+                    tag.tag = .{ .StringPossiblyFormatted = {} };
                 }
 
                 fmt.format(tag, Writer, writer, this_value, global, true);
@@ -1155,7 +1187,7 @@ pub const ZigConsoleClient = struct {
                 any = true;
                 tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                    tag.tag = .StringPossiblyFormatted;
+                    tag.tag = .{ .StringPossiblyFormatted = {} };
                 }
 
                 fmt.format(tag, Writer, writer, this_value, global, false);
@@ -1170,6 +1202,11 @@ pub const ZigConsoleClient = struct {
         if (options.add_newline) _ = writer.write("\n") catch 0;
     }
 
+    const CustomFormattedObject = struct {
+        function: JSValue = .zero,
+        this: JSValue = .zero,
+    };
+
     pub const Formatter = struct {
         remaining_values: []const JSValue = &[_]JSValue{},
         map: Visited.Map = undefined,
@@ -1177,11 +1214,15 @@ pub const ZigConsoleClient = struct {
         hide_native: bool = false,
         globalThis: *JSGlobalObject,
         indent: u32 = 0,
+        depth: u16 = 0,
+        max_depth: u16 = 8,
         quote_strings: bool = false,
+        quote_keys: bool = false,
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
         ordered_properties: bool = false,
+        custom_formatted_object: CustomFormattedObject = .{},
 
         pub fn goodTimeForANewLine(this: *@This()) bool {
             if (this.estimated_line_length > 80) {
@@ -1254,14 +1295,17 @@ pub const ZigConsoleClient = struct {
             TypedArray,
             Map,
             Set,
-            Symbol,
             BigInt,
+            Symbol,
+
+            CustomFormattedObject,
 
             GlobalObject,
             Private,
             Promise,
 
             JSON,
+            toJSON,
             NativeCode,
             ArrayBuffer,
 
@@ -1291,44 +1335,85 @@ pub const ZigConsoleClient = struct {
             }
 
             const Result = struct {
-                tag: Tag,
+                tag: union(Tag) {
+                    StringPossiblyFormatted: void,
+                    String: void,
+                    Undefined: void,
+                    Double: void,
+                    Integer: void,
+                    Null: void,
+                    Boolean: void,
+                    Array: void,
+                    Object: void,
+                    Function: void,
+                    Class: void,
+                    Error: void,
+                    TypedArray: void,
+                    Map: void,
+                    Set: void,
+                    BigInt: void,
+                    Symbol: void,
+                    CustomFormattedObject: CustomFormattedObject,
+                    GlobalObject: void,
+                    Private: void,
+                    Promise: void,
+                    JSON: void,
+                    toJSON: void,
+                    NativeCode: void,
+                    ArrayBuffer: void,
+                    JSX: void,
+                    Event: void,
+                    Getter: void,
+
+                    pub fn isPrimitive(this: @This()) bool {
+                        return @as(Tag, this).isPrimitive();
+                    }
+                },
                 cell: JSValue.JSType = JSValue.JSType.Cell,
             };
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
-                switch (@enumToInt(value)) {
+                return getAdvanced(value, globalThis, .{ .hide_global = false });
+            }
+
+            pub const Options = struct {
+                hide_global: bool = false,
+            };
+
+            pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
+                switch (@intFromEnum(value)) {
                     0, 0xa => return Result{
-                        .tag = .Undefined,
+                        .tag = .{ .Undefined = {} },
                     },
                     0x2 => return Result{
-                        .tag = .Null,
+                        .tag = .{ .Null = {} },
                     },
                     else => {},
                 }
 
                 if (value.isInt32()) {
                     return .{
-                        .tag = .Integer,
+                        .tag = .{ .Integer = {} },
                     };
                 } else if (value.isNumber()) {
                     return .{
-                        .tag = .Double,
+                        .tag = .{ .Double = {} },
                     };
                 } else if (value.isBoolean()) {
                     return .{
-                        .tag = .Boolean,
+                        .tag = .{ .Boolean = {} },
                     };
                 }
 
                 if (!value.isCell())
                     return .{
-                        .tag = .NativeCode,
+                        .tag = .{ .NativeCode = {} },
                     };
 
                 const js_type = value.jsType();
 
                 if (js_type.isHidden()) return .{
-                    .tag = .NativeCode,
+                    .tag = .{ .NativeCode = {} },
                     .cell = js_type,
                 };
 
@@ -1336,52 +1421,72 @@ pub const ZigConsoleClient = struct {
                 // if we call JSObjectGetPrivate, it can segfault
                 if (js_type == .Cell) {
                     return .{
-                        .tag = .NativeCode,
+                        .tag = .{ .NativeCode = {} },
                         .cell = js_type,
                     };
                 }
 
+                if (js_type.canGet()) {
+                    // Attempt to get custom formatter
+                    if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                        if (callback_value.isCallable(globalThis.vm())) {
+                            return .{
+                                .tag = .{
+                                    .CustomFormattedObject = .{
+                                        .function = callback_value,
+                                        .this = value,
+                                    },
+                                },
+                                .cell = js_type,
+                            };
+                        }
+                    }
+                }
+
                 if (js_type == .DOMWrapper) {
                     return .{
-                        .tag = .Private,
+                        .tag = .{ .Private = {} },
                         .cell = js_type,
                     };
                 }
 
                 if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
-                        .tag = .Private,
+                        .tag = .{ .Private = {} },
                         .cell = js_type,
                     };
 
                 // If we check an Object has a method table and it does not
                 // it will crash
-                const callable = js_type != .Object and value.isCallable(globalThis.vm());
+                if (js_type != .Object and value.isCallable(globalThis.vm())) {
+                    if (value.isClass(globalThis)) {
+                        return .{
+                            .tag = .{ .Class = {} },
+                            .cell = js_type,
+                        };
+                    }
 
-                if (value.isClass(globalThis) and !callable) {
                     return .{
-                        .tag = .Object,
+                        // TODO: we print InternalFunction as Object because we have a lot of
+                        // callable namespaces and printing the contents of it is better than [Function: namespace]
+                        // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
+                        // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
+                        .tag = if (js_type == .InternalFunction) .Object else .Function,
                         .cell = js_type,
                     };
                 }
 
-                if (callable and js_type == .JSFunction) {
+                if (js_type == .GlobalProxy) {
+                    if (!opts.hide_global) {
+                        return Tag.get(
+                            JSC.JSValue.c(JSC.C.JSObjectGetProxyTarget(value.asObjectRef())),
+                            globalThis,
+                        );
+                    }
                     return .{
-                        .tag = .Function,
+                        .tag = .{ .GlobalObject = {} },
                         .cell = js_type,
                     };
-                } else if (callable and js_type == .InternalFunction) {
-                    return .{
-                        .tag = .Object,
-                        .cell = js_type,
-                    };
-                }
-
-                if (js_type == .PureForwardingProxy) {
-                    return Tag.get(
-                        JSC.JSValue.c(JSC.C.JSObjectGetProxyTarget(value.asObjectRef())),
-                        globalThis,
-                    );
                 }
 
                 // Is this a react element?
@@ -1391,7 +1496,7 @@ pub const ZigConsoleClient = struct {
                         var react_fragment = ZigString.init("react.fragment");
 
                         if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
-                            return .{ .tag = .JSX, .cell = js_type };
+                            return .{ .tag = .{ .JSX = {} }, .cell = js_type };
                         }
                     }
                 }
@@ -1413,8 +1518,12 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.Object,
                         JSValue.JSType.FinalObject,
                         .ModuleNamespaceObject,
-                        .GlobalObject,
                         => .Object,
+
+                        .GlobalObject => if (!opts.hide_global)
+                            .Object
+                        else
+                            .GlobalObject,
 
                         .ArrayBuffer,
                         JSValue.JSType.Int8Array,
@@ -1463,6 +1572,8 @@ pub const ZigConsoleClient = struct {
 
                         .GetterSetter, .CustomGetterSetter => .Getter,
 
+                        .JSAsJSONType => .toJSON,
+
                         else => .JSON,
                     },
                     .cell = js_type,
@@ -1485,7 +1596,7 @@ pub const ZigConsoleClient = struct {
             var writer = WrappedWriter(Writer){ .ctx = writer_ };
             var slice = slice_;
             var i: u32 = 0;
-            var len: u32 = @truncate(u32, slice.len);
+            var len: u32 = @as(u32, @truncate(slice.len));
             var any_non_ascii = false;
             while (i < len) : (i += 1) {
                 switch (slice[i]) {
@@ -1512,7 +1623,7 @@ pub const ZigConsoleClient = struct {
                         any_non_ascii = false;
                         slice = slice[@min(slice.len, i + 1)..];
                         i = 0;
-                        len = @truncate(u32, slice.len);
+                        len = @as(u32, @truncate(slice.len));
                         const next_value = this.remaining_values[0];
                         this.remaining_values = this.remaining_values[1..];
                         switch (token) {
@@ -1601,11 +1712,10 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @min(this.indent, 32);
             var buf = [_]u8{' '} ** 64;
-            var total_remain: usize = indent;
+            var total_remain: u32 = this.indent;
             while (total_remain > 0) {
-                const written = @min(32, total_remain);
+                const written: u8 = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -1625,7 +1735,7 @@ pub const ZigConsoleClient = struct {
                     const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
                     const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
                     this.formatter.writeIndent(Writer, this.writer) catch unreachable;
-                    const key_tag = Tag.get(key, globalObject);
+                    const key_tag = Tag.getAdvanced(key, globalObject, .{ .hide_global = true });
 
                     this.formatter.format(
                         key_tag,
@@ -1636,7 +1746,7 @@ pub const ZigConsoleClient = struct {
                         enable_ansi_colors,
                     );
                     this.writer.writeAll(": ") catch unreachable;
-                    const value_tag = Tag.get(value, globalObject);
+                    const value_tag = Tag.getAdvanced(value, globalObject, .{ .hide_global = true });
                     this.formatter.format(
                         value_tag,
                         Writer,
@@ -1658,7 +1768,7 @@ pub const ZigConsoleClient = struct {
                 pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     this.formatter.writeIndent(Writer, this.writer) catch {};
-                    const key_tag = Tag.get(nextValue, globalObject);
+                    const key_tag = Tag.getAdvanced(nextValue, globalObject, .{ .hide_global = true });
                     this.formatter.format(
                         key_tag,
                         Writer,
@@ -1683,7 +1793,7 @@ pub const ZigConsoleClient = struct {
                 parent: JSValue,
                 const enable_ansi_colors = enable_ansi_colors_;
                 pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-                    if (!value.jsType().isFunction() and !value.isClass(globalThis)) {
+                    if (!value.jsType().isFunction()) {
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
@@ -1705,6 +1815,7 @@ pub const ZigConsoleClient = struct {
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
                     this.writer.writeAll("{\n") catch {};
                     this.formatter.indent += 1;
+                    this.formatter.depth += 1;
                     this.formatter.writeIndent(Writer, this.writer) catch {};
                 }
 
@@ -1727,7 +1838,7 @@ pub const ZigConsoleClient = struct {
                         .failed = false,
                     };
 
-                    const tag = Tag.get(value, globalThis);
+                    const tag = Tag.getAdvanced(value, globalThis, .{ .hide_global = true });
 
                     if (tag.cell.isHidden()) return;
                     if (ctx.i == 0) {
@@ -1751,18 +1862,18 @@ pub const ZigConsoleClient = struct {
                     if (!is_symbol) {
 
                         // TODO: make this one pass?
-                        if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
+                        if (!key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice()))) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
-                        } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
+                        } else if (key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned()))) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
@@ -1774,7 +1885,7 @@ pub const ZigConsoleClient = struct {
                                 writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                             }
 
-                            writer.writeAll("'");
+                            writer.writeAll("\"");
 
                             while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
                                 writer.write16Bit(utf16Slice[0..j]);
@@ -1789,10 +1900,10 @@ pub const ZigConsoleClient = struct {
                                 .{},
                             );
                         } else {
-                            this.addForNewLine(key.len + 1);
+                            this.addForNewLine(key.len + 2);
 
                             writer.print(
-                                comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
                                 .{JSPrinter.formatJSONString(key.slice())},
                             );
                         }
@@ -1823,6 +1934,15 @@ pub const ZigConsoleClient = struct {
             };
         }
 
+        extern fn JSC__JSValue__callCustomInspectFunction(
+            *JSC.JSGlobalObject,
+            JSValue,
+            JSValue,
+            depth: u32,
+            max_depth: u32,
+            colors: bool,
+        ) JSValue;
+
         pub fn printAs(
             this: *ZigConsoleClient.Formatter,
             comptime Format: ZigConsoleClient.Formatter.Tag,
@@ -1847,7 +1967,7 @@ pub const ZigConsoleClient = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@enumToInt(value)) catch unreachable;
+                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -1856,7 +1976,7 @@ pub const ZigConsoleClient = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@enumToInt(value));
+                    _ = this.map.remove(@intFromEnum(value));
                 }
             }
 
@@ -1902,7 +2022,7 @@ pub const ZigConsoleClient = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{s}", .{str});
+                        writer.print("{}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());
@@ -1928,7 +2048,7 @@ pub const ZigConsoleClient = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @boolToInt(is_negative))
+                            bun.fmt.fastDigitCount(@as(usize, @intCast(i))) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -1992,6 +2112,24 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(4);
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
                 },
+                .CustomFormattedObject => {
+                    // Call custom inspect function. Will return the error if there is one
+                    // we'll need to pass the callback through to the "this" value in here
+                    const result = JSC__JSValue__callCustomInspectFunction(
+                        this.globalThis,
+                        this.custom_formatted_object.function,
+                        this.custom_formatted_object.this,
+                        this.max_depth - this.depth,
+                        this.max_depth,
+                        enable_ansi_colors,
+                    );
+                    // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
+                    if (result.isString()) {
+                        writer.print("{}", .{result.toBunString(this.globalThis)});
+                    } else {
+                        this.format(ZigConsoleClient.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    }
+                },
                 .Symbol => {
                     const description = value.getDescription(this.globalThis);
                     this.addForNewLine("Symbol".len);
@@ -2011,6 +2149,7 @@ pub const ZigConsoleClient = struct {
                         Writer,
                         writer_,
                         enable_ansi_colors,
+                        false,
                     );
                 },
                 .Class => {
@@ -2019,9 +2158,9 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(printable.len);
 
                     if (printable.len == 0) {
-                        writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("[class <cyan>{}<r>]", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
@@ -2031,14 +2170,14 @@ pub const ZigConsoleClient = struct {
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Getter => {
                     writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
                 },
                 .Array => {
-                    const len = @truncate(u32, value.getLengthOfArray(this.globalThis));
+                    const len = @as(u32, @truncate(value.getLength(this.globalThis)));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -2048,6 +2187,8 @@ pub const ZigConsoleClient = struct {
                     var was_good_time = this.always_newline_scope;
                     {
                         this.indent += 1;
+                        this.depth += 1;
+                        defer this.depth -|= 1;
                         defer this.indent -|= 1;
 
                         this.addForNewLine(2);
@@ -2060,7 +2201,7 @@ pub const ZigConsoleClient = struct {
 
                         {
                             const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, 0, null));
-                            const tag = Tag.get(element, this.globalThis);
+                            const tag = Tag.getAdvanced(element, this.globalThis, .{ .hide_global = true });
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
@@ -2094,7 +2235,7 @@ pub const ZigConsoleClient = struct {
                             }
 
                             const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
-                            const tag = Tag.get(element, this.globalThis);
+                            const tag = Tag.getAdvanced(element, this.globalThis, .{ .hide_global = true });
 
                             this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
@@ -2125,27 +2266,51 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.WebCore.Request)) |request| {
                         request.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.API.BuildArtifact)) |build| {
+                        build.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
+                        return;
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
                         blob.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.FetchHeaders) != null) {
+                        if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                            this.addForNewLine("Headers ".len);
+                            writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
+
+                            return this.printAs(
+                                .Object,
+                                Writer,
+                                writer_,
+                                toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                                .Object,
+                                enable_ansi_colors,
+                            );
+                        }
                     } else if (value.as(JSC.DOMFormData) != null) {
-                        const toJSONFunction = value.get(this.globalThis, "toJSON").?;
+                        if (value.get(this.globalThis, "toJSON")) |toJSONFunction| {
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
 
-                        this.addForNewLine("FormData (entries) ".len);
-                        writer.writeAll(comptime Output.prettyFmt("<r><blue>FormData<r> <d>(entries)<r> ", enable_ansi_colors));
+                            return this.printAs(
+                                .Object,
+                                Writer,
+                                writer_,
+                                toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                                .Object,
+                                enable_ansi_colors,
+                            );
+                        }
 
-                        return this.printAs(
-                            .Object,
-                            Writer,
-                            writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
-                            .Object,
-                            enable_ansi_colors,
-                        );
+                        // this case should never happen
+                        return this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                     } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
-                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                         if (timer.kind == .setInterval) {
-                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                             writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                                 timer.id,
                             });
@@ -2156,24 +2321,50 @@ pub const ZigConsoleClient = struct {
                         }
 
                         return;
-                    } else if (jsType != .DOMWrapper) {
-                        if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                            const priv_data = JSPrivateDataPtr.from(private_data_ptr);
-                            switch (priv_data.tag()) {
-                                .BuildError => {
-                                    const build_error = priv_data.as(JS.BuildError);
-                                    build_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                    return;
-                                },
-                                .ResolveError => {
-                                    const resolve_error = priv_data.as(JS.ResolveError);
-                                    resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                    return;
-                                },
-                                else => {},
-                            }
-                        }
+                    } else if (value.as(JSC.BuildMessage)) |build_log| {
+                        build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                        resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(JSC.Expect.ExpectAnything) != null) {
+                        writer.writeAll("Anything");
+                        return;
+                    } else if (value.as(JSC.Expect.ExpectAny) != null) {
+                        const constructor_value = JSC.Expect.ExpectAny.constructorValueGetCached(value) orelse return;
 
+                        this.addForNewLine("Any<".len);
+                        writer.writeAll("Any<");
+                        var class_name = ZigString.init(&name_buf);
+
+                        constructor_value.getClassName(this.globalThis, &class_name);
+                        this.addForNewLine(class_name.len);
+                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+                        this.addForNewLine(1);
+                        writer.writeAll(">");
+
+                        return;
+                    } else if (value.as(JSC.Expect.ExpectStringContaining) != null) {
+                        const substring_value = JSC.Expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringContaining ".len);
+                        writer.writeAll("StringContaining ");
+                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+
+                        return;
+                    } else if (value.as(JSC.Expect.ExpectStringMatching) != null) {
+                        const test_value = JSC.Expect.ExpectStringMatching.testValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringMatching ".len);
+                        writer.writeAll("StringMatching ");
+
+                        const original_quote_strings = this.quote_strings;
+                        if (test_value.isRegExp()) this.quote_strings = false;
+                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+                        this.quote_strings = original_quote_strings;
+
+                        return;
+                    } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {
                             return this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                         }
@@ -2194,7 +2385,7 @@ pub const ZigConsoleClient = struct {
 
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                    switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
+                    switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
                         JSPromise.Status.Pending => {
                             writer.writeAll("<pending>");
                         },
@@ -2236,7 +2427,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .GlobalObject => {
-                    const fmt = "[this.globalThis]";
+                    const fmt = "[Global Object]";
                     this.addForNewLine(fmt.len);
                     writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
@@ -2257,7 +2448,9 @@ pub const ZigConsoleClient = struct {
                     writer.print("{s}({d}) {{\n", .{ map_name, length });
                     {
                         this.indent += 1;
+                        this.depth +|= 1;
                         defer this.indent -|= 1;
+                        defer this.depth -|= 1;
                         var iter = MapIterator(Writer, enable_ansi_colors){
                             .formatter = this,
                             .writer = writer_,
@@ -2286,7 +2479,9 @@ pub const ZigConsoleClient = struct {
                     writer.print("{s}({d}) {{\n", .{ set_name, length });
                     {
                         this.indent += 1;
+                        this.depth +|= 1;
                         defer this.indent -|= 1;
+                        defer this.depth -|= 1;
                         var iter = SetIterator(Writer, enable_ansi_colors){
                             .formatter = this,
                             .writer = writer_,
@@ -2296,10 +2491,26 @@ pub const ZigConsoleClient = struct {
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
                 },
+                .toJSON => {
+                    if (value.get(this.globalThis, "toJSON")) |func| {
+                        const result = func.callWithThis(this.globalThis, value, &.{});
+                        if (result.toError() == null) {
+                            const prev_quote_keys = this.quote_keys;
+                            this.quote_keys = true;
+                            defer this.quote_keys = prev_quote_keys;
+                            this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                            return;
+                        }
+                    }
+
+                    writer.writeAll("{}");
+                },
                 .JSON => {
-                    var str = ZigString.init("");
+                    var str = bun.String.empty;
+                    defer str.deref();
+
                     value.jsonStringify(this.globalThis, this.indent, &str);
-                    this.addForNewLine(str.len);
+                    this.addForNewLine(str.length());
                     if (jsType == JSValue.JSType.JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
@@ -2332,7 +2543,9 @@ pub const ZigConsoleClient = struct {
                     );
                     {
                         this.indent += 1;
+                        this.depth +|= 1;
                         defer this.indent -|= 1;
+                        defer this.depth -|= 1;
                         const old_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = old_quote_strings;
@@ -2353,7 +2566,7 @@ pub const ZigConsoleClient = struct {
                                     .{},
                                 );
                                 const data = value.get(this.globalThis, "data").?;
-                                const tag = Tag.get(data, this.globalThis);
+                                const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
                                 if (tag.cell.isStringLike()) {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                 } else {
@@ -2361,14 +2574,30 @@ pub const ZigConsoleClient = struct {
                                 }
                             },
                             .ErrorEvent => {
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
-                                    .{},
-                                );
+                                {
+                                    const error_value = value.get(this.globalThis, "error").?;
 
-                                const data = value.get(this.globalThis, "error").?;
-                                const tag = Tag.get(data, this.globalThis);
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    if (!error_value.isEmptyOrUndefinedOrNull()) {
+                                        writer.print(
+                                            comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                            .{},
+                                        );
+
+                                        const tag = Tag.getAdvanced(error_value, this.globalThis, .{ .hide_global = true });
+                                        this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                    }
+                                }
+
+                                const message_value = value.get(this.globalThis, "message").?;
+                                if (message_value.isString()) {
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
+
+                                    const tag = Tag.getAdvanced(message_value, this.globalThis, .{ .hide_global = true });
+                                    this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                }
                             },
                             else => unreachable,
                         }
@@ -2392,7 +2621,7 @@ pub const ZigConsoleClient = struct {
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
                     if (value.get(this.globalThis, "type")) |type_value| {
-                        const _tag = Tag.get(type_value, this.globalThis);
+                        const _tag = Tag.getAdvanced(type_value, this.globalThis, .{ .hide_global = true });
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
                             type_value.toZigString(&tag_name_str, this.globalThis);
@@ -2432,7 +2661,7 @@ pub const ZigConsoleClient = struct {
                             this.quote_strings = true;
                             defer this.quote_strings = old_quote_strings;
 
-                            this.format(Tag.get(key_value, this.globalThis), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
+                            this.format(Tag.getAdvanced(key_value, this.globalThis, .{ .hide_global = true }), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
 
                             needs_space = true;
                         }
@@ -2455,14 +2684,14 @@ pub const ZigConsoleClient = struct {
                             {
                                 this.indent += 1;
                                 defer this.indent -|= 1;
-                                const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
+                                const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
                                 while (props_iter.next()) |prop| {
                                     if (prop.eqlComptime("children"))
                                         continue;
 
                                     var property_value = props_iter.value;
-                                    const tag = Tag.get(property_value, this.globalThis);
+                                    const tag = Tag.getAdvanced(property_value, this.globalThis, .{ .hide_global = true });
 
                                     if (tag.cell.isHidden()) continue;
 
@@ -2550,7 +2779,7 @@ pub const ZigConsoleClient = struct {
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                             },
                                             .Array => {
-                                                const length = children.getLengthOfArray(this.globalThis);
+                                                const length = children.getLength(this.globalThis);
                                                 if (length == 0) break :print_children;
                                                 writer.writeAll(">\n");
 
@@ -2565,8 +2794,8 @@ pub const ZigConsoleClient = struct {
 
                                                     var j: usize = 0;
                                                     while (j < length) : (j += 1) {
-                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @intCast(u32, j));
-                                                        this.format(Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
+                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                        this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {
                                                             writer.writeAll("\n");
                                                             this.writeIndent(Writer, writer_) catch unreachable;
@@ -2633,20 +2862,37 @@ pub const ZigConsoleClient = struct {
                         .parent = value,
                     };
 
-                    if (this.ordered_properties) {
+                    if (this.depth > this.max_depth) {
+                        if (this.always_newline_scope or this.goodTimeForANewLine()) {
+                            writer.writeAll("\n");
+                            this.writeIndent(Writer, writer_) catch {};
+                            this.resetLine();
+                        }
+
+                        var display_name = value.getName(this.globalThis);
+                        if (display_name.len == 0) {
+                            display_name = ZigString.init("Object");
+                        }
+                        writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
+                            display_name,
+                        });
+                        return;
+                    } else if (this.ordered_properties) {
                         value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
                     } else {
                         value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
                     }
 
                     if (iter.i == 0) {
-                        if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
+                        if (value.isClass(this.globalThis))
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                         else
                             writer.writeAll("{}");
                     } else {
+                        this.depth -= 1;
+
                         if (iter.always_newline) {
                             this.indent -|= 1;
                             writer.writeAll("\n");
@@ -2663,7 +2909,13 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                     const slice = arrayBuffer.byteSlice();
 
-                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
+                    writer.writeAll(
+                        if (arrayBuffer.typed_array_type == .Uint8Array and
+                            arrayBuffer.value.isBuffer(this.globalThis))
+                            "Buffer"
+                        else
+                            bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
+                    );
                     writer.print("({d}) [ ", .{arrayBuffer.len});
 
                     if (slice.len > 0) {
@@ -2672,56 +2924,56 @@ pub const ZigConsoleClient = struct {
                                 *@TypeOf(writer),
                                 &writer,
                                 i8,
-                                @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
+                                @as([]align(std.meta.alignment([]i8)) i8, @alignCast(std.mem.bytesAsSlice(i8, slice))),
                                 enable_ansi_colors,
                             ),
                             .Int16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i16,
-                                @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
+                                @as([]align(std.meta.alignment([]i16)) i16, @alignCast(std.mem.bytesAsSlice(i16, slice))),
                                 enable_ansi_colors,
                             ),
                             .Uint16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u16,
-                                @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
+                                @as([]align(std.meta.alignment([]u16)) u16, @alignCast(std.mem.bytesAsSlice(u16, slice))),
                                 enable_ansi_colors,
                             ),
                             .Int32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i32,
-                                @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
+                                @as([]align(std.meta.alignment([]i32)) i32, @alignCast(std.mem.bytesAsSlice(i32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Uint32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u32,
-                                @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
+                                @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Float32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f32,
-                                @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
+                                @as([]align(std.meta.alignment([]f32)) f32, @alignCast(std.mem.bytesAsSlice(f32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Float64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f64,
-                                @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
+                                @as([]align(std.meta.alignment([]f64)) f64, @alignCast(std.mem.bytesAsSlice(f64, slice))),
                                 enable_ansi_colors,
                             ),
                             .BigInt64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i64,
-                                @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
+                                @as([]align(std.meta.alignment([]i64)) i64, @alignCast(std.mem.bytesAsSlice(i64, slice))),
                                 enable_ansi_colors,
                             ),
                             .BigUint64Array => {
@@ -2729,7 +2981,7 @@ pub const ZigConsoleClient = struct {
                                     *@TypeOf(writer),
                                     &writer,
                                     u64,
-                                    @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
+                                    @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
                                     enable_ansi_colors,
                                 );
                             },
@@ -2783,7 +3035,7 @@ pub const ZigConsoleClient = struct {
             // comptime var so we have to repeat it here. The rationale there is
             // it _should_ limit the stack usage because each version of the
             // function will be relatively small
-            return switch (result.tag) {
+            switch (result.tag) {
                 .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, result.cell, enable_ansi_colors),
                 .String => this.printAs(.String, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Undefined => this.printAs(.Undefined, Writer, writer, value, result.cell, enable_ansi_colors),
@@ -2804,12 +3056,23 @@ pub const ZigConsoleClient = struct {
                 .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Private => this.printAs(.Private, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Promise => this.printAs(.Promise, Writer, writer, value, result.cell, enable_ansi_colors),
+
+                // Call JSON.stringify on the value
                 .JSON => this.printAs(.JSON, Writer, writer, value, result.cell, enable_ansi_colors),
+
+                // Call value.toJSON() and print as an object
+                .toJSON => this.printAs(.toJSON, Writer, writer, value, result.cell, enable_ansi_colors),
+
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Getter => this.printAs(.Getter, Writer, writer, value, result.cell, enable_ansi_colors),
-            };
+
+                .CustomFormattedObject => |callback| {
+                    this.custom_formatted_object = callback;
+                    this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
+                },
+            }
         }
     };
 
@@ -2869,7 +3132,7 @@ pub const ZigConsoleClient = struct {
         chars: [*]const u8,
         len: usize,
     ) callconv(.C) void {
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         if (!pending_time_logs_loaded) {
             pending_time_logs = PendingTimers.init(default_allocator);
             pending_time_logs_loaded = true;
@@ -2893,12 +3156,12 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -2923,11 +3186,11 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -3105,7 +3368,7 @@ pub const ZigConsoleClient = struct {
 //         const resolve = ModuleLoader.resolve(global, input, module) catch |err| {
 //             return ErrorableJSValue.errFmt(
 //                 err,
-//                 "ResolveError: {s} while resolving \"{s}\"\nfrom \"{s}\"",
+//                 "ResolveMessage: {s} while resolving \"{s}\"\nfrom \"{s}\"",
 //                 .{
 //                     @errorName(err),
 //                     input,
@@ -3152,7 +3415,7 @@ pub const ZigConsoleClient = struct {
 // };
 
 pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
-    return @ptrCast(CAPI.JSGlobalContextRef, ptr);
+    return @as(CAPI.JSGlobalContextRef, @ptrCast(ptr));
 }
 
 comptime {
@@ -3163,10 +3426,11 @@ comptime {
 const Bun = @import("../api/bun.zig");
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ZigConsoleClient.Formatter;
-pub const HTTPServerRequestContext = JSC.API.Server.RequestContext;
-pub const HTTPSSLServerRequestContext = JSC.API.SSLServer.RequestContext;
-pub const HTTPDebugServerRequestContext = JSC.API.DebugServer.RequestContext;
-pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestContext;
+pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;
+pub const HTTPSSLServerRequestContext = JSC.API.HTTPSServer.RequestContext;
+pub const HTTPDebugServerRequestContext = JSC.API.DebugHTTPServer.RequestContext;
+pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestContext;
+pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
     if (!is_bindgen) {
@@ -3182,8 +3446,6 @@ comptime {
 
         _ = Process.getTitle;
         _ = Process.setTitle;
-        _ = Zig__getAPIGlobals;
-        _ = Zig__getAPIConstructors;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();
@@ -3197,5 +3459,6 @@ comptime {
         _ = ZigString__free_global;
 
         TestScope.shim.ref();
+        BodyValueBuffererContext.shim.ref();
     }
 }

@@ -8,6 +8,7 @@
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 
@@ -128,7 +129,7 @@ uint8_t JSStringDecoder::utf8CheckIncomplete(uint8_t* bufPtr, uint32_t length, u
             m_lastNeed = nb - 1;
         return nb;
     }
-    if (--j < i || nb == -2)
+    if (j == 0 || --j < i || nb == -2)
         return 0;
     nb = utf8CheckByte(bufPtr[j]);
     if (nb >= 0) {
@@ -136,7 +137,7 @@ uint8_t JSStringDecoder::utf8CheckIncomplete(uint8_t* bufPtr, uint32_t length, u
             m_lastNeed = nb - 2;
         return nb;
     }
-    if (--j < i || nb == -2)
+    if (j == 0 || --j < i || nb == -2)
         return 0;
     nb = utf8CheckByte(bufPtr[j]);
     if (nb >= 0) {

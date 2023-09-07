@@ -1,7 +1,6 @@
 import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
-import { readFileSync } from "fs";
-
+import crypto from "crypto";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
@@ -45,6 +44,75 @@ describe("CryptoHasher", () => {
       "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
     );
     expect(hasher.algorithm).toBe("sha512");
+  });
+
+  it("CryptoHasher sha256", () => {
+    var hasher = new CryptoHasher("sha256");
+    hasher.update("hello world");
+    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    expect(hasher.algorithm).toBe("sha256");
+  });
+
+  it("CryptoHasher sha256 multi-part", () => {
+    var hasher = new CryptoHasher("sha256");
+    hasher.update("hello ");
+    hasher.update("world");
+    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    expect(hasher.algorithm).toBe("sha256");
+  });
+
+  it("CryptoHasher resets when digest is called", () => {
+    var hasher = new CryptoHasher("sha256");
+    hasher.update("hello");
+    expect(hasher.digest("hex")).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    hasher.update("world");
+    expect(hasher.digest("hex")).toBe("486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7");
+  });
+
+  for (let alg of CryptoHasher.algorithms) {
+    it(`CryptoHasher ${alg} copy is the same`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      const copy = orig.copy();
+
+      expect(copy.digest("hex")).toBe(orig.digest("hex"));
+      expect(copy.algorithm).toBe(orig.algorithm);
+    });
+
+    it(`CryptoHasher ${alg} copy is not linked`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      const copy = orig.copy();
+
+      orig.update("world");
+      expect(copy.digest("hex")).not.toBe(orig.digest("hex"));
+    });
+
+    it(`CryptoHasher ${alg} copy can be used after digest()`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      orig.digest("hex");
+      const copy = orig.copy();
+
+      expect(() => copy.digest("hex")).not.toThrow();
+    });
+
+    it(`CryptoHasher ${alg} copy updates the same`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      const copy = orig.copy();
+
+      orig.update("world");
+      copy.update("world");
+      expect(copy.digest("hex")).toBe(orig.digest("hex"));
+    });
+  }
+});
+
+describe("crypto.getCurves", () => {
+  it("should return an array of strings", () => {
+    expect(Array.isArray(crypto.getCurves())).toBe(true);
+    expect(typeof crypto.getCurves()[0]).toBe("string");
   });
 });
 

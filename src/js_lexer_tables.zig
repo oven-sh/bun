@@ -1,15 +1,18 @@
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const unicode = std.unicode;
-const default_allocator = @import("bun").default_allocator;
+const default_allocator = @import("root").bun.default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 pub const T = enum(u8) {
     t_end_of_file,
+    // close brace is here so that we can do comparisons against EOF or close brace in one branch
+    t_close_brace,
+
     t_syntax_error,
 
     // "#!/usr/bin/env node"
@@ -35,7 +38,6 @@ pub const T = enum(u8) {
     t_bar,
     t_bar_bar,
     t_caret,
-    t_close_brace,
     t_close_bracket,
     t_close_paren,
     t_colon,
@@ -134,11 +136,11 @@ pub const T = enum(u8) {
     t_with,
 
     pub fn isAssign(self: T) bool {
-        return @enumToInt(self) >= @enumToInt(T.t_ampersand_ampersand_equals) and @enumToInt(self) <= @enumToInt(T.t_slash_equals);
+        return @intFromEnum(self) >= @intFromEnum(T.t_ampersand_ampersand_equals) and @intFromEnum(self) <= @intFromEnum(T.t_slash_equals);
     }
 
     pub fn isReservedWord(self: T) bool {
-        return @enumToInt(self) >= @enumToInt(T.t_break) and @enumToInt(self) <= @enumToInt(T.t_with);
+        return @intFromEnum(self) >= @intFromEnum(T.t_break) and @intFromEnum(self) <= @intFromEnum(T.t_with);
     }
 
     pub fn isString(self: T) bool {
@@ -150,6 +152,10 @@ pub const T = enum(u8) {
                 return false;
             },
         }
+    }
+
+    pub fn isCloseBraceOrEOF(self: T) bool {
+        return @intFromEnum(self) <= @intFromEnum(T.t_close_brace);
     }
 };
 
@@ -193,15 +199,15 @@ pub const Keywords = ComptimeStringMap(T, .{
 });
 
 pub const StrictModeReservedWords = ComptimeStringMap(void, .{
-    .{ "implements", void{} },
-    .{ "interface", void{} },
-    .{ "let", void{} },
-    .{ "package", void{} },
-    .{ "private", void{} },
-    .{ "protected", void{} },
-    .{ "public", void{} },
-    .{ "static", void{} },
-    .{ "yield", void{} },
+    .{ "implements", {} },
+    .{ "interface", {} },
+    .{ "let", {} },
+    .{ "package", {} },
+    .{ "private", {} },
+    .{ "protected", {} },
+    .{ "public", {} },
+    .{ "static", {} },
+    .{ "yield", {} },
 });
 
 pub const StrictModeReservedWordsRemap = ComptimeStringMap(string, .{
@@ -836,4 +842,3 @@ test "tokenToString" {
 //         expect(v == 0x223C);
 //     }
 // }
-

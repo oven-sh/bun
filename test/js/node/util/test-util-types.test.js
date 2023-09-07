@@ -1,6 +1,9 @@
-const assert = require("assert");
-import { test, expect } from "bun:test";
-const types = require("util/types");
+import assert from "assert";
+import { describe, test, expect } from "bun:test";
+import def from "util/types";
+import * as ns from "util/types";
+const req = require("util/types");
+const types = def;
 
 function inspect(val) {
   return Bun.inspect(val);
@@ -21,9 +24,8 @@ for (const [value, _method] of [
   [Object(BigInt(0)), "isBigIntObject"],
   [new Error(), "isNativeError"],
   [new RegExp()],
-  [async function () {}, "isAsyncFunction"],
-  [function* () {}, "isGeneratorFunction"],
   [(function* () {})(), "isGeneratorObject"],
+  [(async function* () {})(), "isGeneratorObject"],
   [Promise.resolve()],
   [new Map()],
   [new Set()],
@@ -52,15 +54,21 @@ for (const [value, _method] of [
     assert(method in types, `Missing ${method} for ${inspect(value)}`);
     assert(types[method](value), `Want ${inspect(value)} to match ${method}`);
 
-    for (const key of Object.keys(types)) {
-      if (
-        ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) && key.includes("Array")) ||
-        key === "isBoxedPrimitive"
-      ) {
-        continue;
-      }
+    for (const [types, label] of [
+      [def, "default import"],
+      [ns, "ns import"],
+      [req, "require esm"],
+    ]) {
+      for (const key of Object.keys(types).filter(x => x !== "default")) {
+        if (
+          ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) && key.includes("Array")) ||
+          key === "isBoxedPrimitive"
+        ) {
+          continue;
+        }
 
-      expect(types[key](value)).toBe(key === method);
+        expect(types[key](value)).toBe(key === method);
+      }
     }
   });
 }
@@ -238,3 +246,23 @@ test("isBoxedPrimitive", () => {
     });
   }
 }
+// */
+
+test("isAsyncFunction", () => {
+  for (let fn of [async function asyncFn() {}, async function* asyncGeneratorFn() {}]) {
+    expect(types.isAsyncFunction(fn)).toBeTrue();
+  }
+
+  for (let fn of [function normal() {}, function* generatorFn() {}]) {
+    expect(types.isAsyncFunction(fn)).toBeFalse();
+  }
+});
+test("isGeneratorFunction", () => {
+  for (let fn of [function* generator() {}, async function* asyncGenerator() {}]) {
+    expect(types.isGeneratorFunction(fn)).toBeTrue();
+  }
+
+  for (let fn of [function normal() {}, async function asyncFn() {}]) {
+    expect(types.isGeneratorFunction(fn)).toBeFalse();
+  }
+});

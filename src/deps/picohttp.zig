@@ -1,10 +1,10 @@
 const std = @import("std");
 const c = @import("picohttpparser.zig");
-const ExactSizeMatcher = @import("bun").ExactSizeMatcher;
+const ExactSizeMatcher = @import("root").bun.ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
-const Output = @import("bun").Output;
-const Environment = @import("bun").Environment;
-const StringBuilder = @import("bun").StringBuilder;
+const Output = @import("root").bun.Output;
+const Environment = @import("root").bun.Environment;
+const StringBuilder = @import("root").bun.StringBuilder;
 
 const fmt = std.fmt;
 
@@ -15,7 +15,7 @@ pub const Header = struct {
     value: []const u8,
 
     pub fn isMultiline(self: Header) bool {
-        return @ptrToInt(self.name.ptr) == 0;
+        return @intFromPtr(self.name.ptr) == 0;
     }
 
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -90,18 +90,18 @@ pub const Request = struct {
         const rc = c.phr_parse_request(
             buf.ptr,
             buf.len,
-            @ptrCast([*c][*c]const u8, &method.ptr),
+            @as([*c][*c]const u8, @ptrCast(&method.ptr)),
             &method.len,
-            @ptrCast([*c][*c]const u8, &path.ptr),
+            @as([*c][*c]const u8, @ptrCast(&path.ptr)),
             &path.len,
             &minor_version,
-            @ptrCast([*c]c.phr_header, src.ptr),
+            @as([*c]c.phr_header, @ptrCast(src.ptr)),
             &num_headers,
             0,
         );
 
         // Leave a sentinel value, for JavaScriptCore support.
-        if (rc > -1) @intToPtr([*]u8, @ptrToInt(path.ptr))[path.len] = 0;
+        if (rc > -1) @as([*]u8, @ptrFromInt(@intFromPtr(path.ptr)))[path.len] = 0;
 
         return switch (rc) {
             -1 => error.BadRequest,
@@ -109,9 +109,9 @@ pub const Request = struct {
             else => Request{
                 .method = method,
                 .path = path,
-                .minor_version = @intCast(usize, minor_version),
+                .minor_version = @as(usize, @intCast(minor_version)),
                 .headers = src[0..num_headers],
-                .bytes_read = @intCast(u32, rc),
+                .bytes_read = @as(u32, @intCast(rc)),
             },
         };
     }
@@ -164,9 +164,9 @@ pub const Response = struct {
             buf.len,
             &minor_version,
             &status_code,
-            @ptrCast([*c][*c]const u8, &status.ptr),
+            @as([*c][*c]const u8, @ptrCast(&status.ptr)),
             &status.len,
-            @ptrCast([*c]c.phr_header, src.ptr),
+            @as([*c]c.phr_header, @ptrCast(src.ptr)),
             &num_headers,
             offset.?.*,
         );
@@ -182,8 +182,8 @@ pub const Response = struct {
                 break :brk error.ShortRead;
             },
             else => Response{
-                .minor_version = @intCast(usize, minor_version),
-                .status_code = @intCast(usize, status_code),
+                .minor_version = @as(usize, @intCast(minor_version)),
+                .status_code = @as(usize, @intCast(status_code)),
                 .status = status,
                 .headers = src[0..@min(num_headers, src.len)],
                 .bytes_read = rc,
@@ -237,8 +237,8 @@ pub const Headers = struct {
         const rc = c.phr_parse_headers(
             buf.ptr,
             buf.len,
-            @ptrCast([*c]c.phr_header, src.ptr),
-            @ptrCast([*c]usize, &num_headers),
+            @as([*c]c.phr_header, @ptrCast(src.ptr)),
+            @as([*c]usize, @ptrCast(&num_headers)),
             0,
         );
 

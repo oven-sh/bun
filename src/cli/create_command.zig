@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
@@ -12,7 +12,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -26,10 +26,10 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
@@ -38,9 +38,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("bun").clap;
+const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -104,7 +104,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         count += 1;
     }
 
-    const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
+    const npm_args = 2 * @as(usize, @intCast(@intFromBool(npm_client != null)));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
     var proc: std.ChildProcess = undefined;
@@ -260,7 +260,7 @@ pub const CreateCommand = struct {
             return try CreateListExamplesCommand.exec(ctx);
         }
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -491,7 +491,7 @@ pub const CreateCommand = struct {
                     [1]Archive.Plucker{undefined};
 
                 var archive_context = Archive.Context{
-                    .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
+                    .pluckers = pluckers[0..@as(usize, @intCast(@intFromBool(!create_options.skip_package_json)))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
@@ -523,7 +523,7 @@ pub const CreateCommand = struct {
                         );
                         for (archive_context.overwrite_list.keys()) |path| {
                             if (strings.endsWith(path, std.fs.path.sep_str)) {
-                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
+                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. @max(path.len, 1) - 1]});
                                 Output.prettyErrorln(std.fs.path.sep_str, .{});
                             } else {
                                 Output.prettyErrorln("<r>  {s}", .{path});
@@ -540,7 +540,7 @@ pub const CreateCommand = struct {
                     destination,
                     &archive_context,
                     void,
-                    void{},
+                    {},
                     1,
                     false,
                     false,
@@ -554,7 +554,7 @@ pub const CreateCommand = struct {
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = plucker.fd };
+                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
                     }
                 }
             },
@@ -594,7 +594,7 @@ pub const CreateCommand = struct {
                         progress_: *std.Progress,
                     ) !void {
                         while (try walker.next()) |entry| {
-                            if (entry.kind != .File) continue;
+                            if (entry.kind != .file) continue;
 
                             var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
                                 if (std.fs.path.dirname(entry.path)) |entry_dirname| {
@@ -615,9 +615,13 @@ pub const CreateCommand = struct {
                             var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
-                            // Assumption: you only really care about making sure something that was executable is still executable
-                            const stat = infile.stat() catch continue;
-                            _ = C.fchmod(outfile.handle, stat.mode);
+                            if (comptime Environment.isPosix) {
+                                // Assumption: you only really care about making sure something that was executable is still executable
+                                const stat = infile.stat() catch continue;
+                                _ = C.fchmod(outfile.handle, stat.mode);
+                            } else {
+                                bun.todo(@src(), void{});
+                            }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
                                 Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
@@ -633,24 +637,33 @@ pub const CreateCommand = struct {
 
                 read_package_json: {
                     if (package_json_file) |pkg| {
-                        const stat = pkg.stat() catch |err| {
-                            node.end();
+                        const size = brk: {
+                            if (comptime Environment.isWindows) {
+                                break :brk try pkg.getEndPos();
+                            }
 
-                            progress.refresh();
+                            const stat = pkg.stat() catch |err| {
+                                node.end();
 
-                            package_json_file = null;
-                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
-                            break :read_package_json;
+                                progress.refresh();
+
+                                package_json_file = null;
+                                Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                                break :read_package_json;
+                            };
+
+                            if (stat.kind != .file or stat.size == 0) {
+                                package_json_file = null;
+                                node.end();
+
+                                progress.refresh();
+                                break :read_package_json;
+                            }
+
+                            break :brk stat.size;
                         };
 
-                        if (stat.kind != .File or stat.size == 0) {
-                            package_json_file = null;
-                            node.end();
-
-                            progress.refresh();
-                            break :read_package_json;
-                        }
-                        package_json_contents = try MutableString.init(ctx.allocator, stat.size);
+                        package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
@@ -736,7 +749,7 @@ pub const CreateCommand = struct {
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
                         var basename = std.fs.path.basename(destination);
-                        name_expr.expr.data.e_string.data = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
+                        name_expr.expr.data.e_string.data = @as([*]u8, @ptrFromInt(@intFromPtr(basename.ptr)))[0..basename.len];
                     }
                 }
 
@@ -757,17 +770,17 @@ pub const CreateCommand = struct {
 
                 const Prune = struct {
                     pub const packages = ComptimeStringMap(void, .{
-                        .{ "@parcel/babel-preset", void{} },
-                        .{ "@parcel/core", void{} },
-                        .{ "@swc/cli", void{} },
-                        .{ "@swc/core", void{} },
-                        .{ "@webpack/cli", void{} },
-                        .{ "react-scripts", void{} },
-                        .{ "webpack-cli", void{} },
-                        .{ "webpack", void{} },
+                        .{ "@parcel/babel-preset", {} },
+                        .{ "@parcel/core", {} },
+                        .{ "@swc/cli", {} },
+                        .{ "@swc/core", {} },
+                        .{ "@webpack/cli", {} },
+                        .{ "react-scripts", {} },
+                        .{ "webpack-cli", {} },
+                        .{ "webpack", {} },
 
                         // one of cosmic config's imports breaks stuff
-                        .{ "cosmiconfig", void{} },
+                        .{ "cosmiconfig", {} },
                     });
                     pub var prune_count: u16 = 0;
 
@@ -778,7 +791,7 @@ pub const CreateCommand = struct {
                             const key = list[i].key.?.data.e_string.data;
 
                             const do_prune = packages.has(key);
-                            prune_count += @intCast(u16, @boolToInt(do_prune));
+                            prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
 
                             if (!do_prune) {
                                 list[out_i] = list[i];
@@ -902,14 +915,14 @@ pub const CreateCommand = struct {
                 var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
                 var needs_to_inject_dependency = needs.bun_framework_next;
 
-                const dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.bun_framework_next));
+                const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
 
-                const dev_dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.react_refresh)) +
-                    @intCast(usize, @boolToInt(needs.bun_macro_relay));
+                const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
+                    @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
 
-                const new_properties_count = @intCast(usize, @boolToInt(needs_to_inject_dev_dependency and dev_dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_to_inject_dependency and dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_bun_prop));
+                const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
+                    @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
+                    @as(usize, @intCast(@intFromBool(needs_bun_prop)));
 
                 if (new_properties_count != 0) {
                     try properties_list.ensureUnusedCapacity(new_properties_count);
@@ -1463,7 +1476,7 @@ pub const CreateCommand = struct {
         }
 
         if (create_options.verbose) {
-            Output.prettyErrorln("Has dependencies? {d}", .{@boolToInt(has_dependencies)});
+            Output.prettyErrorln("Has dependencies? {d}", .{@intFromBool(has_dependencies)});
         }
 
         var npm_client_: ?NPMClient = null;
@@ -1652,7 +1665,7 @@ pub const CreateCommand = struct {
                 child.stderr_behavior = .Inherit;
 
                 const open = @import("../open.zig");
-                open.openURL("http://localhost:3000/") catch {};
+                open.openURL("http://localhost:3000/");
 
                 try child.spawn();
                 _ = child.wait() catch {};
@@ -1665,7 +1678,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("bun").picohttp;
+const picohttp = @import("root").bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -1692,7 +1705,7 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
+            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
                 Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
@@ -1717,36 +1730,36 @@ pub const Example = struct {
         {
             var folders = [3]std.fs.IterableDir{
                 .{
-                    .dir = .{ .fd = 0 },
+                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
                 },
                 .{
-                    .dir = .{ .fd = 0 },
+                    .dir = .{ .fd = bun.fdcast(bun.invalid_fd) },
                 },
-                .{ .dir = .{ .fd = 0 } },
+                .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
+                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
 
             // subfolders with package.json
             for (folders) |folder__| {
                 const folder_ = folder__.dir;
 
-                if (folder_.fd != 0) {
+                if (folder_.fd != bun.fdcast(bun.invalid_fd)) {
                     const folder: std.fs.Dir = folder_;
                     var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
 
@@ -1754,7 +1767,7 @@ pub const Example = struct {
                         const entry: std.fs.IterableDir.Entry = entry_;
 
                         switch (entry.kind) {
-                            .Directory => {
+                            .directory => {
                                 inline for (skip_dirs) |skip_dir| {
                                     if (strings.eqlComptime(entry.name, skip_dir)) {
                                         continue :loop;
@@ -1835,11 +1848,11 @@ pub const Example = struct {
                     Headers.Kv{
                         .name = Api.StringPointer{
                             .offset = 0,
-                            .length = @intCast(u32, "Access-Token".len),
+                            .length = @as(u32, @intCast("Access-Token".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @intCast(u32, "Access-Token".len),
-                            .length = @intCast(u32, headers_buf.len - "Access-Token".len),
+                            .offset = @as(u32, @intCast("Access-Token".len)),
+                            .length = @as(u32, @intCast(headers_buf.len - "Access-Token".len)),
                         },
                     },
                 );
@@ -1852,7 +1865,19 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            api_url,
+            header_entries,
+            headers_buf,
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1916,7 +1941,19 @@ pub const Example = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            url,
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1992,7 +2029,19 @@ pub const Example = struct {
 
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            parsed_tarball_url,
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2022,7 +2071,19 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            url,
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;
@@ -2098,7 +2159,7 @@ pub const Example = struct {
 
 pub const CreateListExamplesCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);

@@ -1,3 +1,10 @@
 {
-  "recommendations": ["ziglang.vscode-zig", "esbenp.prettier-vscode", "xaver.clang-format", "vadimcn.vscode-lldb"]
+  "recommendations": [
+    "ziglang.vscode-zig",
+    "esbenp.prettier-vscode",
+    "xaver.clang-format",
+    "vadimcn.vscode-lldb",
+    "bierner.comment-tagged-templates",
+    "ms-vscode.cpptools"
+  ]
 }

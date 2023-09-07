@@ -1,5 +1,7 @@
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
 
+## Usage (`bun:ffi`)
+
 To print the version number of `sqlite3`:
 
 ```ts
@@ -278,7 +280,7 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 **⚡️ Performance tip** — For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead of the `JSCallback` object:
 
 ```ts
-const onResolve = new JSCallback((arg) => arg === 42, {
+const onResolve = new JSCallback(arg => arg === 42, {
   returns: "bool",
   args: ["i32"],
 });
@@ -380,10 +382,6 @@ The `read` function behaves similarly to `DataView`, but it's usually faster bec
 If you want to track when a `TypedArray` is no longer in use from JavaScript, you can use a [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry).
 
 #### From C, Rust, Zig, etc
-
-{% callout %}
-**Note** — Available in Bun v0.1.8 and later.
-{% /callout %}
 
 If you want to track when a `TypedArray` is no longer in use from C or FFI, you can pass a callback and an optional context pointer to `toArrayBuffer` or `toBuffer`. This function is called at some point later, once the garbage collector frees the underlying `ArrayBuffer` JavaScript object.
 

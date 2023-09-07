@@ -1,15 +1,15 @@
 // so it can run in environments without node module resolution
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 
 import crypto from "node:crypto";
 
-var foo = Buffer.allocUnsafe(16384);
+var foo = Buffer.allocUnsafe(512);
 foo.fill(123);
 
 // if ("Bun" in globalThis) {
 //   const { CryptoHasher } = Bun;
-//   bench("CryptoHasher Blake2b256", () => {
-//     var hasher = new CryptoHasher("blake2b256");
+//   bench("Bun.CryptoHasher(sha512)", () => {
+//     var hasher = new CryptoHasher("sha512");
 //     hasher.update(foo);
 //     hasher.digest();
 //   });

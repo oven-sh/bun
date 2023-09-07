@@ -503,6 +503,32 @@ it("latin1 supplement chars", () => {
       greeting: "¿Qué sucedió?",
     },
   ]);
+
+  expect(db.query("SELECT * FROM foo").values()).toEqual([
+    [1, "Welcome to bun!"],
+    [2, "Español"],
+    [3, "¿Qué sucedió?"],
+  ]);
+  expect(db.query("SELECT * FROM foo WHERE id > 9999").all()).toEqual([]);
+  expect(db.query("SELECT * FROM foo WHERE id > 9999").values()).toEqual([]);
+});
+
+it("supports FTS5", () => {
+  const db = new Database();
+  db.run("CREATE VIRTUAL TABLE movies USING fts5(title, tokenize='trigram')");
+  const insert = db.prepare("INSERT INTO movies VALUES ($title)");
+  const insertMovies = db.transaction(movies => {
+    for (const movie of movies) insert.run(movie);
+  });
+  insertMovies([
+    { $title: "The Shawshank Redemption" },
+    { $title: "WarGames" },
+    { $title: "Interstellar" },
+    { $title: "Se7en" },
+    { $title: "City of God" },
+    { $title: "Spirited Away" },
+  ]);
+  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([{ title: "WarGames" }]);
 });
 
 describe("Database.run", () => {
@@ -526,4 +552,40 @@ describe("Database.run", () => {
       expect(e.message).toBe("Query contained no valid SQL statement; likely empty query.");
     }
   });
+});
+
+it("#3991", () => {
+  const db = new Database(":memory:");
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    xx TEXT)
+`,
+  ).run();
+
+  db.prepare(
+    `insert into users (id, xx) values (
+    'foobar',
+    '{
+        "links": [{"1": {
+    "2": "https://foobar.to/123",
+    "3": "4"
+    }}]
+
+    }'
+)`,
+  ).run();
+
+  let x = db
+    .query(
+      `SELECT * FROM users
+        WHERE users.id = 'foobar'
+        limit 1`,
+    )
+    .get();
+
+  // Check we don't crash when a column with a string value greater than 64 characters is present.
+  expect(x.abc).toBeUndefined();
+
+  expect(x.id).toBe("foobar");
 });

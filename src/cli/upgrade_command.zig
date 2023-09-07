@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -25,19 +25,19 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = @import("bun").clap;
+const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 const NetworkThread = HTTP.NetworkThread;
 
@@ -116,7 +116,7 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
+        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
@@ -174,8 +174,8 @@ pub const UpgradeCommand = struct {
 
         var header_entries: Headers.Entries = .{};
         const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @intCast(u32, "Accept".len) },
-            .value = Api.StringPointer{ .offset = @intCast(u32, "Accept".len), .length = @intCast(u32, "application/vnd.github.v3+json".len) },
+            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
+            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -206,11 +206,11 @@ pub const UpgradeCommand = struct {
                     Headers.Kv{
                         .name = Api.StringPointer{
                             .offset = accept.value.length + accept.value.offset,
-                            .length = @intCast(u32, "Access-Token".len),
+                            .length = @as(u32, @intCast("Access-Token".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @intCast(u32, accept.value.length + accept.value.offset + "Access-Token".len),
-                            .length = @intCast(u32, access_token.len),
+                            .offset = @as(u32, @intCast(accept.value.length + accept.value.offset + "Access-Token".len)),
+                            .length = @as(u32, @intCast(access_token.len)),
                         },
                     },
                 );
@@ -223,7 +223,19 @@ pub const UpgradeCommand = struct {
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            allocator,
+            .GET,
+            api_url,
+            header_entries,
+            headers_buf,
+            &metadata_body,
+            "",
+            60 * std.time.ns_per_min,
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -344,7 +356,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @as(u32, @intCast(@max(@as(i32, @intFromFloat(std.math.ceil(size_.expr.data.e_number.value))), 0)));
                             }
                         }
                         return version;
@@ -382,7 +394,7 @@ pub const UpgradeCommand = struct {
     fn _exec(ctx: Command.Context) !void {
         try HTTP.HTTPThread.init();
 
-        var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
+        var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -396,14 +408,14 @@ pub const UpgradeCommand = struct {
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.span(std.os.argv), "--stable"))
+            if (default_use_canary and strings.containsAny(bun.span(bun.argv()), "--stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.span(std.os.argv), "--canary") or default_use_canary;
+                strings.containsAny(bun.span(bun.argv()), "--canary") or default_use_canary;
         };
 
-        const use_profile = strings.containsAny(bun.span(std.os.argv), "--profile");
+        const use_profile = strings.containsAny(bun.span(bun.argv()), "--profile");
 
         if (!use_canary) {
             var refresher = std.Progress{};
@@ -454,7 +466,19 @@ pub const UpgradeCommand = struct {
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy);
+            async_http.* = HTTP.AsyncHTTP.initSync(
+                ctx.allocator,
+                .GET,
+                zip_url,
+                .{},
+                "",
+                zip_file_buffer,
+                "",
+                timeout,
+                http_proxy,
+                null,
+                HTTP.FetchRedirect.follow,
+            );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);
@@ -508,7 +532,7 @@ pub const UpgradeCommand = struct {
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
             var tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
-            std.os.chdirZ(tmpdir_z) catch {};
+            _ = bun.sys.chdir(tmpdir_z);
 
             const tmpname = "bun.zip";
             const exe =
@@ -648,13 +672,13 @@ pub const UpgradeCommand = struct {
                 if (target_stat.size == dest_stat.size and target_stat.size > 0) {
                     var input_buf = try ctx.allocator.alloc(u8, target_stat.size);
 
-                    const target_hash = std.hash.Wyhash.hash(0, target_dir.readFile(target_filename, input_buf) catch |err| {
+                    const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
-                    const source_hash = std.hash.Wyhash.hash(0, save_dir.readFile(exe, input_buf) catch |err| {
+                    const source_hash = bun.hash(save_dir.readFile(exe, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
                         Global.exit(1);

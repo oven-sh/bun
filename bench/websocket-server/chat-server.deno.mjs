@@ -1,6 +1,6 @@
 // See ./README.md for instructions on how to run this benchmark.
 const port = Deno.env.get("PORT") || 4001;
-const CLIENTS_TO_WAIT_FOR = parseInt(Deno.env.get("CLIENTS_COUNT") || "", 10) || 16;
+const CLIENTS_TO_WAIT_FOR = parseInt(Deno.env.get("CLIENTS_COUNT") || "", 10) || 32;
 
 var clients = [];
 async function reqHandler(req) {
@@ -42,4 +42,4 @@ function sendReadyMessage() {
 
 console.log(`Waiting for ${CLIENTS_TO_WAIT_FOR} clients to connect..`);
 
-Deno.serve(reqHandler, { port });
+Deno.serve({ port }, reqHandler);

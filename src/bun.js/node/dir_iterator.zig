@@ -9,15 +9,21 @@ const std = @import("std");
 const os = std.os;
 
 const Dir = std.fs.Dir;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
+const bun = @import("root").bun;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
-const strings = @import("bun").strings;
+const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
-const Result = Maybe(?Entry);
+const IteratorResult = struct {
+    name: PathString,
+    kind: Entry.Kind,
+};
+
+const Result = Maybe(?IteratorResult);
 
 const Entry = JSC.Node.Dirent;
 
@@ -60,31 +66,31 @@ pub const Iterator = switch (builtin.os.tag) {
                     }
 
                     self.index = 0;
-                    self.end_index = @intCast(usize, rc);
+                    self.end_index = @as(usize, @intCast(rc));
                 }
-                const darwin_entry = @ptrCast(*align(1) os.system.dirent, &self.buf[self.index]);
+                const darwin_entry = @as(*align(1) os.system.dirent, @ptrCast(&self.buf[self.index]));
                 const next_index = self.index + darwin_entry.reclen();
                 self.index = next_index;
 
-                const name = @ptrCast([*]u8, &darwin_entry.d_name)[0..darwin_entry.d_namlen];
+                const name = @as([*]u8, @ptrCast(&darwin_entry.d_name))[0..darwin_entry.d_namlen];
 
                 if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.d_ino == 0)) {
                     continue :start_over;
                 }
 
                 const entry_kind = switch (darwin_entry.d_type) {
-                    os.DT.BLK => Entry.Kind.BlockDevice,
-                    os.DT.CHR => Entry.Kind.CharacterDevice,
-                    os.DT.DIR => Entry.Kind.Directory,
-                    os.DT.FIFO => Entry.Kind.NamedPipe,
-                    os.DT.LNK => Entry.Kind.SymLink,
-                    os.DT.REG => Entry.Kind.File,
-                    os.DT.SOCK => Entry.Kind.UnixDomainSocket,
-                    os.DT.WHT => Entry.Kind.Whiteout,
-                    else => Entry.Kind.Unknown,
+                    os.DT.BLK => Entry.Kind.block_device,
+                    os.DT.CHR => Entry.Kind.character_device,
+                    os.DT.DIR => Entry.Kind.directory,
+                    os.DT.FIFO => Entry.Kind.named_pipe,
+                    os.DT.LNK => Entry.Kind.sym_link,
+                    os.DT.REG => Entry.Kind.file,
+                    os.DT.SOCK => Entry.Kind.unix_domain_socket,
+                    os.DT.WHT => Entry.Kind.whiteout,
+                    else => Entry.Kind.unknown,
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name),
                         .kind = entry_kind,
                     },
@@ -117,11 +123,11 @@ pub const Iterator = switch (builtin.os.tag) {
                     self.index = 0;
                     self.end_index = rc;
                 }
-                const linux_entry = @ptrCast(*align(1) linux.dirent64, &self.buf[self.index]);
+                const linux_entry = @as(*align(1) linux.dirent64, @ptrCast(&self.buf[self.index]));
                 const next_index = self.index + linux_entry.reclen();
                 self.index = next_index;
 
-                const name = mem.sliceTo(@ptrCast([*:0]u8, &linux_entry.d_name), 0);
+                const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.d_name)), 0);
 
                 // skip . and .. entries
                 if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..")) {
@@ -129,17 +135,17 @@ pub const Iterator = switch (builtin.os.tag) {
                 }
 
                 const entry_kind = switch (linux_entry.d_type) {
-                    linux.DT.BLK => Entry.Kind.BlockDevice,
-                    linux.DT.CHR => Entry.Kind.CharacterDevice,
-                    linux.DT.DIR => Entry.Kind.Directory,
-                    linux.DT.FIFO => Entry.Kind.NamedPipe,
-                    linux.DT.LNK => Entry.Kind.SymLink,
-                    linux.DT.REG => Entry.Kind.File,
-                    linux.DT.SOCK => Entry.Kind.UnixDomainSocket,
-                    else => Entry.Kind.Unknown,
+                    linux.DT.BLK => Entry.Kind.block_device,
+                    linux.DT.CHR => Entry.Kind.character_device,
+                    linux.DT.DIR => Entry.Kind.directory,
+                    linux.DT.FIFO => Entry.Kind.named_pipe,
+                    linux.DT.LNK => Entry.Kind.sym_link,
+                    linux.DT.REG => Entry.Kind.file,
+                    linux.DT.SOCK => Entry.Kind.unix_domain_socket,
+                    else => Entry.Kind.unknown,
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name),
                         .kind = entry_kind,
                     },
@@ -183,37 +189,61 @@ pub const Iterator = switch (builtin.os.tag) {
                     if (io.Information == 0) return .{ .result = null };
                     self.index = 0;
                     self.end_index = io.Information;
-                    switch (rc) {
-                        .SUCCESS => {},
-                        .ACCESS_DENIED => return error.AccessDenied, // Double-check that the Dir was opened with iteration ability
+                    // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
+                    if (rc == .INVALID_PARAMETER) {
+                        return .{
+                            .err = .{
+                                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(bun.C.SystemErrno.ENOTDIR))),
+                                .syscall = .NtQueryDirectoryFile,
+                            },
+                        };
+                    }
 
-                        else => return w.unexpectedStatus(rc),
+                    if (rc == .NO_MORE_FILES) {
+                        self.end_index = self.index;
+                        return .{ .result = null };
+                    }
+
+                    if (rc != .SUCCESS) {
+                        if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
+                            return .{
+                                .err = .{
+                                    .errno = @truncate(@intFromEnum(errno)),
+                                    .syscall = .NtQueryDirectoryFile,
+                                },
+                            };
+                        }
+
+                        return .{
+                            .err = .{
+                                .errno = @truncate(@intFromEnum(bun.C.SystemErrno.EUNKNOWN)),
+                                .syscall = .NtQueryDirectoryFile,
+                            },
+                        };
                     }
                 }
 
-                const aligned_ptr = @alignCast(@alignOf(w.FILE_BOTH_DIR_INFORMATION), &self.buf[self.index]);
-                const dir_info = @ptrCast(*w.FILE_BOTH_DIR_INFORMATION, aligned_ptr);
+                const dir_info: *w.FILE_BOTH_DIR_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
                 if (dir_info.NextEntryOffset != 0) {
                     self.index += dir_info.NextEntryOffset;
                 } else {
                     self.index = self.buf.len;
                 }
 
-                const name_utf16le = @ptrCast([*]u16, &dir_info.FileName)[0 .. dir_info.FileNameLength / 2];
+                const name_utf16le = @as([*]u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
 
                 if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
                     continue;
                 // Trust that Windows gives us valid UTF-16LE
-                const name_utf8_len = std.unicode.utf16leToUtf8(self.name_data[0..], name_utf16le) catch unreachable;
-                const name_utf8 = self.name_data[0..name_utf8_len];
+                const name_utf8 = strings.fromWPath(self.name_data[0..], name_utf16le);
                 const kind = blk: {
                     const attrs = dir_info.FileAttributes;
-                    if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.Directory;
-                    if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.SymLink;
-                    break :blk Entry.Kind.File;
+                    if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.directory;
+                    if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.sym_link;
+                    break :blk Entry.Kind.file;
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name_utf8),
                         .kind = kind,
                     },
@@ -255,7 +285,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     self.index = 0;
                     self.end_index = bufused;
                 }
-                const entry = @ptrCast(*align(1) w.dirent_t, &self.buf[self.index]);
+                const entry = @as(*align(1) w.dirent_t, @ptrCast(&self.buf[self.index]));
                 const entry_size = @sizeOf(w.dirent_t);
                 const name_index = self.index + entry_size;
                 const name = mem.span(self.buf[name_index .. name_index + entry.d_namlen]);
@@ -270,15 +300,15 @@ pub const Iterator = switch (builtin.os.tag) {
                 }
 
                 const entry_kind = switch (entry.d_type) {
-                    .BLOCK_DEVICE => Entry.Kind.BlockDevice,
-                    .CHARACTER_DEVICE => Entry.Kind.CharacterDevice,
-                    .DIRECTORY => Entry.Kind.Directory,
-                    .SYMBOLIC_LINK => Entry.Kind.SymLink,
-                    .REGULAR_FILE => Entry.Kind.File,
-                    .SOCKET_STREAM, .SOCKET_DGRAM => Entry.Kind.UnixDomainSocket,
-                    else => Entry.Kind.Unknown,
+                    .BLOCK_DEVICE => Entry.Kind.block_device,
+                    .CHARACTER_DEVICE => Entry.Kind.character_device,
+                    .DIRECTORY => Entry.Kind.directory,
+                    .SYMBOLIC_LINK => Entry.Kind.sym_link,
+                    .REGULAR_FILE => Entry.Kind.file,
+                    .SOCKET_STREAM, .SOCKET_DGRAM => Entry.Kind.unix_domain_socket,
+                    else => Entry.Kind.unknown,
                 };
-                return Entry{
+                return IteratorResult{
                     .name = name,
                     .kind = entry_kind,
                 };

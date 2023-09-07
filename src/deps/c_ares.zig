@@ -1,6 +1,7 @@
 const c = @import("std").c;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
 const struct_in_addr = std.os.sockaddr.in;
@@ -180,8 +181,6 @@ pub const struct_hostent = extern struct {
     h_length: c_int,
     h_addr_list: [*c][*c]u8,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
 
         // A cname lookup always returns a single record but we follow the common API here.
@@ -220,6 +219,22 @@ pub const struct_hostent = extern struct {
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_hostent) void;
+    }
+
+    pub fn hostCallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_host_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, hostent);
+            }
+        }.handle;
     }
 
     pub fn callbackWrapper(
@@ -296,12 +311,11 @@ pub const AddrInfo_node = extern struct {
         return len;
     }
 };
+
 pub const AddrInfo = extern struct {
     cnames_: [*c]AddrInfo_cname = null,
     node: ?*AddrInfo_node = null,
     name_: ?[*:0]u8 = null,
-
-    const JSC = bun.JSC;
 
     pub fn toJSArray(
         addr_info: *AddrInfo,
@@ -309,7 +323,7 @@ pub const AddrInfo = extern struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         var node = addr_info.node.?;
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
@@ -400,7 +414,7 @@ pub const Channel = opaque {
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
                 var container = bun.cast(*Container, ctx.?);
-                Container.onDNSSocketState(container, @intCast(i32, socket), readable != 0, writable != 0);
+                Container.onDNSSocketState(container, @as(i32, @intCast(socket)), readable != 0, writable != 0);
             }
         };
 
@@ -408,7 +422,7 @@ pub const Channel = opaque {
 
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
-        opts.sock_state_cb_data = @ptrCast(*anyopaque, this);
+        opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
         opts.timeout = 1000;
         opts.tries = 3;
 
@@ -488,7 +502,7 @@ pub const Channel = opaque {
                 break :brk null;
             }
             const len = @min(host.len, host_buf.len - 1);
-            @memcpy(&host_buf, host.ptr, len);
+            @memcpy(host_buf[0..len], host[0..len]);
             host_buf[len] = 0;
             break :brk host_buf[0..len :0].ptr;
         };
@@ -515,14 +529,46 @@ pub const Channel = opaque {
             if (name.len == 0 or name.len >= 1023) {
                 break :brk null;
             }
-            const len = @min(name_buf.len, name_buf.len - 1);
-            @memcpy(&name_buf, name.ptr, len);
+            const len = @min(name.len, name_buf.len - 1);
+            @memcpy(name_buf[0..len], name[0..len]);
+
             name_buf[len] = 0;
             break :brk name_buf[0..len :0];
         };
 
         const field_name = comptime std.fmt.comptimePrint("ns_t_{s}", .{lookup_name});
         ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(lookup_name, Type, callback), ctx);
+    }
+
+    pub fn getHostByAddr(this: *Channel, ip_addr: []const u8, comptime Type: type, ctx: *Type, comptime callback: struct_hostent.Callback(Type)) void {
+        // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
+        const buf_size = 46;
+        var addr_buf: [buf_size]u8 = undefined;
+        const addr_ptr: ?[*:0]const u8 = brk: {
+            if (ip_addr.len == 0 or ip_addr.len >= buf_size) {
+                break :brk null;
+            }
+            const len = @min(ip_addr.len, addr_buf.len - 1);
+            @memcpy(addr_buf[0..len], ip_addr[0..len]);
+
+            addr_buf[len] = 0;
+            break :brk addr_buf[0..len :0];
+        };
+
+        // https://c-ares.org/ares_inet_pton.html
+        // https://github.com/c-ares/c-ares/blob/7f3262312f246556d8c1bdd8ccc1844847f42787/src/lib/ares_gethostbyaddr.c#L71-L72
+        // `ares_inet_pton` allows passing raw bytes as `dst`,
+        // which can avoid the use of `struct_in_addr` to reduce extra bytes.
+        var addr: [16]u8 = undefined;
+        if (addr_ptr != null) {
+            if (ares_inet_pton(std.os.AF.INET, addr_ptr, &addr) == 1) {
+                ares_gethostbyaddr(this, &addr, 4, std.os.AF.INET, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+                return;
+            } else if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &addr) == 1) {
+                return ares_gethostbyaddr(this, &addr, 16, std.os.AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+            }
+        }
+        struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
@@ -623,11 +669,9 @@ pub const struct_ares_caa_reply = extern struct {
     value: [*c]u8,
     length: usize,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -702,11 +746,10 @@ pub const struct_ares_srv_reply = extern struct {
     priority: c_ushort,
     weight: c_ushort,
     port: c_ushort,
-    const JSC = bun.JSC;
 
     pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -787,11 +830,9 @@ pub const struct_ares_mx_reply = extern struct {
     host: [*c]u8,
     priority: c_ushort,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -863,11 +904,9 @@ pub const struct_ares_txt_reply = extern struct {
     txt: [*c]u8,
     length: usize,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -945,11 +984,9 @@ pub const struct_ares_naptr_reply = extern struct {
     order: c_ushort,
     preference: c_ushort,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -1039,11 +1076,9 @@ pub const struct_ares_soa_reply = extern struct {
     expire: c_uint,
     minttl: c_uint,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         var allocator = arena.allocator();
@@ -1103,6 +1138,7 @@ pub const struct_ares_soa_reply = extern struct {
         ares_free_data(this);
     }
 };
+
 pub const struct_ares_uri_reply = extern struct {
     next: [*c]struct_ares_uri_reply,
     priority: c_ushort,
@@ -1131,7 +1167,7 @@ const union_unnamed_3 = extern union {
     addr6: struct_ares_in6_addr,
 };
 pub const struct_ares_addr_node = extern struct {
-    next: [*c]struct_ares_addr_node,
+    next: ?*struct_ares_addr_node,
     family: c_int,
     addr: union_unnamed_3,
 };
@@ -1140,7 +1176,7 @@ const union_unnamed_4 = extern union {
     addr6: struct_ares_in6_addr,
 };
 pub const struct_ares_addr_port_node = extern struct {
-    next: [*c]struct_ares_addr_port_node,
+    next: ?*struct_ares_addr_port_node,
     family: c_int,
     addr: union_unnamed_4,
     udp_port: c_int,
@@ -1150,8 +1186,8 @@ pub extern fn ares_set_servers(channel: *Channel, servers: [*c]struct_ares_addr_
 pub extern fn ares_set_servers_ports(channel: *Channel, servers: [*c]struct_ares_addr_port_node) c_int;
 pub extern fn ares_set_servers_csv(channel: *Channel, servers: [*c]const u8) c_int;
 pub extern fn ares_set_servers_ports_csv(channel: *Channel, servers: [*c]const u8) c_int;
-pub extern fn ares_get_servers(channel: *Channel, servers: [*c][*c]struct_ares_addr_node) c_int;
-pub extern fn ares_get_servers_ports(channel: *Channel, servers: [*c][*c]struct_ares_addr_port_node) c_int;
+pub extern fn ares_get_servers(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
+pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) [*c]const u8;
 pub extern fn ares_inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 pub const ARES_SUCCESS = 0;
@@ -1209,8 +1245,12 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
-        return switch (@intToEnum(std.os.system.EAI, rc)) {
-            @intToEnum(std.os.system.EAI, 0) => return null,
+        if (comptime bun.Environment.isWindows) {
+            return bun.todo(@src(), Error.ENOTIMP);
+        }
+
+        return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {
+            @as(std.os.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
@@ -1283,8 +1323,8 @@ pub const Error = enum(i32) {
     pub fn get(rc: i32) ?Error {
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @intToEnum(Error, rc),
-            -ARES_ESERVICE...-1 => @intToEnum(Error, -rc),
+            1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),
+            -ARES_ESERVICE...-1 => @as(Error, @enumFromInt(-rc)),
             else => unreachable,
         };
     }
@@ -1376,3 +1416,62 @@ pub const ares_soa_reply = struct_ares_soa_reply;
 pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
+
+pub export fn Bun__canonicalizeIP(
+    ctx: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    JSC.markBinding(@src());
+
+    const globalThis = ctx.ptr();
+    const arguments = callframe.arguments(1);
+
+    if (arguments.len == 0) {
+        globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
+        return .zero;
+    }
+    // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
+    const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
+
+    var script_ctx = globalThis.bunVM();
+    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+    var addr_arg = args.nextEat().?;
+
+    if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+        const addr_slice = addr.toSlice(bun.default_allocator);
+        const addr_str = addr_slice.slice();
+        if (addr_str.len >= INET6_ADDRSTRLEN) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+        // we need a null terminated string as input
+        var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+        bun.copy(u8, &ip_addr, addr_str);
+        ip_addr[addr_str.len] = 0;
+
+        var af: c_int = std.os.AF.INET;
+        // get the standard text representation of the IP
+        if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
+            af = std.os.AF.INET6;
+            if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
+                return JSC.JSValue.jsUndefined();
+            }
+        }
+        // ip_addr will contain the null-terminated string of the cannonicalized IP
+        if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
+            return JSC.JSValue.jsUndefined();
+        }
+        // use the null-terminated size to return the string
+        const size = bun.len(bun.cast([*:0]u8, &ip_addr));
+        return JSC.ZigString.init(ip_addr[0..size]).toValueGC(globalThis);
+    } else {
+        globalThis.throwInvalidArguments("address must be a string", .{});
+        return .zero;
+    }
+}
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Bun__canonicalizeIP;
+    }
+}

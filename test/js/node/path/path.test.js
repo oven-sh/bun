@@ -1,13 +1,207 @@
 const { file } = import.meta;
 
-import { describe, it, expect } from "bun:test";
-import * as path from "node:path";
+import { describe, it, expect, test } from "bun:test";
+import path from "node:path";
 import assert from "assert";
+import { hideFromStackTrace } from "harness";
 
 const strictEqual = (...args) => {
   assert.strictEqual(...args);
   expect(true).toBe(true);
 };
+
+const expectStrictEqual = (actual, expected) => {
+  expect(actual).toBe(expected);
+};
+hideFromStackTrace(expectStrictEqual);
+
+describe("dirname", () => {
+  it("path.dirname", () => {
+    const fixtures = [
+      ["yo", "."],
+      ["/yo", "/"],
+      ["/yo/", "/"],
+      ["/yo/123", "/yo"],
+      [".", "."],
+      ["../", "."],
+      ["../../", ".."],
+      ["../../foo", "../.."],
+      ["../../foo/../", "../../foo"],
+      ["/foo/../", "/foo"],
+      ["../../foo/../bar", "../../foo/.."],
+    ];
+    for (const [input, expected] of fixtures) {
+      expect(path.posix.dirname(input)).toBe(expected);
+      if (process.platform !== "win32") {
+        expect(path.dirname(input)).toBe(expected);
+      }
+    }
+  });
+  it("path.posix.dirname", () => {
+    expect(path.posix.dirname("/a/b/")).toBe("/a");
+    expect(path.posix.dirname("/a/b")).toBe("/a");
+    expect(path.posix.dirname("/a")).toBe("/");
+    expect(path.posix.dirname("/a/")).toBe("/");
+    expect(path.posix.dirname("")).toBe(".");
+    expect(path.posix.dirname("/")).toBe("/");
+    expect(path.posix.dirname("//")).toBe("/");
+    expect(path.posix.dirname("///")).toBe("/");
+    expect(path.posix.dirname("////")).toBe("/");
+    expect(path.posix.dirname("//a")).toBe("//");
+    expect(path.posix.dirname("//ab")).toBe("//");
+    expect(path.posix.dirname("///a")).toBe("//");
+    expect(path.posix.dirname("////a")).toBe("///");
+    expect(path.posix.dirname("/////a")).toBe("////");
+    expect(path.posix.dirname("foo")).toBe(".");
+    expect(path.posix.dirname("foo/")).toBe(".");
+    expect(path.posix.dirname("a/b")).toBe("a");
+    expect(path.posix.dirname("a/")).toBe(".");
+    expect(path.posix.dirname("a///b")).toBe("a//");
+    expect(path.posix.dirname("a//b")).toBe("a/");
+    expect(path.posix.dirname("\\")).toBe(".");
+    expect(path.posix.dirname("\\a")).toBe(".");
+    expect(path.posix.dirname("a")).toBe(".");
+    expect(path.posix.dirname("/a/b//c")).toBe("/a/b/");
+    expect(path.posix.dirname("/文檔")).toBe("/");
+    expect(path.posix.dirname("/文檔/")).toBe("/");
+    expect(path.posix.dirname("/文檔/新建文件夾")).toBe("/文檔");
+    expect(path.posix.dirname("/文檔/新建文件夾/")).toBe("/文檔");
+    expect(path.posix.dirname("//新建文件夾")).toBe("//");
+    expect(path.posix.dirname("///新建文件夾")).toBe("//");
+    expect(path.posix.dirname("////新建文件夾")).toBe("///");
+    expect(path.posix.dirname("/////新建文件夾")).toBe("////");
+    expect(path.posix.dirname("新建文件夾")).toBe(".");
+    expect(path.posix.dirname("新建文件夾/")).toBe(".");
+    expect(path.posix.dirname("文檔/新建文件夾")).toBe("文檔");
+    expect(path.posix.dirname("文檔/")).toBe(".");
+    expect(path.posix.dirname("文檔///新建文件夾")).toBe("文檔//");
+    expect(path.posix.dirname("文檔//新建文件夾")).toBe("文檔/");
+  });
+  it("path.win32.dirname", () => {
+    expect(path.win32.dirname("c:\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo\\bar")).toBe("c:\\foo");
+    expect(path.win32.dirname("c:\\foo\\bar\\")).toBe("c:\\foo");
+    expect(path.win32.dirname("c:\\foo\\bar\\baz")).toBe("c:\\foo\\bar");
+    expect(path.win32.dirname("c:\\foo bar\\baz")).toBe("c:\\foo bar");
+    expect(path.win32.dirname("c:\\\\foo")).toBe("c:\\");
+    expect(path.win32.dirname("\\")).toBe("\\");
+    expect(path.win32.dirname("\\foo")).toBe("\\");
+    expect(path.win32.dirname("\\foo\\")).toBe("\\");
+    expect(path.win32.dirname("\\foo\\bar")).toBe("\\foo");
+    expect(path.win32.dirname("\\foo\\bar\\")).toBe("\\foo");
+    expect(path.win32.dirname("\\foo\\bar\\baz")).toBe("\\foo\\bar");
+    expect(path.win32.dirname("\\foo bar\\baz")).toBe("\\foo bar");
+    expect(path.win32.dirname("c:")).toBe("c:");
+    expect(path.win32.dirname("c:foo")).toBe("c:");
+    expect(path.win32.dirname("c:foo\\")).toBe("c:");
+    expect(path.win32.dirname("c:foo\\bar")).toBe("c:foo");
+    expect(path.win32.dirname("c:foo\\bar\\")).toBe("c:foo");
+    expect(path.win32.dirname("c:foo\\bar\\baz")).toBe("c:foo\\bar");
+    expect(path.win32.dirname("c:foo bar\\baz")).toBe("c:foo bar");
+    expect(path.win32.dirname("file:stream")).toBe(".");
+    expect(path.win32.dirname("dir\\file:stream")).toBe("dir");
+    expect(path.win32.dirname("\\\\unc\\share")).toBe("\\\\unc\\share");
+    expect(path.win32.dirname("\\\\unc\\share\\foo")).toBe("\\\\unc\\share\\");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\")).toBe("\\\\unc\\share\\");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar")).toBe("\\\\unc\\share\\foo");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar\\")).toBe("\\\\unc\\share\\foo");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar\\baz")).toBe("\\\\unc\\share\\foo\\bar");
+    expect(path.win32.dirname("/a/b/")).toBe("/a");
+    expect(path.win32.dirname("/a/b")).toBe("/a");
+    expect(path.win32.dirname("/a")).toBe("/");
+    expect(path.win32.dirname("")).toBe(".");
+    expect(path.win32.dirname("/")).toBe("/");
+    expect(path.win32.dirname("////")).toBe("/");
+    expect(path.win32.dirname("foo")).toBe(".");
+    expect(path.win32.dirname("c:\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\文檔")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\文檔\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\文檔\\新建文件夾")).toBe("c:\\文檔");
+    expect(path.win32.dirname("c:\\文檔\\新建文件夾\\")).toBe("c:\\文檔");
+    expect(path.win32.dirname("c:\\文檔\\新建文件夾\\baz")).toBe("c:\\文檔\\新建文件夾");
+    expect(path.win32.dirname("c:\\文檔 1\\新建文件夾")).toBe("c:\\文檔 1");
+    expect(path.win32.dirname("c:\\\\文檔")).toBe("c:\\");
+    expect(path.win32.dirname("\\文檔")).toBe("\\");
+    expect(path.win32.dirname("\\文檔\\")).toBe("\\");
+    expect(path.win32.dirname("\\文檔\\新建文件夾")).toBe("\\文檔");
+    expect(path.win32.dirname("\\文檔\\新建文件夾\\")).toBe("\\文檔");
+    expect(path.win32.dirname("\\文檔\\新建文件夾\\baz")).toBe("\\文檔\\新建文件夾");
+    expect(path.win32.dirname("\\文檔 1\\baz")).toBe("\\文檔 1");
+    expect(path.win32.dirname("c:")).toBe("c:");
+    expect(path.win32.dirname("c:文檔")).toBe("c:");
+    expect(path.win32.dirname("c:文檔\\")).toBe("c:");
+    expect(path.win32.dirname("c:文檔\\新建文件夾")).toBe("c:文檔");
+    expect(path.win32.dirname("c:文檔\\新建文件夾\\")).toBe("c:文檔");
+    expect(path.win32.dirname("c:文檔\\新建文件夾\\baz")).toBe("c:文檔\\新建文件夾");
+    expect(path.win32.dirname("c:文檔 1\\baz")).toBe("c:文檔 1");
+    expect(path.win32.dirname("/文檔/新建文件夾/")).toBe("/文檔");
+    expect(path.win32.dirname("/文檔/新建文件夾")).toBe("/文檔");
+    expect(path.win32.dirname("/文檔")).toBe("/");
+    expect(path.win32.dirname("新建文件夾")).toBe(".");
+  });
+});
+
+it("path.parse().name", () => {
+  expectStrictEqual(path.parse(file).name, "path.test");
+  expectStrictEqual(path.parse(".js").name, ".js");
+  expectStrictEqual(path.parse("..js").name, ".");
+  expectStrictEqual(path.parse("").name, "");
+  expectStrictEqual(path.parse(".").name, ".");
+  expectStrictEqual(path.parse("dir/name.ext").name, "name");
+  expectStrictEqual(path.parse("/dir/name.ext").name, "name");
+  expectStrictEqual(path.parse("/name.ext").name, "name");
+  expectStrictEqual(path.parse("name.ext").name, "name");
+  expectStrictEqual(path.parse("name.ext/").name, "name");
+  expectStrictEqual(path.parse("name.ext//").name, "name");
+  expectStrictEqual(path.parse("aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("/aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb/").name, "bbb");
+  expectStrictEqual(path.parse("//aaa/bbb//").name, "bbb");
+  expectStrictEqual(path.parse("///aaa").name, "aaa");
+  expectStrictEqual(path.parse("//aaa").name, "aaa");
+  expectStrictEqual(path.parse("/aaa").name, "aaa");
+  expectStrictEqual(path.parse("aaa.").name, "aaa");
+
+  // On unix a backslash is just treated as any other character.
+  expectStrictEqual(path.posix.parse("\\dir\\name.ext").name, "\\dir\\name");
+  expectStrictEqual(path.posix.parse("\\name.ext").name, "\\name");
+  expectStrictEqual(path.posix.parse("name.ext").name, "name");
+  expectStrictEqual(path.posix.parse("name.ext\\").name, "name");
+  expectStrictEqual(path.posix.parse("name.ext\\\\").name, "name");
+});
+
+it("path.parse() windows edition", () => {
+  // On Windows a backslash acts as a path separator.
+  expectStrictEqual(path.win32.parse("\\dir\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext\\").name, "name");
+  expectStrictEqual(path.win32.parse("name.ext\\\\").name, "name");
+  expectStrictEqual(path.win32.parse("name").name, "name");
+  expectStrictEqual(path.win32.parse(".name").name, ".name");
+  expectStrictEqual(path.win32.parse("file:stream").name, "file:stream");
+});
+
+it.todo("path.parse() windows edition - drive letter", () => {
+  expectStrictEqual(path.win32.parse("C:").name, "");
+  expectStrictEqual(path.win32.parse("C:.").name, ".");
+  expectStrictEqual(path.win32.parse("C:\\").name, "");
+  expectStrictEqual(path.win32.parse("C:\\.").name, ".");
+  expectStrictEqual(path.win32.parse("C:\\.ext").name, ".ext");
+  expectStrictEqual(path.win32.parse("C:\\dir\\name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext\\").name, "name");
+  expectStrictEqual(path.win32.parse("C:name.ext\\\\").name, "name");
+  expectStrictEqual(path.win32.parse("C:foo").name, "foo");
+  expectStrictEqual(path.win32.parse("C:.foo").name, ".foo");
+});
 
 it("path.basename", () => {
   strictEqual(path.basename(file), "path.test.js");
@@ -275,6 +469,14 @@ it("path.relative", () => {
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
         [process.cwd(), "foo", "foo"],
+        ["/webpack", "/webpack", ""],
+        ["/webpack/", "/webpack", ""],
+        ["/webpack", "/webpack/", ""],
+        ["/webpack/", "/webpack/", ""],
+        ["/webpack-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
+        ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
       ],
     ],
   ];
@@ -345,7 +547,6 @@ it("path.normalize", () => {
   //   "..\\..\\..\\..\\baz"
   // );
   // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
-
   strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");
@@ -365,6 +566,7 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"), "../../");
   strictEqual(path.posix.normalize("../.../../foobar/../../../bar/../../baz"), "../../../../baz");
   strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
+  strictEqual(path.posix.normalize(""), ".");
 });
 
 it("path.resolve", () => {
@@ -423,4 +625,214 @@ it("path.resolve", () => {
     });
   });
   strictEqual(failures.length, 0, failures.join("\n"));
+});
+
+describe("path.parse and path.format", () => {
+  const testCases = [
+    {
+      input: "/tmp/test.txt",
+      expected: {
+        root: "/",
+        dir: "/tmp",
+        base: "test.txt",
+        ext: ".txt",
+        name: "test",
+      },
+    },
+    {
+      input: "/tmp/test/file.txt",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "/tmp/test/dir",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "/tmp/test/dir/",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: ".",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "./",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "/.",
+      expected: {
+        root: "/",
+        dir: "/",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "/../",
+      expected: {
+        root: "/",
+        dir: "/",
+        base: "..",
+        ext: ".",
+        name: ".",
+      },
+    },
+    {
+      input: "./file.txt",
+      expected: {
+        root: "",
+        dir: ".",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "../file.txt",
+      expected: {
+        root: "",
+        dir: "..",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "../test/file.txt",
+      expected: {
+        root: "",
+        dir: "../test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "test/file.txt",
+      expected: {
+        root: "",
+        dir: "test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "test/dir",
+      expected: {
+        root: "",
+        dir: "test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "test/dir/another_dir",
+      expected: {
+        root: "",
+        dir: "test/dir",
+        base: "another_dir",
+        ext: "",
+        name: "another_dir",
+      },
+    },
+    {
+      input: "./dir",
+      expected: {
+        root: "",
+        dir: ".",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "../dir",
+      expected: {
+        root: "",
+        dir: "..",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "../dir/another_dir",
+      expected: {
+        root: "",
+        dir: "../dir",
+        base: "another_dir",
+        ext: "",
+        name: "another_dir",
+      },
+    },
+  ];
+  testCases.forEach(({ input, expected }) => {
+    it(`case ${input}`, () => {
+      const parsed = path.parse(input);
+      expect(parsed).toStrictEqual(expected);
+
+      const formatted = path.format(parsed);
+      expect(formatted).toStrictEqual(input.slice(-1) === "/" ? input.slice(0, -1) : input);
+    });
+  });
+  it("empty string arguments, issue #4005", () => {
+    expect(
+      path.format({
+        root: "",
+        dir: "",
+        base: "",
+        name: "foo",
+        ext: ".ts",
+      }),
+    ).toStrictEqual("foo.ts");
+    expect(
+      path.format({
+        name: "foo",
+        ext: ".ts",
+      }),
+    ).toStrictEqual("foo.ts");
+  });
+});
+
+test("path.format works for vite's example", () => {
+  expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
+});
+
+it("path.extname", () => {
+  expect(path.extname("index.js")).toBe(".js");
+  expect(path.extname("make_plot.🔥")).toBe(".🔥");
 });

@@ -1,4 +1,6 @@
 import { it, expect } from "bun:test";
+import { bunExe, bunEnv } from "harness";
+import path from "path";
 
 it("setImmediate", async () => {
   var lastID = -1;
@@ -44,4 +46,29 @@ it("clearImmediate", async () => {
     setImmediate(resolve);
   });
   expect(called).toBe(false);
+});
+
+it("setImmediate should not keep the process alive forever", async () => {
+  let process = null;
+  const success = async () => {
+    process = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(import.meta.dir, "process-setImmediate-fixture.js")],
+      stdout: "ignore",
+      env: {
+        ...bunEnv,
+        NODE_ENV: undefined,
+      },
+    });
+    await process.exited;
+    process = null;
+    return true;
+  };
+
+  const fail = async () => {
+    await Bun.sleep(500);
+    process?.kill();
+    return false;
+  };
+
+  expect(await Promise.race([success(), fail()])).toBe(true);
 });

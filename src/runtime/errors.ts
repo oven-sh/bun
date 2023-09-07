@@ -1,6 +1,6 @@
 // @ts-nocheck
-var __BuildError;
-var __ResolveError;
+var __BuildLog;
+var __ResolveLog;
 var __ImportKind;
 {
   enum ImportKind {
@@ -37,13 +37,13 @@ var __ImportKind;
     importKind: ImportKind;
   }
 
-  class BuildError extends Error {
+  class BuildMessage extends Error {
     constructor(data: BuildErrorImplementation) {
       super(data.message);
       this.name = data.name;
       this.data = data;
     }
-    data: BuildErrorImplementation;
+    data: BuildLogImplementation;
 
     get position() {
       return this.data.position;
@@ -54,7 +54,7 @@ var __ImportKind;
     }
   }
 
-  class ResolveError extends BuildError {
+  class ResolveMessage extends BuildMessage {
     constructor(data: ResolveErrorImplementation) {
       super(data);
       this.name = data.name;
@@ -71,9 +71,9 @@ var __ImportKind;
     }
   }
 
-  __ResolveError = ResolveError;
-  __BuildError = BuildError;
+  __ResolveLog = ResolveMessage;
+  __BuildLog = BuildMessage;
   __ImportKind = ImportKind;
 }
 
-export { __ResolveError as ResolveError, __BuildError as BuildError, __ImportKind as ImportKind };
+export { __ResolveLog as ResolveMessage, __BuildLog as BuildMessage, __ImportKind as ImportKind };

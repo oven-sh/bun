@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "FetchHeaders.h"
+#include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
 
@@ -63,7 +64,7 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = stripLeadingAndTrailingHTTPSpaces(value);
+    String normalizedValue = value.trim(isHTTPSpace);
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
@@ -107,7 +108,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = stripLeadingAndTrailingHTTPSpaces(header.value);
+    String normalizedValue = header.value.trim(isHTTPSpace);
     auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -213,6 +214,11 @@ ExceptionOr<void> FetchHeaders::remove(const String& name)
     return {};
 }
 
+size_t FetchHeaders::memoryCost() const
+{
+    return m_headers.memoryCost() + sizeof(*this);
+}
+
 ExceptionOr<String> FetchHeaders::get(const String& name) const
 {
     if (!isValidHTTPToken(name))
@@ -229,7 +235,7 @@ ExceptionOr<bool> FetchHeaders::has(const String& name) const
 
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
-    String normalizedValue = stripLeadingAndTrailingHTTPSpaces(value);
+    String normalizedValue = value.trim(isHTTPSpace);
     auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -248,7 +254,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 {
     for (auto& header : headers) {
-        String normalizedValue = stripLeadingAndTrailingHTTPSpaces(header.value);
+        String normalizedValue = header.value.trim(isHTTPSpace);
         auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
         if (canWriteResult.hasException())
             continue;
@@ -261,30 +267,48 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
-static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
-
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
+        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size());
+        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
         for (auto& header : m_headers->m_headers)
             m_keys.uncheckedAppend(header.asciiLowerCaseName());
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+        if (hasSetCookie)
+            m_keys.uncheckedAppend(String());
+
+        m_currentIndex += m_cookieIndex;
+        if (hasSetCookie) {
+            size_t setCookieKeyIndex = m_keys.size() - 1;
+            if (m_currentIndex < setCookieKeyIndex)
+                m_cookieIndex = 0;
+            else {
+                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
+                m_currentIndex -= m_cookieIndex;
+            }
+        } else
+            m_cookieIndex = 0;
+
         m_updateCounter = m_headers->m_updateCounter;
-        m_cookieIndex = 0;
     }
 
     auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
 
     while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex++];
+        auto key = m_keys[m_currentIndex];
 
-        if (!setCookieHeaders.isEmpty() && key == setCookieLowercaseString) {
-            auto cookie = setCookieHeaders[m_cookieIndex++];
-            return KeyValuePair<String, String> { WTFMove(key), WTFMove(cookie) };
+        if (key.isNull()) {
+            if (m_cookieIndex < setCookieHeaders.size()) {
+                String value = setCookieHeaders[m_cookieIndex++];
+                return KeyValuePair<String, String> { WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)], WTFMove(value) };
+            }
+            m_currentIndex++;
+            continue;
         }
 
+        m_currentIndex++;
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
             return KeyValuePair<String, String> { WTFMove(key), WTFMove(value) };

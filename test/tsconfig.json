@@ -1,16 +1,14 @@
 {
-  "include": [
-    ".",
-    "../packages/bun-types/index.d.ts"
-  ],
+  "include": [".", "../packages/bun-types/index.d.ts"],
   "compilerOptions": {
-    "noEmit": true,
-    "lib": [
-      "ESNext"
-    ],
+    "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "composite": true,
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
@@ -19,31 +17,17 @@
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     "resolveJsonModule": true,
+    "noImplicitThis": false,
     "baseUrl": ".",
     "paths": {
-      "harness": [
-        "harness.ts"
-      ],
-      "mkfifo": [
-        "mkfifo.ts"
-      ],
-      "node-harness": [
-        "js/node/harness.ts"
-      ],
-      "deno:harness": [
-        "js/deno/harness.ts"
-      ],
-      "foo/bar": [
-        "js/bun/resolve/baz.js"
-      ],
-      "@faasjs/*": [
-        "js/bun/resolve/*.js"
-      ]
+      "harness": ["harness.ts"],
+      "mkfifo": ["mkfifo.ts"],
+      "node-harness": ["js/node/harness.ts"],
+      "deno:harness": ["js/deno/harness.ts"],
+      "foo/bar": ["js/bun/resolve/baz.js"],
+      "@faasjs/*": ["js/bun/resolve/*.js"]
     }
   },
-  "exclude": [
-    "fixtures",
-    "snapshots",
-    "js/deno"
-  ]
+
+  "exclude": ["bundler/fixtures", "snapshots", "js/deno"]
 }

@@ -1,18 +1,18 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-{% callout %}
-**Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
+## macOS and Linux
 
-**Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+{% callout %}
+**Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 {% /callout %}
 
 {% codetabs %}
 
-```bash#Native
+```bash#macOS/Linux_(curl)
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 ```
 
-```bash#npm
+```bash#NPM
 $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
@@ -26,11 +26,25 @@ $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
-```bash#proto
+```bash#Proto
 $ proto install bun
 ```
 
 {% /codetabs %}
+
+## Windows
+
+Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+
+- `bun <file>`
+- `bun run <file>`
+
+The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+
+- `bun test`
+- `bun install/add/remove`
+- `bun link/unlink`
+- `bun build`
 
 ## Upgrading
 
@@ -117,7 +131,7 @@ Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json
   }
 ```
 
-Refer to [Ecosystem > TypeScript](/docs/ecosystem/typescript) for a complete guide to TypeScript support in Bun.
+Refer to [Ecosystem > TypeScript](/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
 
 ## Completions
 

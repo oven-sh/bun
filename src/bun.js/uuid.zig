@@ -3,7 +3,7 @@ const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
 const testing = std.testing;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();
@@ -18,6 +18,16 @@ pub fn init() UUID {
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1
     uuid.bytes[8] = (uuid.bytes[8] & 0x3f) | 0x80;
+
+    return uuid;
+}
+
+pub fn initWith(bytes: *const [16]u8) UUID {
+    var uuid = UUID{ .bytes = bytes.* };
+
+    uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
+    uuid.bytes[8] = (uuid.bytes[8] & 0x3f) | 0x80;
+
     return uuid;
 }
 

@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -37,7 +37,6 @@ const runtime = @import("./runtime.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
@@ -51,7 +50,7 @@ const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
@@ -68,58 +67,11 @@ const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.J
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
 pub usingnamespace EntryPoints;
-// How it works end-to-end
-// 1. Resolve a file path from input using the resolver
-// 2. Look at the extension of that file path, and determine a loader
-// 3. If the loader is .js, .jsx, .ts, .tsx, or .json, run it through our JavaScript Parser
-// IF serving via HTTP and it's parsed without errors:
-// 4. If parsed without errors, generate a strong ETag & write the output to a buffer that sends to the in the Printer.
-// 4. Else, write any errors to error page (which doesn't exist yet)
-// IF writing to disk AND it's parsed without errors:
-// 4. Write the output to a temporary file.
-//    Why? Two reasons.
-//    1. At this point, we don't know what the best output path is.
-//       Most of the time, you want the shortest common path, which you can't know until you've
-//       built & resolved all paths.
-//       Consider this directory tree:
-//          - /Users/jarred/Code/app/src/index.tsx
-//          - /Users/jarred/Code/app/src/Button.tsx
-//          - /Users/jarred/Code/app/assets/logo.png
-//          - /Users/jarred/Code/app/src/Button.css
-//          - /Users/jarred/Code/app/node_modules/react/index.js
-//          - /Users/jarred/Code/app/node_modules/react/cjs/react.development.js
-//        Remember that we cannot know which paths need to be resolved without parsing the JavaScript.
-//        If we stopped here: /Users/jarred/Code/app/src/Button.tsx
-//        We would choose /Users/jarred/Code/app/src/ as the directory
-//        Then, that would result in a directory structure like this:
-//         - /Users/jarred/Code/app/src/Users/jarred/Code/app/node_modules/react/cjs/react.development.js
-//        Which is absolutely insane
-//
-//    2. We will need to write to disk at some point!
-//          - If we delay writing to disk, we need to print & allocate a potentially quite large
-//          buffer (react-dom.development.js is 550 KB)
-//             ^ This is how it used to work!
-//          - If we delay printing, we need to keep the AST around. Which breaks all our
-//          memory-saving recycling logic since that could be many many ASTs.
-//  5. Once all files are written, determine the shortest common path
-//  6. Move all the temporary files to their intended destinations
-// IF writing to disk AND it's a file-like loader
-// 4. Hash the contents
-//     - rewrite_paths.put(absolute_path, hash(file(absolute_path)))
-// 5. Resolve any imports of this file to that hash(file(absolute_path))
-// 6. Append to the files array with the new filename
-// 7. When parsing & resolving is over, just copy the file.
-//     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space (only possible if file doesn't already exist)
-//          fclonefile
-// IF serving via HTTP AND it's a file-like loader:
-// 4. Use os.sendfile so copying/reading the file happens in the kernel instead of in bun.
-//      This unfortunately means content hashing for HTTP server is unsupported, but metadata etags work
-// For each imported file, GOTO 1.
-
 pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
+    already_bundled: bool = false,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
@@ -175,13 +127,13 @@ pub const PluginRunner = struct {
         var global = this.global_object;
         const namespace_slice = extractNamespace(specifier);
         const namespace = if (namespace_slice.len > 0 and !strings.eqlComptime(namespace_slice, "file"))
-            JSC.ZigString.init(namespace_slice)
+            bun.String.init(namespace_slice)
         else
-            JSC.ZigString.init("");
+            bun.String.empty;
         const on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
-            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0, 0),
-            JSC.ZigString.init(importer),
+            bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
+            bun.String.init(importer),
             target,
         ) orelse return null;
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
@@ -191,9 +143,9 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.getZigString(global);
+        var file_path = path_value.toBunString(global);
 
-        if (file_path.len == 0) {
+        if (file_path.length() == 0) {
             log.addError(
                 null,
                 loc,
@@ -215,28 +167,28 @@ pub const PluginRunner = struct {
             return null;
         }
         var static_namespace = true;
-        const user_namespace: JSC.ZigString = brk: {
+        const user_namespace: bun.String = brk: {
             if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
                 }
 
-                const namespace_str = namespace_value.getZigString(global);
-                if (namespace_str.len == 0) {
-                    break :brk JSC.ZigString.init("file");
+                const namespace_str = namespace_value.toBunString(global);
+                if (namespace_str.length() == 0) {
+                    break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
-                    break :brk JSC.ZigString.init("file");
+                    break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
-                    break :brk JSC.ZigString.init("bun");
+                    break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
-                    break :brk JSC.ZigString.init("node");
+                    break :brk bun.String.init("node");
                 }
 
                 static_namespace = false;
@@ -244,13 +196,13 @@ pub const PluginRunner = struct {
                 break :brk namespace_str;
             }
 
-            break :brk JSC.ZigString.init("file");
+            break :brk bun.String.init("file");
         };
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
                 std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
-                user_namespace.slice(),
+                user_namespace.byteSlice(),
             );
         } else {
             return Fs.Path.initWithNamespace(
@@ -262,17 +214,17 @@ pub const PluginRunner = struct {
 
     pub fn onResolveJSC(
         this: *const PluginRunner,
-        namespace: JSC.ZigString,
-        specifier: JSC.ZigString,
-        importer: JSC.ZigString,
+        namespace: bun.String,
+        specifier: bun.String,
+        importer: bun.String,
         target: JSC.JSGlobalObject.BunPluginTarget,
-    ) ?JSC.ErrorableZigString {
+    ) ?JSC.ErrorableString {
         var global = this.global_object;
         const on_resolve_plugin = global.runOnResolvePlugins(
-            if (namespace.len > 0 and !namespace.eqlComptime("file"))
+            if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
-                JSC.ZigString.init(""),
+                bun.String.static(""),
             specifier,
             importer,
             target,
@@ -280,18 +232,18 @@ pub const PluginRunner = struct {
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
-            return JSC.ErrorableZigString.err(
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         }
 
-        const file_path = path_value.getZigString(global);
+        const file_path = path_value.toBunString(global);
 
-        if (file_path.len == 0) {
-            return JSC.ErrorableZigString.err(
+        if (file_path.length() == 0) {
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         } else if
         // TODO: validate this better
@@ -300,36 +252,36 @@ pub const PluginRunner = struct {
             file_path.eqlComptime("...") or
             file_path.eqlComptime(" "))
         {
-            return JSC.ErrorableZigString.err(
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         }
         var static_namespace = true;
-        const user_namespace: JSC.ZigString = brk: {
+        const user_namespace: bun.String = brk: {
             if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
-                    return JSC.ErrorableZigString.err(
+                    return JSC.ErrorableString.err(
                         error.JSErrorObject,
-                        JSC.ZigString.init("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
+                        bun.String.static("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
                     );
                 }
 
-                const namespace_str = namespace_value.getZigString(global);
-                if (namespace_str.len == 0) {
-                    break :brk JSC.ZigString.init("file");
+                const namespace_str = namespace_value.toBunString(global);
+                if (namespace_str.length() == 0) {
+                    break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
-                    break :brk JSC.ZigString.init("file");
+                    break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
-                    break :brk JSC.ZigString.init("bun");
+                    break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
-                    break :brk JSC.ZigString.init("node");
+                    break :brk bun.String.static("node");
                 }
 
                 static_namespace = false;
@@ -337,7 +289,7 @@ pub const PluginRunner = struct {
                 break :brk namespace_str;
             }
 
-            break :brk JSC.ZigString.init("file");
+            break :brk bun.String.static("file");
         };
 
         // Our super slow way of cloning the string into memory owned by JSC
@@ -346,9 +298,10 @@ pub const PluginRunner = struct {
             "{any}:{any}",
             .{ user_namespace, file_path },
         ) catch unreachable;
-        const out = JSC.ZigString.init(combined_string).toValueGC(this.global_object).getZigString(this.global_object);
+        var out_ = bun.String.init(combined_string);
+        const out = out_.toJS(this.global_object).toBunString(this.global_object);
         this.allocator.free(combined_string);
-        return JSC.ErrorableZigString.ok(out);
+        return JSC.ErrorableString.ok(out);
     }
 };
 
@@ -365,6 +318,7 @@ pub const Bundler = struct {
     elapsed: u64 = 0,
     needs_runtime: bool = false,
     router: ?Router = null,
+    source_map: options.SourceMapOption = .none,
 
     linker: Linker,
     timer: SystemTimer = undefined,
@@ -381,6 +335,7 @@ pub const Bundler = struct {
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
         to.macro_context = null;
+        to.linker.resolver = &to.resolver;
     }
 
     pub inline fn getPackageManager(this: *Bundler) *PackageManager {
@@ -402,19 +357,11 @@ pub const Bundler = struct {
     pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) anyerror!_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
-                _ = bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
-                break :brk true;
+                return bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
             };
+            _ = has_dot_slash_form;
 
-            if (has_dot_slash_form) {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\". Did you mean: \"./{s}\"", .{
-                    @errorName(err),
-                    entry_point,
-                    entry_point,
-                }) catch unreachable;
-            } else {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
-            }
+            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
 
             return err;
         };
@@ -424,13 +371,11 @@ pub const Bundler = struct {
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
-        existing_bundle: ?*NodeModuleBundle,
         env_loader_: ?*DotEnv.Loader,
     ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
-        var fs = try Fs.FileSystem.init1(
-            allocator,
+        var fs = try Fs.FileSystem.init(
             opts.absolute_working_dir,
         );
         const bundle_options = try options.BundleOptions.fromApi(
@@ -438,7 +383,6 @@ pub const Bundler = struct {
             fs,
             log,
             opts,
-            existing_bundle,
         );
 
         var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
@@ -511,19 +455,28 @@ pub const Bundler = struct {
         switch (this.options.env.behavior) {
             .prefix, .load_all => {
                 // Step 1. Load the project root.
-                var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
+                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
+
+                if (dir_info.tsconfig_json) |tsconfig| {
+                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
+                }
+
+                var dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 // Process always has highest priority.
                 const was_production = this.options.production;
                 this.env.loadProcess();
-                if (!was_production and this.env.isProduction()) {
+                const has_production_env = this.env.isProduction();
+                if (!was_production and has_production_env) {
                     this.options.setProduction(true);
                 }
 
-                if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, false);
+                if (!has_production_env and this.options.isTest()) {
+                    try this.env.load(&this.fs.fs, dir, .@"test");
+                } else if (this.options.production) {
+                    try this.env.load(&this.fs.fs, dir, .production);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, true);
+                    try this.env.load(&this.fs.fs, dir, .development);
                 }
             },
             .disable => {
@@ -535,8 +488,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.map.get("DISABLE_BUN_ANALYTICS")) |should_disable| {
-            if (strings.eqlComptime(should_disable, "1")) {
+        if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
+            // https://do-not-track.dev/
+            if (strings.eqlComptime(dnt, "1")) {
                 Analytics.disabled = true;
             }
         }
@@ -556,12 +510,14 @@ pub const Bundler = struct {
             return;
         }
 
-        if (this.options.platform == .bun_macro) {
+        if (this.options.target == .bun_macro) {
             this.options.env.behavior = .prefix;
             this.options.env.prefix = "BUN_";
         }
 
         try this.runEnvLoader();
+
+        this.options.jsx.setProduction(this.env.isProduction());
 
         js_ast.Expr.Data.Store.create(this.allocator);
         js_ast.Stmt.Data.Store.create(this.allocator);
@@ -570,7 +526,7 @@ pub const Bundler = struct {
         defer js_ast.Stmt.Data.Store.reset();
 
         if (this.options.framework) |framework| {
-            if (this.options.platform.isClient()) {
+            if (this.options.target.isClient()) {
                 try this.options.loadDefines(this.allocator, this.env, &framework.client.env);
             } else {
                 try this.options.loadDefines(this.allocator, this.env, &framework.server.env);
@@ -582,21 +538,16 @@ pub const Bundler = struct {
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
-                this.options.jsx.development = false;
 
-                if (this.options.jsx.import_source.ptr == options.JSX.Pragma.Defaults.ImportSourceDev) {
-                    this.options.jsx.import_source = options.JSX.Pragma.Defaults.ImportSource;
-                }
+                if (this.options.target.isBun()) {
+                    if (strings.eqlComptime(this.options.jsx.package_name, "react")) {
+                        if (this.options.jsx_optimization_inline == null) {
+                            this.options.jsx_optimization_inline = true;
+                        }
 
-                if (options.JSX.Pragma.Defaults.ImportSource == this.options.jsx.import_source.ptr or
-                    strings.eqlComptime(this.options.jsx.import_source, comptime options.JSX.Pragma.Defaults.ImportSource) or strings.eqlComptime(this.options.jsx.package_name, "react"))
-                {
-                    if (this.options.jsx_optimization_inline == null) {
-                        this.options.jsx_optimization_inline = true;
-                    }
-
-                    if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
-                        this.options.jsx_optimization_hoist = true;
+                        if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
+                            this.options.jsx_optimization_hoist = true;
+                        }
                     }
                 }
             }
@@ -619,7 +570,7 @@ pub const Bundler = struct {
                 }
 
                 if (this.options.areDefinesUnset()) {
-                    if (this.options.platform.isClient()) {
+                    if (this.options.target.isClient()) {
                         this.options.env = framework.client.env;
                     } else {
                         this.options.env = framework.server.env;
@@ -666,45 +617,7 @@ pub const Bundler = struct {
             }
         }
 
-        // if you pass just a directory, activate the router configured for the pages directory
-        // for now:
-        // - "." is not supported
-        // - multiple pages directories is not supported
-        if (!this.options.routes.routes_enabled and this.options.entry_points.len == 1 and !this.options.serve) {
-
-            // When inferring:
-            // - pages directory with a file extension is not supported. e.g. "pages.app/" won't work.
-            //     This is a premature optimization to avoid this magical auto-detection we do here from meaningfully increasing startup time if you're just passing a file
-            //     readDirInfo is a recursive lookup, top-down instead of bottom-up. It opens each folder handle and potentially reads the package.jsons
-            // So it is not fast! Unless it's already cached.
-            var paths = [_]string{std.mem.trimLeft(u8, this.options.entry_points[0], "./")};
-            if (std.mem.indexOfScalar(u8, paths[0], '.') == null) {
-                var pages_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var entry = this.fs.absBuf(&paths, &pages_dir_buf);
-
-                if (std.fs.path.extension(entry).len == 0) {
-                    bun.constStrToU8(entry).ptr[entry.len] = '/';
-
-                    // Only throw if they actually passed in a route config and the directory failed to load
-                    var dir_info_ = this.resolver.readDirInfo(entry) catch return;
-                    var dir_info = dir_info_ orelse return;
-
-                    this.options.routes.dir = dir_info.abs_path;
-                    this.options.routes.extensions = options.RouteConfig.DefaultExtensions[0..];
-                    this.options.routes.routes_enabled = true;
-                    this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-                    try this.router.?.loadRoutes(
-                        this.log,
-                        dir_info,
-                        Resolver,
-                        &this.resolver,
-                        this.fs.top_level_dir,
-                    );
-                    this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
-                    return;
-                }
-            }
-        } else if (this.options.routes.routes_enabled) {
+        if (this.options.routes.routes_enabled) {
             var dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
             var dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
@@ -740,16 +653,12 @@ pub const Bundler = struct {
     pub noinline fn dumpEnvironmentVariables(bundler: *const Bundler) void {
         @setCold(true);
         const opts = std.json.StringifyOptions{
-            .whitespace = std.json.StringifyOptions.Whitespace{
-                .separator = true,
-            },
+            .whitespace = .indent_2,
         };
         Output.flush();
         std.json.stringify(bundler.env.map.*, opts, Output.writer()) catch unreachable;
         Output.flush();
     }
-
-    pub const GenerateNodeModulesBundle = @import("./bundler/generate_node_modules_bundle.zig");
 
     pub const BuildResolveResultPair = struct {
         written: usize,
@@ -886,8 +795,11 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                 }
 
-                if (bundler.options.platform.isBun()) {
-                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
+                if (bundler.options.target.isBun()) {
+                    if (!bundler.options.transform_only) {
+                        try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
+                    }
+
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
                             .esm => try bundler.printWithSourceMapMaybe(
@@ -904,7 +816,7 @@ pub const Bundler = struct {
                                 &result.source,
                                 Writer,
                                 writer,
-                                .cjs_ascii,
+                                .cjs,
                                 is_source_map,
                                 source_map_handler,
                             ),
@@ -914,7 +826,9 @@ pub const Bundler = struct {
                     };
                 }
 
-                try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
+                if (!bundler.options.transform_only) {
+                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
+                }
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
@@ -968,26 +882,13 @@ pub const Bundler = struct {
         file_path.pretty = Linker.relative_paths_list.append(string, bundler.fs.relativeTo(file_path.text)) catch unreachable;
 
         var output_file = options.OutputFile{
-            .input = file_path,
+            .src_path = file_path,
             .loader = loader,
             .value = undefined,
         };
 
-        var file: std.fs.File = undefined;
-
-        if (Outstream == std.fs.Dir) {
-            const output_dir = outstream;
-
-            if (std.fs.path.dirname(file_path.pretty)) |dirname| {
-                try output_dir.makePath(dirname);
-            }
-            file = try output_dir.createFile(file_path.pretty, .{});
-        } else {
-            file = outstream;
-        }
-
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml => {
+            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
                 var result = bundler.parse(
                     ParseOptions{
                         .allocator = bundler.allocator,
@@ -1003,58 +904,68 @@ pub const Bundler = struct {
                 ) orelse {
                     return null;
                 };
-                if (!bundler.options.platform.isBun())
-                    try bundler.linker.link(
-                        file_path,
-                        &result,
-                        bundler.options.origin,
-                        import_path_format,
-                        false,
-                        false,
-                    )
-                else
-                    try bundler.linker.link(
-                        file_path,
-                        &result,
-                        bundler.options.origin,
-                        import_path_format,
-                        false,
-                        true,
-                    );
+                if (!bundler.options.transform_only) {
+                    if (!bundler.options.target.isBun())
+                        try bundler.linker.link(
+                            file_path,
+                            &result,
+                            bundler.options.origin,
+                            import_path_format,
+                            false,
+                            false,
+                        )
+                    else
+                        try bundler.linker.link(
+                            file_path,
+                            &result,
+                            bundler.options.origin,
+                            import_path_format,
+                            false,
+                            true,
+                        );
+                }
 
-                output_file.size = switch (bundler.options.platform) {
-                    .neutral, .browser, .node => try bundler.print(
+                var buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
+                var writer = js_printer.BufferPrinter.init(buffer_writer);
+
+                output_file.size = switch (bundler.options.target) {
+                    .browser, .node => try bundler.print(
                         result,
-                        js_printer.FileWriter,
-                        js_printer.NewFileWriter(file),
+                        *js_printer.BufferPrinter,
+                        &writer,
                         .esm,
                     ),
                     .bun, .bun_macro => try bundler.print(
                         result,
-                        js_printer.FileWriter,
-                        js_printer.NewFileWriter(file),
+                        *js_printer.BufferPrinter,
+                        &writer,
                         .esm_ascii,
                     ),
                 };
-
-                var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
-
-                file_op.fd = file.handle;
-
-                file_op.is_tmpdir = false;
-
-                if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
-
-                    if (bundler.fs.fs.needToCloseFiles()) {
-                        file.close();
-                        file_op.fd = 0;
-                    }
-                }
-
-                output_file.value = .{ .move = file_op };
+                output_file.value = .{
+                    .buffer = .{
+                        .allocator = bundler.allocator,
+                        .bytes = writer.ctx.written,
+                    },
+                };
+            },
+            .dataurl, .base64 => {
+                Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
+                var file: std.fs.File = undefined;
+
+                if (Outstream == std.fs.Dir) {
+                    const output_dir = outstream;
+
+                    if (std.fs.path.dirname(file_path.pretty)) |dirname| {
+                        try output_dir.makePath(dirname);
+                    }
+                    file = try output_dir.createFile(file_path.pretty, .{});
+                } else {
+                    file = outstream;
+                }
+
                 const CSSBuildContext = struct {
                     origin: URL,
                 };
@@ -1079,7 +990,7 @@ pub const Bundler = struct {
                     null,
                 ) catch return null;
 
-                const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
 
@@ -1097,12 +1008,12 @@ pub const Bundler = struct {
                 output_file.size = css_writer.ctx.context.bytes_written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 
-                file_op.fd = file.handle;
+                file_op.fd = bun.toFD(file.handle);
 
                 file_op.is_tmpdir = false;
 
                 if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = bun.toFD(outstream.fd);
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1117,7 +1028,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1145,7 +1056,10 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
+        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        defer tracer.end();
+
+        var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1156,17 +1070,17 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .rewrite_require_resolve = bundler.options.platform != .node,
+                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
+                    .minify_syntax = bundler.options.minify_syntax,
+                    .minify_identifiers = bundler.options.minify_identifiers,
+                    .transform_only = bundler.options.transform_only,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
 
@@ -1178,107 +1092,44 @@ pub const Bundler = struct {
                 source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .rewrite_require_resolve = bundler.options.platform != .node,
+                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
+                    .minify_syntax = bundler.options.minify_syntax,
+                    .minify_identifiers = bundler.options.minify_identifiers,
+                    .transform_only = bundler.options.transform_only,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
-            .esm_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printAst(
+            .esm_ascii => switch (bundler.options.target.isBun()) {
+                inline else => |is_bun| try js_printer.printAst(
                     Writer,
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
                     source,
-                    true,
+                    is_bun,
                     js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
                         .externals = ast.externals,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
                         .minify_whitespace = bundler.options.minify_whitespace,
+                        .minify_syntax = bundler.options.minify_syntax,
+                        .minify_identifiers = bundler.options.minify_identifiers,
+                        .transform_only = bundler.options.transform_only,
+                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .inline_require_and_import_errors = false,
                     },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printAst(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
                     enable_source_map,
                 ),
-            .cjs_ascii => if (bundler.options.platform.isBun())
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    true,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                )
-            else
-                try js_printer.printCommonJS(
-                    Writer,
-                    writer,
-                    ast,
-                    js_ast.Symbol.Map.initList(symbols),
-                    source,
-                    false,
-                    js_printer.Options{
-                        .to_module_ref = Ref.RuntimeRef,
-                        .externals = ast.externals,
-                        .runtime_imports = ast.runtime_imports,
-                        .require_ref = ast.require_ref,
-                        .css_import_behavior = bundler.options.cssImportBehavior(),
-                        .source_map_handler = source_map_context,
-                        .rewrite_require_resolve = bundler.options.platform != .node,
-                        .minify_whitespace = bundler.options.minify_whitespace,
-                    },
-                    Linker,
-                    &bundler.linker,
-                    enable_source_map,
-                ),
+            },
+            else => unreachable,
         };
     }
 
@@ -1335,8 +1186,11 @@ pub const Bundler = struct {
         macro_js_ctx: MacroJSValueType = default_macro_js_value,
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
-        hoist_bun_plugin: bool = false,
         inject_jest_globals: bool = false,
+        set_breakpoint_on_first_line: bool = false,
+
+        dont_bundle_twice: bool = false,
+        allow_commonjs: bool = false,
     };
 
     pub fn parse(
@@ -1353,6 +1207,22 @@ pub const Bundler = struct {
         client_entry_point_: anytype,
         comptime return_file_only: bool,
     ) ?ParseResult {
+        return parseMaybeReturnFileOnlyAllowSharedBuffer(
+            bundler,
+            this_parse,
+            client_entry_point_,
+            return_file_only,
+            false,
+        );
+    }
+
+    pub fn parseMaybeReturnFileOnlyAllowSharedBuffer(
+        bundler: *Bundler,
+        this_parse: ParseOptions,
+        client_entry_point_: anytype,
+        comptime return_file_only: bool,
+        comptime use_shared_buffer: bool,
+    ) ?ParseResult {
         var allocator = this_parse.allocator;
         const dirname_fd = this_parse.dirname_fd;
         const file_descriptor = this_parse.file_descriptor;
@@ -1360,14 +1230,6 @@ pub const Bundler = struct {
         const path = this_parse.path;
         const loader = this_parse.loader;
 
-        if (FeatureFlags.tracing) {
-            bundler.timer.reset();
-        }
-        defer {
-            if (FeatureFlags.tracing) {
-                bundler.elapsed += bundler.timer.read();
-            }
-        }
         var input_fd: ?StoredFileDescriptorType = null;
 
         const source: logger.Source = brk: {
@@ -1389,11 +1251,12 @@ pub const Bundler = struct {
                 break :brk logger.Source.initPathString(path.text, "");
             }
 
-            const entry = bundler.resolver.caches.fs.readFile(
+            const entry = bundler.resolver.caches.fs.readFileWithAllocator(
+                if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
                 bundler.fs,
                 path.text,
                 dirname_fd,
-                true,
+                use_shared_buffer,
                 file_descriptor,
             ) catch |err| {
                 bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
@@ -1403,7 +1266,7 @@ pub const Bundler = struct {
             if (this_parse.file_fd_ptr) |file_fd_ptr| {
                 file_fd_ptr.* = entry.fd;
             }
-            break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
         if (comptime return_file_only) {
@@ -1431,45 +1294,46 @@ pub const Bundler = struct {
                     };
                 }
 
-                const platform = bundler.options.platform;
+                const target = bundler.options.target;
 
                 var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
-                opts.enable_bundling = false;
-                opts.transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
+                opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
+                opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_numeric_constants = platform.isBun();
-                opts.features.dynamic_require = platform.isBun();
+                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
+                opts.features.dynamic_require = target.isBun();
+                opts.features.no_macros = bundler.options.no_macros;
+                opts.transform_only = bundler.options.transform_only;
 
-                opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
+                // @bun annotation
+                opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+
+                opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
 
-                // HMR is enabled when devserver is running
-                // unless you've explicitly disabled it
-                // or you're running in SSR
-                // or the file is a node_module
-                opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    platform.isNotBun() and
-                    (!opts.can_import_from_bundle or
-                    (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
                     jsx.parse and
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
-                opts.warn_about_unbundled_modules = platform.isNotBun();
-                opts.features.jsx_optimization_inline = (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
+                opts.warn_about_unbundled_modules = target.isNotBun();
+                opts.features.jsx_optimization_inline = opts.features.allow_runtime and
+                    (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
                     !jsx.development)) and
-                    (jsx.runtime == .automatic or jsx.runtime == .classic);
+                    (jsx.runtime == .automatic or jsx.runtime == .classic) and
+                    strings.eqlComptime(jsx.import_source.production, "react/jsx-runtime");
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
-                opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.minify_syntax = bundler.options.minify_syntax;
+                opts.features.minify_identifiers = bundler.options.minify_identifiers;
+
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }
@@ -1480,28 +1344,37 @@ pub const Bundler = struct {
 
                 opts.macro_context = &bundler.macro_context.?;
                 if (comptime !JSC.is_bindgen) {
-                    if (platform != .bun_macro) {
+                    if (target != .bun_macro) {
                         opts.macro_context.javascript_object = this_parse.macro_js_ctx;
                     }
                 }
 
-                opts.features.is_macro_runtime = platform == .bun_macro;
+                opts.features.is_macro_runtime = target == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
-                const value = (bundler.resolver.caches.js.parse(
+                return switch ((bundler.resolver.caches.js.parse(
                     allocator,
                     opts,
                     bundler.options.define,
                     bundler.log,
                     &source,
-                ) catch null) orelse return null;
-                return ParseResult{
-                    .ast = value,
-                    .source = source,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                ) catch null) orelse return null) {
+                    .ast => |value| ParseResult{
+                        .ast = value,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
+                    .already_bundled => ParseResult{
+                        .ast = undefined,
+                        .already_bundled = true,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
                 };
             },
+            // TODO: use lazy export AST
             .json => {
                 var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
                 var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1544,8 +1417,32 @@ pub const Bundler = struct {
                     .input_fd = input_fd,
                 };
             },
+            // TODO: use lazy export AST
+            .text => {
+                var expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = source.contents,
+                }, logger.Loc.Empty);
+                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.initTest(parts),
+                    .source = source,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
             .wasm => {
-                if (bundler.options.platform.isBun()) {
+                if (bundler.options.target.isBun()) {
                     if (!source.isWebAssembly()) {
                         bundler.log.addErrorFmt(
                             null,
@@ -1605,7 +1502,7 @@ pub const Bundler = struct {
         // All non-absolute paths are ./paths
         if (path_to_use[0] != '/' and path_to_use[0] != '.') {
             tmp_buildfile_buf3[0..2].* = "./".*;
-            @memcpy(tmp_buildfile_buf3[2..], path_to_use.ptr, path_to_use.len);
+            @memcpy(tmp_buildfile_buf3[2..][0..path_to_use.len], path_to_use);
             path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
         }
 
@@ -1666,9 +1563,9 @@ pub const Bundler = struct {
             else => {
                 var abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-                var stat = try file.stat();
+                const size = try file.getEndPos();
                 return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .file = options.OutputFile.initFile(file, abs_path, size),
                     .mime_type = MimeType.byLoader(
                         loader,
                         mime_type_ext[1..],
@@ -1742,69 +1639,24 @@ pub const Bundler = struct {
         return entry_point_i;
     }
 
-    pub fn bundle(
+    pub fn transform(
+        bundler: *Bundler,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
-        var bundler = try Bundler.init(allocator, log, opts, null, null);
-        bundler.configureLinker();
-        try bundler.configureRouter(false);
-        try bundler.configureDefines();
-        bundler.macro_context = js_ast.Macro.MacroContext.init(&bundler);
-
-        if (bundler.env.map.get("BUN_CONFIG_MINIFY_WHITESPACE") != null) {
-            bundler.options.minify_whitespace = true;
-        }
-
-        if (bundler.env.map.get("BUN_CONFIG_INLINE") != null) {
-            bundler.options.inlining = true;
-        }
-
-        var skip_normalize = false;
-        var load_from_routes = false;
-        if (bundler.options.routes.routes_enabled and bundler.options.entry_points.len == 0) {
-            if (bundler.router) |router| {
-                bundler.options.entry_points = try router.getEntryPoints();
-                skip_normalize = true;
-                load_from_routes = true;
-            }
-        }
-
-        //  100.00 µs std.fifo.LinearFifo(resolver.Result,std.fifo.LinearFifoBufferType { .Dynamic = {}}).writeItemAssumeCapacity
-        if (bundler.options.resolve_mode != .lazy) {
-            try bundler.resolve_queue.ensureUnusedCapacity(3);
-        }
-
+        _ = opts;
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
-        if (skip_normalize) {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, false)];
-        } else {
-            entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
-        }
+        entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
         if (log.level == .verbose) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
-
+        bundler.options.transform_only = true;
         var did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
             const outstream = std.io.getStdOut();
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, @TypeOf(outstream), outstream),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, @TypeOf(outstream), outstream),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, @TypeOf(outstream), outstream),
-                            .package_path => bundler.processResolveQueue(.package_path, true, @TypeOf(outstream), outstream),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
@@ -1819,20 +1671,6 @@ pub const Bundler = struct {
                 Output.printError("Invalid or missing output directory.", .{});
                 Global.crash();
             };
-
-            if (load_from_routes) {
-                if (bundler.options.framework) |*framework| {
-                    if (framework.client.isEnabled()) {
-                        did_start = true;
-                        try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
-                        };
-                    }
-                }
-            }
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
@@ -1852,7 +1690,14 @@ pub const Bundler = struct {
 
         if (bundler.linker.any_needs_runtime) {
             try bundler.output_files.append(
-                options.OutputFile.initBuf(runtime.Runtime.sourceContent(false), Linker.runtime_source_path, .js),
+                options.OutputFile.initBuf(
+                    runtime.Runtime.sourceContent(false),
+                    bun.default_allocator,
+                    Linker.runtime_source_path,
+                    .js,
+                    null,
+                    null,
+                ),
             );
         }
 

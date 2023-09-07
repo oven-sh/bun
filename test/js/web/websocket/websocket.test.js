@@ -6,16 +6,33 @@ const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman
 
 describe("WebSocket", () => {
   it("should connect", async () => {
-    const ws = new WebSocket(TEST_WEBSOCKET_HOST);
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve;
-      ws.onerror = reject;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          server.stop();
+          return;
+        }
+
+        return new Response();
+      },
+      websocket: {
+        open(ws) {},
+        message(ws) {
+          ws.close();
+        },
+      },
     });
-    var closed = new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, {});
+    await new Promise(resolve => {
+      ws.onopen = resolve;
+    });
+    var closed = new Promise(resolve => {
       ws.onclose = resolve;
     });
     ws.close();
     await closed;
+    server.stop(true);
   });
 
   it("should connect over https", async () => {
@@ -59,17 +76,80 @@ describe("WebSocket", () => {
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        server.stop();
         done();
+        server.stop();
         return new Response();
       },
       websocket: {
-        open(ws) {
+        open(ws) {},
+        message(ws) {
           ws.close();
         },
       },
     });
-    const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+  });
+  describe("nodebuffer", () => {
+    it("should support 'nodebuffer' binaryType", done => {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+          },
+        },
+      });
+      const ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      ws.binaryType = "nodebuffer";
+      expect(ws.binaryType).toBe("nodebuffer");
+      Bun.gc(true);
+      ws.onmessage = ({ data }) => {
+        ws.close();
+        expect(Buffer.isBuffer(data)).toBe(true);
+        expect(data).toEqual(new Uint8Array([1, 2, 3]));
+        server.stop(true);
+        Bun.gc(true);
+        done();
+      };
+    });
+
+    it("should support 'nodebuffer' binaryType when the handler is not immediately provided", done => {
+      var client;
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+            setTimeout(() => {
+              client.onmessage = ({ data }) => {
+                client.close();
+                expect(Buffer.isBuffer(data)).toBe(true);
+                expect(data).toEqual(new Uint8Array([1, 2, 3]));
+                server.stop(true);
+                done();
+              };
+            }, 0);
+          },
+        },
+      });
+      client = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+      client.binaryType = "nodebuffer";
+      expect(client.binaryType).toBe("nodebuffer");
+    });
   });
 
   it("should send and receive messages", async () => {

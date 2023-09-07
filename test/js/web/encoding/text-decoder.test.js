@@ -225,6 +225,39 @@ describe("TextDecoder", () => {
     expect(decoder.decode(bytes.subarray(0, amount.written))).toBe(text);
     gcTrace(true);
   });
+
+  it("should respect fatal when encountering invalid data", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    expect(() => {
+      decoder.decode(new Uint8Array([0xc0])); // Invalid UTF8
+    }).toThrow(TypeError);
+  });
+
+  it("should not trim invalid byte sequences when fatal is false", () => {
+    const buf = Buffer.from([77, 97, 110, 32, 208, 129, 240, 164, 173]);
+    const received = new TextDecoder("utf-8").decode(buf);
+    const expected = "Man Ё\ufffd";
+    expect(received).toBe(expected);
+  });
+
+  it("should trim when stream is true", () => {
+    const buf = Buffer.from([77, 97, 110, 32, 208, 129, 240, 164, 173]);
+    const received = new TextDecoder("utf-8").decode(buf, { stream: true });
+    const expected = "Man Ё";
+    expect(received).toBe(expected);
+  });
+
+  it("constructor should set values", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+    expect(decoder.fatal).toBe(true);
+    // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
+  });
+
+  it("should throw on invalid input", () => {
+    expect(() => {
+      const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
+    }).toThrow();
+  });
 });
 
 it("truncated sequences", () => {

@@ -47,6 +47,9 @@ registry = "https://registry.yarnpkg.com/"
 # Install for production? This is the equivalent to the "--production" CLI argument
 production = false
 
+# Disallow changes to lockfile? This is the equivalent to the "--fozen-lockfile" CLI argument
+frozenLockfile = false
+
 # Don't actually install
 dryRun = true
 
@@ -108,6 +111,7 @@ export interface Install {
   scopes: Scopes;
   registry: Registry;
   production: boolean;
+  frozenLockfile: boolean;
   dryRun: boolean;
   optional: boolean;
   dev: boolean;

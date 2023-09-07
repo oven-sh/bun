@@ -1,6 +1,6 @@
-Use Bun's native TCP API implement performance sensitive systems like database clients, game servers, or anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library authors and for advanced use cases.
+Use Bun's native TCP API to implement performance sensitive systems like database clients, game servers, or anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library authors and for advanced use cases.
 
-## Start a server
+## Start a server (`Bun.listen()`)
 
 To start a TCP server with `Bun.listen`:
 
@@ -59,7 +59,7 @@ Bun.listen<SocketData>({
 });
 ```
 
-To enable TLS, pass a `tls` object containing `keyFile` and `certFile` properties.
+To enable TLS, pass a `tls` object containing `key` and `cert` fields.
 
 ```ts
 Bun.listen({
@@ -69,13 +69,32 @@ Bun.listen({
     data(socket, data) {},
   },
   tls: {
-    certFile: "cert.pem",
-    keyFile: "key.pem",
+    // can be string, BunFile, TypedArray, Buffer, or array thereof
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
   },
 });
 ```
 
-The result of `Bun.listen` is a server that conforms to the `TCPSocket` instance.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+
+```ts
+Bun.listen({
+  // ...
+  tls: {
+    // BunFile
+    key: Bun.file("./key.pem"),
+    // Buffer
+    key: fs.readFileSync("./key.pem"),
+    // string
+    key: fs.readFileSync("./key.pem", "utf8"),
+    // array of above
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")],
+  },
+});
+```
+
+The result of `Bun.listen` is a server that conforms to the `TCPSocket` interface.
 
 ```ts
 const server = Bun.listen({
@@ -90,7 +109,7 @@ server.stop(true);
 server.unref();
 ```
 
-## Create a connection
+## Create a connection (`Bun.connect()`)
 
 Use `Bun.connect` to connect to a TCP server. Specify the server to connect to with `hostname` and `port`. TCP clients can define the same set of handlers as `Bun.listen`, plus a couple client-specific handlers.
 
@@ -136,7 +155,7 @@ const server = Bun.listen({ /* config */ })
 
 // reloads handlers for all active server-side sockets
 server.reload({
-  socket:
+  socket: {
     data(){
       // new 'data' handler
     }

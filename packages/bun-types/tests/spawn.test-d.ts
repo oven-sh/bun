@@ -1,3 +1,13 @@
+import {
+  FileSink,
+  NullSubprocess,
+  PipedSubprocess,
+  ReadableSubprocess,
+  SyncSubprocess,
+  WritableSubprocess,
+} from "bun";
+import * as tsd from "tsd";
+
 Bun.spawn(["echo", "hello"]);
 {
   const proc = Bun.spawn(["echo", "hello"], {
@@ -9,6 +19,10 @@ Bun.spawn(["echo", "hello"]);
   });
 
   proc.pid; // process ID of subprocess
+
+  tsd.expectType<ReadableStream<Uint8Array>>(proc.stdout);
+  tsd.expectType<undefined>(proc.stderr);
+  tsd.expectType<undefined>(proc.stdin);
 }
 
 {
@@ -28,17 +42,17 @@ Bun.spawn(["echo", "hello"]);
   });
 
   // enqueue string data
-  proc.stdin!.write("hello");
+  proc.stdin.write("hello");
 
   // enqueue binary data
   const enc = new TextEncoder();
-  proc.stdin!.write(enc.encode(" world!"));
+  proc.stdin.write(enc.encode(" world!"));
 
   // send buffered data
-  proc.stdin!.flush();
+  proc.stdin.flush();
 
   // close the input stream
-  proc.stdin!.end();
+  proc.stdin.end();
 }
 
 {
@@ -66,5 +80,87 @@ Bun.spawn(["echo", "hello"]);
 }
 
 {
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  tsd.expectType<FileSink>(proc.stdin);
+  tsd.expectType<ReadableStream<Uint8Array>>(proc.stdout);
+  tsd.expectType<ReadableStream<Uint8Array>>(proc.stderr);
 }
-export {};
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  tsd.expectType<undefined>(proc.stdin);
+  tsd.expectType<undefined>(proc.stdout);
+  tsd.expectType<undefined>(proc.stderr);
+}
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  tsd.expectType<undefined>(proc.stdin);
+  tsd.expectType<undefined>(proc.stdout);
+  tsd.expectType<undefined>(proc.stderr);
+}
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: [null, null, null],
+  });
+  tsd.expectType<undefined>(proc.stdin);
+  tsd.expectType<undefined>(proc.stdout);
+  tsd.expectType<undefined>(proc.stderr);
+}
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: [new Request("1"), null, null],
+  });
+  tsd.expectType<number>(proc.stdin);
+}
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: [new Response("1"), null, null],
+  });
+  tsd.expectType<number>(proc.stdin);
+}
+{
+  const proc = Bun.spawn(["echo", "hello"], {
+    stdio: [new Uint8Array([]), null, null],
+  });
+  tsd.expectType<number>(proc.stdin);
+}
+tsd.expectAssignable<PipedSubprocess>(
+  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
+);
+tsd.expectNotAssignable<PipedSubprocess>(
+  Bun.spawn([], { stdio: ["inherit", "inherit", "inherit"] }),
+);
+tsd.expectAssignable<ReadableSubprocess>(
+  Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }),
+);
+tsd.expectAssignable<ReadableSubprocess>(
+  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
+);
+tsd.expectNotAssignable<ReadableSubprocess>(
+  Bun.spawn([], { stdio: ["pipe", "ignore", "pipe"] }),
+);
+tsd.expectAssignable<WritableSubprocess>(
+  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
+);
+tsd.expectAssignable<WritableSubprocess>(
+  Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }),
+);
+tsd.expectNotAssignable<WritableSubprocess>(
+  Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }),
+);
+tsd.expectAssignable<NullSubprocess>(
+  Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }),
+);
+tsd.expectAssignable<NullSubprocess>(
+  Bun.spawn([], { stdio: [null, null, null] }),
+);
+tsd.expectNotAssignable<ReadableSubprocess>(Bun.spawn([], {}));
+tsd.expectNotAssignable<PipedSubprocess>(Bun.spawn([], {}));
+
+tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));
+tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));

@@ -36,6 +36,7 @@
 // #include "JSWindowProxy.h"
 // #include "JSWorkerGlobalScope.h"
 // #include "WorkerGlobalScope.h"
+#include "BunWorkerGlobalScope.h"
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"
@@ -55,8 +56,8 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     //     return &jsCast<JSWindowProxy*>(asObject(value))->wrapped();
     // if (value.inherits<JSDOMWindow>())
     //     return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
-    // if (value.inherits<JSDOMGlobalObject>())
-    // return &jsCast<JSDOMGlobalObject*>(asObject(value))->wrapped();
+    if (value.inherits<JSDOMGlobalObject>())
+        return &jsCast<JSDOMGlobalObject*>(asObject(value))->globalEventScope;
     if (value.inherits<JSEventTarget>())
         return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
     return nullptr;
@@ -66,6 +67,18 @@ std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValu
 {
     if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
         return makeUnique<JSEventTargetWrapper>(target->wrapped(), *target);
+    if (!thisValue.isObject())
+        return nullptr;
+
+    JSObject* object = thisValue.getObject();
+    if (object->type() == GlobalProxyType) {
+        object = jsCast<JSGlobalProxy*>(object)->target();
+        if (!object)
+            return nullptr;
+    }
+    if (auto* global = jsDynamicCast<Zig::GlobalObject*>(object))
+        return makeUnique<JSEventTargetWrapper>(global->eventTarget(), *global);
+
     // if (auto* window = toJSDOMGlobalObject<JSDOMGlobalObject>(vm, thisValue))
     //     return makeUnique<JSEventTargetWrapper>(*window, *window);
     // if (auto* scope = toJSDOMGlobalObject<JSWorkerGlobalScope>(vm, thisValue))

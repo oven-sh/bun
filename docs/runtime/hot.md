@@ -1,7 +1,7 @@
 Bun supports two kinds of automatic reloading via CLI flags:
 
-- `--watch` mode, which hard restarts Bun's process when imported files change (introduced in Bun v0.5.9)
-- `--hot` mode, which soft reloads the code (without restarting the process) when imported files change (introduced in Bun v0.2.0)
+- `--watch` mode, which hard restarts Bun's process when imported files change/
+- `--hot` mode, which soft reloads the code (without restarting the process) when imported files change.
 
 ## `--watch` mode
 
@@ -10,13 +10,13 @@ Watch mode can be used with `bun test` or when running TypeScript, JSX, and Java
 To run a file in `--watch` mode:
 
 ```bash
-$ bun index.tsx --watch
+$ bun --watch index.tsx
 ```
 
 To run your tests in `--watch` mode:
 
 ```bash
-$ bun test --watch
+$ bun --watch test
 ```
 
 In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a change is detected, Bun restarts the process, preserving the same set of CLI arguments and environment variables used in the initial run. If Bun crashes, `--watch` will attempt to automatically restart the process.
@@ -34,7 +34,7 @@ The following examples show Bun live-reloading a file as it is edited, with VSCo
 {% codetabs %}
 
 ```bash
-$ bun run watchy.tsx --watch
+$ bun run --watch watchy.tsx
 ```
 
 ```tsx#watchy.tsx
@@ -57,7 +57,7 @@ serve({
 Running `bun test` in watch mode and `save-on-keypress` enabled:
 
 ```bash
-$ bun test --watch
+$ bun --watch test
 ```
 
 ![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
@@ -78,7 +78,7 @@ declare global {
   var count: number;
 }
 
-globalThis.count = globalThis.count ?? 0;
+globalThis.count ??= 0;
 console.log(`Reloaded ${globalThis.count} times`);
 globalThis.count++;
 
@@ -102,54 +102,24 @@ Traditional file watchers like `nodemon` restart the entire process, so HTTP ser
 Bun provides the following simplified API for implementing HTTP servers. Refer to [API > HTTP](/docs/api/http) for full details.
 
 ```ts#server.ts
-import {type Serve} from "bun";
+import {serve} from "bun";
 
-globalThis.count = globalThis.count ?? 0;
+globalThis.count ??= 0;
 globalThis.count++;
 
-export default {
+serve({
   fetch(req: Request) {
     return new Response(`Reloaded ${globalThis.count} times`);
   },
   port: 3000,
-} satisfies Serve;
+});
 ```
 
 The file above is simply exporting an object with a `fetch` handler defined. When this file is executed, Bun interprets this as an HTTP server and passes the exported object into `Bun.serve`.
 
-Unlike an explicit call to `Bun.serve`, the object-based syntax works out of the box with `bun --hot`. When you save the file, your HTTP server be reloaded with the updated code without the process being restarted. This results in seriously fast refresh speeds.
+When you save the file, your HTTP server be reloaded with the updated code without the process being restarted. This results in seriously fast refresh speeds.
 
 {% image src="https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif" alt="Bun vs Nodemon refresh speeds" caption="Bun on the left, Nodemon on the right." /%}
-
-For more fine-grained control, you can use the `Bun.serve` API directly and handle the server reloading manually.
-
-```ts#server.ts
-import type {Serve, Server} from "bun";
-
-// make TypeScript happy
-declare global {
-  var count: number;
-  var server: Server;
-}
-
-globalThis.count = globalThis.count ?? 0;
-globalThis.count++;
-
-// define server parameters
-const serverOptions: Serve = {
-  port: 3000,
-  fetch(req) {
-    return new Response(`Reloaded ${globalThis.count} times`);
-  }
-};
-
-if (!globalThis.server) {
-  globalThis.server = Bun.serve(serverOptions);
-} else {
-  // reload server
-  globalThis.server.reload(serverOptions);
-}
-```
 
 {% callout %}
 **Note** — In a future version of Bun, support for Vite's `import.meta.hot` is planned to enable better lifecycle management for hot reloading and to align with the ecosystem.

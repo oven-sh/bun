@@ -107,6 +107,50 @@ static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
         return JSValue::encode(jsUndefined());                                                                     \
     }
 
+class VersionSqlite3 {
+public:
+    explicit VersionSqlite3(sqlite3* db)
+        : db(db)
+        , version(0)
+    {
+    }
+    sqlite3* db;
+    std::atomic<uint64_t> version;
+};
+
+class SQLiteSingleton {
+public:
+    Vector<VersionSqlite3*> databases;
+    Vector<std::atomic<uint64_t>> schema_versions;
+};
+
+static SQLiteSingleton* _instance = nullptr;
+
+static Vector<VersionSqlite3*>& databases()
+{
+    if (!_instance) {
+        _instance = new SQLiteSingleton();
+        _instance->databases = Vector<VersionSqlite3*>();
+        _instance->databases.reserveInitialCapacity(4);
+        _instance->schema_versions = Vector<std::atomic<uint64_t>>();
+    }
+
+    return _instance->databases;
+}
+
+extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
+{
+    if (!_instance) {
+        return;
+    }
+    auto& dbs = _instance->databases;
+
+    for (auto& db : dbs) {
+        if (db->db)
+            sqlite3_close_v2(db->db);
+    }
+}
+
 namespace WebCore {
 using namespace JSC;
 
@@ -131,6 +175,8 @@ public:
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     // static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -191,7 +237,55 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     if (count == 0)
         return;
 
-    // if (count > 63) {
+    // Fast path:
+    if (count < 64) {
+        // 64 is the maximum we can preallocate here
+        // see https://github.com/oven-sh/bun/issues/987
+        // also see https://github.com/oven-sh/bun/issues/1646
+        auto& globalObject = *lexicalGlobalObject;
+        PropertyOffset offset;
+        auto columnNames = castedThis->columnNames.get();
+        bool anyHoles = false;
+        for (int i = 0; i < count; i++) {
+            const char* name = sqlite3_column_name(stmt, i);
+
+            if (name == nullptr) {
+                anyHoles = true;
+                break;
+            }
+
+            size_t len = strlen(name);
+            if (len == 0) {
+                anyHoles = true;
+                break;
+            }
+
+            columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8(name, len)));
+        }
+
+        if (LIKELY(!anyHoles)) {
+            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
+            vm.writeBarrier(castedThis, structure);
+
+            for (const auto& propertyName : *columnNames) {
+                structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
+            }
+            castedThis->_structure.set(vm, castedThis, structure);
+
+            // We are done.
+            return;
+        } else {
+            // If for any reason we do not have column names, disable the fast path.
+            columnNames->releaseData();
+            castedThis->columnNames.reset(new PropertyNameArray(
+                castedThis->columnNames->vm(),
+                castedThis->columnNames->propertyNameMode(),
+                castedThis->columnNames->privateSymbolMode()));
+        }
+    }
+
+    // Slow path:
+
     JSC::ObjectInitializationScope initializationScope(vm);
 
     // 64 is the maximum we can preallocate here
@@ -233,34 +327,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         castedThis->columnNames->add(key);
     }
     castedThis->_prototype.set(vm, castedThis, object);
-    // TODO: Re-enable after https://github.com/oven-sh/bun/issues/1646 is fixed
-    // } else {
-    //     // 64 is the maximum we can preallocate here
-    //     // see https://github.com/oven-sh/bun/issues/987
-    //     auto& globalObject = *lexicalGlobalObject;
-    //     Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), count);
-    //     PropertyOffset offset;
-
-    //     for (int i = 0; i < count; i++) {
-    //         const char* name = sqlite3_column_name(stmt, i);
-
-    //         if (name == nullptr)
-    //             break;
-
-    //         size_t len = strlen(name);
-    //         if (len == 0)
-    //             break;
-
-    //         auto wtfString = WTF::String::fromUTF8(name, len);
-    //         auto str = JSValue(jsString(vm, wtfString));
-    //         auto key = str.toPropertyKey(lexicalGlobalObject);
-    //         structure = Structure::addPropertyTransition(vm, structure, key, 0, offset);
-    //         castedThis->columnNames->add(key);
-    //     }
-    //     castedThis->_structure.set(vm, castedThis, structure);
-    //     JSC::JSObject* object = JSC::constructEmptyObject(vm, structure);
-    //     castedThis->_prototype.set(vm, castedThis, object);
-    // }
 }
 
 void JSSQLStatement::destroy(JSC::JSCell* cell)
@@ -272,10 +338,6 @@ void JSSQLStatement::destroy(JSC::JSCell* cell)
 
 void JSSQLStatementConstructor::destroy(JSC::JSCell* cell)
 {
-    JSSQLStatementConstructor* thisObject = static_cast<JSSQLStatementConstructor*>(cell);
-    for (auto version_db : thisObject->databases) {
-        delete version_db;
-    }
 }
 
 static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope, bool clone)
@@ -318,7 +380,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        if (roped.is8Bit() && roped.isAllASCII()) {
+        if (roped.is8Bit() && roped.containsOnlyASCII()) {
             CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.characters8()), roped.length(), transientOrStatic));
         } else if (!roped.is8Bit()) {
             CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.characters16(), roped.length() * 2, transientOrStatic));
@@ -365,8 +427,10 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
         JSValue value;
         if (LIKELY(!slot.isTaintedByOpaqueObject()))
             value = slot.getValue(globalObject, propertyName);
-        else
+        else {
             value = target->get(globalObject, propertyName);
+            RETURN_IF_EXCEPTION(scope, JSValue());
+        }
 
         // Ensure this gets freed on scope clear
         auto utf8 = WTF::String(propertyName.string()).utf8();
@@ -547,8 +611,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto count = thisObject->databases.size();
-    thisObject->databases.append(new VersionSqlite3(db));
+    auto count = databases().size();
+    databases().append(new VersionSqlite3(db));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -565,12 +629,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (UNLIKELY(dbIndex < 0 || dbIndex >= thisObject->databases.size())) {
+    if (UNLIKELY(dbIndex < 0 || dbIndex >= databases().size())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    sqlite3* db = thisObject->databases[dbIndex]->db;
+    sqlite3* db = databases()[dbIndex]->db;
     if (UNLIKELY(!db)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -606,7 +670,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (UNLIKELY(dbIndex < 0 || dbIndex >= thisObject->databases.size())) {
+    if (UNLIKELY(dbIndex < 0 || dbIndex >= databases().size())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -620,7 +684,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    sqlite3* db = thisObject->databases[dbIndex]->db;
+    sqlite3* db = databases()[dbIndex]->db;
     if (UNLIKELY(!db)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -661,11 +725,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (thisObject->databases.size() < handle) {
+    if (databases().size() < handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
-    sqlite3* db = thisObject->databases[handle]->db;
+    sqlite3* db = databases()[handle]->db;
 
     if (UNLIKELY(!db)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -724,7 +788,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     rc = sqlite3_step(statement);
     if (!sqlite3_stmt_readonly(statement)) {
-        thisObject->databases[handle]->version++;
+        databases()[handle]->version++;
     }
 
     while (rc == SQLITE_ROW) {
@@ -765,12 +829,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (handle < 0 || handle > thisObject->databases.size()) {
+    if (handle < 0 || handle > databases().size()) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    sqlite3* db = thisObject->databases[handle]->db;
+    sqlite3* db = databases()[handle]->db;
 
     if (UNLIKELY(!db)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -803,12 +867,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle > thisObject->databases.size()) {
+    if (handle < 0 || handle > databases().size()) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    sqlite3* db = thisObject->databases[handle]->db;
+    sqlite3* db = databases()[handle]->db;
     if (!db) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Cannot use a closed database"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -848,7 +912,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     auto* structure = JSSQLStatement::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
     // auto* structure = JSSQLStatement::createStructure(vm, globalObject(), thisObject->getDirect(vm, vm.propertyNames->prototype));
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        structure, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, thisObject->databases[handle]);
+        structure, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle]);
     if (bindings.isObject()) {
         auto* castedThis = sqlStatement;
         DO_REBIND(bindings)
@@ -924,8 +988,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
     assert(status == SQLITE_OK);
 
-    auto count = constructor->databases.size();
-    constructor->databases.append(new VersionSqlite3(db));
+    auto count = databases().size();
+    databases().append(new VersionSqlite3(db));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -956,12 +1020,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (dbIndex < 0 || dbIndex >= constructor->databases.size()) {
+    if (dbIndex < 0 || dbIndex >= databases().size()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return JSValue::encode(jsUndefined());
     }
 
-    sqlite3* db = constructor->databases[dbIndex]->db;
+    sqlite3* db = databases()[dbIndex]->db;
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());
@@ -973,7 +1037,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    constructor->databases[dbIndex]->db = nullptr;
+    databases()[dbIndex]->db = nullptr;
     return JSValue::encode(jsUndefined());
 }
 
@@ -1017,19 +1081,20 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     auto* stmt = castedThis->stmt;
 
     if (auto* structure = castedThis->_structure.get()) {
-        RELEASE_ASSERT(count <= 64);
         result = JSC::constructEmptyObject(vm, structure);
 
-        for (int i = 0; i < count; i++) {
+        for (unsigned int i = 0; i < count; i++) {
+            JSValue value;
 
+            // Loop 1. Fill the rowBuffer with values from SQLite
             switch (sqlite3_column_type(stmt, i)) {
             case SQLITE_INTEGER: {
                 // https://github.com/oven-sh/bun/issues/1536
-                result->putDirectOffset(vm, i, jsNumber(sqlite3_column_int64(stmt, i)));
+                value = jsNumber(sqlite3_column_int64(stmt, i));
                 break;
             }
             case SQLITE_FLOAT: {
-                result->putDirectOffset(vm, i, jsNumber(sqlite3_column_double(stmt, i)));
+                value = jsNumber(sqlite3_column_double(stmt, i));
                 break;
             }
             // > Note that the SQLITE_TEXT constant was also used in SQLite version
@@ -1041,27 +1106,33 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                 const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
 
                 if (len > 64) {
-                    result->putDirectOffset(vm, i, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
-                    continue;
+                    value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
+                    break;
+                } else {
+                    value = jsString(vm, WTF::String::fromUTF8(text, len));
+                    break;
                 }
-
-                result->putDirectOffset(vm, i, jsString(vm, WTF::String::fromUTF8(text, len)));
-                break;
             }
             case SQLITE_BLOB: {
                 size_t len = sqlite3_column_bytes(stmt, i);
                 const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
                 JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-                memcpy(array->vector(), blob, len);
-                result->putDirectOffset(vm, i, array);
+
+                if (LIKELY(blob && len))
+                    memcpy(array->vector(), blob, len);
+
+                value = array;
                 break;
             }
             default: {
-                result->putDirectOffset(vm, i, jsNull());
+                value = jsNull();
                 break;
             }
             }
+
+            result->putDirectOffset(vm, i, value);
         }
+
     } else {
         if (count <= 64) {
             result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
@@ -1102,7 +1173,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                 size_t len = sqlite3_column_bytes(stmt, i);
                 const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
                 JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-                memcpy(array->vector(), blob, len);
+
+                if (LIKELY(blob && len))
+                    memcpy(array->vector(), blob, len);
+
                 result->putDirect(vm, name, array, 0);
                 break;
             }
@@ -1131,11 +1205,11 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {
             // https://github.com/oven-sh/bun/issues/1536
-            result->initializeIndex(scope, i, jsNumber(sqlite3_column_int64(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_int64(stmt, i)));
             break;
         }
         case SQLITE_FLOAT: {
-            result->initializeIndex(scope, i, jsNumber(sqlite3_column_double(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_double(stmt, i)));
             break;
         }
         // > Note that the SQLITE_TEXT constant was also used in SQLite version
@@ -1146,10 +1220,10 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
             size_t len = sqlite3_column_bytes(stmt, i);
             const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
             if (UNLIKELY(text == nullptr || len == 0)) {
-                result->initializeIndex(scope, i, jsEmptyString(vm));
+                result->putDirectIndex(lexicalGlobalObject, i, jsEmptyString(vm));
                 continue;
             }
-            result->initializeIndex(scope, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
+            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
             break;
         }
         case SQLITE_BLOB: {
@@ -1157,11 +1231,11 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
             const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
             memcpy(array->vector(), blob, len);
-            result->initializeIndex(scope, i, array);
+            result->putDirectIndex(lexicalGlobalObject, i, array);
             break;
         }
         default: {
-            result->initializeIndex(scope, i, jsNull());
+            result->putDirectIndex(lexicalGlobalObject, i, jsNull());
             break;
         }
         }
@@ -1222,9 +1296,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             {
-                JSC::ObjectInitializationScope initializationScope(vm);
-                JSC::GCDeferralContext deferralContext(vm);
-
                 while (status == SQLITE_ROW) {
                     JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
                     resultArray->push(lexicalGlobalObject, result);
@@ -1417,6 +1488,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
             result = resultArray;
         }
+    } else if (status == SQLITE_DONE && columnCount != 0) {
+        // breaking change in Bun v0.6.8
+        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
@@ -1504,8 +1578,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
     JSC::JSArray* array;
-    if (castedThis->columnNames->size() > 0) {
-        array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude, CachedPropertyNamesKind::Keys);
+    auto* columnNames = castedThis->columnNames.get();
+    if (columnNames->size() > 0) {
+        if (castedThis->_prototype) {
+            array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+        } else {
+            array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, columnNames->size());
+            unsigned int i = 0;
+            for (const auto column : *columnNames) {
+                array->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, column.string()));
+            }
+        }
     } else {
         array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
@@ -1601,4 +1684,26 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSSQLStatement);
+
+template<typename Visitor>
+void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
+{
+    JSSQLStatement* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->_structure);
+    visitor.append(thisObject->_prototype);
+}
+
+template<typename Visitor>
+void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSSQLStatement*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 }

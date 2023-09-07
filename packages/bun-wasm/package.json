@@ -1,7 +1,12 @@
 {
   "name": "bun-wasm",
   "version": "0.0.79",
+  "scripts": {
+    "build": "cd ../.. && make wasm",
+    "dev": "cd ../.. && make dev-wasm"
+  },
   "devDependencies": {
+    "@types/node": "^20.4.10",
     "peechy": "0.4.32",
     "typescript": "latest"
   },
@@ -16,7 +21,7 @@
     "schema.js"
   ],
   "type": "module",
-  "types": "index.d.ts",
+  "types": "index.d.mts",
   "exports": {
     ".": {
       "import": "./index.mjs",

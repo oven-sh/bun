@@ -1,6 +1,6 @@
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Fs = @import("../fs.zig");
 const js_ast = bun.JSAst;
@@ -183,16 +183,10 @@ pub const ServerEntryPoint = struct {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
                     allocator,
-                    \\//Auto-generated file
-                    \\var cjsSymbol = Symbol.for("CommonJS");
+                    \\// @bun
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
                     \\import * as start from '{s}{s}';
-                    \\export * from '{s}{s}';
                     \\var entryNamespace = start;
-                    \\var cjs = start?.default;
-                    \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                    \\  entryNamespace = cjs();
-                    \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                     \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -201,7 +195,7 @@ pub const ServerEntryPoint = struct {
                     \\           server.reload(entryNamespace.default);
                     \\        }} else {{
                     \\           server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
-                    \\           console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
+                    \\           console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
@@ -211,7 +205,7 @@ pub const ServerEntryPoint = struct {
                     \\      server.reload(entryNamespace.default);
                     \\   }} else {{
                     \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
-                    \\      console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
+                    \\      console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                     \\   }}
                     \\}}
                     \\
@@ -219,22 +213,14 @@ pub const ServerEntryPoint = struct {
                     .{
                         dir_to_use,
                         original_path.filename,
-                        dir_to_use,
-                        original_path.filename,
                     },
                 );
             }
             break :brk try std.fmt.allocPrint(
                 allocator,
-                \\//Auto-generated file
-                \\var cjsSymbol = Symbol.for("CommonJS");
+                \\// @bun
                 \\import * as start from '{s}{s}';
-                \\export * from '{s}{s}';
                 \\var entryNamespace = start;
-                \\var cjs = start?.default;
-                \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-                \\  entryNamespace = cjs();
-                \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
                 \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
@@ -247,8 +233,6 @@ pub const ServerEntryPoint = struct {
                 \\
             ,
                 .{
-                    dir_to_use,
-                    original_path.filename,
                     dir_to_use,
                     original_path.filename,
                 },
@@ -272,7 +256,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
@@ -280,13 +264,13 @@ pub const MacroEntryPoint = struct {
         const fmt = bun.fmt.hexIntLower(hash);
 
         const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
-        len.* = @truncate(u32, specifier.len);
+        len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
     }
 
     pub fn generateIDFromSpecifier(specifier: string) i32 {
-        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+        return @as(i32, @bitCast(@as(u32, @truncate(bun.hash(specifier)))));
     }
 
     pub fn generate(

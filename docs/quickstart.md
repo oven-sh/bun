@@ -64,7 +64,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +     "start": "bun run index.ts"
 +   },
     "devDependencies": {
-      "bun-types": "^0.4.0"
+      "bun-types": "^0.7.0"
     }
   }
 ```

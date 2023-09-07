@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const JSC = bun.JSC;
 const Encoder = JSC.WebCore.Encoder;
 
@@ -50,7 +50,7 @@ pub const BufferVectorized = struct {
 
         switch (written) {
             0 => {},
-            1 => @memset(buf.ptr, buf[0], buf.len),
+            1 => @memset(buf, buf[0]),
             else => {
                 var contents = buf[0..written];
                 buf = buf[written..];

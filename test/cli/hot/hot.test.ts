@@ -2,9 +2,12 @@ import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
+
+const hotRunnerRoot = join(import.meta.dir, "/hot-runner-root.js");
 
 it("should hot reload when file is overwritten", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -19,7 +22,7 @@ it("should hot reload when file is overwritten", async () => {
     writeFileSync(root, readFileSync(root, "utf-8"));
   }
 
-  for await (const line of runner.stdout!) {
+  for await (const line of runner.stdout) {
     var str = new TextDecoder().decode(line);
     var any = false;
     for (let line of str.split("\n")) {
@@ -43,7 +46,7 @@ it("should hot reload when file is overwritten", async () => {
 });
 
 it("should recover from errors", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -66,7 +69,7 @@ it("should recover from errors", async () => {
   var errors: string[] = [];
   var onError: (...args: any[]) => void;
   (async () => {
-    for await (let line of runner.stderr!) {
+    for await (let line of runner.stderr) {
       var str = new TextDecoder().decode(line);
       errors.push(str);
       // @ts-ignore
@@ -74,7 +77,7 @@ it("should recover from errors", async () => {
     }
   })();
 
-  for await (const line of runner.stdout!) {
+  for await (const line of runner.stdout) {
     var str = new TextDecoder().decode(line);
     var any = false;
     for (let line of str.split("\n")) {
@@ -111,7 +114,7 @@ it("should recover from errors", async () => {
 });
 
 it("should not hot reload when a random file is written", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -138,7 +141,7 @@ it("should not hot reload when a random file is written", async () => {
       if (finished) {
         return;
       }
-      for await (const line of runner.stdout!) {
+      for await (const line of runner.stdout) {
         if (finished) {
           return;
         }
@@ -165,7 +168,7 @@ it("should not hot reload when a random file is written", async () => {
 });
 
 it("should hot reload when a file is deleted and rewritten", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -182,7 +185,7 @@ it("should hot reload when a file is deleted and rewritten", async () => {
     writeFileSync(root, contents);
   }
 
-  for await (const line of runner.stdout!) {
+  for await (const line of runner.stdout) {
     var str = new TextDecoder().decode(line);
     var any = false;
     for (let line of str.split("\n")) {
@@ -206,7 +209,7 @@ it("should hot reload when a file is deleted and rewritten", async () => {
 });
 
 it("should hot reload when a file is renamed() into place", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -227,7 +230,7 @@ it("should hot reload when a file is renamed() into place", async () => {
     await 1;
   }
 
-  for await (const line of runner.stdout!) {
+  for await (const line of runner.stdout) {
     var str = new TextDecoder().decode(line);
     var any = false;
     for (let line of str.split("\n")) {

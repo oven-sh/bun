@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } from "./runner.mjs";
 
 function doIt(...args) {
   // we use .at() to prevent constant folding optimizations

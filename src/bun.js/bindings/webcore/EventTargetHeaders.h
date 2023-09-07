@@ -46,7 +46,7 @@
 // #include "BaseAudioContext.h"
 // #include "JSBaseAudioContext.h"
 // #endif
-// #include "BroadcastChannel.h"
+#include "BroadcastChannel.h"
 // #include "Clipboard.h"
 // #include "DOMApplicationCache.h"
 // #include "DOMWindow.h"
@@ -59,7 +59,7 @@
 // #include "IDBOpenDBRequest.h"
 // #include "IDBRequest.h"
 // #include "IDBTransaction.h"
-// #include "JSBroadcastChannel.h"
+#include "JSBroadcastChannel.h"
 // #include "JSClipboard.h"
 // #include "JSDOMApplicationCache.h"
 // #include "JSDOMWindow.h"
@@ -106,8 +106,8 @@
 // #include "JSMediaStreamTrack.h"
 // #include "MediaStreamTrack.h"
 // #endif
-// #include "MessagePort.h"
-// #include "JSMessagePort.h"
+#include "MessagePort.h"
+#include "JSMessagePort.h"
 // #include "JSNode.h"
 #include "Node.h"
 // #if ENABLE(NOTIFICATIONS)
@@ -254,13 +254,15 @@
 // #include "JSWebXRSystem.h"
 // #include "WebXRSystem.h"
 // #endif
-// #include "Worker.h"
-// #include "JSWorker.h"
+#include "Worker.h"
+#include "JSWorker.h"
 // #include "WorkletGlobalScope.h"
 // #include "JSWorkletGlobalScope.h"
 // #include "XMLHttpRequest.h"
 // #include "JSXMLHttpRequest.h"
 // #include "XMLHttpRequestUpload.h"
 // #include "JSXMLHttpRequestUpload.h"
+
+#include "BunWorkerGlobalScope.h"
 
 #endif // EventTargetHeaders_h

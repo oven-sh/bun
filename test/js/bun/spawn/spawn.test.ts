@@ -116,7 +116,7 @@ for (let [gcTick, label] of [
           cmd: ["sleep", "0.1"],
         });
         gcTick();
-        for await (const _ of proc.stdout!) {
+        for await (const _ of proc.stdout) {
           throw new Error("should not happen");
         }
         gcTick();
@@ -160,6 +160,71 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
+      }, 20_000);
+
+      // FIXME: fix the assertion failure
+      it.skip("Uint8Array works as stdout", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(11);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello world");
+        expect(text2).toBe("hello world");
+        gcTick();
+      });
+
+      it.skip("Uint8Array works as stdout when is smaller than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(5);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello");
+        expect(text2).toBe("hello");
+        gcTick();
+      });
+
+      it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(12);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello world\n");
+        expect(text2).toBe("hello world\n");
+        gcTick();
+      });
+
+      it.skip("Uint8Array works as stdout when is larger than output", () => {
+        gcTick();
+        const stdout_buffer = new Uint8Array(15);
+        const { stdout } = spawnSync(["echo", "hello world"], {
+          stdout: stdout_buffer,
+          stderr: null,
+          stdin: null,
+        });
+        gcTick();
+        const text = new TextDecoder().decode(stdout);
+        const text2 = new TextDecoder().decode(stdout_buffer);
+        expect(text).toBe("hello world\n");
+        expect(text2).toBe("hello world\n\u0000\u0000\u0000");
+        gcTick();
       });
 
       it("Blob works as stdin", async () => {
@@ -264,7 +329,7 @@ for (let [gcTick, label] of [
           stderr: "inherit",
         });
 
-        var stdout = proc.stdout!;
+        var stdout = proc.stdout;
         var reader = stdout.getReader();
         proc.stdin!.write("hey\n");
         await proc.stdin!.end();
@@ -319,7 +384,7 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout!);
+                const output = await readableStreamToText(process.stdout);
                 await process.exited;
                 const expected = fixture + "\n";
 
@@ -366,7 +431,7 @@ for (let [gcTick, label] of [
               it("after exit", async () => {
                 const process = callback();
                 await process.exited;
-                const output = await readableStreamToText(process.stdout!);
+                const output = await readableStreamToText(process.stdout);
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);

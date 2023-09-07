@@ -1,7 +1,8 @@
-import fs from "fs";
+import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
-import path from "path";
-import { gcTick, withoutAggressiveGC } from "harness";
+import path, { join } from "path";
+import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
+import { tmpdir } from "os";
 
 it("Bun.write blob", async () => {
   await Bun.write(Bun.file("/tmp/response-file.test.txt"), Bun.file(path.join(import.meta.dir, "fetch.js.txt")));
@@ -147,6 +148,23 @@ it("Bun.file empty file", async () => {
   await gcTick();
 });
 
+it("Bun.file lastModified update", async () => {
+  const file = Bun.file(tmpdir() + "/bun.test.lastModified.txt");
+  await gcTick();
+  // setup
+  await Bun.write(file, "test text.");
+  const lastModified0 = file.lastModified;
+
+  // sleep some time and write the file again.
+  await Bun.sleep(10);
+  await Bun.write(file, "test text2.");
+  const lastModified1 = file.lastModified;
+
+  // ensure the last modified timestamp is updated.
+  expect(lastModified1).toBeGreaterThan(lastModified0);
+  await gcTick();
+});
+
 it("Bun.file as a Blob", async () => {
   const filePath = path.join(import.meta.path, "../fetch.js.txt");
   const fixture = fs.readFileSync(filePath, "utf8");
@@ -272,3 +290,94 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
   expect(await Bun.file(outpath).text()).toBe("<div><blink>it worked!</blink></div>");
   done();
 });
+
+it("#2674", async () => {
+  const file = path.join(import.meta.dir, "big-stdout.js");
+
+  const { stderr, stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", file],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  console.log(stderr?.toString());
+  const text = stdout?.toString();
+  expect(text?.length).toBe(300000);
+  const error = stderr?.toString();
+  expect(error?.length).toBeFalsy();
+  expect(exitCode).toBe(0);
+});
+
+if (process.platform === "linux") {
+  describe("should work when copyFileRange is not available", () => {
+    it("on large files", () => {
+      var tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/large`;
+      expect(fs.existsSync(tempdir)).toBe(false);
+      expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+      var buffer = new Int32Array(1024 * 1024 * 64);
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] = i % 256;
+      }
+
+      const hash = Bun.hash(buffer.buffer);
+      const src = join(tempdir, "Bun.write.src.blob");
+      const dest = join(tempdir, "Bun.write.dest.blob");
+
+      try {
+        fs.writeFileSync(src, buffer.buffer);
+
+        expect(fs.existsSync(dest)).toBe(false);
+
+        const { exitCode } = Bun.spawnSync({
+          stdio: ["inherit", "inherit", "inherit"],
+          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+          },
+        });
+        expect(exitCode).toBe(0);
+
+        expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
+      } finally {
+        fs.rmSync(src, { force: true });
+        fs.rmSync(dest, { force: true });
+      }
+    });
+
+    it("on small files", () => {
+      const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/small`;
+      expect(fs.existsSync(tempdir)).toBe(false);
+      expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+      var buffer = new Int32Array(1 * 1024);
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] = i % 256;
+      }
+
+      const hash = Bun.hash(buffer.buffer);
+      const src = join(tempdir, "Bun.write.src.blob");
+      const dest = join(tempdir, "Bun.write.dest.blob");
+
+      try {
+        fs.writeFileSync(src, buffer.buffer);
+
+        expect(fs.existsSync(dest)).toBe(false);
+
+        const { exitCode } = Bun.spawnSync({
+          stdio: ["inherit", "inherit", "inherit"],
+          cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+          },
+        });
+        expect(exitCode).toBe(0);
+
+        expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
+      } finally {
+        fs.rmSync(src, { force: true });
+        fs.rmSync(dest, { force: true });
+      }
+    });
+  });
+}

@@ -16,6 +16,7 @@ pub const isWasi = build_target == .wasi;
 pub const isMac = build_target == .native and @import("builtin").target.os.tag == .macos;
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
+pub const isPosix = !isWindows and !isWasm;
 pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
 pub const isRelease = std.builtin.Mode.Debug != @import("builtin").mode and !isTest;
 pub const isTest = @import("builtin").is_test;
@@ -45,3 +46,21 @@ pub inline fn onlyMac() void {
         unreachable;
     }
 }
+pub const OperatingSystem = enum {
+    mac,
+    linux,
+    windows,
+    // wAsM is nOt aN oPeRaTiNg SyStEm
+    wasm,
+};
+
+pub const os: OperatingSystem = if (isMac)
+    OperatingSystem.mac
+else if (isLinux)
+    OperatingSystem.linux
+else if (isWindows)
+    OperatingSystem.windows
+else if (isWasm)
+    OperatingSystem.wasm
+else
+    @compileError("Please add your OS to the OperatingSystem enum");

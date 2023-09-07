@@ -1,4 +1,4 @@
-import { run, bench } from "mitata";
+import { run, bench } from "./runner.mjs";
 
 var writer = globalThis.Bun ? Bun.stderr.writer() : undefined;
 if (writer)

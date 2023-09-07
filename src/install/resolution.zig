@@ -11,6 +11,7 @@ const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
+    _padding: [7]u8 = .{0} ** 7,
     value: Value = .{ .uninitialized = {} },
 
     pub fn order(
@@ -20,7 +21,7 @@ pub const Resolution = extern struct {
         rhs_buf: []const u8,
     ) std.math.Order {
         if (lhs.tag != rhs.tag) {
-            return std.math.order(@enumToInt(lhs.tag), @enumToInt(rhs.tag));
+            return std.math.order(@intFromEnum(lhs.tag), @intFromEnum(rhs.tag));
         }
 
         return switch (lhs.tag) {

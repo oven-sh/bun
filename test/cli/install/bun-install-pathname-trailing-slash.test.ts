@@ -3,11 +3,12 @@ import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { tmpdirSync } from "./dummy.registry";
 
 let package_dir: string;
 
 beforeEach(() => {
-  package_dir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-path"));
+  package_dir = tmpdirSync("bun-install-path");
 });
 
 afterEach(() => {

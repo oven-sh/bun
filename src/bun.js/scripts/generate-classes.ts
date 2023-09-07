@@ -4,7 +4,19 @@ import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
 
+const CommonIdentifiers = {
+  "name": true,
+};
+function toIdentifier(propertyName) {
+  if (CommonIdentifiers[propertyName]) {
+    return `vm.propertyNames->${propertyName}`;
+  }
+
+  return `Identifier::fromString(vm, ${JSON.stringify(propertyName)}_s)`;
+}
+
 const directoriesToSearch = [
+  resolve(`${import.meta.dir}/../`),
   resolve(`${import.meta.dir}/../api`),
   resolve(`${import.meta.dir}/../test`),
   resolve(`${import.meta.dir}/../webcore`),
@@ -181,6 +193,7 @@ function propRow(
     DOMJIT,
     enumerable = true,
     configurable = false,
+    value,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
   var extraPropertyAttributes = "";
@@ -265,7 +278,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   }
 
   for (const name in props) {
-    if ("internal" in props[name]) continue;
+    if ("internal" in props[name] || "value" in props[name]) continue;
     if (name.startsWith("@@")) continue;
 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
@@ -301,7 +314,17 @@ function generatePrototype(typeName, obj) {
   const { proto: protoFields } = obj;
   var specialSymbols = "";
 
+  var staticPrototypeValues = "";
+
   for (const name in protoFields) {
+    if ("value" in protoFields[name]) {
+      const { value } = protoFields[name];
+      staticPrototypeValues += `
+      this->putDirect(vm, ${toIdentifier(name)}, jsString(vm, String(${JSON.stringify(
+        value,
+      )}_s)), PropertyAttribute::ReadOnly | 0);`;
+    }
+
     if (!name.startsWith("@@")) {
       continue;
     }
@@ -322,6 +345,25 @@ ${
 JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);`
     : ""
 }
+
+${
+  obj.structuredClone
+    ? `extern "C" void ${symbolName(
+        typeName,
+        "onStructuredCloneSerialize",
+      )}(void*, JSC::JSGlobalObject*, void*, void (*) (CloneSerializer*, const uint8_t*, uint32_t));`
+    : ""
+}
+
+${
+  obj.structuredClone
+    ? `extern "C" JSC::EncodedJSValue ${symbolName(
+        typeName,
+        "onStructuredCloneDeserialize",
+      )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);`
+    : ""
+}
+
 ${"finalize" in obj ? `extern "C" void ${classSymbolName(typeName, "finalize")}(void*);` : ""}
 ${obj.call ? `extern "C" JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` : ""}
 
@@ -350,7 +392,7 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
       Object.keys(protoFields).length > 0
         ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
         : ""
-    }${specialSymbols}
+    }${specialSymbols}${staticPrototypeValues}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -697,7 +739,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
 }    
     
@@ -790,10 +832,22 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
         if (UNLIKELY(!thisObject)) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
-            return throwVMTypeError(lexicalGlobalObject, throwScope);
+            throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
+            return JSValue::encode({});
         }
 
         JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+        #ifdef BUN_DEBUG
+          /** View the file name of the JS file that called this function
+           * from a debugger */ 
+          SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+          const char* fileName = sourceOrigin.string().utf8().data();
+          static const char* lastFileName = nullptr;
+          if (lastFileName != fileName) {
+            lastFileName = fileName;
+          }
+        #endif
 
         return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
     }
@@ -856,6 +910,11 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           return &m_owner.get();
       }
       `;
+  }
+  var suffix = "";
+
+  if (obj.getInternalProperties) {
+    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
   }
 
   return `
@@ -939,11 +998,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         ${renderCachedFieldsHeader(typeName, klass, proto, values)}
     };
+    ${suffix}
   `;
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
-  const { klass: fields, finalize, proto, construct, estimatedSize, hasPendingActivity = false } = obj;
+  const {
+    klass: fields,
+    finalize,
+    proto,
+    construct,
+    estimatedSize,
+    hasPendingActivity = false,
+    getInternalProperties = false,
+  } = obj;
   const name = className(typeName);
 
   const DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
@@ -965,7 +1033,6 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    ${values}
     ${
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
@@ -973,8 +1040,7 @@ visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
 }`
         : ""
     }
-${DEFINE_VISIT_CHILDREN_LIST}
-${hasPendingActivity ? `visitor.addOpaqueRoot(thisObject->wrapped());` : ""}
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(${name});
@@ -986,7 +1052,7 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped())" : ""};
+    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
@@ -1021,6 +1087,24 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
+  }
+
+  if (getInternalProperties) {
+    output += `
+    extern "C" EncodedJSValue ${symbolName(
+      typeName,
+      "getInternalProperties",
+    )}(void* ptr, JSC::JSGlobalObject *globalObject, EncodedJSValue thisValue);
+
+    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis) 
+    {
+      return JSValue::decode(${symbolName(
+        typeName,
+        "getInternalProperties",
+      )}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
+    }
+    
+    `;
   }
 
   if (finalize) {
@@ -1166,6 +1250,8 @@ function generateZig(
     call = false,
     values = [],
     hasPendingActivity = false,
+    structuredClone = false,
+    getInternalProperties = false,
   } = {} as ClassDefinition,
 ) {
   const exports = new Map<string, string>();
@@ -1191,6 +1277,20 @@ function generateZig(
   }
   Object.values(klass).map(a => appendSymbols(exports, name => classSymbolName(typeName, name), a));
   Object.values(proto).map(a => appendSymbols(exports, name => protoSymbolName(typeName, name), a));
+
+  if (getInternalProperties) {
+    exports.set("getInternalProperties", symbolName(typeName, "getInternalProperties"));
+  }
+
+  if (structuredClone) {
+    exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
+
+    if (structuredClone === "transferable") {
+      exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
+    }
+
+    exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
+  }
 
   const externs = Object.entries({
     ...proto,
@@ -1232,6 +1332,37 @@ function generateZig(
         if (@TypeOf(${typeName}.estimatedSize) != (fn(*${typeName}) callconv(.C) usize)) {
            @compileLog("${typeName}.estimatedSize is not a size function");
         }
+      `;
+    }
+
+    if (structuredClone) {
+      output += `
+      if (@TypeOf(${typeName}.onStructuredCloneSerialize) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+        @compileLog("${typeName}.onStructuredCloneSerialize is not a structured clone serialize function");
+      }
+      `;
+
+      if (getInternalProperties) {
+        output += `
+        if (@TypeOf(${typeName}.getInternalProperties) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, JSC.JSValue thisValue) callconv(.C) JSC.JSValue {
+          @compileLog("${typeName}.getInternalProperties is not a getInternalProperties function");
+        }
+        `;
+      }
+
+      if (structuredClone === "transferable") {
+        exports.set("structuredClone", symbolName(typeName, "onTransferableStructuredClone"));
+        output += `
+        if (@TypeOf(${typeName}.onStructuredCloneTransfer) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, write: *const fn(*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void) callconv(.C) void)) {
+          @compileLog("${typeName}.onStructuredCloneTransfer is not a structured clone transfer function");
+        }
+        `;
+      }
+
+      output += `
+      if (@TypeOf(${typeName}.onStructuredCloneDeserialize) != (fn(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+        @compileLog("${typeName}.onStructuredCloneDeserialize is not a structured clone deserialize function");
+      }
       `;
     }
 
@@ -1498,6 +1629,7 @@ namespace Zig {
 
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
+#include "SerializedScriptValue.h"
 `,
 
   `
@@ -1508,11 +1640,6 @@ using namespace JSC;
 
 `,
 ];
-
-const GENERATED_CLASSES_FOOTER = `
-}
-
-`;
 
 const GENERATED_CLASSES_IMPL_HEADER = `
 // GENERATED CODE - DO NOT MODIFY BY HAND
@@ -1600,7 +1727,7 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///  
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");
@@ -1642,6 +1769,84 @@ function writeAndUnlink(path, content) {
   return Bun.write(path, content);
 }
 
+const GENERATED_CLASSES_FOOTER = `
+
+class StructuredCloneableSerialize {
+  public:
+
+    void (*cppWriteBytes)(CloneSerializer*, const uint8_t*, uint32_t);
+
+    std::function<void(void*, JSC::JSGlobalObject*, void*, void (*)(CloneSerializer*, const uint8_t*, uint32_t))> zigFunction;
+
+    uint8_t tag;
+
+    // the type from zig
+    void* impl;
+
+    static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
+    void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
+    {
+      zigFunction(impl, globalObject, serializer, cppWriteBytes);
+    }
+};
+
+class StructuredCloneableDeserialize {
+  public:
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+};
+
+}
+
+`;
+
+function writeCppSerializers() {
+  var output = ``;
+
+  var structuredClonable = classes
+    .filter(a => a.structuredClone)
+    .sort((a, b) => a.structuredClone.tag < b.structuredClone.tag);
+
+  function fromJSForEachClass(klass) {
+    return `
+    if (auto* result = jsDynamicCast<${className(klass.name)}*>(value)) {
+      return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
+        klass.name,
+        "onStructuredCloneSerialize",
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+    }
+    `;
+  }
+
+  function fromTagDeserializeForEachClass(klass) {
+    return `
+    if (tag == ${klass.structuredClone.tag}) {
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, ptr, end);
+    }
+    `;
+  }
+
+  output += `  
+  std::optional<StructuredCloneableSerialize> StructuredCloneableSerialize::fromJS(JSC::JSValue value)
+  {
+    ${structuredClonable.map(fromJSForEachClass).join("\n").trim()}
+    return std::nullopt;
+  }
+  `;
+
+  output += `
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+  {
+    ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
+    return std::nullopt;
+  }
+  `;
+
+  for (let klass of classes) {
+  }
+
+  return output;
+}
+
 await writeAndUnlink(`${import.meta.dir}/../bindings/generated_classes.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
@@ -1665,6 +1870,7 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.h`, [
 await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map(a => generateImpl(a.name, a)),
+  writeCppSerializers(classes),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
 await writeAndUnlink(

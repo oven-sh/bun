@@ -1,6 +1,6 @@
 const std = @import("std");
 const Lock = @import("./lock.zig").Lock;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -19,7 +19,7 @@ len: usize,
 pub const Map = struct {
     const MapContext = struct {
         pub fn hash(_: @This(), s: u64) u32 {
-            return @truncate(u32, s);
+            return @as(u32, @truncate(s));
         }
         pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
             return a == b;
@@ -42,14 +42,14 @@ pub const Map = struct {
     pub fn get(this: *Map, key: string) ?Blob {
         this.lock.lock();
         defer this.lock.unlock();
-        return this.map.get(std.hash.Wyhash.hash(0, key));
+        return this.map.get(bun.hash(key));
     }
 
     pub fn put(this: *Map, key: string, blob: Blob) !void {
         this.lock.lock();
         defer this.lock.unlock();
 
-        return try this.map.put(std.hash.Wyhash.hash(0, key), blob);
+        return try this.map.put(bun.hash(key), blob);
     }
 
     pub fn reset(this: *Map) !void {

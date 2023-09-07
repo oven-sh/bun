@@ -1,5 +1,5 @@
-import { group } from "mitata";
-import { bench, run } from "mitata";
+import { group } from "./runner.mjs";
+import { bench, run } from "./runner.mjs";
 bench("performance.now x 1000", () => {
   for (let i = 0; i < 1000; i++) {
     performance.now();

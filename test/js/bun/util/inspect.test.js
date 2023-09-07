@@ -1,4 +1,5 @@
 import { it, expect, describe } from "bun:test";
+import util from "util";
 
 it("getters", () => {
   const obj = {
@@ -7,7 +8,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(obj)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
   var called = false;
   const objWithThrowingGetter = {
     get foo() {
@@ -20,7 +21,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
   expect(called).toBe(false);
 });
 
@@ -39,7 +40,7 @@ it("when prototype defines the same property, don't print the same property twic
   };
   var obj = Object.create(base);
   obj.foo = "456";
-  expect(Bun.inspect(obj).trim()).toBe('{\n  "foo": "456"\n}'.trim());
+  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
 });
 
 it("Blob inspect", () => {
@@ -54,6 +55,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
+  headers: Headers {},
   statusText: "",
   redirected: false,
   bodyUsed: false,
@@ -63,6 +65,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
   url: "",
+  headers: Headers {},
   statusText: "",
   redirected: false,
   bodyUsed: false,
@@ -71,7 +74,7 @@ it("Blob inspect", () => {
 }`);
 });
 
-it.skip("utf16 property name", () => {
+it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");
   expect("笑".codePointAt(0)).toBe(31505);
@@ -92,12 +95,12 @@ it.skip("utf16 property name", () => {
 });
 
 it("latin1", () => {
-  expect(Bun.inspect("English")).toBe("English");
-  expect(Bun.inspect("Français")).toBe("Français");
-  expect(Bun.inspect("Ελληνική")).toBe("Ελληνική");
-  expect(Bun.inspect("日本語")).toBe("日本語");
-  expect(Bun.inspect("Emoji😎")).toBe("Emoji😎");
-  expect(Bun.inspect("Français / Ελληνική")).toBe("Français / Ελληνική");
+  expect(Bun.inspect("English")).toBe('"English"');
+  expect(Bun.inspect("Français")).toBe('"Français"');
+  expect(Bun.inspect("Ελληνική")).toBe('"Ελληνική"');
+  expect(Bun.inspect("日本語")).toBe('"日本語"');
+  expect(Bun.inspect("Emoji😎")).toBe('"Emoji😎"');
+  expect(Bun.inspect("Français / Ελληνική")).toBe('"Français / Ελληνική"');
 });
 
 it("Request object", () => {
@@ -105,7 +108,8 @@ it("Request object", () => {
     `
 Request (0 KB) {
   method: "GET",
-  url: "https://example.com"
+  url: "https://example.com/",
+  headers: Headers {}
 }`.trim(),
   );
 });
@@ -210,23 +214,22 @@ it("jsx with fragment", () => {
 
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
-  expect("hi").toBe("hi");
+  expect(Bun.inspect("hi")).toBe('"hi"');
   expect(Bun.inspect(1)).toBe("1");
   expect(Bun.inspect(NaN)).toBe("NaN");
   expect(Bun.inspect(Infinity)).toBe("Infinity");
   expect(Bun.inspect(-Infinity)).toBe("-Infinity");
-  expect(Bun.inspect(1, "hi")).toBe("1 hi");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
-  expect(Bun.inspect({ hello: 1 })).toBe('{\n  "hello": 1\n}');
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe('{\n  "hello": 1,\n  "there": 2\n}');
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  "hello": "1",\n  "there": 2\n}');
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  "there": 2\n}');
+  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";
   }
-  expect(Bun.inspect(str)).toBe(str);
+  expect(Bun.inspect(str)).toBe('"' + str + '"');
   // expect(Bun.inspect(new Headers())).toBe("Headers (0 KB) {}");
   expect(Bun.inspect(new Response()).length > 0).toBe(true);
   // expect(
@@ -274,18 +277,15 @@ describe("latin1 supplemental", () => {
     it(`latin1 (input) \"${input}\" ${output}`, () => {
       expect(Bun.inspect(input)).toBe(output);
     });
-    it(`latin1 (output) \"${output}\"`, () => {
-      expect(Bun.inspect(output)).toBe(output);
-    });
-    // this test is failing:
-    // it(`latin1 (property key)`, () => {
-    //   expect(
-    //     Object.keys({
-    //       ä: 1,
-    //     })[0].codePointAt(0),
-    //   ).toBe(228);
-    // });
   }
+  // this test is failing:
+  it(`latin1 (property key)`, () => {
+    expect(
+      Object.keys({
+        ä: 1,
+      })[0].codePointAt(0),
+    ).toBe(228);
+  });
 });
 
 const fixture = [
@@ -326,7 +326,9 @@ describe("crash testing", () => {
   for (let input of fixture) {
     it(`inspecting "${input.toString().slice(0, 20).replaceAll("\n", "\\n")}" doesn't crash`, async () => {
       try {
+        console.log("asked" + input.toString().slice(0, 20).replaceAll("\n", "\\n"));
         Bun.inspect(await input());
+        console.log("who");
       } catch (e) {
         // this can throw its fine
       }
@@ -335,17 +337,28 @@ describe("crash testing", () => {
 });
 
 it("possibly formatted emojis log", () => {
-  expect(Bun.inspect("✔", "hey")).toBe("✔ hey");
+  expect(Bun.inspect("✔")).toBe('"✔"');
 });
 
 it("new Date(..)", () => {
-  expect(Bun.inspect(new Date(1679911059000))).toBe("2023-03-27T09:54:00.000Z");
-  expect(Bun.inspect(new Date("March 27, 2023 09:54:00"))).toBe("2023-03-27T09:54:00.000Z");
-  expect(Bun.inspect(new Date("2023-03-27T09:54:00"))).toBe("2023-03-27T09:54:00.000Z");
-  expect(Bun.inspect(new Date(2023, 02, 27))).toBe("2023-03-27T00:00:00.000Z");
-  expect(Bun.inspect(new Date(2023, 02, 27, 09, 54, 0))).toBe("2023-03-27T09:54:00.000Z");
+  let s = Bun.inspect(new Date(1679911059000 - new Date().getTimezoneOffset()));
+  expect(s).toContain("2023-03-27T");
+  expect(s).toHaveLength(24);
+  let offset = new Date().getTimezoneOffset() / 60;
+  let hour = (9 - offset).toString();
+  if (hour.length === 1) {
+    hour = "0" + hour;
+  }
+  expect(Bun.inspect(new Date("March 27, 2023 " + hour + ":54:00"))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date("2023-03-27T" + hour + ":54:00"))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date(2023, 2, 27, -offset))).toBe("2023-03-27T00:00:00.000Z");
+  expect(Bun.inspect(new Date(2023, 2, 27, 9 - offset, 54, 0))).toBe("2023-03-27T09:54:00.000Z");
 
   expect(Bun.inspect(new Date("1679911059000"))).toBe("Invalid Date");
   expect(Bun.inspect(new Date("hello world"))).toBe("Invalid Date");
   expect(Bun.inspect(new Date("Invalid Date"))).toBe("Invalid Date");
+});
+
+it("Bun.inspect.custom exists", () => {
+  expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });

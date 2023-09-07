@@ -1,3 +1,9 @@
+// ** WARNING **
+// This header is included in nearly every file.
+// Be very cautious of sticking your #include in this file
+// or adding anything into this file other than LazyClassStructure or LazyProperty
+// ** WARNING **
+// TODO: rename this to BunGlobalObject
 #pragma once
 
 #ifndef ZIG_GLOBAL_OBJECT
@@ -10,44 +16,47 @@ class LazyClassStructure;
 
 } // namespace JSC
 
+namespace JSC {
+
+enum class JSPromiseRejectionOperation : unsigned;
+
+}
+
 namespace WebCore {
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
+class DOMWrapperWorld;
 }
 
 #include "root.h"
 
 #include "headers-handwritten.h"
-#include "BunClientData.h"
 
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
-#include "WebCoreJSBuiltinInternals.h"
-#include "JSEnvironmentVariableMap.h"
-
-#include "ZigConsoleClient.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "DOMConstructors.h"
-#include "DOMWrapperWorld-class.h"
-#include "DOMIsoSubspaces.h"
 #include "BunPlugin.h"
-
-#include "ErrorStackTrace.h"
-#include "CallSite.h"
-#include "CallSitePrototype.h"
+#include "JSMockFunction.h"
+#include "InternalModuleRegistry.h"
+#include "ProcessBindingConstants.h"
 
 namespace WebCore {
+class GlobalScope;
 class SubtleCrypto;
+class EventTarget;
 }
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
+extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -82,18 +91,13 @@ public:
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
-    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     ~GlobalObject();
     static void destroy(JSC::JSCell*);
@@ -128,6 +132,13 @@ public:
         return ptr;
     }
 
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
+    {
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
     const JSDOMStructureMap& structures() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         ASSERT(!Thread::mayBeGCThread());
@@ -142,6 +153,8 @@ public:
     WebCore::DOMWrapperWorld& world() { return m_world.get(); }
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
@@ -166,8 +179,8 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[]);
+    static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
+    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -188,7 +201,6 @@ public:
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*,
         JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-    void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
@@ -230,6 +242,10 @@ public:
     JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* NodeVMScriptStructure() { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMScript() { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMScriptPrototype() { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::Structure* encodeIntoObjectStructure() { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
@@ -237,19 +253,38 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
-    JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
+    JSC::JSFunction* utilInspectFunction() { return m_utilInspectFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* utilInspectStylizeColorFunction() { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* utilInspectStylizeNoColorFunction() { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
+
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
-    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
-    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+    JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
+    Bun::InternalModuleRegistry* internalModuleRegistry() { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
+    Bun::ProcessBindingConstants* processBindingConstants() { return m_processBindingConstants.getInitializedOnMainThread(this); }
+
+    JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
     JSFunction* bunSleepThenCallback() { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
 
-    JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
+    Structure* globalObjectStructure() { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* globalProxyStructure() { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
+    JSObject* lazyTestModuleObject() { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
+    JSObject* lazyPreloadTestModuleObject() { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
+    Structure* CommonJSModuleObjectStructure() { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
+    Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
+
+    Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
+
+    JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
+    bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     JSC::JSObject* processObject()
     {
@@ -260,6 +295,8 @@ public:
     {
         return m_processEnvObject.getInitializedOnMainThread(this);
     }
+
+    void drainMicrotasks();
 
     void handleRejectedPromises();
     void initGeneratedLazyClasses();
@@ -276,6 +313,9 @@ public:
     }
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
+
+    WebCore::EventTarget& eventTarget();
+    Bun::GlobalScope& globalEventScope;
 
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,
@@ -303,8 +343,11 @@ public:
 
         CallbackJob__onResolve,
         CallbackJob__onReject,
+
+        Bun__BodyValueBufferer__onRejectStream,
+        Bun__BodyValueBufferer__onResolveStream,
     };
-    static constexpr size_t promiseFunctionsSize = 22;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -322,6 +365,8 @@ public:
         return func;
     }
 
+    bool asyncHooksNeedsCleanup = false;
+
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
      *
@@ -338,17 +383,45 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
+
+    // This is set when doing `require('module')._resolveFilename = ...`
+    // a hack used by Next.js to inject their versions of webpack and react
+    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+
+    mutable WriteBarrier<Unknown> m_nextTickQueue;
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
+    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCloseEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCustomEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMExceptionSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_JSErrorEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventTargetSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
     mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
-    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
 
+    mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
+    Structure* memoryFootprintStructure()
+    {
+        return m_memoryFootprintStructure.getInitializedOnMainThread(this);
+    }
+
     JSObject* navigatorObject();
+    JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
+
+    String agentClusterID() const;
+    static String defaultAgentClusterID();
 
     void trackFFIFunction(JSC::JSFunction* function)
     {
@@ -370,6 +443,12 @@ public:
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
+    // This increases the cache hit rate for JSC::VM's SourceProvider cache
+    // It also avoids an extra allocation for the SourceProvider
+    // The key is a pointer to the source code
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    size_t reloadCount = 0;
+
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
@@ -388,6 +467,13 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
+    Bun::JSMockModule mockModule;
+
+    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
+
+    JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
+    JSObject* JSDOMFileConstructor() { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -396,6 +482,7 @@ private:
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     GlobalObject(JSC::VM& vm, JSC::Structure* structure);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -424,6 +511,7 @@ private:
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
     LazyClassStructure m_JSBufferClassStructure;
+    LazyClassStructure m_NodeVMScriptClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -437,7 +525,11 @@ private:
      */
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
@@ -447,16 +539,31 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
-    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
+    LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
+
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
+    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
+    LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+    LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
+
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
+    LazyProperty<JSGlobalObject, Bun::ProcessBindingConstants> m_processBindingConstants;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
+
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

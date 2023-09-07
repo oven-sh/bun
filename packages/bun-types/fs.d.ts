@@ -19,6 +19,7 @@
  */
 declare module "fs" {
   import * as stream from "stream";
+  import type EventEmitter from "events";
   import type { SystemError, ArrayBufferView } from "bun";
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;
@@ -3648,7 +3649,7 @@ declare module "fs" {
     // prependOnceListener(event: 'unpipe', listener: (src: stream.Readable) => void): this;
     // prependOnceListener(event: string | symbol, listener: (...args: any[]) => void): this;
   }
-  function fdatasync(fd: number, callback: NoParamCallback): void;
+  // function fdatasync(fd: number, callback: NoParamCallback): void;
   // namespace fdatasync {
   //   /**
   //    * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
@@ -3661,7 +3662,7 @@ declare module "fs" {
    * operating system's synchronized I/O completion state. Refer to the POSIX [`fdatasync(2)`](http://man7.org/linux/man-pages/man2/fdatasync.2.html) documentation for details. Returns `undefined`.
    * @since v0.0.67
    */
-  function fdatasyncSync(fd: number): void;
+  // function fdatasyncSync(fd: number): void;
   /**
    * Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it
    * already exists. No arguments other than a possible exception are given to the
@@ -3929,6 +3930,403 @@ declare module "fs" {
      */
     recursive?: boolean;
   }
+  /**
+   * Class: fs.StatWatcher
+   * Extends `EventEmitter`
+   * A successful call to {@link watchFile} method will return a new fs.StatWatcher object.
+   */
+  export interface StatWatcher extends EventEmitter {
+    /**
+     * When called, requests that the Node.js event loop _not_ exit so long as the `fs.StatWatcher` is active. Calling `watcher.ref()` multiple times will have
+     * no effect.
+     *
+     * By default, all `fs.StatWatcher` objects are "ref'ed", making it normally
+     * unnecessary to call `watcher.ref()` unless `watcher.unref()` had been
+     * called previously.
+     */
+    ref(): this;
+    /**
+     * When called, the active `fs.StatWatcher` object will not require the Node.js
+     * event loop to remain active. If there is no other activity keeping the
+     * event loop running, the process may exit before the `fs.StatWatcher` object's
+     * callback is invoked. Calling `watcher.unref()` multiple times will have
+     * no effect.
+     */
+    unref(): this;
+  }
+  export interface FSWatcher extends EventEmitter {
+    /**
+     * Stop watching for changes on the given `fs.FSWatcher`. Once stopped, the `fs.FSWatcher` object is no longer usable.
+     * @since v0.6.8
+     */
+    close(): void;
+
+    /**
+     * When called, requests that the Node.js event loop not exit so long as the <fs.FSWatcher> is active. Calling watcher.ref() multiple times will have no effect.
+     */
+    ref(): void;
+
+    /**
+     * When called, the active <fs.FSWatcher> object will not require the Node.js event loop to remain active. If there is no other activity keeping the event loop running, the process may exit before the <fs.FSWatcher> object's callback is invoked. Calling watcher.unref() multiple times will have no effect.
+     */
+    unref(): void;
+
+    /**
+     * events.EventEmitter
+     *   1. change
+     *   2. error
+     */
+    addListener(event: string, listener: (...args: any[]) => void): this;
+    addListener(
+      event: "change",
+      listener: (eventType: string, filename: string | Buffer) => void,
+    ): this;
+    addListener(event: "error", listener: (error: Error) => void): this;
+    addListener(event: "close", listener: () => void): this;
+    on(event: string, listener: (...args: any[]) => void): this;
+    on(
+      event: "change",
+      listener: (eventType: string, filename: string | Buffer) => void,
+    ): this;
+    on(event: "error", listener: (error: Error) => void): this;
+    on(event: "close", listener: () => void): this;
+    once(event: string, listener: (...args: any[]) => void): this;
+    once(
+      event: "change",
+      listener: (eventType: string, filename: string | Buffer) => void,
+    ): this;
+    once(event: "error", listener: (error: Error) => void): this;
+    once(event: "close", listener: () => void): this;
+    prependListener(event: string, listener: (...args: any[]) => void): this;
+    prependListener(
+      event: "change",
+      listener: (eventType: string, filename: string | Buffer) => void,
+    ): this;
+    prependListener(event: "error", listener: (error: Error) => void): this;
+    prependListener(event: "close", listener: () => void): this;
+    prependOnceListener(
+      event: string,
+      listener: (...args: any[]) => void,
+    ): this;
+    prependOnceListener(
+      event: "change",
+      listener: (eventType: string, filename: string | Buffer) => void,
+    ): this;
+    prependOnceListener(event: "error", listener: (error: Error) => void): this;
+    prependOnceListener(event: "close", listener: () => void): this;
+  }
+
+  type WatchOptions = {
+    encoding?: BufferEncoding;
+    persistent?: boolean;
+    recursive?: boolean;
+    signal?: AbortSignal;
+  };
+  export type WatchEventType = "rename" | "change" | "error" | "close";
+  type WatchListener<T> = (
+    event: WatchEventType,
+    filename: T | Error | undefined,
+  ) => void;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a
+   * directory.
+   *
+   * The second argument is optional. If `options` is provided as a string, it
+   * specifies the `encoding`. Otherwise `options` should be passed as an object.
+   *
+   * The listener callback gets two arguments `(eventType, filename)`. `eventType`is either `'rename'` or `'change'`, and `filename` is the name of the file
+   * which triggered the event.
+   *
+   * On most platforms, `'rename'` is emitted whenever a filename appears or
+   * disappears in the directory.
+   *
+   * The listener callback is attached to the `'change'` event fired by `fs.FSWatcher`, but it is not the same thing as the `'change'` value of`eventType`.
+   *
+   * If a `signal` is passed, aborting the corresponding AbortController will close
+   * the returned `fs.FSWatcher`.
+   * @since v0.6.8
+   * @param listener
+   */
+  export function watch(
+    filename: PathLike,
+    options:
+      | (WatchOptions & {
+          encoding: "buffer";
+        })
+      | "buffer",
+    listener?: WatchListener<Buffer>,
+  ): FSWatcher;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+   * If `encoding` is not supplied, the default of `'utf8'` is used.
+   * If `persistent` is not supplied, the default of `true` is used.
+   * If `recursive` is not supplied, the default of `false` is used.
+   */
+  export function watch(
+    filename: PathLike,
+    options?: WatchOptions | BufferEncoding | null,
+    listener?: WatchListener<string>,
+  ): FSWatcher;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   * @param options Either the encoding for the filename provided to the listener, or an object optionally specifying encoding, persistent, and recursive options.
+   * If `encoding` is not supplied, the default of `'utf8'` is used.
+   * If `persistent` is not supplied, the default of `true` is used.
+   * If `recursive` is not supplied, the default of `false` is used.
+   */
+  export function watch(
+    filename: PathLike,
+    options: WatchOptions | string,
+    listener?: WatchListener<string | Buffer>,
+  ): FSWatcher;
+  /**
+   * Watch for changes on `filename`, where `filename` is either a file or a directory, returning an `FSWatcher`.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   */
+  export function watch(
+    filename: PathLike,
+    listener?: WatchListener<string>,
+  ): FSWatcher;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each
+   * time the file is accessed.
+   *
+   * The `options` argument may be omitted. If provided, it should be an object. The`options` object may contain a boolean named `persistent` that indicates
+   * whether the process should continue to run as long as files are being watched.
+   * The `options` object may specify an `interval` property indicating how often the
+   * target should be polled in milliseconds.
+   *
+   * The `listener` gets two arguments the current stat object and the previous
+   * stat object:
+   *
+   * ```js
+   * import { watchFile } from 'fs';
+   *
+   * watchFile('message.text', (curr, prev) => {
+   *   console.log(`the current mtime is: ${curr.mtime}`);
+   *   console.log(`the previous mtime was: ${prev.mtime}`);
+   * });
+   * ```
+   *
+   * These stat objects are instances of `fs.Stat`. If the `bigint` option is `true`,
+   * the numeric values in these objects are specified as `BigInt`s.
+   *
+   * To be notified when the file was modified, not just accessed, it is necessary
+   * to compare `curr.mtimeMs` and `prev.mtimeMs`.
+   *
+   * When an `fs.watchFile` operation results in an `ENOENT` error, it
+   * will invoke the listener once, with all the fields zeroed (or, for dates, the
+   * Unix Epoch). If the file is created later on, the listener will be called
+   * again, with the latest stat objects. This is a change in functionality since
+   * v0.10.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile` and`fs.unwatchFile`. `fs.watch` should be used instead of `fs.watchFile` and`fs.unwatchFile` when possible.
+   *
+   * When a file being watched by `fs.watchFile()` disappears and reappears,
+   * then the contents of `previous` in the second callback event (the file's
+   * reappearance) will be the same as the contents of `previous` in the first
+   * callback event (its disappearance).
+   *
+   * This happens when:
+   *
+   * * the file is deleted, followed by a restore
+   * * the file is renamed and then renamed a second time back to its original name
+   * @since v0.1.31
+   */
+  export interface WatchFileOptions {
+    bigint?: boolean | undefined;
+    persistent?: boolean | undefined;
+    interval?: number | undefined;
+  }
+  export type StatsListener = (current: Stats, previous: Stats) => void;
+  export type BigIntStatsListener = (
+    current: BigIntStats,
+    previous: BigIntStats,
+  ) => void;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each
+   * time the file is accessed.
+   *
+   * The `options` argument may be omitted. If provided, it should be an object. The`options` object may contain a boolean named `persistent` that indicates
+   * whether the process should continue to run as long as files are being watched.
+   * The `options` object may specify an `interval` property indicating how often the
+   * target should be polled in milliseconds.
+   *
+   * The `listener` gets two arguments the current stat object and the previous
+   * stat object:
+   *
+   * ```js
+   * import { watchFile } from 'node:fs';
+   *
+   * watchFile('message.text', (curr, prev) => {
+   *   console.log(`the current mtime is: ${curr.mtime}`);
+   *   console.log(`the previous mtime was: ${prev.mtime}`);
+   * });
+   * ```
+   *
+   * These stat objects are instances of `fs.Stat`. If the `bigint` option is `true`,
+   * the numeric values in these objects are specified as `BigInt`s.
+   *
+   * To be notified when the file was modified, not just accessed, it is necessary
+   * to compare `curr.mtimeMs` and `prev.mtimeMs`.
+   *
+   * When an `fs.watchFile` operation results in an `ENOENT` error, it
+   * will invoke the listener once, with all the fields zeroed (or, for dates, the
+   * Unix Epoch). If the file is created later on, the listener will be called
+   * again, with the latest stat objects. This is a change in functionality since
+   * v0.10.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile` and`fs.unwatchFile`. `fs.watch` should be used instead of `fs.watchFile` and`fs.unwatchFile` when possible.
+   *
+   * When a file being watched by `fs.watchFile()` disappears and reappears,
+   * then the contents of `previous` in the second callback event (the file's
+   * reappearance) will be the same as the contents of `previous` in the first
+   * callback event (its disappearance).
+   *
+   * This happens when:
+   *
+   * * the file is deleted, followed by a restore
+   * * the file is renamed and then renamed a second time back to its original name
+   */
+  export function watchFile(
+    filename: PathLike,
+    options:
+      | (WatchFileOptions & {
+          bigint?: false | undefined;
+        })
+      | undefined,
+    listener: StatsListener,
+  ): StatWatcher;
+  export function watchFile(
+    filename: PathLike,
+    options:
+      | (WatchFileOptions & {
+          bigint: true;
+        })
+      | undefined,
+    listener: BigIntStatsListener,
+  ): StatWatcher;
+  /**
+   * Watch for changes on `filename`. The callback `listener` will be called each time the file is accessed.
+   * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
+   */
+  export function watchFile(
+    filename: PathLike,
+    listener: StatsListener,
+  ): StatWatcher;
+  /**
+   * Stop watching for changes on `filename`. If `listener` is specified, only that
+   * particular listener is removed. Otherwise, _all_ listeners are removed,
+   * effectively stopping watching of `filename`.
+   *
+   * Calling `fs.unwatchFile()` with a filename that is not being watched is a
+   * no-op, not an error.
+   *
+   * Using {@link watch} is more efficient than `fs.watchFile()` and`fs.unwatchFile()`. `fs.watch()` should be used instead of `fs.watchFile()`and `fs.unwatchFile()` when possible.
+   * @since v0.1.31
+   * @param listener Optional, a listener previously attached using `fs.watchFile()`
+   */
+  export function unwatchFile(
+    filename: PathLike,
+    listener?: StatsListener,
+  ): void;
+  export function unwatchFile(
+    filename: PathLike,
+    listener?: BigIntStatsListener,
+  ): void;
+  interface CopyOptionsBase {
+    /**
+     * Dereference symlinks
+     * @default false
+     */
+    dereference?: boolean;
+    /**
+     * When `force` is `false`, and the destination
+     * exists, throw an error.
+     * @default false
+     */
+    errorOnExist?: boolean;
+    /**
+     * Overwrite existing file or directory. _The copy
+     * operation will ignore errors if you set this to false and the destination
+     * exists. Use the `errorOnExist` option to change this behavior.
+     * @default true
+     */
+    force?: boolean;
+    /**
+     * Modifiers for copy operation. See `mode` flag of {@link copyFileSync()}
+     */
+    mode?: number;
+    /**
+     * When `true` timestamps from `source` will
+     * be preserved.
+     * @default false
+     */
+    preserveTimestamps?: boolean;
+    /**
+     * Copy directories recursively.
+     * @default false
+     */
+    recursive?: boolean;
+    /**
+     * When true, path resolution for symlinks will be skipped
+     * @default false
+     */
+    verbatimSymlinks?: boolean;
+  }
+  export interface CopyOptions extends CopyOptionsBase {
+    /**
+     * Function to filter copied files/directories. Return
+     * `true` to copy the item, `false` to ignore it.
+     */
+    filter?(source: string, destination: string): boolean | Promise<boolean>;
+  }
+  export interface CopySyncOptions extends CopyOptionsBase {
+    /**
+     * Function to filter copied files/directories. Return
+     * `true` to copy the item, `false` to ignore it.
+     */
+    filter?(source: string, destination: string): boolean;
+  }
+  /**
+   * Asynchronously copies the entire directory structure from `src` to `dest`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   */
+  export function cp(
+    source: string | URL,
+    destination: string | URL,
+    callback: (error: ErrnoException | null) => void,
+  ): void;
+  export function cp(
+    source: string | URL,
+    destination: string | URL,
+    options: CopyOptions,
+    callback: (error: ErrnoException | null) => void,
+  ): void;
+  /**
+   * Synchronously copies the entire directory structure from `src` to `dest`,
+   * including subdirectories and files.
+   *
+   * When copying a directory to another directory, globs are not supported and
+   * behavior is similar to `cp dir1/ dir2/`.
+   *
+   * @param source source path to copy.
+   * @param destination destination path to copy to.
+   */
+  export function cpSync(
+    source: string | URL,
+    destination: string | URL,
+    options?: CopySyncOptions,
+  ): void;
 }
 
 declare module "node:fs" {

@@ -13,7 +13,7 @@
 ///        - pub usingnamespace JSC.Codegen.JSMyClassName;
 ///  5. make clean-bindings && make bindings -j10
 ///
-const JSC = @import("bun").JSC;
+const JSC = @import("root").bun.JSC;
 const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");
@@ -22,6 +22,375 @@ pub const StaticGetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) 
 pub const StaticSetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
 pub const StaticCallbackType = fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
+pub const JSAttributeIterator = struct {
+    const AttributeIterator = Classes.AttributeIterator;
+    const GetterType = fn (*AttributeIterator, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*AttributeIterator, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*AttributeIterator, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*AttributeIterator, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*AttributeIterator, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*AttributeIterator {
+        JSC.markBinding(@src());
+        return AttributeIterator__fromJS(value);
+    }
+
+    /// Create a new instance of AttributeIterator
+    pub fn toJS(this: *AttributeIterator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = AttributeIterator__create(globalObject, this);
+            std.debug.assert(value__.as(AttributeIterator).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return AttributeIterator__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of AttributeIterator.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*AttributeIterator) bool {
+        JSC.markBinding(@src());
+        return AttributeIterator__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *AttributeIterator, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(AttributeIterator__dangerouslySetPtr(value, null));
+    }
+
+    extern fn AttributeIterator__fromJS(JSC.JSValue) ?*AttributeIterator;
+    extern fn AttributeIterator__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn AttributeIterator__create(globalObject: *JSC.JSGlobalObject, ptr: ?*AttributeIterator) JSC.JSValue;
+
+    extern fn AttributeIterator__dangerouslySetPtr(JSC.JSValue, ?*AttributeIterator) bool;
+
+    comptime {
+        if (@TypeOf(AttributeIterator.finalize) != (fn (*AttributeIterator) callconv(.C) void)) {
+            @compileLog("AttributeIterator.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(AttributeIterator.getThis) != CallbackType)
+            @compileLog("Expected AttributeIterator.getThis to be a callback but received " ++ @typeName(@TypeOf(AttributeIterator.getThis)));
+        if (@TypeOf(AttributeIterator.next) != CallbackType)
+            @compileLog("Expected AttributeIterator.next to be a callback but received " ++ @typeName(@TypeOf(AttributeIterator.next)));
+        if (!JSC.is_bindgen) {
+            @export(AttributeIterator.finalize, .{ .name = "AttributeIteratorClass__finalize" });
+            @export(AttributeIterator.getThis, .{ .name = "AttributeIteratorPrototype__getThis" });
+            @export(AttributeIterator.next, .{ .name = "AttributeIteratorPrototype__next" });
+        }
+    }
+};
+pub const JSBigIntStats = struct {
+    const BigIntStats = Classes.BigIntStats;
+    const GetterType = fn (*BigIntStats, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*BigIntStats, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*BigIntStats, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*BigIntStats, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*BigIntStats, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*BigIntStats {
+        JSC.markBinding(@src());
+        return BigIntStats__fromJS(value);
+    }
+
+    extern fn BigIntStatsPrototype__atimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__atimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.atime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__atimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.atime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__atimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__birthtimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__birthtimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.birthtime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn birthtimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__birthtimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.birthtime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn birthtimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__birthtimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__ctimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__ctimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.ctime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__ctimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.ctime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__ctimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BigIntStatsPrototype__mtimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BigIntStatsPrototype__mtimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BigIntStats.mtime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BigIntStatsPrototype__mtimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BigIntStats.mtime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BigIntStatsPrototype__mtimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the BigIntStats constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return BigIntStats__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of BigIntStats
+    pub fn toJS(this: *BigIntStats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = BigIntStats__create(globalObject, this);
+            std.debug.assert(value__.as(BigIntStats).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return BigIntStats__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of BigIntStats.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*BigIntStats) bool {
+        JSC.markBinding(@src());
+        return BigIntStats__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *BigIntStats, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(BigIntStats__dangerouslySetPtr(value, null));
+    }
+
+    extern fn BigIntStats__fromJS(JSC.JSValue) ?*BigIntStats;
+    extern fn BigIntStats__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn BigIntStats__create(globalObject: *JSC.JSGlobalObject, ptr: ?*BigIntStats) JSC.JSValue;
+
+    extern fn BigIntStats__dangerouslySetPtr(JSC.JSValue, ?*BigIntStats) bool;
+
+    comptime {
+        if (@TypeOf(BigIntStats.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*BigIntStats)) {
+            @compileLog("BigIntStats.constructor is not a constructor");
+        }
+
+        if (@TypeOf(BigIntStats.finalize) != (fn (*BigIntStats) callconv(.C) void)) {
+            @compileLog("BigIntStats.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(BigIntStats.atime) != GetterType)
+            @compileLog("Expected BigIntStats.atime to be a getter");
+
+        if (@TypeOf(BigIntStats.atimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.atimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.atimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.atimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtime) != GetterType)
+            @compileLog("Expected BigIntStats.birthtime to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.birthtimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.birthtimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.birthtimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.blksize) != GetterType)
+            @compileLog("Expected BigIntStats.blksize to be a getter");
+
+        if (@TypeOf(BigIntStats.blocks) != GetterType)
+            @compileLog("Expected BigIntStats.blocks to be a getter");
+
+        if (@TypeOf(BigIntStats.ctime) != GetterType)
+            @compileLog("Expected BigIntStats.ctime to be a getter");
+
+        if (@TypeOf(BigIntStats.ctimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.ctimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.ctimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.ctimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.dev) != GetterType)
+            @compileLog("Expected BigIntStats.dev to be a getter");
+
+        if (@TypeOf(BigIntStats.gid) != GetterType)
+            @compileLog("Expected BigIntStats.gid to be a getter");
+
+        if (@TypeOf(BigIntStats.ino) != GetterType)
+            @compileLog("Expected BigIntStats.ino to be a getter");
+
+        if (@TypeOf(BigIntStats.isBlockDevice_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isBlockDevice_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isBlockDevice_) != CallbackType)
+            @compileLog("Expected BigIntStats.isBlockDevice_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isBlockDevice_)));
+        if (@TypeOf(BigIntStats.isCharacterDevice_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isCharacterDevice_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isCharacterDevice_) != CallbackType)
+            @compileLog("Expected BigIntStats.isCharacterDevice_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isCharacterDevice_)));
+        if (@TypeOf(BigIntStats.isDirectory_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isDirectory_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isDirectory_) != CallbackType)
+            @compileLog("Expected BigIntStats.isDirectory_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isDirectory_)));
+        if (@TypeOf(BigIntStats.isFIFO_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isFIFO_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isFIFO_) != CallbackType)
+            @compileLog("Expected BigIntStats.isFIFO_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isFIFO_)));
+        if (@TypeOf(BigIntStats.isFile_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isFile_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isFile_) != CallbackType)
+            @compileLog("Expected BigIntStats.isFile_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isFile_)));
+        if (@TypeOf(BigIntStats.isSocket_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isSocket_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isSocket_) != CallbackType)
+            @compileLog("Expected BigIntStats.isSocket_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isSocket_)));
+        if (@TypeOf(BigIntStats.isSymbolicLink_WithoutTypeChecks) != fn (
+            *BigIntStats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected BigIntStats.isSymbolicLink_WithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(BigIntStats.isSymbolicLink_) != CallbackType)
+            @compileLog("Expected BigIntStats.isSymbolicLink_ to be a callback but received " ++ @typeName(@TypeOf(BigIntStats.isSymbolicLink_)));
+        if (@TypeOf(BigIntStats.mode) != GetterType)
+            @compileLog("Expected BigIntStats.mode to be a getter");
+
+        if (@TypeOf(BigIntStats.mtime) != GetterType)
+            @compileLog("Expected BigIntStats.mtime to be a getter");
+
+        if (@TypeOf(BigIntStats.mtimeMs) != GetterType)
+            @compileLog("Expected BigIntStats.mtimeMs to be a getter");
+
+        if (@TypeOf(BigIntStats.mtimeNs) != GetterType)
+            @compileLog("Expected BigIntStats.mtimeNs to be a getter");
+
+        if (@TypeOf(BigIntStats.nlink) != GetterType)
+            @compileLog("Expected BigIntStats.nlink to be a getter");
+
+        if (@TypeOf(BigIntStats.rdev) != GetterType)
+            @compileLog("Expected BigIntStats.rdev to be a getter");
+
+        if (@TypeOf(BigIntStats.size) != GetterType)
+            @compileLog("Expected BigIntStats.size to be a getter");
+
+        if (@TypeOf(BigIntStats.uid) != GetterType)
+            @compileLog("Expected BigIntStats.uid to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(BigIntStats.atime, .{ .name = "BigIntStatsPrototype__atime" });
+            @export(BigIntStats.atimeMs, .{ .name = "BigIntStatsPrototype__atimeMs" });
+            @export(BigIntStats.atimeNs, .{ .name = "BigIntStatsPrototype__atimeNs" });
+            @export(BigIntStats.birthtime, .{ .name = "BigIntStatsPrototype__birthtime" });
+            @export(BigIntStats.birthtimeMs, .{ .name = "BigIntStatsPrototype__birthtimeMs" });
+            @export(BigIntStats.birthtimeNs, .{ .name = "BigIntStatsPrototype__birthtimeNs" });
+            @export(BigIntStats.blksize, .{ .name = "BigIntStatsPrototype__blksize" });
+            @export(BigIntStats.blocks, .{ .name = "BigIntStatsPrototype__blocks" });
+            @export(BigIntStats.constructor, .{ .name = "BigIntStatsClass__construct" });
+            @export(BigIntStats.ctime, .{ .name = "BigIntStatsPrototype__ctime" });
+            @export(BigIntStats.ctimeMs, .{ .name = "BigIntStatsPrototype__ctimeMs" });
+            @export(BigIntStats.ctimeNs, .{ .name = "BigIntStatsPrototype__ctimeNs" });
+            @export(BigIntStats.dev, .{ .name = "BigIntStatsPrototype__dev" });
+            @export(BigIntStats.finalize, .{ .name = "BigIntStatsClass__finalize" });
+            @export(BigIntStats.gid, .{ .name = "BigIntStatsPrototype__gid" });
+            @export(BigIntStats.ino, .{ .name = "BigIntStatsPrototype__ino" });
+            @export(BigIntStats.isBlockDevice_, .{ .name = "BigIntStatsPrototype__isBlockDevice_" });
+            @export(BigIntStats.isBlockDevice_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isBlockDevice_WithoutTypeChecks" });
+            @export(BigIntStats.isCharacterDevice_, .{ .name = "BigIntStatsPrototype__isCharacterDevice_" });
+            @export(BigIntStats.isCharacterDevice_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isCharacterDevice_WithoutTypeChecks" });
+            @export(BigIntStats.isDirectory_, .{ .name = "BigIntStatsPrototype__isDirectory_" });
+            @export(BigIntStats.isDirectory_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isDirectory_WithoutTypeChecks" });
+            @export(BigIntStats.isFIFO_, .{ .name = "BigIntStatsPrototype__isFIFO_" });
+            @export(BigIntStats.isFIFO_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isFIFO_WithoutTypeChecks" });
+            @export(BigIntStats.isFile_, .{ .name = "BigIntStatsPrototype__isFile_" });
+            @export(BigIntStats.isFile_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isFile_WithoutTypeChecks" });
+            @export(BigIntStats.isSocket_, .{ .name = "BigIntStatsPrototype__isSocket_" });
+            @export(BigIntStats.isSocket_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isSocket_WithoutTypeChecks" });
+            @export(BigIntStats.isSymbolicLink_, .{ .name = "BigIntStatsPrototype__isSymbolicLink_" });
+            @export(BigIntStats.isSymbolicLink_WithoutTypeChecks, .{ .name = "BigIntStatsPrototype__isSymbolicLink_WithoutTypeChecks" });
+            @export(BigIntStats.mode, .{ .name = "BigIntStatsPrototype__mode" });
+            @export(BigIntStats.mtime, .{ .name = "BigIntStatsPrototype__mtime" });
+            @export(BigIntStats.mtimeMs, .{ .name = "BigIntStatsPrototype__mtimeMs" });
+            @export(BigIntStats.mtimeNs, .{ .name = "BigIntStatsPrototype__mtimeNs" });
+            @export(BigIntStats.nlink, .{ .name = "BigIntStatsPrototype__nlink" });
+            @export(BigIntStats.rdev, .{ .name = "BigIntStatsPrototype__rdev" });
+            @export(BigIntStats.size, .{ .name = "BigIntStatsPrototype__size" });
+            @export(BigIntStats.uid, .{ .name = "BigIntStatsPrototype__uid" });
+        }
+    }
+};
 pub const JSBlob = struct {
     const Blob = Classes.Blob;
     const GetterType = fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -35,6 +404,28 @@ pub const JSBlob = struct {
     pub fn fromJS(value: JSC.JSValue) ?*Blob {
         JSC.markBinding(@src());
         return Blob__fromJS(value);
+    }
+
+    extern fn BlobPrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BlobPrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Blob.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BlobPrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Blob.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BlobPrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the Blob constructor value.
@@ -76,6 +467,18 @@ pub const JSBlob = struct {
     extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
 
     comptime {
+        if (@TypeOf(Blob.estimatedSize) != (fn (*Blob) callconv(.C) usize)) {
+            @compileLog("Blob.estimatedSize is not a size function");
+        }
+
+        if (@TypeOf(Blob.onStructuredCloneSerialize) != (fn (*Blob, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+            @compileLog("Blob.onStructuredCloneSerialize is not a structured clone serialize function");
+        }
+
+        if (@TypeOf(Blob.onStructuredCloneDeserialize) != (fn (globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+            @compileLog("Blob.onStructuredCloneDeserialize is not a structured clone deserialize function");
+        }
+
         if (@TypeOf(Blob.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Blob)) {
             @compileLog("Blob.constructor is not a constructor");
         }
@@ -86,10 +489,18 @@ pub const JSBlob = struct {
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
             @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
+        if (@TypeOf(Blob.getExists) != CallbackType)
+            @compileLog("Expected Blob.getExists to be a callback but received " ++ @typeName(@TypeOf(Blob.getExists)));
         if (@TypeOf(Blob.getFormData) != CallbackType)
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
             @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
+        if (@TypeOf(Blob.getLastModified) != GetterType)
+            @compileLog("Expected Blob.getLastModified to be a getter");
+
+        if (@TypeOf(Blob.getName) != GetterType)
+            @compileLog("Expected Blob.getName to be a getter");
+
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
@@ -106,16 +517,577 @@ pub const JSBlob = struct {
             @compileLog("Expected Blob.getWriter to be a callback but received " ++ @typeName(@TypeOf(Blob.getWriter)));
         if (!JSC.is_bindgen) {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
+            @export(Blob.estimatedSize, .{ .name = "Blob__estimatedSize" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
+            @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
+            @export(Blob.getName, .{ .name = "BlobPrototype__getName" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
             @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });
             @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
             @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
             @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
+            @export(Blob.onStructuredCloneDeserialize, .{ .name = "Blob__onStructuredCloneDeserialize" });
+            @export(Blob.onStructuredCloneSerialize, .{ .name = "Blob__onStructuredCloneSerialize" });
+        }
+    }
+};
+pub const JSBuildArtifact = struct {
+    const BuildArtifact = Classes.BuildArtifact;
+    const GetterType = fn (*BuildArtifact, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*BuildArtifact, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*BuildArtifact, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*BuildArtifact, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*BuildArtifact, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*BuildArtifact {
+        JSC.markBinding(@src());
+        return BuildArtifact__fromJS(value);
+    }
+
+    extern fn BuildArtifactPrototype__hashSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__hashGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.hash` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hashSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__hashSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.hash` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hashGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__hashGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__kindSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__kindGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.kind` setter
+    /// This value will be visited by the garbage collector.
+    pub fn kindSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__kindSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.kind` getter
+    /// This value will be visited by the garbage collector.
+    pub fn kindGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__kindGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__loaderSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__loaderGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.loader` setter
+    /// This value will be visited by the garbage collector.
+    pub fn loaderSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__loaderSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.loader` getter
+    /// This value will be visited by the garbage collector.
+    pub fn loaderGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__loaderGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__pathSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__pathGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.path` setter
+    /// This value will be visited by the garbage collector.
+    pub fn pathSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__pathSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.path` getter
+    /// This value will be visited by the garbage collector.
+    pub fn pathGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__pathGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__sourcemapSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__sourcemapGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.sourcemap` setter
+    /// This value will be visited by the garbage collector.
+    pub fn sourcemapSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__sourcemapSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.sourcemap` getter
+    /// This value will be visited by the garbage collector.
+    pub fn sourcemapGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__sourcemapGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildArtifactPrototype__typeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildArtifactPrototype__typeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildArtifact.type` setter
+    /// This value will be visited by the garbage collector.
+    pub fn typeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildArtifactPrototype__typeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildArtifact.type` getter
+    /// This value will be visited by the garbage collector.
+    pub fn typeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildArtifactPrototype__typeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of BuildArtifact
+    pub fn toJS(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = BuildArtifact__create(globalObject, this);
+            std.debug.assert(value__.as(BuildArtifact).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return BuildArtifact__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of BuildArtifact.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*BuildArtifact) bool {
+        JSC.markBinding(@src());
+        return BuildArtifact__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *BuildArtifact, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(BuildArtifact__dangerouslySetPtr(value, null));
+    }
+
+    extern fn BuildArtifact__fromJS(JSC.JSValue) ?*BuildArtifact;
+    extern fn BuildArtifact__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn BuildArtifact__create(globalObject: *JSC.JSGlobalObject, ptr: ?*BuildArtifact) JSC.JSValue;
+
+    extern fn BuildArtifact__dangerouslySetPtr(JSC.JSValue, ?*BuildArtifact) bool;
+
+    comptime {
+        if (@TypeOf(BuildArtifact.finalize) != (fn (*BuildArtifact) callconv(.C) void)) {
+            @compileLog("BuildArtifact.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(BuildArtifact.getArrayBuffer) != CallbackType)
+            @compileLog("Expected BuildArtifact.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getArrayBuffer)));
+        if (@TypeOf(BuildArtifact.getHash) != GetterType)
+            @compileLog("Expected BuildArtifact.getHash to be a getter");
+
+        if (@TypeOf(BuildArtifact.getJSON) != CallbackType)
+            @compileLog("Expected BuildArtifact.getJSON to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getJSON)));
+        if (@TypeOf(BuildArtifact.getOutputKind) != GetterType)
+            @compileLog("Expected BuildArtifact.getOutputKind to be a getter");
+
+        if (@TypeOf(BuildArtifact.getLoader) != GetterType)
+            @compileLog("Expected BuildArtifact.getLoader to be a getter");
+
+        if (@TypeOf(BuildArtifact.getPath) != GetterType)
+            @compileLog("Expected BuildArtifact.getPath to be a getter");
+
+        if (@TypeOf(BuildArtifact.getSize) != GetterType)
+            @compileLog("Expected BuildArtifact.getSize to be a getter");
+
+        if (@TypeOf(BuildArtifact.getSlice) != CallbackType)
+            @compileLog("Expected BuildArtifact.getSlice to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getSlice)));
+        if (@TypeOf(BuildArtifact.getSourceMap) != GetterType)
+            @compileLog("Expected BuildArtifact.getSourceMap to be a getter");
+
+        if (@TypeOf(BuildArtifact.getStream) != CallbackType)
+            @compileLog("Expected BuildArtifact.getStream to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getStream)));
+        if (@TypeOf(BuildArtifact.getText) != CallbackType)
+            @compileLog("Expected BuildArtifact.getText to be a callback but received " ++ @typeName(@TypeOf(BuildArtifact.getText)));
+        if (@TypeOf(BuildArtifact.getMimeType) != GetterType)
+            @compileLog("Expected BuildArtifact.getMimeType to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(BuildArtifact.finalize, .{ .name = "BuildArtifactClass__finalize" });
+            @export(BuildArtifact.getArrayBuffer, .{ .name = "BuildArtifactPrototype__getArrayBuffer" });
+            @export(BuildArtifact.getHash, .{ .name = "BuildArtifactPrototype__getHash" });
+            @export(BuildArtifact.getJSON, .{ .name = "BuildArtifactPrototype__getJSON" });
+            @export(BuildArtifact.getLoader, .{ .name = "BuildArtifactPrototype__getLoader" });
+            @export(BuildArtifact.getMimeType, .{ .name = "BuildArtifactPrototype__getMimeType" });
+            @export(BuildArtifact.getOutputKind, .{ .name = "BuildArtifactPrototype__getOutputKind" });
+            @export(BuildArtifact.getPath, .{ .name = "BuildArtifactPrototype__getPath" });
+            @export(BuildArtifact.getSize, .{ .name = "BuildArtifactPrototype__getSize" });
+            @export(BuildArtifact.getSlice, .{ .name = "BuildArtifactPrototype__getSlice" });
+            @export(BuildArtifact.getSourceMap, .{ .name = "BuildArtifactPrototype__getSourceMap" });
+            @export(BuildArtifact.getStream, .{ .name = "BuildArtifactPrototype__getStream" });
+            @export(BuildArtifact.getText, .{ .name = "BuildArtifactPrototype__getText" });
+        }
+    }
+};
+pub const JSBuildMessage = struct {
+    const BuildMessage = Classes.BuildMessage;
+    const GetterType = fn (*BuildMessage, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*BuildMessage, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*BuildMessage, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*BuildMessage, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*BuildMessage, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*BuildMessage {
+        JSC.markBinding(@src());
+        return BuildMessage__fromJS(value);
+    }
+
+    extern fn BuildMessagePrototype__levelSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildMessagePrototype__levelGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildMessage.level` setter
+    /// This value will be visited by the garbage collector.
+    pub fn levelSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildMessagePrototype__levelSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildMessage.level` getter
+    /// This value will be visited by the garbage collector.
+    pub fn levelGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildMessagePrototype__levelGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildMessagePrototype__messageSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildMessagePrototype__messageGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildMessage.message` setter
+    /// This value will be visited by the garbage collector.
+    pub fn messageSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildMessagePrototype__messageSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildMessage.message` getter
+    /// This value will be visited by the garbage collector.
+    pub fn messageGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildMessagePrototype__messageGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn BuildMessagePrototype__positionSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn BuildMessagePrototype__positionGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `BuildMessage.position` setter
+    /// This value will be visited by the garbage collector.
+    pub fn positionSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        BuildMessagePrototype__positionSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `BuildMessage.position` getter
+    /// This value will be visited by the garbage collector.
+    pub fn positionGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = BuildMessagePrototype__positionGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the BuildMessage constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return BuildMessage__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of BuildMessage
+    pub fn toJS(this: *BuildMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = BuildMessage__create(globalObject, this);
+            std.debug.assert(value__.as(BuildMessage).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return BuildMessage__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of BuildMessage.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*BuildMessage) bool {
+        JSC.markBinding(@src());
+        return BuildMessage__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *BuildMessage, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(BuildMessage__dangerouslySetPtr(value, null));
+    }
+
+    extern fn BuildMessage__fromJS(JSC.JSValue) ?*BuildMessage;
+    extern fn BuildMessage__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn BuildMessage__create(globalObject: *JSC.JSGlobalObject, ptr: ?*BuildMessage) JSC.JSValue;
+
+    extern fn BuildMessage__dangerouslySetPtr(JSC.JSValue, ?*BuildMessage) bool;
+
+    comptime {
+        if (@TypeOf(BuildMessage.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*BuildMessage)) {
+            @compileLog("BuildMessage.constructor is not a constructor");
+        }
+
+        if (@TypeOf(BuildMessage.finalize) != (fn (*BuildMessage) callconv(.C) void)) {
+            @compileLog("BuildMessage.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(BuildMessage.toPrimitive) != CallbackType)
+            @compileLog("Expected BuildMessage.toPrimitive to be a callback but received " ++ @typeName(@TypeOf(BuildMessage.toPrimitive)));
+        if (@TypeOf(BuildMessage.getLevel) != GetterType)
+            @compileLog("Expected BuildMessage.getLevel to be a getter");
+
+        if (@TypeOf(BuildMessage.getMessage) != GetterType)
+            @compileLog("Expected BuildMessage.getMessage to be a getter");
+
+        if (@TypeOf(BuildMessage.getPosition) != GetterType)
+            @compileLog("Expected BuildMessage.getPosition to be a getter");
+
+        if (@TypeOf(BuildMessage.toJSON) != CallbackType)
+            @compileLog("Expected BuildMessage.toJSON to be a callback but received " ++ @typeName(@TypeOf(BuildMessage.toJSON)));
+        if (@TypeOf(BuildMessage.toString) != CallbackType)
+            @compileLog("Expected BuildMessage.toString to be a callback but received " ++ @typeName(@TypeOf(BuildMessage.toString)));
+        if (!JSC.is_bindgen) {
+            @export(BuildMessage.constructor, .{ .name = "BuildMessageClass__construct" });
+            @export(BuildMessage.finalize, .{ .name = "BuildMessageClass__finalize" });
+            @export(BuildMessage.getLevel, .{ .name = "BuildMessagePrototype__getLevel" });
+            @export(BuildMessage.getMessage, .{ .name = "BuildMessagePrototype__getMessage" });
+            @export(BuildMessage.getPosition, .{ .name = "BuildMessagePrototype__getPosition" });
+            @export(BuildMessage.toJSON, .{ .name = "BuildMessagePrototype__toJSON" });
+            @export(BuildMessage.toPrimitive, .{ .name = "BuildMessagePrototype__toPrimitive" });
+            @export(BuildMessage.toString, .{ .name = "BuildMessagePrototype__toString" });
+        }
+    }
+};
+pub const JSComment = struct {
+    const Comment = Classes.Comment;
+    const GetterType = fn (*Comment, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Comment, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Comment, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Comment, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Comment, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Comment {
+        JSC.markBinding(@src());
+        return Comment__fromJS(value);
+    }
+
+    /// Create a new instance of Comment
+    pub fn toJS(this: *Comment, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Comment__create(globalObject, this);
+            std.debug.assert(value__.as(Comment).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Comment__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Comment.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Comment) bool {
+        JSC.markBinding(@src());
+        return Comment__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Comment, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Comment__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Comment__fromJS(JSC.JSValue) ?*Comment;
+    extern fn Comment__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Comment__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Comment) JSC.JSValue;
+
+    extern fn Comment__dangerouslySetPtr(JSC.JSValue, ?*Comment) bool;
+
+    comptime {
+        if (@TypeOf(Comment.finalize) != (fn (*Comment) callconv(.C) void)) {
+            @compileLog("Comment.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Comment.after) != CallbackType)
+            @compileLog("Expected Comment.after to be a callback but received " ++ @typeName(@TypeOf(Comment.after)));
+        if (@TypeOf(Comment.before) != CallbackType)
+            @compileLog("Expected Comment.before to be a callback but received " ++ @typeName(@TypeOf(Comment.before)));
+        if (@TypeOf(Comment.remove) != CallbackType)
+            @compileLog("Expected Comment.remove to be a callback but received " ++ @typeName(@TypeOf(Comment.remove)));
+        if (@TypeOf(Comment.removed) != GetterType)
+            @compileLog("Expected Comment.removed to be a getter");
+
+        if (@TypeOf(Comment.replace) != CallbackType)
+            @compileLog("Expected Comment.replace to be a callback but received " ++ @typeName(@TypeOf(Comment.replace)));
+        if (@TypeOf(Comment.getText) != GetterType)
+            @compileLog("Expected Comment.getText to be a getter");
+
+        if (@TypeOf(Comment.setText) != SetterType)
+            @compileLog("Expected Comment.setText to be a setter");
+        if (!JSC.is_bindgen) {
+            @export(Comment.after, .{ .name = "CommentPrototype__after" });
+            @export(Comment.before, .{ .name = "CommentPrototype__before" });
+            @export(Comment.finalize, .{ .name = "CommentClass__finalize" });
+            @export(Comment.getText, .{ .name = "CommentPrototype__getText" });
+            @export(Comment.remove, .{ .name = "CommentPrototype__remove" });
+            @export(Comment.removed, .{ .name = "CommentPrototype__removed" });
+            @export(Comment.replace, .{ .name = "CommentPrototype__replace" });
+            @export(Comment.setText, .{ .name = "CommentPrototype__setText" });
+        }
+    }
+};
+pub const JSCrypto = struct {
+    const Crypto = Classes.Crypto;
+    const GetterType = fn (*Crypto, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Crypto, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Crypto, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Crypto, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Crypto, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Crypto {
+        JSC.markBinding(@src());
+        return Crypto__fromJS(value);
+    }
+
+    /// Get the Crypto constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Crypto__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Crypto
+    pub fn toJS(this: *Crypto, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Crypto__create(globalObject, this);
+            std.debug.assert(value__.as(Crypto).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Crypto__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Crypto.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Crypto) bool {
+        JSC.markBinding(@src());
+        return Crypto__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Crypto, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Crypto__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Crypto__fromJS(JSC.JSValue) ?*Crypto;
+    extern fn Crypto__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Crypto__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Crypto) JSC.JSValue;
+
+    extern fn Crypto__dangerouslySetPtr(JSC.JSValue, ?*Crypto) bool;
+
+    comptime {
+        if (@TypeOf(Crypto.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Crypto)) {
+            @compileLog("Crypto.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Crypto.getRandomValuesWithoutTypeChecks) != fn (*Crypto, *JSC.JSGlobalObject, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Crypto.getRandomValuesWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(Crypto.getRandomValues) != CallbackType)
+            @compileLog("Expected Crypto.getRandomValues to be a callback but received " ++ @typeName(@TypeOf(Crypto.getRandomValues)));
+        if (@TypeOf(Crypto.randomInt) != CallbackType)
+            @compileLog("Expected Crypto.randomInt to be a callback but received " ++ @typeName(@TypeOf(Crypto.randomInt)));
+        if (@TypeOf(Crypto.randomUUIDWithoutTypeChecks) != fn (
+            *Crypto,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Crypto.randomUUIDWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(Crypto.randomUUID) != CallbackType)
+            @compileLog("Expected Crypto.randomUUID to be a callback but received " ++ @typeName(@TypeOf(Crypto.randomUUID)));
+        if (@TypeOf(Crypto.doScryptSync) != CallbackType)
+            @compileLog("Expected Crypto.doScryptSync to be a callback but received " ++ @typeName(@TypeOf(Crypto.doScryptSync)));
+        if (@TypeOf(Crypto.timingSafeEqualWithoutTypeChecks) != fn (*Crypto, *JSC.JSGlobalObject, *JSC.JSUint8Array, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Crypto.timingSafeEqualWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(Crypto.timingSafeEqual) != CallbackType)
+            @compileLog("Expected Crypto.timingSafeEqual to be a callback but received " ++ @typeName(@TypeOf(Crypto.timingSafeEqual)));
+        if (!JSC.is_bindgen) {
+            @export(Crypto.constructor, .{ .name = "CryptoClass__construct" });
+            @export(Crypto.doScryptSync, .{ .name = "CryptoPrototype__doScryptSync" });
+            @export(Crypto.getRandomValues, .{ .name = "CryptoPrototype__getRandomValues" });
+            @export(Crypto.getRandomValuesWithoutTypeChecks, .{ .name = "CryptoPrototype__getRandomValuesWithoutTypeChecks" });
+            @export(Crypto.randomInt, .{ .name = "CryptoPrototype__randomInt" });
+            @export(Crypto.randomUUID, .{ .name = "CryptoPrototype__randomUUID" });
+            @export(Crypto.randomUUIDWithoutTypeChecks, .{ .name = "CryptoPrototype__randomUUIDWithoutTypeChecks" });
+            @export(Crypto.timingSafeEqual, .{ .name = "CryptoPrototype__timingSafeEqual" });
+            @export(Crypto.timingSafeEqualWithoutTypeChecks, .{ .name = "CryptoPrototype__timingSafeEqualWithoutTypeChecks" });
         }
     }
 };
@@ -209,6 +1181,8 @@ pub const JSCryptoHasher = struct {
         if (@TypeOf(CryptoHasher.getByteLength) != GetterType)
             @compileLog("Expected CryptoHasher.getByteLength to be a getter");
 
+        if (@TypeOf(CryptoHasher.copy) != CallbackType)
+            @compileLog("Expected CryptoHasher.copy to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.copy)));
         if (@TypeOf(CryptoHasher.digest) != CallbackType)
             @compileLog("Expected CryptoHasher.digest to be a callback but received " ++ @typeName(@TypeOf(CryptoHasher.digest)));
         if (@TypeOf(CryptoHasher.update) != CallbackType)
@@ -220,6 +1194,7 @@ pub const JSCryptoHasher = struct {
             @compileLog("Expected CryptoHasher.hash to be a static callback");
         if (!JSC.is_bindgen) {
             @export(CryptoHasher.constructor, .{ .name = "CryptoHasherClass__construct" });
+            @export(CryptoHasher.copy, .{ .name = "CryptoHasherPrototype__copy" });
             @export(CryptoHasher.digest, .{ .name = "CryptoHasherPrototype__digest" });
             @export(CryptoHasher.finalize, .{ .name = "CryptoHasherClass__finalize" });
             @export(CryptoHasher.getAlgorithm, .{ .name = "CryptoHasherPrototype__getAlgorithm" });
@@ -227,6 +1202,292 @@ pub const JSCryptoHasher = struct {
             @export(CryptoHasher.getByteLength, .{ .name = "CryptoHasherPrototype__getByteLength" });
             @export(CryptoHasher.hash, .{ .name = "CryptoHasherClass__hash" });
             @export(CryptoHasher.update, .{ .name = "CryptoHasherPrototype__update" });
+        }
+    }
+};
+pub const JSDebugHTTPSServer = struct {
+    const DebugHTTPSServer = Classes.DebugHTTPSServer;
+    const GetterType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DebugHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DebugHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*DebugHTTPSServer {
+        JSC.markBinding(@src());
+        return DebugHTTPSServer__fromJS(value);
+    }
+
+    extern fn DebugHTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPSServer.hostname` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPSServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPSServer.hostname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPSServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DebugHTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of DebugHTTPSServer
+    pub fn toJS(this: *DebugHTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = DebugHTTPSServer__create(globalObject, this);
+            std.debug.assert(value__.as(DebugHTTPSServer).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return DebugHTTPSServer__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of DebugHTTPSServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugHTTPSServer) bool {
+        JSC.markBinding(@src());
+        return DebugHTTPSServer__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *DebugHTTPSServer, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(DebugHTTPSServer__dangerouslySetPtr(value, null));
+    }
+
+    extern fn DebugHTTPSServer__fromJS(JSC.JSValue) ?*DebugHTTPSServer;
+    extern fn DebugHTTPSServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn DebugHTTPSServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugHTTPSServer) JSC.JSValue;
+
+    extern fn DebugHTTPSServer__dangerouslySetPtr(JSC.JSValue, ?*DebugHTTPSServer) bool;
+
+    comptime {
+        if (@TypeOf(DebugHTTPSServer.finalize) != (fn (*DebugHTTPSServer) callconv(.C) void)) {
+            @compileLog("DebugHTTPSServer.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(DebugHTTPSServer.getDevelopment) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getDevelopment to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.doFetch) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doFetch)));
+        if (@TypeOf(DebugHTTPSServer.getHostname) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getHostname to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getId to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.getPendingRequests) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPendingRequests to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPendingWebSockets to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.getPort) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPort to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.getProtocol) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getProtocol to be a getter");
+
+        if (@TypeOf(DebugHTTPSServer.doPublish) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doPublish)));
+        if (@TypeOf(DebugHTTPSServer.doReload) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doReload)));
+        if (@TypeOf(DebugHTTPSServer.doStop) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doStop)));
+        if (@TypeOf(DebugHTTPSServer.doUpgrade) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doUpgrade)));
+        if (!JSC.is_bindgen) {
+            @export(DebugHTTPSServer.doFetch, .{ .name = "DebugHTTPSServerPrototype__doFetch" });
+            @export(DebugHTTPSServer.doPublish, .{ .name = "DebugHTTPSServerPrototype__doPublish" });
+            @export(DebugHTTPSServer.doReload, .{ .name = "DebugHTTPSServerPrototype__doReload" });
+            @export(DebugHTTPSServer.doStop, .{ .name = "DebugHTTPSServerPrototype__doStop" });
+            @export(DebugHTTPSServer.doUpgrade, .{ .name = "DebugHTTPSServerPrototype__doUpgrade" });
+            @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
+            @export(DebugHTTPSServer.getDevelopment, .{ .name = "DebugHTTPSServerPrototype__getDevelopment" });
+            @export(DebugHTTPSServer.getHostname, .{ .name = "DebugHTTPSServerPrototype__getHostname" });
+            @export(DebugHTTPSServer.getId, .{ .name = "DebugHTTPSServerPrototype__getId" });
+            @export(DebugHTTPSServer.getPendingRequests, .{ .name = "DebugHTTPSServerPrototype__getPendingRequests" });
+            @export(DebugHTTPSServer.getPendingWebSockets, .{ .name = "DebugHTTPSServerPrototype__getPendingWebSockets" });
+            @export(DebugHTTPSServer.getPort, .{ .name = "DebugHTTPSServerPrototype__getPort" });
+            @export(DebugHTTPSServer.getProtocol, .{ .name = "DebugHTTPSServerPrototype__getProtocol" });
+        }
+    }
+};
+pub const JSDebugHTTPServer = struct {
+    const DebugHTTPServer = Classes.DebugHTTPServer;
+    const GetterType = fn (*DebugHTTPServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DebugHTTPServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DebugHTTPServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DebugHTTPServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DebugHTTPServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*DebugHTTPServer {
+        JSC.markBinding(@src());
+        return DebugHTTPServer__fromJS(value);
+    }
+
+    extern fn DebugHTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPServer.hostname` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPServer.hostname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DebugHTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of DebugHTTPServer
+    pub fn toJS(this: *DebugHTTPServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = DebugHTTPServer__create(globalObject, this);
+            std.debug.assert(value__.as(DebugHTTPServer).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return DebugHTTPServer__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of DebugHTTPServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugHTTPServer) bool {
+        JSC.markBinding(@src());
+        return DebugHTTPServer__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *DebugHTTPServer, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(DebugHTTPServer__dangerouslySetPtr(value, null));
+    }
+
+    extern fn DebugHTTPServer__fromJS(JSC.JSValue) ?*DebugHTTPServer;
+    extern fn DebugHTTPServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn DebugHTTPServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugHTTPServer) JSC.JSValue;
+
+    extern fn DebugHTTPServer__dangerouslySetPtr(JSC.JSValue, ?*DebugHTTPServer) bool;
+
+    comptime {
+        if (@TypeOf(DebugHTTPServer.finalize) != (fn (*DebugHTTPServer) callconv(.C) void)) {
+            @compileLog("DebugHTTPServer.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(DebugHTTPServer.getDevelopment) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getDevelopment to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.doFetch) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doFetch)));
+        if (@TypeOf(DebugHTTPServer.getHostname) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getHostname to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getId to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.getPendingRequests) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPendingRequests to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPendingWebSockets to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.getPort) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPort to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.getProtocol) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getProtocol to be a getter");
+
+        if (@TypeOf(DebugHTTPServer.doPublish) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doPublish)));
+        if (@TypeOf(DebugHTTPServer.doReload) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doReload)));
+        if (@TypeOf(DebugHTTPServer.doStop) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doStop)));
+        if (@TypeOf(DebugHTTPServer.doUpgrade) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doUpgrade)));
+        if (!JSC.is_bindgen) {
+            @export(DebugHTTPServer.doFetch, .{ .name = "DebugHTTPServerPrototype__doFetch" });
+            @export(DebugHTTPServer.doPublish, .{ .name = "DebugHTTPServerPrototype__doPublish" });
+            @export(DebugHTTPServer.doReload, .{ .name = "DebugHTTPServerPrototype__doReload" });
+            @export(DebugHTTPServer.doStop, .{ .name = "DebugHTTPServerPrototype__doStop" });
+            @export(DebugHTTPServer.doUpgrade, .{ .name = "DebugHTTPServerPrototype__doUpgrade" });
+            @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
+            @export(DebugHTTPServer.getDevelopment, .{ .name = "DebugHTTPServerPrototype__getDevelopment" });
+            @export(DebugHTTPServer.getHostname, .{ .name = "DebugHTTPServerPrototype__getHostname" });
+            @export(DebugHTTPServer.getId, .{ .name = "DebugHTTPServerPrototype__getId" });
+            @export(DebugHTTPServer.getPendingRequests, .{ .name = "DebugHTTPServerPrototype__getPendingRequests" });
+            @export(DebugHTTPServer.getPendingWebSockets, .{ .name = "DebugHTTPServerPrototype__getPendingWebSockets" });
+            @export(DebugHTTPServer.getPort, .{ .name = "DebugHTTPServerPrototype__getPort" });
+            @export(DebugHTTPServer.getProtocol, .{ .name = "DebugHTTPServerPrototype__getProtocol" });
         }
     }
 };
@@ -345,6 +1606,415 @@ pub const JSDirent = struct {
         }
     }
 };
+pub const JSDocEnd = struct {
+    const DocEnd = Classes.DocEnd;
+    const GetterType = fn (*DocEnd, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DocEnd, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DocEnd, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DocEnd, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DocEnd, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*DocEnd {
+        JSC.markBinding(@src());
+        return DocEnd__fromJS(value);
+    }
+
+    /// Create a new instance of DocEnd
+    pub fn toJS(this: *DocEnd, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = DocEnd__create(globalObject, this);
+            std.debug.assert(value__.as(DocEnd).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return DocEnd__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of DocEnd.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DocEnd) bool {
+        JSC.markBinding(@src());
+        return DocEnd__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *DocEnd, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(DocEnd__dangerouslySetPtr(value, null));
+    }
+
+    extern fn DocEnd__fromJS(JSC.JSValue) ?*DocEnd;
+    extern fn DocEnd__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn DocEnd__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DocEnd) JSC.JSValue;
+
+    extern fn DocEnd__dangerouslySetPtr(JSC.JSValue, ?*DocEnd) bool;
+
+    comptime {
+        if (@TypeOf(DocEnd.finalize) != (fn (*DocEnd) callconv(.C) void)) {
+            @compileLog("DocEnd.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(DocEnd.append) != CallbackType)
+            @compileLog("Expected DocEnd.append to be a callback but received " ++ @typeName(@TypeOf(DocEnd.append)));
+        if (!JSC.is_bindgen) {
+            @export(DocEnd.append, .{ .name = "DocEndPrototype__append" });
+            @export(DocEnd.finalize, .{ .name = "DocEndClass__finalize" });
+        }
+    }
+};
+pub const JSDocType = struct {
+    const DocType = Classes.DocType;
+    const GetterType = fn (*DocType, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DocType, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DocType, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DocType, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DocType, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*DocType {
+        JSC.markBinding(@src());
+        return DocType__fromJS(value);
+    }
+
+    extern fn DocTypePrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DocTypePrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DocType.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DocTypePrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DocType.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DocTypePrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DocTypePrototype__publicIdSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DocTypePrototype__publicIdGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DocType.publicId` setter
+    /// This value will be visited by the garbage collector.
+    pub fn publicIdSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DocTypePrototype__publicIdSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DocType.publicId` getter
+    /// This value will be visited by the garbage collector.
+    pub fn publicIdGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DocTypePrototype__publicIdGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DocTypePrototype__systemIdSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DocTypePrototype__systemIdGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DocType.systemId` setter
+    /// This value will be visited by the garbage collector.
+    pub fn systemIdSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DocTypePrototype__systemIdSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DocType.systemId` getter
+    /// This value will be visited by the garbage collector.
+    pub fn systemIdGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DocTypePrototype__systemIdGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of DocType
+    pub fn toJS(this: *DocType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = DocType__create(globalObject, this);
+            std.debug.assert(value__.as(DocType).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return DocType__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of DocType.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DocType) bool {
+        JSC.markBinding(@src());
+        return DocType__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *DocType, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(DocType__dangerouslySetPtr(value, null));
+    }
+
+    extern fn DocType__fromJS(JSC.JSValue) ?*DocType;
+    extern fn DocType__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn DocType__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DocType) JSC.JSValue;
+
+    extern fn DocType__dangerouslySetPtr(JSC.JSValue, ?*DocType) bool;
+
+    comptime {
+        if (@TypeOf(DocType.finalize) != (fn (*DocType) callconv(.C) void)) {
+            @compileLog("DocType.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(DocType.name) != GetterType)
+            @compileLog("Expected DocType.name to be a getter");
+
+        if (@TypeOf(DocType.publicId) != GetterType)
+            @compileLog("Expected DocType.publicId to be a getter");
+
+        if (@TypeOf(DocType.systemId) != GetterType)
+            @compileLog("Expected DocType.systemId to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(DocType.finalize, .{ .name = "DocTypeClass__finalize" });
+            @export(DocType.name, .{ .name = "DocTypePrototype__name" });
+            @export(DocType.publicId, .{ .name = "DocTypePrototype__publicId" });
+            @export(DocType.systemId, .{ .name = "DocTypePrototype__systemId" });
+        }
+    }
+};
+pub const JSElement = struct {
+    const Element = Classes.Element;
+    const GetterType = fn (*Element, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Element, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Element, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Element, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Element, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Element {
+        JSC.markBinding(@src());
+        return Element__fromJS(value);
+    }
+
+    extern fn ElementPrototype__namespaceURISetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ElementPrototype__namespaceURIGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Element.namespaceURI` setter
+    /// This value will be visited by the garbage collector.
+    pub fn namespaceURISetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ElementPrototype__namespaceURISetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Element.namespaceURI` getter
+    /// This value will be visited by the garbage collector.
+    pub fn namespaceURIGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ElementPrototype__namespaceURIGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of Element
+    pub fn toJS(this: *Element, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Element__create(globalObject, this);
+            std.debug.assert(value__.as(Element).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Element__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Element.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Element) bool {
+        JSC.markBinding(@src());
+        return Element__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Element, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Element__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Element__fromJS(JSC.JSValue) ?*Element;
+    extern fn Element__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Element__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Element) JSC.JSValue;
+
+    extern fn Element__dangerouslySetPtr(JSC.JSValue, ?*Element) bool;
+
+    comptime {
+        if (@TypeOf(Element.finalize) != (fn (*Element) callconv(.C) void)) {
+            @compileLog("Element.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Element.after) != CallbackType)
+            @compileLog("Expected Element.after to be a callback but received " ++ @typeName(@TypeOf(Element.after)));
+        if (@TypeOf(Element.append) != CallbackType)
+            @compileLog("Expected Element.append to be a callback but received " ++ @typeName(@TypeOf(Element.append)));
+        if (@TypeOf(Element.getAttributes) != GetterType)
+            @compileLog("Expected Element.getAttributes to be a getter");
+
+        if (@TypeOf(Element.before) != CallbackType)
+            @compileLog("Expected Element.before to be a callback but received " ++ @typeName(@TypeOf(Element.before)));
+        if (@TypeOf(Element.getCanHaveContent) != GetterType)
+            @compileLog("Expected Element.getCanHaveContent to be a getter");
+
+        if (@TypeOf(Element.getAttribute) != CallbackType)
+            @compileLog("Expected Element.getAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.getAttribute)));
+        if (@TypeOf(Element.hasAttribute) != CallbackType)
+            @compileLog("Expected Element.hasAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.hasAttribute)));
+        if (@TypeOf(Element.getNamespaceURI) != GetterType)
+            @compileLog("Expected Element.getNamespaceURI to be a getter");
+
+        if (@TypeOf(Element.onEndTag) != CallbackType)
+            @compileLog("Expected Element.onEndTag to be a callback but received " ++ @typeName(@TypeOf(Element.onEndTag)));
+        if (@TypeOf(Element.prepend) != CallbackType)
+            @compileLog("Expected Element.prepend to be a callback but received " ++ @typeName(@TypeOf(Element.prepend)));
+        if (@TypeOf(Element.remove) != CallbackType)
+            @compileLog("Expected Element.remove to be a callback but received " ++ @typeName(@TypeOf(Element.remove)));
+        if (@TypeOf(Element.removeAndKeepContent) != CallbackType)
+            @compileLog("Expected Element.removeAndKeepContent to be a callback but received " ++ @typeName(@TypeOf(Element.removeAndKeepContent)));
+        if (@TypeOf(Element.removeAttribute) != CallbackType)
+            @compileLog("Expected Element.removeAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.removeAttribute)));
+        if (@TypeOf(Element.getRemoved) != GetterType)
+            @compileLog("Expected Element.getRemoved to be a getter");
+
+        if (@TypeOf(Element.replace) != CallbackType)
+            @compileLog("Expected Element.replace to be a callback but received " ++ @typeName(@TypeOf(Element.replace)));
+        if (@TypeOf(Element.getSelfClosing) != GetterType)
+            @compileLog("Expected Element.getSelfClosing to be a getter");
+
+        if (@TypeOf(Element.setAttribute) != CallbackType)
+            @compileLog("Expected Element.setAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.setAttribute)));
+        if (@TypeOf(Element.setInnerContent) != CallbackType)
+            @compileLog("Expected Element.setInnerContent to be a callback but received " ++ @typeName(@TypeOf(Element.setInnerContent)));
+        if (@TypeOf(Element.getTagName) != GetterType)
+            @compileLog("Expected Element.getTagName to be a getter");
+
+        if (@TypeOf(Element.setTagName) != SetterType)
+            @compileLog("Expected Element.setTagName to be a setter");
+        if (!JSC.is_bindgen) {
+            @export(Element.after, .{ .name = "ElementPrototype__after" });
+            @export(Element.append, .{ .name = "ElementPrototype__append" });
+            @export(Element.before, .{ .name = "ElementPrototype__before" });
+            @export(Element.finalize, .{ .name = "ElementClass__finalize" });
+            @export(Element.getAttribute, .{ .name = "ElementPrototype__getAttribute" });
+            @export(Element.getAttributes, .{ .name = "ElementPrototype__getAttributes" });
+            @export(Element.getCanHaveContent, .{ .name = "ElementPrototype__getCanHaveContent" });
+            @export(Element.getNamespaceURI, .{ .name = "ElementPrototype__getNamespaceURI" });
+            @export(Element.getRemoved, .{ .name = "ElementPrototype__getRemoved" });
+            @export(Element.getSelfClosing, .{ .name = "ElementPrototype__getSelfClosing" });
+            @export(Element.getTagName, .{ .name = "ElementPrototype__getTagName" });
+            @export(Element.hasAttribute, .{ .name = "ElementPrototype__hasAttribute" });
+            @export(Element.onEndTag, .{ .name = "ElementPrototype__onEndTag" });
+            @export(Element.prepend, .{ .name = "ElementPrototype__prepend" });
+            @export(Element.remove, .{ .name = "ElementPrototype__remove" });
+            @export(Element.removeAndKeepContent, .{ .name = "ElementPrototype__removeAndKeepContent" });
+            @export(Element.removeAttribute, .{ .name = "ElementPrototype__removeAttribute" });
+            @export(Element.replace, .{ .name = "ElementPrototype__replace" });
+            @export(Element.setAttribute, .{ .name = "ElementPrototype__setAttribute" });
+            @export(Element.setInnerContent, .{ .name = "ElementPrototype__setInnerContent" });
+            @export(Element.setTagName, .{ .name = "ElementPrototype__setTagName" });
+        }
+    }
+};
+pub const JSEndTag = struct {
+    const EndTag = Classes.EndTag;
+    const GetterType = fn (*EndTag, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*EndTag, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*EndTag, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*EndTag, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*EndTag, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*EndTag {
+        JSC.markBinding(@src());
+        return EndTag__fromJS(value);
+    }
+
+    /// Create a new instance of EndTag
+    pub fn toJS(this: *EndTag, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = EndTag__create(globalObject, this);
+            std.debug.assert(value__.as(EndTag).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return EndTag__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of EndTag.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*EndTag) bool {
+        JSC.markBinding(@src());
+        return EndTag__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *EndTag, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(EndTag__dangerouslySetPtr(value, null));
+    }
+
+    extern fn EndTag__fromJS(JSC.JSValue) ?*EndTag;
+    extern fn EndTag__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn EndTag__create(globalObject: *JSC.JSGlobalObject, ptr: ?*EndTag) JSC.JSValue;
+
+    extern fn EndTag__dangerouslySetPtr(JSC.JSValue, ?*EndTag) bool;
+
+    comptime {
+        if (@TypeOf(EndTag.finalize) != (fn (*EndTag) callconv(.C) void)) {
+            @compileLog("EndTag.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(EndTag.after) != CallbackType)
+            @compileLog("Expected EndTag.after to be a callback but received " ++ @typeName(@TypeOf(EndTag.after)));
+        if (@TypeOf(EndTag.before) != CallbackType)
+            @compileLog("Expected EndTag.before to be a callback but received " ++ @typeName(@TypeOf(EndTag.before)));
+        if (@TypeOf(EndTag.getName) != GetterType)
+            @compileLog("Expected EndTag.getName to be a getter");
+
+        if (@TypeOf(EndTag.setName) != SetterType)
+            @compileLog("Expected EndTag.setName to be a setter");
+        if (@TypeOf(EndTag.remove) != CallbackType)
+            @compileLog("Expected EndTag.remove to be a callback but received " ++ @typeName(@TypeOf(EndTag.remove)));
+        if (!JSC.is_bindgen) {
+            @export(EndTag.after, .{ .name = "EndTagPrototype__after" });
+            @export(EndTag.before, .{ .name = "EndTagPrototype__before" });
+            @export(EndTag.finalize, .{ .name = "EndTagClass__finalize" });
+            @export(EndTag.getName, .{ .name = "EndTagPrototype__getName" });
+            @export(EndTag.remove, .{ .name = "EndTagPrototype__remove" });
+            @export(EndTag.setName, .{ .name = "EndTagPrototype__setName" });
+        }
+    }
+};
 pub const JSExpect = struct {
     const Expect = Classes.Expect;
     const GetterType = fn (*Expect, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -451,44 +2121,92 @@ pub const JSExpect = struct {
             @compileLog("Expect.finalize is not a finalizer");
         }
 
+        if (@TypeOf(Expect.fail) != CallbackType)
+            @compileLog("Expected Expect.fail to be a callback but received " ++ @typeName(@TypeOf(Expect.fail)));
         if (@TypeOf(Expect.getNot) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getNot to be a getter with thisValue");
+        if (@TypeOf(Expect._pass) != CallbackType)
+            @compileLog("Expected Expect._pass to be a callback but received " ++ @typeName(@TypeOf(Expect._pass)));
         if (@TypeOf(Expect.getRejects) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getRejects to be a getter with thisValue");
         if (@TypeOf(Expect.getResolves) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getResolves to be a getter with thisValue");
         if (@TypeOf(Expect.toBe) != CallbackType)
             @compileLog("Expected Expect.toBe to be a callback but received " ++ @typeName(@TypeOf(Expect.toBe)));
+        if (@TypeOf(Expect.toBeArray) != CallbackType)
+            @compileLog("Expected Expect.toBeArray to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArray)));
+        if (@TypeOf(Expect.toBeArrayOfSize) != CallbackType)
+            @compileLog("Expected Expect.toBeArrayOfSize to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArrayOfSize)));
+        if (@TypeOf(Expect.toBeBoolean) != CallbackType)
+            @compileLog("Expected Expect.toBeBoolean to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeBoolean)));
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
             @compileLog("Expected Expect.toBeCloseTo to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeCloseTo)));
+        if (@TypeOf(Expect.toBeDate) != CallbackType)
+            @compileLog("Expected Expect.toBeDate to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDate)));
         if (@TypeOf(Expect.toBeDefined) != CallbackType)
             @compileLog("Expected Expect.toBeDefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDefined)));
+        if (@TypeOf(Expect.toBeEmpty) != CallbackType)
+            @compileLog("Expected Expect.toBeEmpty to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEmpty)));
+        if (@TypeOf(Expect.toBeEven) != CallbackType)
+            @compileLog("Expected Expect.toBeEven to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEven)));
+        if (@TypeOf(Expect.toBeFalse) != CallbackType)
+            @compileLog("Expected Expect.toBeFalse to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalse)));
         if (@TypeOf(Expect.toBeFalsy) != CallbackType)
             @compileLog("Expected Expect.toBeFalsy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalsy)));
+        if (@TypeOf(Expect.toBeFinite) != CallbackType)
+            @compileLog("Expected Expect.toBeFinite to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFinite)));
+        if (@TypeOf(Expect.toBeFunction) != CallbackType)
+            @compileLog("Expected Expect.toBeFunction to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFunction)));
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThan)));
         if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThanOrEqual)));
         if (@TypeOf(Expect.toBeInstanceOf) != CallbackType)
             @compileLog("Expected Expect.toBeInstanceOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeInstanceOf)));
+        if (@TypeOf(Expect.toBeInteger) != CallbackType)
+            @compileLog("Expected Expect.toBeInteger to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeInteger)));
         if (@TypeOf(Expect.toBeLessThan) != CallbackType)
             @compileLog("Expected Expect.toBeLessThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThan)));
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThanOrEqual)));
         if (@TypeOf(Expect.toBeNaN) != CallbackType)
             @compileLog("Expected Expect.toBeNaN to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNaN)));
+        if (@TypeOf(Expect.toBeNegative) != CallbackType)
+            @compileLog("Expected Expect.toBeNegative to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNegative)));
+        if (@TypeOf(Expect.toBeNil) != CallbackType)
+            @compileLog("Expected Expect.toBeNil to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNil)));
         if (@TypeOf(Expect.toBeNull) != CallbackType)
             @compileLog("Expected Expect.toBeNull to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNull)));
+        if (@TypeOf(Expect.toBeNumber) != CallbackType)
+            @compileLog("Expected Expect.toBeNumber to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNumber)));
+        if (@TypeOf(Expect.toBeOdd) != CallbackType)
+            @compileLog("Expected Expect.toBeOdd to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeOdd)));
+        if (@TypeOf(Expect.toBePositive) != CallbackType)
+            @compileLog("Expected Expect.toBePositive to be a callback but received " ++ @typeName(@TypeOf(Expect.toBePositive)));
+        if (@TypeOf(Expect.toBeString) != CallbackType)
+            @compileLog("Expected Expect.toBeString to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeString)));
+        if (@TypeOf(Expect.toBeSymbol) != CallbackType)
+            @compileLog("Expected Expect.toBeSymbol to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeSymbol)));
+        if (@TypeOf(Expect.toBeTrue) != CallbackType)
+            @compileLog("Expected Expect.toBeTrue to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTrue)));
         if (@TypeOf(Expect.toBeTruthy) != CallbackType)
             @compileLog("Expected Expect.toBeTruthy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTruthy)));
+        if (@TypeOf(Expect.toBeTypeOf) != CallbackType)
+            @compileLog("Expected Expect.toBeTypeOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTypeOf)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
             @compileLog("Expected Expect.toBeUndefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeUndefined)));
+        if (@TypeOf(Expect.toBeWithin) != CallbackType)
+            @compileLog("Expected Expect.toBeWithin to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeWithin)));
         if (@TypeOf(Expect.toContain) != CallbackType)
             @compileLog("Expected Expect.toContain to be a callback but received " ++ @typeName(@TypeOf(Expect.toContain)));
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
             @compileLog("Expected Expect.toContainEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toContainEqual)));
+        if (@TypeOf(Expect.toEndWith) != CallbackType)
+            @compileLog("Expected Expect.toEndWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toEndWith)));
         if (@TypeOf(Expect.toEqual) != CallbackType)
             @compileLog("Expected Expect.toEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqual)));
+        if (@TypeOf(Expect.toHaveBeenCalled) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenCalled to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalled)));
         if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
             @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalledTimes)));
         if (@TypeOf(Expect.toHaveBeenCalledWith) != CallbackType)
@@ -509,6 +2227,10 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toHaveReturnedTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedTimes)));
         if (@TypeOf(Expect.toHaveReturnedWith) != CallbackType)
             @compileLog("Expected Expect.toHaveReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedWith)));
+        if (@TypeOf(Expect.toInclude) != CallbackType)
+            @compileLog("Expected Expect.toInclude to be a callback but received " ++ @typeName(@TypeOf(Expect.toInclude)));
+        if (@TypeOf(Expect.toIncludeRepeated) != CallbackType)
+            @compileLog("Expected Expect.toIncludeRepeated to be a callback but received " ++ @typeName(@TypeOf(Expect.toIncludeRepeated)));
         if (@TypeOf(Expect.toMatch) != CallbackType)
             @compileLog("Expected Expect.toMatch to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatch)));
         if (@TypeOf(Expect.toMatchInlineSnapshot) != CallbackType)
@@ -517,6 +2239,10 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toMatchObject to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchObject)));
         if (@TypeOf(Expect.toMatchSnapshot) != CallbackType)
             @compileLog("Expected Expect.toMatchSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchSnapshot)));
+        if (@TypeOf(Expect.toSatisfy) != CallbackType)
+            @compileLog("Expected Expect.toSatisfy to be a callback but received " ++ @typeName(@TypeOf(Expect.toSatisfy)));
+        if (@TypeOf(Expect.toStartWith) != CallbackType)
+            @compileLog("Expected Expect.toStartWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toStartWith)));
         if (@TypeOf(Expect.toStrictEqual) != CallbackType)
             @compileLog("Expected Expect.toStrictEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toStrictEqual)));
         if (@TypeOf(Expect.toThrow) != CallbackType)
@@ -557,6 +2283,7 @@ pub const JSExpect = struct {
         if (@TypeOf(Expect.call) != StaticCallbackType)
             @compileLog("Expected Expect.call to be a static callback");
         if (!JSC.is_bindgen) {
+            @export(Expect._pass, .{ .name = "ExpectPrototype___pass" });
             @export(Expect.addSnapshotSerializer, .{ .name = "ExpectClass__addSnapshotSerializer" });
             @export(Expect.any, .{ .name = "ExpectClass__any" });
             @export(Expect.anything, .{ .name = "ExpectClass__anything" });
@@ -565,6 +2292,7 @@ pub const JSExpect = struct {
             @export(Expect.call, .{ .name = "ExpectClass__call" });
             @export(Expect.constructor, .{ .name = "ExpectClass__construct" });
             @export(Expect.extend, .{ .name = "ExpectClass__extend" });
+            @export(Expect.fail, .{ .name = "ExpectPrototype__fail" });
             @export(Expect.finalize, .{ .name = "ExpectClass__finalize" });
             @export(Expect.getNot, .{ .name = "ExpectPrototype__getNot" });
             @export(Expect.getRejects, .{ .name = "ExpectPrototype__getRejects" });
@@ -577,21 +2305,43 @@ pub const JSExpect = struct {
             @export(Expect.stringContaining, .{ .name = "ExpectClass__stringContaining" });
             @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
+            @export(Expect.toBeArray, .{ .name = "ExpectPrototype__toBeArray" });
+            @export(Expect.toBeArrayOfSize, .{ .name = "ExpectPrototype__toBeArrayOfSize" });
+            @export(Expect.toBeBoolean, .{ .name = "ExpectPrototype__toBeBoolean" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
+            @export(Expect.toBeDate, .{ .name = "ExpectPrototype__toBeDate" });
             @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
+            @export(Expect.toBeEmpty, .{ .name = "ExpectPrototype__toBeEmpty" });
+            @export(Expect.toBeEven, .{ .name = "ExpectPrototype__toBeEven" });
+            @export(Expect.toBeFalse, .{ .name = "ExpectPrototype__toBeFalse" });
             @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
+            @export(Expect.toBeFinite, .{ .name = "ExpectPrototype__toBeFinite" });
+            @export(Expect.toBeFunction, .{ .name = "ExpectPrototype__toBeFunction" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
             @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
             @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
+            @export(Expect.toBeInteger, .{ .name = "ExpectPrototype__toBeInteger" });
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
             @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
+            @export(Expect.toBeNegative, .{ .name = "ExpectPrototype__toBeNegative" });
+            @export(Expect.toBeNil, .{ .name = "ExpectPrototype__toBeNil" });
             @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
+            @export(Expect.toBeNumber, .{ .name = "ExpectPrototype__toBeNumber" });
+            @export(Expect.toBeOdd, .{ .name = "ExpectPrototype__toBeOdd" });
+            @export(Expect.toBePositive, .{ .name = "ExpectPrototype__toBePositive" });
+            @export(Expect.toBeString, .{ .name = "ExpectPrototype__toBeString" });
+            @export(Expect.toBeSymbol, .{ .name = "ExpectPrototype__toBeSymbol" });
+            @export(Expect.toBeTrue, .{ .name = "ExpectPrototype__toBeTrue" });
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
+            @export(Expect.toBeTypeOf, .{ .name = "ExpectPrototype__toBeTypeOf" });
             @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
+            @export(Expect.toBeWithin, .{ .name = "ExpectPrototype__toBeWithin" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
+            @export(Expect.toEndWith, .{ .name = "ExpectPrototype__toEndWith" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
+            @export(Expect.toHaveBeenCalled, .{ .name = "ExpectPrototype__toHaveBeenCalled" });
             @export(Expect.toHaveBeenCalledTimes, .{ .name = "ExpectPrototype__toHaveBeenCalledTimes" });
             @export(Expect.toHaveBeenCalledWith, .{ .name = "ExpectPrototype__toHaveBeenCalledWith" });
             @export(Expect.toHaveBeenLastCalledWith, .{ .name = "ExpectPrototype__toHaveBeenLastCalledWith" });
@@ -602,10 +2352,14 @@ pub const JSExpect = struct {
             @export(Expect.toHaveProperty, .{ .name = "ExpectPrototype__toHaveProperty" });
             @export(Expect.toHaveReturnedTimes, .{ .name = "ExpectPrototype__toHaveReturnedTimes" });
             @export(Expect.toHaveReturnedWith, .{ .name = "ExpectPrototype__toHaveReturnedWith" });
+            @export(Expect.toInclude, .{ .name = "ExpectPrototype__toInclude" });
+            @export(Expect.toIncludeRepeated, .{ .name = "ExpectPrototype__toIncludeRepeated" });
             @export(Expect.toMatch, .{ .name = "ExpectPrototype__toMatch" });
             @export(Expect.toMatchInlineSnapshot, .{ .name = "ExpectPrototype__toMatchInlineSnapshot" });
             @export(Expect.toMatchObject, .{ .name = "ExpectPrototype__toMatchObject" });
             @export(Expect.toMatchSnapshot, .{ .name = "ExpectPrototype__toMatchSnapshot" });
+            @export(Expect.toSatisfy, .{ .name = "ExpectPrototype__toSatisfy" });
+            @export(Expect.toStartWith, .{ .name = "ExpectPrototype__toStartWith" });
             @export(Expect.toStrictEqual, .{ .name = "ExpectPrototype__toStrictEqual" });
             @export(Expect.toThrow, .{ .name = "ExpectPrototype__toThrow" });
             @export(Expect.toThrowErrorMatchingInlineSnapshot, .{ .name = "ExpectPrototype__toThrowErrorMatchingInlineSnapshot" });
@@ -691,6 +2445,403 @@ pub const JSExpectAny = struct {
         if (!JSC.is_bindgen) {
             @export(ExpectAny.call, .{ .name = "ExpectAnyClass__call" });
             @export(ExpectAny.finalize, .{ .name = "ExpectAnyClass__finalize" });
+        }
+    }
+};
+pub const JSExpectAnything = struct {
+    const ExpectAnything = Classes.ExpectAnything;
+    const GetterType = fn (*ExpectAnything, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectAnything, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectAnything, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectAnything {
+        JSC.markBinding(@src());
+        return ExpectAnything__fromJS(value);
+    }
+
+    /// Create a new instance of ExpectAnything
+    pub fn toJS(this: *ExpectAnything, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectAnything__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectAnything).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectAnything__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectAnything.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectAnything) bool {
+        JSC.markBinding(@src());
+        return ExpectAnything__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectAnything, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectAnything__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectAnything__fromJS(JSC.JSValue) ?*ExpectAnything;
+    extern fn ExpectAnything__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectAnything__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectAnything) JSC.JSValue;
+
+    extern fn ExpectAnything__dangerouslySetPtr(JSC.JSValue, ?*ExpectAnything) bool;
+
+    comptime {
+        if (@TypeOf(ExpectAnything.finalize) != (fn (*ExpectAnything) callconv(.C) void)) {
+            @compileLog("ExpectAnything.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectAnything.call) != StaticCallbackType)
+            @compileLog("Expected ExpectAnything.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectAnything.call, .{ .name = "ExpectAnythingClass__call" });
+            @export(ExpectAnything.finalize, .{ .name = "ExpectAnythingClass__finalize" });
+        }
+    }
+};
+pub const JSExpectStringContaining = struct {
+    const ExpectStringContaining = Classes.ExpectStringContaining;
+    const GetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectStringContaining, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectStringContaining, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectStringContaining, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectStringContaining {
+        JSC.markBinding(@src());
+        return ExpectStringContaining__fromJS(value);
+    }
+
+    extern fn ExpectStringContainingPrototype__stringValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectStringContainingPrototype__stringValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectStringContaining.stringValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn stringValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectStringContainingPrototype__stringValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectStringContaining.stringValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn stringValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectStringContainingPrototype__stringValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectStringContaining
+    pub fn toJS(this: *ExpectStringContaining, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectStringContaining__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectStringContaining).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectStringContaining__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectStringContaining.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectStringContaining) bool {
+        JSC.markBinding(@src());
+        return ExpectStringContaining__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectStringContaining, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectStringContaining__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectStringContaining__fromJS(JSC.JSValue) ?*ExpectStringContaining;
+    extern fn ExpectStringContaining__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectStringContaining__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectStringContaining) JSC.JSValue;
+
+    extern fn ExpectStringContaining__dangerouslySetPtr(JSC.JSValue, ?*ExpectStringContaining) bool;
+
+    comptime {
+        if (@TypeOf(ExpectStringContaining.finalize) != (fn (*ExpectStringContaining) callconv(.C) void)) {
+            @compileLog("ExpectStringContaining.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectStringContaining.call) != StaticCallbackType)
+            @compileLog("Expected ExpectStringContaining.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectStringContaining.call, .{ .name = "ExpectStringContainingClass__call" });
+            @export(ExpectStringContaining.finalize, .{ .name = "ExpectStringContainingClass__finalize" });
+        }
+    }
+};
+pub const JSExpectStringMatching = struct {
+    const ExpectStringMatching = Classes.ExpectStringMatching;
+    const GetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectStringMatching {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__fromJS(value);
+    }
+
+    extern fn ExpectStringMatchingPrototype__testValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectStringMatchingPrototype__testValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectStringMatching.testValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectStringMatchingPrototype__testValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectStringMatching.testValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectStringMatchingPrototype__testValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectStringMatching
+    pub fn toJS(this: *ExpectStringMatching, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectStringMatching__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectStringMatching).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectStringMatching__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectStringMatching.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectStringMatching) bool {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectStringMatching, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectStringMatching__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectStringMatching__fromJS(JSC.JSValue) ?*ExpectStringMatching;
+    extern fn ExpectStringMatching__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectStringMatching__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectStringMatching) JSC.JSValue;
+
+    extern fn ExpectStringMatching__dangerouslySetPtr(JSC.JSValue, ?*ExpectStringMatching) bool;
+
+    comptime {
+        if (@TypeOf(ExpectStringMatching.finalize) != (fn (*ExpectStringMatching) callconv(.C) void)) {
+            @compileLog("ExpectStringMatching.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectStringMatching.call) != StaticCallbackType)
+            @compileLog("Expected ExpectStringMatching.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectStringMatching.call, .{ .name = "ExpectStringMatchingClass__call" });
+            @export(ExpectStringMatching.finalize, .{ .name = "ExpectStringMatchingClass__finalize" });
+        }
+    }
+};
+pub const JSFFI = struct {
+    const FFI = Classes.FFI;
+    const GetterType = fn (*FFI, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FFI, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FFI, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FFI, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FFI, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FFI {
+        JSC.markBinding(@src());
+        return FFI__fromJS(value);
+    }
+
+    extern fn FFIPrototype__symbolsValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FFIPrototype__symbolsValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FFI.symbolsValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn symbolsValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FFIPrototype__symbolsValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FFI.symbolsValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn symbolsValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FFIPrototype__symbolsValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of FFI
+    pub fn toJS(this: *FFI, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FFI__create(globalObject, this);
+            std.debug.assert(value__.as(FFI).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FFI__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FFI.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FFI) bool {
+        JSC.markBinding(@src());
+        return FFI__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FFI, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FFI__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FFI__fromJS(JSC.JSValue) ?*FFI;
+    extern fn FFI__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FFI__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FFI) JSC.JSValue;
+
+    extern fn FFI__dangerouslySetPtr(JSC.JSValue, ?*FFI) bool;
+
+    comptime {
+        if (@TypeOf(FFI.finalize) != (fn (*FFI) callconv(.C) void)) {
+            @compileLog("FFI.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FFI.close) != CallbackType)
+            @compileLog("Expected FFI.close to be a callback but received " ++ @typeName(@TypeOf(FFI.close)));
+        if (@TypeOf(FFI.getSymbols) != GetterType)
+            @compileLog("Expected FFI.getSymbols to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(FFI.close, .{ .name = "FFIPrototype__close" });
+            @export(FFI.finalize, .{ .name = "FFIClass__finalize" });
+            @export(FFI.getSymbols, .{ .name = "FFIPrototype__getSymbols" });
+        }
+    }
+};
+pub const JSFSWatcher = struct {
+    const FSWatcher = Classes.FSWatcher;
+    const GetterType = fn (*FSWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FSWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FSWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FSWatcher {
+        JSC.markBinding(@src());
+        return FSWatcher__fromJS(value);
+    }
+
+    extern fn FSWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FSWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FSWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FSWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FSWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FSWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of FSWatcher
+    pub fn toJS(this: *FSWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FSWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(FSWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FSWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FSWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FSWatcher) bool {
+        JSC.markBinding(@src());
+        return FSWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FSWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FSWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FSWatcher__fromJS(JSC.JSValue) ?*FSWatcher;
+    extern fn FSWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FSWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FSWatcher) JSC.JSValue;
+
+    extern fn FSWatcher__dangerouslySetPtr(JSC.JSValue, ?*FSWatcher) bool;
+
+    comptime {
+        if (@TypeOf(FSWatcher.finalize) != (fn (*FSWatcher) callconv(.C) void)) {
+            @compileLog("FSWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FSWatcher.doClose) != CallbackType)
+            @compileLog("Expected FSWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doClose)));
+        if (@TypeOf(FSWatcher.hasRef) != CallbackType)
+            @compileLog("Expected FSWatcher.hasRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.hasRef)));
+        if (@TypeOf(FSWatcher.doRef) != CallbackType)
+            @compileLog("Expected FSWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doRef)));
+        if (@TypeOf(FSWatcher.doUnref) != CallbackType)
+            @compileLog("Expected FSWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(FSWatcher.doClose, .{ .name = "FSWatcherPrototype__doClose" });
+            @export(FSWatcher.doRef, .{ .name = "FSWatcherPrototype__doRef" });
+            @export(FSWatcher.doUnref, .{ .name = "FSWatcherPrototype__doUnref" });
+            @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
+            @export(FSWatcher.hasPendingActivity, .{ .name = "FSWatcher__hasPendingActivity" });
+            @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
         }
     }
 };
@@ -843,6 +2994,369 @@ pub const JSFileSystemRouter = struct {
             @export(FileSystemRouter.getStyle, .{ .name = "FileSystemRouterPrototype__getStyle" });
             @export(FileSystemRouter.match, .{ .name = "FileSystemRouterPrototype__match" });
             @export(FileSystemRouter.reload, .{ .name = "FileSystemRouterPrototype__reload" });
+        }
+    }
+};
+pub const JSHTMLRewriter = struct {
+    const HTMLRewriter = Classes.HTMLRewriter;
+    const GetterType = fn (*HTMLRewriter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*HTMLRewriter, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*HTMLRewriter, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*HTMLRewriter, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*HTMLRewriter, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*HTMLRewriter {
+        JSC.markBinding(@src());
+        return HTMLRewriter__fromJS(value);
+    }
+
+    /// Get the HTMLRewriter constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return HTMLRewriter__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of HTMLRewriter
+    pub fn toJS(this: *HTMLRewriter, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = HTMLRewriter__create(globalObject, this);
+            std.debug.assert(value__.as(HTMLRewriter).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return HTMLRewriter__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of HTMLRewriter.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*HTMLRewriter) bool {
+        JSC.markBinding(@src());
+        return HTMLRewriter__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *HTMLRewriter, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(HTMLRewriter__dangerouslySetPtr(value, null));
+    }
+
+    extern fn HTMLRewriter__fromJS(JSC.JSValue) ?*HTMLRewriter;
+    extern fn HTMLRewriter__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn HTMLRewriter__create(globalObject: *JSC.JSGlobalObject, ptr: ?*HTMLRewriter) JSC.JSValue;
+
+    extern fn HTMLRewriter__dangerouslySetPtr(JSC.JSValue, ?*HTMLRewriter) bool;
+
+    comptime {
+        if (@TypeOf(HTMLRewriter.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*HTMLRewriter)) {
+            @compileLog("HTMLRewriter.constructor is not a constructor");
+        }
+
+        if (@TypeOf(HTMLRewriter.finalize) != (fn (*HTMLRewriter) callconv(.C) void)) {
+            @compileLog("HTMLRewriter.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(HTMLRewriter.on) != CallbackType)
+            @compileLog("Expected HTMLRewriter.on to be a callback but received " ++ @typeName(@TypeOf(HTMLRewriter.on)));
+        if (@TypeOf(HTMLRewriter.onDocument) != CallbackType)
+            @compileLog("Expected HTMLRewriter.onDocument to be a callback but received " ++ @typeName(@TypeOf(HTMLRewriter.onDocument)));
+        if (@TypeOf(HTMLRewriter.transform) != CallbackType)
+            @compileLog("Expected HTMLRewriter.transform to be a callback but received " ++ @typeName(@TypeOf(HTMLRewriter.transform)));
+        if (!JSC.is_bindgen) {
+            @export(HTMLRewriter.constructor, .{ .name = "HTMLRewriterClass__construct" });
+            @export(HTMLRewriter.finalize, .{ .name = "HTMLRewriterClass__finalize" });
+            @export(HTMLRewriter.on, .{ .name = "HTMLRewriterPrototype__on" });
+            @export(HTMLRewriter.onDocument, .{ .name = "HTMLRewriterPrototype__onDocument" });
+            @export(HTMLRewriter.transform, .{ .name = "HTMLRewriterPrototype__transform" });
+        }
+    }
+};
+pub const JSHTTPSServer = struct {
+    const HTTPSServer = Classes.HTTPSServer;
+    const GetterType = fn (*HTTPSServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*HTTPSServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*HTTPSServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*HTTPSServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*HTTPSServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*HTTPSServer {
+        JSC.markBinding(@src());
+        return HTTPSServer__fromJS(value);
+    }
+
+    extern fn HTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPSServer.hostname` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPSServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPSServer.hostname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPSServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn HTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of HTTPSServer
+    pub fn toJS(this: *HTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = HTTPSServer__create(globalObject, this);
+            std.debug.assert(value__.as(HTTPSServer).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return HTTPSServer__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of HTTPSServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*HTTPSServer) bool {
+        JSC.markBinding(@src());
+        return HTTPSServer__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *HTTPSServer, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(HTTPSServer__dangerouslySetPtr(value, null));
+    }
+
+    extern fn HTTPSServer__fromJS(JSC.JSValue) ?*HTTPSServer;
+    extern fn HTTPSServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn HTTPSServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*HTTPSServer) JSC.JSValue;
+
+    extern fn HTTPSServer__dangerouslySetPtr(JSC.JSValue, ?*HTTPSServer) bool;
+
+    comptime {
+        if (@TypeOf(HTTPSServer.finalize) != (fn (*HTTPSServer) callconv(.C) void)) {
+            @compileLog("HTTPSServer.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(HTTPSServer.getDevelopment) != GetterType)
+            @compileLog("Expected HTTPSServer.getDevelopment to be a getter");
+
+        if (@TypeOf(HTTPSServer.doFetch) != CallbackType)
+            @compileLog("Expected HTTPSServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doFetch)));
+        if (@TypeOf(HTTPSServer.getHostname) != GetterType)
+            @compileLog("Expected HTTPSServer.getHostname to be a getter");
+
+        if (@TypeOf(HTTPSServer.getId) != GetterType)
+            @compileLog("Expected HTTPSServer.getId to be a getter");
+
+        if (@TypeOf(HTTPSServer.getPendingRequests) != GetterType)
+            @compileLog("Expected HTTPSServer.getPendingRequests to be a getter");
+
+        if (@TypeOf(HTTPSServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected HTTPSServer.getPendingWebSockets to be a getter");
+
+        if (@TypeOf(HTTPSServer.getPort) != GetterType)
+            @compileLog("Expected HTTPSServer.getPort to be a getter");
+
+        if (@TypeOf(HTTPSServer.getProtocol) != GetterType)
+            @compileLog("Expected HTTPSServer.getProtocol to be a getter");
+
+        if (@TypeOf(HTTPSServer.doPublish) != CallbackType)
+            @compileLog("Expected HTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doPublish)));
+        if (@TypeOf(HTTPSServer.doReload) != CallbackType)
+            @compileLog("Expected HTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doReload)));
+        if (@TypeOf(HTTPSServer.doStop) != CallbackType)
+            @compileLog("Expected HTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doStop)));
+        if (@TypeOf(HTTPSServer.doUpgrade) != CallbackType)
+            @compileLog("Expected HTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doUpgrade)));
+        if (!JSC.is_bindgen) {
+            @export(HTTPSServer.doFetch, .{ .name = "HTTPSServerPrototype__doFetch" });
+            @export(HTTPSServer.doPublish, .{ .name = "HTTPSServerPrototype__doPublish" });
+            @export(HTTPSServer.doReload, .{ .name = "HTTPSServerPrototype__doReload" });
+            @export(HTTPSServer.doStop, .{ .name = "HTTPSServerPrototype__doStop" });
+            @export(HTTPSServer.doUpgrade, .{ .name = "HTTPSServerPrototype__doUpgrade" });
+            @export(HTTPSServer.finalize, .{ .name = "HTTPSServerClass__finalize" });
+            @export(HTTPSServer.getDevelopment, .{ .name = "HTTPSServerPrototype__getDevelopment" });
+            @export(HTTPSServer.getHostname, .{ .name = "HTTPSServerPrototype__getHostname" });
+            @export(HTTPSServer.getId, .{ .name = "HTTPSServerPrototype__getId" });
+            @export(HTTPSServer.getPendingRequests, .{ .name = "HTTPSServerPrototype__getPendingRequests" });
+            @export(HTTPSServer.getPendingWebSockets, .{ .name = "HTTPSServerPrototype__getPendingWebSockets" });
+            @export(HTTPSServer.getPort, .{ .name = "HTTPSServerPrototype__getPort" });
+            @export(HTTPSServer.getProtocol, .{ .name = "HTTPSServerPrototype__getProtocol" });
+        }
+    }
+};
+pub const JSHTTPServer = struct {
+    const HTTPServer = Classes.HTTPServer;
+    const GetterType = fn (*HTTPServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*HTTPServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*HTTPServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*HTTPServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*HTTPServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*HTTPServer {
+        JSC.markBinding(@src());
+        return HTTPServer__fromJS(value);
+    }
+
+    extern fn HTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPServer.hostname` setter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPServer.hostname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn HTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of HTTPServer
+    pub fn toJS(this: *HTTPServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = HTTPServer__create(globalObject, this);
+            std.debug.assert(value__.as(HTTPServer).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return HTTPServer__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of HTTPServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*HTTPServer) bool {
+        JSC.markBinding(@src());
+        return HTTPServer__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *HTTPServer, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(HTTPServer__dangerouslySetPtr(value, null));
+    }
+
+    extern fn HTTPServer__fromJS(JSC.JSValue) ?*HTTPServer;
+    extern fn HTTPServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn HTTPServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*HTTPServer) JSC.JSValue;
+
+    extern fn HTTPServer__dangerouslySetPtr(JSC.JSValue, ?*HTTPServer) bool;
+
+    comptime {
+        if (@TypeOf(HTTPServer.finalize) != (fn (*HTTPServer) callconv(.C) void)) {
+            @compileLog("HTTPServer.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(HTTPServer.getDevelopment) != GetterType)
+            @compileLog("Expected HTTPServer.getDevelopment to be a getter");
+
+        if (@TypeOf(HTTPServer.doFetch) != CallbackType)
+            @compileLog("Expected HTTPServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doFetch)));
+        if (@TypeOf(HTTPServer.getHostname) != GetterType)
+            @compileLog("Expected HTTPServer.getHostname to be a getter");
+
+        if (@TypeOf(HTTPServer.getId) != GetterType)
+            @compileLog("Expected HTTPServer.getId to be a getter");
+
+        if (@TypeOf(HTTPServer.getPendingRequests) != GetterType)
+            @compileLog("Expected HTTPServer.getPendingRequests to be a getter");
+
+        if (@TypeOf(HTTPServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected HTTPServer.getPendingWebSockets to be a getter");
+
+        if (@TypeOf(HTTPServer.getPort) != GetterType)
+            @compileLog("Expected HTTPServer.getPort to be a getter");
+
+        if (@TypeOf(HTTPServer.getProtocol) != GetterType)
+            @compileLog("Expected HTTPServer.getProtocol to be a getter");
+
+        if (@TypeOf(HTTPServer.doPublish) != CallbackType)
+            @compileLog("Expected HTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doPublish)));
+        if (@TypeOf(HTTPServer.doReload) != CallbackType)
+            @compileLog("Expected HTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doReload)));
+        if (@TypeOf(HTTPServer.doStop) != CallbackType)
+            @compileLog("Expected HTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doStop)));
+        if (@TypeOf(HTTPServer.doUpgrade) != CallbackType)
+            @compileLog("Expected HTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doUpgrade)));
+        if (!JSC.is_bindgen) {
+            @export(HTTPServer.doFetch, .{ .name = "HTTPServerPrototype__doFetch" });
+            @export(HTTPServer.doPublish, .{ .name = "HTTPServerPrototype__doPublish" });
+            @export(HTTPServer.doReload, .{ .name = "HTTPServerPrototype__doReload" });
+            @export(HTTPServer.doStop, .{ .name = "HTTPServerPrototype__doStop" });
+            @export(HTTPServer.doUpgrade, .{ .name = "HTTPServerPrototype__doUpgrade" });
+            @export(HTTPServer.finalize, .{ .name = "HTTPServerClass__finalize" });
+            @export(HTTPServer.getDevelopment, .{ .name = "HTTPServerPrototype__getDevelopment" });
+            @export(HTTPServer.getHostname, .{ .name = "HTTPServerPrototype__getHostname" });
+            @export(HTTPServer.getId, .{ .name = "HTTPServerPrototype__getId" });
+            @export(HTTPServer.getPendingRequests, .{ .name = "HTTPServerPrototype__getPendingRequests" });
+            @export(HTTPServer.getPendingWebSockets, .{ .name = "HTTPServerPrototype__getPendingWebSockets" });
+            @export(HTTPServer.getPort, .{ .name = "HTTPServerPrototype__getPort" });
+            @export(HTTPServer.getProtocol, .{ .name = "HTTPServerPrototype__getProtocol" });
         }
     }
 };
@@ -1470,6 +3984,10 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.copyFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFile)));
         if (@TypeOf(NodeJSFS.copyFileSync) != CallbackType)
             @compileLog("Expected NodeJSFS.copyFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFileSync)));
+        if (@TypeOf(NodeJSFS.cp) != CallbackType)
+            @compileLog("Expected NodeJSFS.cp to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cp)));
+        if (@TypeOf(NodeJSFS.cpSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.cpSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cpSync)));
         if (@TypeOf(NodeJSFS.getDirent) != GetterType)
             @compileLog("Expected NodeJSFS.getDirent to be a getter");
 
@@ -1596,10 +4114,16 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.unlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlink)));
         if (@TypeOf(NodeJSFS.unlinkSync) != CallbackType)
             @compileLog("Expected NodeJSFS.unlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlinkSync)));
+        if (@TypeOf(NodeJSFS.unwatchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.unwatchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unwatchFile)));
         if (@TypeOf(NodeJSFS.utimes) != CallbackType)
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.watch) != CallbackType)
+            @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
+        if (@TypeOf(NodeJSFS.watchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.watchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watchFile)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -1626,6 +4150,8 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.constructor, .{ .name = "NodeJSFSClass__construct" });
             @export(NodeJSFS.copyFile, .{ .name = "NodeJSFSPrototype__copyFile" });
             @export(NodeJSFS.copyFileSync, .{ .name = "NodeJSFSPrototype__copyFileSync" });
+            @export(NodeJSFS.cp, .{ .name = "NodeJSFSPrototype__cp" });
+            @export(NodeJSFS.cpSync, .{ .name = "NodeJSFSPrototype__cpSync" });
             @export(NodeJSFS.exists, .{ .name = "NodeJSFSPrototype__exists" });
             @export(NodeJSFS.existsSync, .{ .name = "NodeJSFSPrototype__existsSync" });
             @export(NodeJSFS.fchmod, .{ .name = "NodeJSFSPrototype__fchmod" });
@@ -1688,8 +4214,11 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.truncateSync, .{ .name = "NodeJSFSPrototype__truncateSync" });
             @export(NodeJSFS.unlink, .{ .name = "NodeJSFSPrototype__unlink" });
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
+            @export(NodeJSFS.unwatchFile, .{ .name = "NodeJSFSPrototype__unwatchFile" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
+            @export(NodeJSFS.watchFile, .{ .name = "NodeJSFSPrototype__watchFile" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -1931,6 +4460,265 @@ pub const JSRequest = struct {
             @export(Request.getSignal, .{ .name = "RequestPrototype__getSignal" });
             @export(Request.getText, .{ .name = "RequestPrototype__getText" });
             @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
+        }
+    }
+};
+pub const JSResolveMessage = struct {
+    const ResolveMessage = Classes.ResolveMessage;
+    const GetterType = fn (*ResolveMessage, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ResolveMessage, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ResolveMessage, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ResolveMessage, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ResolveMessage, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ResolveMessage {
+        JSC.markBinding(@src());
+        return ResolveMessage__fromJS(value);
+    }
+
+    extern fn ResolveMessagePrototype__codeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__codeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.code` setter
+    /// This value will be visited by the garbage collector.
+    pub fn codeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__codeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.code` getter
+    /// This value will be visited by the garbage collector.
+    pub fn codeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__codeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__importKindSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__importKindGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.importKind` setter
+    /// This value will be visited by the garbage collector.
+    pub fn importKindSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__importKindSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.importKind` getter
+    /// This value will be visited by the garbage collector.
+    pub fn importKindGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__importKindGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__levelSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__levelGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.level` setter
+    /// This value will be visited by the garbage collector.
+    pub fn levelSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__levelSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.level` getter
+    /// This value will be visited by the garbage collector.
+    pub fn levelGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__levelGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__messageSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__messageGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.message` setter
+    /// This value will be visited by the garbage collector.
+    pub fn messageSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__messageSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.message` getter
+    /// This value will be visited by the garbage collector.
+    pub fn messageGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__messageGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__positionSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__positionGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.position` setter
+    /// This value will be visited by the garbage collector.
+    pub fn positionSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__positionSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.position` getter
+    /// This value will be visited by the garbage collector.
+    pub fn positionGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__positionGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__referrerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__referrerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.referrer` setter
+    /// This value will be visited by the garbage collector.
+    pub fn referrerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__referrerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.referrer` getter
+    /// This value will be visited by the garbage collector.
+    pub fn referrerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__referrerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ResolveMessagePrototype__specifierSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ResolveMessagePrototype__specifierGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ResolveMessage.specifier` setter
+    /// This value will be visited by the garbage collector.
+    pub fn specifierSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResolveMessagePrototype__specifierSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ResolveMessage.specifier` getter
+    /// This value will be visited by the garbage collector.
+    pub fn specifierGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResolveMessagePrototype__specifierGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the ResolveMessage constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return ResolveMessage__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of ResolveMessage
+    pub fn toJS(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ResolveMessage__create(globalObject, this);
+            std.debug.assert(value__.as(ResolveMessage).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ResolveMessage__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ResolveMessage.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ResolveMessage) bool {
+        JSC.markBinding(@src());
+        return ResolveMessage__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ResolveMessage, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ResolveMessage__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ResolveMessage__fromJS(JSC.JSValue) ?*ResolveMessage;
+    extern fn ResolveMessage__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ResolveMessage__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ResolveMessage) JSC.JSValue;
+
+    extern fn ResolveMessage__dangerouslySetPtr(JSC.JSValue, ?*ResolveMessage) bool;
+
+    comptime {
+        if (@TypeOf(ResolveMessage.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*ResolveMessage)) {
+            @compileLog("ResolveMessage.constructor is not a constructor");
+        }
+
+        if (@TypeOf(ResolveMessage.finalize) != (fn (*ResolveMessage) callconv(.C) void)) {
+            @compileLog("ResolveMessage.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ResolveMessage.toPrimitive) != CallbackType)
+            @compileLog("Expected ResolveMessage.toPrimitive to be a callback but received " ++ @typeName(@TypeOf(ResolveMessage.toPrimitive)));
+        if (@TypeOf(ResolveMessage.getCode) != GetterType)
+            @compileLog("Expected ResolveMessage.getCode to be a getter");
+
+        if (@TypeOf(ResolveMessage.getImportKind) != GetterType)
+            @compileLog("Expected ResolveMessage.getImportKind to be a getter");
+
+        if (@TypeOf(ResolveMessage.getLevel) != GetterType)
+            @compileLog("Expected ResolveMessage.getLevel to be a getter");
+
+        if (@TypeOf(ResolveMessage.getMessage) != GetterType)
+            @compileLog("Expected ResolveMessage.getMessage to be a getter");
+
+        if (@TypeOf(ResolveMessage.getPosition) != GetterType)
+            @compileLog("Expected ResolveMessage.getPosition to be a getter");
+
+        if (@TypeOf(ResolveMessage.getReferrer) != GetterType)
+            @compileLog("Expected ResolveMessage.getReferrer to be a getter");
+
+        if (@TypeOf(ResolveMessage.getSpecifier) != GetterType)
+            @compileLog("Expected ResolveMessage.getSpecifier to be a getter");
+
+        if (@TypeOf(ResolveMessage.toJSON) != CallbackType)
+            @compileLog("Expected ResolveMessage.toJSON to be a callback but received " ++ @typeName(@TypeOf(ResolveMessage.toJSON)));
+        if (@TypeOf(ResolveMessage.toString) != CallbackType)
+            @compileLog("Expected ResolveMessage.toString to be a callback but received " ++ @typeName(@TypeOf(ResolveMessage.toString)));
+        if (!JSC.is_bindgen) {
+            @export(ResolveMessage.constructor, .{ .name = "ResolveMessageClass__construct" });
+            @export(ResolveMessage.finalize, .{ .name = "ResolveMessageClass__finalize" });
+            @export(ResolveMessage.getCode, .{ .name = "ResolveMessagePrototype__getCode" });
+            @export(ResolveMessage.getImportKind, .{ .name = "ResolveMessagePrototype__getImportKind" });
+            @export(ResolveMessage.getLevel, .{ .name = "ResolveMessagePrototype__getLevel" });
+            @export(ResolveMessage.getMessage, .{ .name = "ResolveMessagePrototype__getMessage" });
+            @export(ResolveMessage.getPosition, .{ .name = "ResolveMessagePrototype__getPosition" });
+            @export(ResolveMessage.getReferrer, .{ .name = "ResolveMessagePrototype__getReferrer" });
+            @export(ResolveMessage.getSpecifier, .{ .name = "ResolveMessagePrototype__getSpecifier" });
+            @export(ResolveMessage.toJSON, .{ .name = "ResolveMessagePrototype__toJSON" });
+            @export(ResolveMessage.toPrimitive, .{ .name = "ResolveMessagePrototype__toPrimitive" });
+            @export(ResolveMessage.toString, .{ .name = "ResolveMessagePrototype__toString" });
         }
     }
 };
@@ -2792,6 +5580,10 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.getBufferedAmount)));
         if (@TypeOf(ServerWebSocket.isSubscribed) != CallbackType)
             @compileLog("Expected ServerWebSocket.isSubscribed to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.isSubscribed)));
+        if (@TypeOf(ServerWebSocket.ping) != CallbackType)
+            @compileLog("Expected ServerWebSocket.ping to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.ping)));
+        if (@TypeOf(ServerWebSocket.pong) != CallbackType)
+            @compileLog("Expected ServerWebSocket.pong to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.pong)));
         if (@TypeOf(ServerWebSocket.publish) != CallbackType)
             @compileLog("Expected ServerWebSocket.publish to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.publish)));
         if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
@@ -2820,6 +5612,8 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.sendText to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.sendText)));
         if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
             @compileLog("Expected ServerWebSocket.subscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.subscribe)));
+        if (@TypeOf(ServerWebSocket.terminate) != CallbackType)
+            @compileLog("Expected ServerWebSocket.terminate to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.terminate)));
         if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
             @compileLog("Expected ServerWebSocket.unsubscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.unsubscribe)));
         if (!JSC.is_bindgen) {
@@ -2833,6 +5627,8 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.getReadyState, .{ .name = "ServerWebSocketPrototype__getReadyState" });
             @export(ServerWebSocket.getRemoteAddress, .{ .name = "ServerWebSocketPrototype__getRemoteAddress" });
             @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
+            @export(ServerWebSocket.ping, .{ .name = "ServerWebSocketPrototype__ping" });
+            @export(ServerWebSocket.pong, .{ .name = "ServerWebSocketPrototype__pong" });
             @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
             @export(ServerWebSocket.publishBinary, .{ .name = "ServerWebSocketPrototype__publishBinary" });
             @export(ServerWebSocket.publishBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishBinaryWithoutTypeChecks" });
@@ -2846,7 +5642,96 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.setBinaryType, .{ .name = "ServerWebSocketPrototype__setBinaryType" });
             @export(ServerWebSocket.setData, .{ .name = "ServerWebSocketPrototype__setData" });
             @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
+            @export(ServerWebSocket.terminate, .{ .name = "ServerWebSocketPrototype__terminate" });
             @export(ServerWebSocket.unsubscribe, .{ .name = "ServerWebSocketPrototype__unsubscribe" });
+        }
+    }
+};
+pub const JSStatWatcher = struct {
+    const StatWatcher = Classes.StatWatcher;
+    const GetterType = fn (*StatWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*StatWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*StatWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*StatWatcher {
+        JSC.markBinding(@src());
+        return StatWatcher__fromJS(value);
+    }
+
+    extern fn StatWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `StatWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `StatWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of StatWatcher
+    pub fn toJS(this: *StatWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = StatWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(StatWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return StatWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of StatWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*StatWatcher) bool {
+        JSC.markBinding(@src());
+        return StatWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *StatWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(StatWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn StatWatcher__fromJS(JSC.JSValue) ?*StatWatcher;
+    extern fn StatWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn StatWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*StatWatcher) JSC.JSValue;
+
+    extern fn StatWatcher__dangerouslySetPtr(JSC.JSValue, ?*StatWatcher) bool;
+
+    comptime {
+        if (@TypeOf(StatWatcher.finalize) != (fn (*StatWatcher) callconv(.C) void)) {
+            @compileLog("StatWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(StatWatcher.doClose) != CallbackType)
+            @compileLog("Expected StatWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doClose)));
+        if (@TypeOf(StatWatcher.doRef) != CallbackType)
+            @compileLog("Expected StatWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doRef)));
+        if (@TypeOf(StatWatcher.doUnref) != CallbackType)
+            @compileLog("Expected StatWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(StatWatcher.doClose, .{ .name = "StatWatcherPrototype__doClose" });
+            @export(StatWatcher.doRef, .{ .name = "StatWatcherPrototype__doRef" });
+            @export(StatWatcher.doUnref, .{ .name = "StatWatcherPrototype__doUnref" });
+            @export(StatWatcher.finalize, .{ .name = "StatWatcherClass__finalize" });
+            @export(StatWatcher.hasPendingActivity, .{ .name = "StatWatcher__hasPendingActivity" });
         }
     }
 };
@@ -3255,6 +6140,8 @@ pub const JSSubprocess = struct {
 
         if (@TypeOf(Subprocess.doRef) != CallbackType)
             @compileLog("Expected Subprocess.doRef to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doRef)));
+        if (@TypeOf(Subprocess.doSend) != CallbackType)
+            @compileLog("Expected Subprocess.doSend to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doSend)));
         if (@TypeOf(Subprocess.getSignalCode) != GetterType)
             @compileLog("Expected Subprocess.getSignalCode to be a getter");
 
@@ -3274,6 +6161,7 @@ pub const JSSubprocess = struct {
 
         if (!JSC.is_bindgen) {
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
+            @export(Subprocess.doSend, .{ .name = "SubprocessPrototype__doSend" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
             @export(Subprocess.getExitCode, .{ .name = "SubprocessPrototype__getExitCode" });
@@ -3384,6 +6272,12 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TCPSocket.getALPNProtocol to be a getter");
+
+        if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TCPSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TCPSocket.getData) != GetterType)
             @compileLog("Expected TCPSocket.getData to be a getter");
 
@@ -3391,8 +6285,32 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.setData to be a setter");
         if (@TypeOf(TCPSocket.end) != CallbackType)
             @compileLog("Expected TCPSocket.end to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.end)));
+        if (@TypeOf(TCPSocket.exportKeyingMaterial) != CallbackType)
+            @compileLog("Expected TCPSocket.exportKeyingMaterial to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.exportKeyingMaterial)));
         if (@TypeOf(TCPSocket.flush) != CallbackType)
             @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
+        if (@TypeOf(TCPSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
+        if (@TypeOf(TCPSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCertificate)));
+        if (@TypeOf(TCPSocket.getCipher) != CallbackType)
+            @compileLog("Expected TCPSocket.getCipher to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCipher)));
+        if (@TypeOf(TCPSocket.getEphemeralKeyInfo) != CallbackType)
+            @compileLog("Expected TCPSocket.getEphemeralKeyInfo to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getEphemeralKeyInfo)));
+        if (@TypeOf(TCPSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getPeerCertificate)));
+        if (@TypeOf(TCPSocket.getSession) != CallbackType)
+            @compileLog("Expected TCPSocket.getSession to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getSession)));
+        if (@TypeOf(TCPSocket.getSharedSigalgs) != CallbackType)
+            @compileLog("Expected TCPSocket.getSharedSigalgs to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getSharedSigalgs)));
+        if (@TypeOf(TCPSocket.getTLSFinishedMessage) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSFinishedMessage)));
+        if (@TypeOf(TCPSocket.getTLSPeerFinishedMessage) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSPeerFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSPeerFinishedMessage)));
+        if (@TypeOf(TCPSocket.getTLSTicket) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSTicket to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSTicket)));
+        if (@TypeOf(TCPSocket.getTLSVersion) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSVersion to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSVersion)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -3409,30 +6327,56 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.setMaxSendFragment) != CallbackType)
+            @compileLog("Expected TCPSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setMaxSendFragment)));
+        if (@TypeOf(TCPSocket.setServername) != CallbackType)
+            @compileLog("Expected TCPSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setServername)));
+        if (@TypeOf(TCPSocket.setSession) != CallbackType)
+            @compileLog("Expected TCPSocket.setSession to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setSession)));
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
             @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
             @compileLog("Expected TCPSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.timeout)));
         if (@TypeOf(TCPSocket.unref) != CallbackType)
             @compileLog("Expected TCPSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.unref)));
+        if (@TypeOf(TCPSocket.upgradeTLS) != CallbackType)
+            @compileLog("Expected TCPSocket.upgradeTLS to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.upgradeTLS)));
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
+            @export(TCPSocket.exportKeyingMaterial, .{ .name = "TCPSocketPrototype__exportKeyingMaterial" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
+            @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
+            @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
+            @export(TCPSocket.getCertificate, .{ .name = "TCPSocketPrototype__getCertificate" });
+            @export(TCPSocket.getCipher, .{ .name = "TCPSocketPrototype__getCipher" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
+            @export(TCPSocket.getEphemeralKeyInfo, .{ .name = "TCPSocketPrototype__getEphemeralKeyInfo" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
+            @export(TCPSocket.getPeerCertificate, .{ .name = "TCPSocketPrototype__getPeerCertificate" });
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
+            @export(TCPSocket.getSession, .{ .name = "TCPSocketPrototype__getSession" });
+            @export(TCPSocket.getSharedSigalgs, .{ .name = "TCPSocketPrototype__getSharedSigalgs" });
+            @export(TCPSocket.getTLSFinishedMessage, .{ .name = "TCPSocketPrototype__getTLSFinishedMessage" });
+            @export(TCPSocket.getTLSPeerFinishedMessage, .{ .name = "TCPSocketPrototype__getTLSPeerFinishedMessage" });
+            @export(TCPSocket.getTLSTicket, .{ .name = "TCPSocketPrototype__getTLSTicket" });
+            @export(TCPSocket.getTLSVersion, .{ .name = "TCPSocketPrototype__getTLSVersion" });
             @export(TCPSocket.hasPendingActivity, .{ .name = "TCPSocket__hasPendingActivity" });
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.setMaxSendFragment, .{ .name = "TCPSocketPrototype__setMaxSendFragment" });
+            @export(TCPSocket.setServername, .{ .name = "TCPSocketPrototype__setServername" });
+            @export(TCPSocket.setSession, .{ .name = "TCPSocketPrototype__setSession" });
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
+            @export(TCPSocket.upgradeTLS, .{ .name = "TCPSocketPrototype__upgradeTLS" });
             @export(TCPSocket.write, .{ .name = "TCPSocketPrototype__write" });
         }
     }
@@ -3532,6 +6476,12 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TLSSocket.getALPNProtocol to be a getter");
+
+        if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
+            @compileLog("Expected TLSSocket.getAuthorized to be a getter");
+
         if (@TypeOf(TLSSocket.getData) != GetterType)
             @compileLog("Expected TLSSocket.getData to be a getter");
 
@@ -3539,8 +6489,32 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.setData to be a setter");
         if (@TypeOf(TLSSocket.end) != CallbackType)
             @compileLog("Expected TLSSocket.end to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.end)));
+        if (@TypeOf(TLSSocket.exportKeyingMaterial) != CallbackType)
+            @compileLog("Expected TLSSocket.exportKeyingMaterial to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.exportKeyingMaterial)));
         if (@TypeOf(TLSSocket.flush) != CallbackType)
             @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
+        if (@TypeOf(TLSSocket.getAuthorizationError) != CallbackType)
+            @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
+        if (@TypeOf(TLSSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCertificate)));
+        if (@TypeOf(TLSSocket.getCipher) != CallbackType)
+            @compileLog("Expected TLSSocket.getCipher to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCipher)));
+        if (@TypeOf(TLSSocket.getEphemeralKeyInfo) != CallbackType)
+            @compileLog("Expected TLSSocket.getEphemeralKeyInfo to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getEphemeralKeyInfo)));
+        if (@TypeOf(TLSSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getPeerCertificate)));
+        if (@TypeOf(TLSSocket.getSession) != CallbackType)
+            @compileLog("Expected TLSSocket.getSession to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getSession)));
+        if (@TypeOf(TLSSocket.getSharedSigalgs) != CallbackType)
+            @compileLog("Expected TLSSocket.getSharedSigalgs to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getSharedSigalgs)));
+        if (@TypeOf(TLSSocket.getTLSFinishedMessage) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSFinishedMessage)));
+        if (@TypeOf(TLSSocket.getTLSPeerFinishedMessage) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSPeerFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSPeerFinishedMessage)));
+        if (@TypeOf(TLSSocket.getTLSTicket) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSTicket to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSTicket)));
+        if (@TypeOf(TLSSocket.getTLSVersion) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSVersion to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSVersion)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -3557,31 +6531,159 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.setMaxSendFragment) != CallbackType)
+            @compileLog("Expected TLSSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setMaxSendFragment)));
+        if (@TypeOf(TLSSocket.setServername) != CallbackType)
+            @compileLog("Expected TLSSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setServername)));
+        if (@TypeOf(TLSSocket.setSession) != CallbackType)
+            @compileLog("Expected TLSSocket.setSession to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setSession)));
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
             @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
             @compileLog("Expected TLSSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.timeout)));
         if (@TypeOf(TLSSocket.unref) != CallbackType)
             @compileLog("Expected TLSSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.unref)));
+        if (@TypeOf(TLSSocket.upgradeTLS) != CallbackType)
+            @compileLog("Expected TLSSocket.upgradeTLS to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.upgradeTLS)));
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
+            @export(TLSSocket.exportKeyingMaterial, .{ .name = "TLSSocketPrototype__exportKeyingMaterial" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
+            @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
+            @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
+            @export(TLSSocket.getCertificate, .{ .name = "TLSSocketPrototype__getCertificate" });
+            @export(TLSSocket.getCipher, .{ .name = "TLSSocketPrototype__getCipher" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
+            @export(TLSSocket.getEphemeralKeyInfo, .{ .name = "TLSSocketPrototype__getEphemeralKeyInfo" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
+            @export(TLSSocket.getPeerCertificate, .{ .name = "TLSSocketPrototype__getPeerCertificate" });
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
+            @export(TLSSocket.getSession, .{ .name = "TLSSocketPrototype__getSession" });
+            @export(TLSSocket.getSharedSigalgs, .{ .name = "TLSSocketPrototype__getSharedSigalgs" });
+            @export(TLSSocket.getTLSFinishedMessage, .{ .name = "TLSSocketPrototype__getTLSFinishedMessage" });
+            @export(TLSSocket.getTLSPeerFinishedMessage, .{ .name = "TLSSocketPrototype__getTLSPeerFinishedMessage" });
+            @export(TLSSocket.getTLSTicket, .{ .name = "TLSSocketPrototype__getTLSTicket" });
+            @export(TLSSocket.getTLSVersion, .{ .name = "TLSSocketPrototype__getTLSVersion" });
             @export(TLSSocket.hasPendingActivity, .{ .name = "TLSSocket__hasPendingActivity" });
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.setMaxSendFragment, .{ .name = "TLSSocketPrototype__setMaxSendFragment" });
+            @export(TLSSocket.setServername, .{ .name = "TLSSocketPrototype__setServername" });
+            @export(TLSSocket.setSession, .{ .name = "TLSSocketPrototype__setSession" });
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });
+            @export(TLSSocket.upgradeTLS, .{ .name = "TLSSocketPrototype__upgradeTLS" });
             @export(TLSSocket.write, .{ .name = "TLSSocketPrototype__write" });
+        }
+    }
+};
+pub const JSTextChunk = struct {
+    const TextChunk = Classes.TextChunk;
+    const GetterType = fn (*TextChunk, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*TextChunk, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TextChunk, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*TextChunk, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TextChunk, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*TextChunk {
+        JSC.markBinding(@src());
+        return TextChunk__fromJS(value);
+    }
+
+    extern fn TextChunkPrototype__lastInTextNodeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn TextChunkPrototype__lastInTextNodeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TextChunk.lastInTextNode` setter
+    /// This value will be visited by the garbage collector.
+    pub fn lastInTextNodeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TextChunkPrototype__lastInTextNodeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `TextChunk.lastInTextNode` getter
+    /// This value will be visited by the garbage collector.
+    pub fn lastInTextNodeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TextChunkPrototype__lastInTextNodeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of TextChunk
+    pub fn toJS(this: *TextChunk, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = TextChunk__create(globalObject, this);
+            std.debug.assert(value__.as(TextChunk).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return TextChunk__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of TextChunk.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TextChunk) bool {
+        JSC.markBinding(@src());
+        return TextChunk__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *TextChunk, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(TextChunk__dangerouslySetPtr(value, null));
+    }
+
+    extern fn TextChunk__fromJS(JSC.JSValue) ?*TextChunk;
+    extern fn TextChunk__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn TextChunk__create(globalObject: *JSC.JSGlobalObject, ptr: ?*TextChunk) JSC.JSValue;
+
+    extern fn TextChunk__dangerouslySetPtr(JSC.JSValue, ?*TextChunk) bool;
+
+    comptime {
+        if (@TypeOf(TextChunk.finalize) != (fn (*TextChunk) callconv(.C) void)) {
+            @compileLog("TextChunk.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(TextChunk.after) != CallbackType)
+            @compileLog("Expected TextChunk.after to be a callback but received " ++ @typeName(@TypeOf(TextChunk.after)));
+        if (@TypeOf(TextChunk.before) != CallbackType)
+            @compileLog("Expected TextChunk.before to be a callback but received " ++ @typeName(@TypeOf(TextChunk.before)));
+        if (@TypeOf(TextChunk.lastInTextNode) != GetterType)
+            @compileLog("Expected TextChunk.lastInTextNode to be a getter");
+
+        if (@TypeOf(TextChunk.remove) != CallbackType)
+            @compileLog("Expected TextChunk.remove to be a callback but received " ++ @typeName(@TypeOf(TextChunk.remove)));
+        if (@TypeOf(TextChunk.removed) != GetterType)
+            @compileLog("Expected TextChunk.removed to be a getter");
+
+        if (@TypeOf(TextChunk.replace) != CallbackType)
+            @compileLog("Expected TextChunk.replace to be a callback but received " ++ @typeName(@TypeOf(TextChunk.replace)));
+        if (@TypeOf(TextChunk.getText) != GetterType)
+            @compileLog("Expected TextChunk.getText to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(TextChunk.after, .{ .name = "TextChunkPrototype__after" });
+            @export(TextChunk.before, .{ .name = "TextChunkPrototype__before" });
+            @export(TextChunk.finalize, .{ .name = "TextChunkClass__finalize" });
+            @export(TextChunk.getText, .{ .name = "TextChunkPrototype__getText" });
+            @export(TextChunk.lastInTextNode, .{ .name = "TextChunkPrototype__lastInTextNode" });
+            @export(TextChunk.remove, .{ .name = "TextChunkPrototype__remove" });
+            @export(TextChunk.removed, .{ .name = "TextChunkPrototype__removed" });
+            @export(TextChunk.replace, .{ .name = "TextChunkPrototype__replace" });
         }
     }
 };
@@ -3704,6 +6806,50 @@ pub const JSTimeout = struct {
         return Timeout__fromJS(value);
     }
 
+    extern fn TimeoutPrototype__argumentsSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn TimeoutPrototype__argumentsGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Timeout.arguments` setter
+    /// This value will be visited by the garbage collector.
+    pub fn argumentsSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TimeoutPrototype__argumentsSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Timeout.arguments` getter
+    /// This value will be visited by the garbage collector.
+    pub fn argumentsGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TimeoutPrototype__argumentsGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn TimeoutPrototype__callbackSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn TimeoutPrototype__callbackGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Timeout.callback` setter
+    /// This value will be visited by the garbage collector.
+    pub fn callbackSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TimeoutPrototype__callbackSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Timeout.callback` getter
+    /// This value will be visited by the garbage collector.
+    pub fn callbackGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TimeoutPrototype__callbackGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of Timeout
     pub fn toJS(this: *Timeout, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -3746,10 +6892,13 @@ pub const JSTimeout = struct {
             @compileLog("Expected Timeout.hasRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.hasRef)));
         if (@TypeOf(Timeout.doRef) != CallbackType)
             @compileLog("Expected Timeout.doRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.doRef)));
+        if (@TypeOf(Timeout.doRefresh) != CallbackType)
+            @compileLog("Expected Timeout.doRefresh to be a callback but received " ++ @typeName(@TypeOf(Timeout.doRefresh)));
         if (@TypeOf(Timeout.doUnref) != CallbackType)
             @compileLog("Expected Timeout.doUnref to be a callback but received " ++ @typeName(@TypeOf(Timeout.doUnref)));
         if (!JSC.is_bindgen) {
             @export(Timeout.doRef, .{ .name = "TimeoutPrototype__doRef" });
+            @export(Timeout.doRefresh, .{ .name = "TimeoutPrototype__doRefresh" });
             @export(Timeout.doUnref, .{ .name = "TimeoutPrototype__doUnref" });
             @export(Timeout.finalize, .{ .name = "TimeoutClass__finalize" });
             @export(Timeout.hasRef, .{ .name = "TimeoutPrototype__hasRef" });
@@ -3839,18 +6988,39 @@ pub const JSTranspiler = struct {
 };
 
 comptime {
+    _ = JSAttributeIterator;
+    _ = JSBigIntStats;
     _ = JSBlob;
+    _ = JSBuildArtifact;
+    _ = JSBuildMessage;
+    _ = JSComment;
+    _ = JSCrypto;
     _ = JSCryptoHasher;
+    _ = JSDebugHTTPSServer;
+    _ = JSDebugHTTPServer;
     _ = JSDirent;
+    _ = JSDocEnd;
+    _ = JSDocType;
+    _ = JSElement;
+    _ = JSEndTag;
     _ = JSExpect;
     _ = JSExpectAny;
+    _ = JSExpectAnything;
+    _ = JSExpectStringContaining;
+    _ = JSExpectStringMatching;
+    _ = JSFFI;
+    _ = JSFSWatcher;
     _ = JSFileSystemRouter;
+    _ = JSHTMLRewriter;
+    _ = JSHTTPSServer;
+    _ = JSHTTPServer;
     _ = JSListener;
     _ = JSMD4;
     _ = JSMD5;
     _ = JSMatchedRoute;
     _ = JSNodeJSFS;
     _ = JSRequest;
+    _ = JSResolveMessage;
     _ = JSResponse;
     _ = JSSHA1;
     _ = JSSHA224;
@@ -3859,10 +7029,12 @@ comptime {
     _ = JSSHA512;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSStatWatcher;
     _ = JSStats;
     _ = JSSubprocess;
     _ = JSTCPSocket;
     _ = JSTLSSocket;
+    _ = JSTextChunk;
     _ = JSTextDecoder;
     _ = JSTimeout;
     _ = JSTranspiler;

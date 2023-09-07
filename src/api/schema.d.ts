@@ -24,6 +24,9 @@ export const enum Loader {
   toml = 8,
   wasm = 9,
   napi = 10,
+  base64 = 11,
+  dataurl = 12,
+  text = 13,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -46,6 +49,12 @@ export const LoaderKeys: {
   wasm: "wasm";
   10: "napi";
   napi: "napi";
+  11: "base64";
+  base64: "base64";
+  12: "dataurl";
+  dataurl: "dataurl";
+  13: "text";
+  text: "text";
 };
 export const enum FrameworkEntryPointType {
   client = 1,
@@ -126,13 +135,13 @@ export const ResolveModeKeys: {
   4: "bundle";
   bundle: "bundle";
 };
-export const enum Platform {
+export const enum Target {
   browser = 1,
   node = 2,
   bun = 3,
   bun_macro = 4,
 }
-export const PlatformKeys: {
+export const TargetKeys: {
   1: "browser";
   browser: "browser";
   2: "node";
@@ -321,6 +330,16 @@ export const WebsocketCommandKindKeys: {
   manifest: "manifest";
   3: "build_with_file_path";
   build_with_file_path: "build_with_file_path";
+};
+export const enum TestKind {
+  test_fn = 1,
+  describe_fn = 2,
+}
+export const TestKindKeys: {
+  1: "test_fn";
+  test_fn: "test_fn";
+  2: "describe_fn";
+  describe_fn: "describe_fn";
 };
 export interface StackFrame {
   function_name: string;
@@ -525,12 +544,9 @@ export interface TransformOptions {
   external?: string[];
   loaders?: LoaderMap;
   main_fields?: string[];
-  platform?: Platform;
+  target?: Target;
   serve?: boolean;
   extension_order?: string[];
-  generate_node_module_bundle?: boolean;
-  node_modules_bundle_path?: string;
-  node_modules_bundle_path_server?: string;
   framework?: FrameworkConfig;
   router?: RouteConfig;
   no_summary?: boolean;
@@ -563,6 +579,7 @@ export interface Scan {
 export interface ScanResult {
   exports: string[];
   imports: ScannedImport[];
+  errors: Message[];
 }
 
 export interface ScannedImport {
@@ -700,6 +717,40 @@ export interface BunInstall {
   disable_manifest_cache?: boolean;
   global_dir?: string;
   global_bin_dir?: string;
+  frozen_lockfile?: boolean;
+  exact?: boolean;
+}
+
+export interface ClientServerModule {
+  moduleId: uint32;
+  inputName: StringPointer;
+  assetName: StringPointer;
+  exportNames: StringPointer;
+}
+
+export interface ClientServerModuleManifest {
+  version: uint32;
+  clientModules: ClientServerModule[];
+  serverModules: ClientServerModule[];
+  ssrModules: ClientServerModule[];
+  exportNames: StringPointer[];
+  contents: Uint8Array;
+}
+
+export interface GetTestsRequest {
+  path: string;
+  contents: Uint8Array;
+}
+
+export interface TestResponseItem {
+  byteOffset: int32;
+  label: StringPointer;
+  kind: TestKind;
+}
+
+export interface GetTestsResponse {
+  tests: TestResponseItem[];
+  contents: Uint8Array;
 }
 
 export declare function encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
@@ -816,3 +867,13 @@ export declare function encodeNPMRegistryMap(message: NPMRegistryMap, bb: ByteBu
 export declare function decodeNPMRegistryMap(buffer: ByteBuffer): NPMRegistryMap;
 export declare function encodeBunInstall(message: BunInstall, bb: ByteBuffer): void;
 export declare function decodeBunInstall(buffer: ByteBuffer): BunInstall;
+export declare function encodeClientServerModule(message: ClientServerModule, bb: ByteBuffer): void;
+export declare function decodeClientServerModule(buffer: ByteBuffer): ClientServerModule;
+export declare function encodeClientServerModuleManifest(message: ClientServerModuleManifest, bb: ByteBuffer): void;
+export declare function decodeClientServerModuleManifest(buffer: ByteBuffer): ClientServerModuleManifest;
+export declare function encodeGetTestsRequest(message: GetTestsRequest, bb: ByteBuffer): void;
+export declare function decodeGetTestsRequest(buffer: ByteBuffer): GetTestsRequest;
+export declare function encodeTestResponseItem(message: TestResponseItem, bb: ByteBuffer): void;
+export declare function decodeTestResponseItem(buffer: ByteBuffer): TestResponseItem;
+export declare function encodeGetTestsResponse(message: GetTestsResponse, bb: ByteBuffer): void;
+export declare function decodeGetTestsResponse(buffer: ByteBuffer): GetTestsResponse;

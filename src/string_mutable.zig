@@ -1,7 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 const strings = bun.strings;
 const js_lexer = bun.js_lexer;
@@ -14,7 +14,7 @@ pub const MutableString = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub fn init2048(allocator: std.mem.Allocator) !MutableString {
+    pub fn init2048(allocator: std.mem.Allocator) std.mem.Allocator.Error!MutableString {
         return MutableString.init(allocator, 2048);
     }
 
@@ -25,6 +25,10 @@ pub const MutableString = struct {
         };
     }
 
+    pub fn isEmpty(this: *const MutableString) bool {
+        return this.list.items.len == 0;
+    }
+
     pub fn deinit(str: *MutableString) void {
         if (str.list.capacity > 0) {
             str.list.expandToCapacity();
@@ -33,7 +37,7 @@ pub const MutableString = struct {
     }
 
     pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return @import("bun").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+        return @import("root").bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
@@ -49,7 +53,7 @@ pub const MutableString = struct {
         return BufferedWriter{ .context = self };
     }
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) std.mem.Allocator.Error!MutableString {
         return MutableString{ .allocator = allocator, .list = if (capacity > 0)
             try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
         else
@@ -68,10 +72,9 @@ pub const MutableString = struct {
         return mutable;
     }
 
-    // Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
-    // identifier, you're going to potentially cause trouble with non-BMP code
-    // points in target environments that don't support bracketed Unicode escapes.
-
+    /// Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
+    /// identifier, you're going to potentially cause trouble with non-BMP code
+    /// points in target environments that don't support bracketed Unicode escapes.
     pub fn ensureValidIdentifier(str: string, allocator: std.mem.Allocator) !string {
         if (str.len == 0) {
             return "_";
@@ -101,12 +104,17 @@ pub const MutableString = struct {
             }
         }
 
-        if (!needs_gap and str.len >= 3 and str.len <= 10) {
+        if (!needs_gap) {
             return JSLexerTables.StrictModeReservedWordsRemap.get(str) orelse str;
         }
 
         if (needs_gap) {
-            var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
+            var mutable = try MutableString.initCopy(allocator, if (start_i == 0)
+                // the first letter can be a non-identifier start
+                // https://github.com/oven-sh/bun/issues/2946
+                "_"
+            else
+                str[0..start_i]);
             needs_gap = false;
 
             var slice = str[start_i..];
@@ -132,6 +140,10 @@ pub const MutableString = struct {
                 try mutable.appendChar('_');
                 needs_gap = false;
                 has_needed_gap = true;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(js_lexer.isIdentifier(mutable.list.items));
             }
 
             return try mutable.list.toOwnedSlice(allocator);
@@ -168,13 +180,21 @@ pub const MutableString = struct {
         try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
         var end = self.list.items.ptr + self.list.items.len;
         self.list.items.len += slice.len;
-        @memcpy(end, slice.ptr, slice.len);
+        @memcpy(end[0..slice.len], slice);
     }
 
     pub inline fn reset(
         self: *MutableString,
     ) void {
-        self.list.shrinkRetainingCapacity(0);
+        self.list.clearRetainingCapacity();
+    }
+
+    pub inline fn resetTo(
+        self: *MutableString,
+        index: usize,
+    ) void {
+        std.debug.assert(index <= self.list.capacity);
+        self.list.items.len = index;
     }
 
     pub fn inflate(self: *MutableString, amount: usize) !void {
@@ -190,21 +210,36 @@ pub const MutableString = struct {
     pub inline fn append(self: *MutableString, char: []const u8) !void {
         try self.list.appendSlice(self.allocator, char);
     }
+    pub inline fn appendInt(self: *MutableString, int: u64) !void {
+        const count = bun.fmt.fastDigitCount(int);
+        try self.list.ensureUnusedCapacity(self.allocator, count);
+        const old = self.list.items.len;
+        self.list.items.len += count;
+        std.debug.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+    }
+
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
         self.list.appendSliceAssumeCapacity(
             char,
         );
     }
     pub inline fn lenI(self: *MutableString) i32 {
-        return @intCast(i32, self.list.items.len);
+        return @as(i32, @intCast(self.list.items.len));
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
         return self.list.items;
+    }
+
+    /// Clear the existing value without freeing the memory or shrinking the capacity.
+    pub fn move(self: *MutableString) []u8 {
+        const out = self.list.items;
+        self.list = .{};
+        return out;
     }
 
     pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
@@ -220,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -231,7 +266,7 @@ pub const MutableString = struct {
         return self.indexOfChar(char) != null;
     }
 
-    pub fn indexOfChar(self: *const MutableString, char: u8) ?usize {
+    pub fn indexOfChar(self: *const MutableString, char: u8) ?u32 {
         return strings.indexOfChar(self.list.items, char);
     }
 
@@ -294,7 +329,7 @@ pub const MutableString = struct {
                 if (pending.len + this.pos > max) {
                     try this.flush();
                 }
-                @memcpy(this.remain().ptr, pending.ptr, pending.len);
+                @memcpy(this.remain()[0..pending.len], pending);
                 this.pos += pending.len;
             }
 

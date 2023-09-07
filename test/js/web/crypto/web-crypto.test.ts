@@ -1,6 +1,31 @@
+import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Web Crypto", () => {
+  // https://github.com/oven-sh/bun/issues/3795
+  it("keeps event loop alive", () => {
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), import.meta.resolveSync("./keeps-alive-fixture.js")],
+      env: bunEnv,
+    });
+
+    const lines = stdout.toString().trim().split("\n").sort();
+    const results = [
+      "2ef7bde608ce5404e97d5f042f95f89f1c232871",
+      "6b3e626d70787e3dc3f0bca509a7e1e5f6802643fde54a18d4353aa9b24ccb2fb874bbc8a70ff587df2bd6ed41471f82",
+      "7dc2af5ef620a4b1c8871371526b664512b82193",
+      "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+      "861844d6704e8573fec34d967e20bcfef3d424cf48be04e6dc08f2bd58c729743371015ead891cc3cf1c9d34b49264b510751b1ff9e537937bc46b5d6ff4ecc8",
+      "bf6873609ce720ec489bb2f5ae116716058c06cda7dc9a7e1dadee90da98e71aee22519505af61adbecd5b94bbefa855c2ede623e8b383bb179b150e25861441",
+      "bfd76c0ebbd006fee583410547c1887b0292be76d582d96c242d2a792723e3fd6fd061f9d5cfd13b8f961358e6adba4a",
+      "e1061f7858d68c3818ec9967ea1f7bf8e3c65f5603af95004bdfcb64b9ea4148",
+    ];
+
+    expect(exitCode).toBe(0);
+    expect(lines).toStrictEqual(results);
+  });
+
   it("has globals", () => {
     expect(crypto.subtle !== undefined).toBe(true);
     expect(CryptoKey.name).toBe("CryptoKey");

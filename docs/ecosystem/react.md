@@ -19,23 +19,23 @@ $ bun run react.tsx
 <Component message="Hello world!" />
 ```
 
-### Prop punning 
+### Prop punning
 
-The Bun runtime also supports "prop punning for JSX. This is a shorthand syntax useful for assigning a variable to a prop with the same name.
+The Bun runtime also supports "prop punning" for JSX. This is a shorthand syntax useful for assigning a variable to a prop with the same name.
 
 ```tsx
 function Div(props: {className: string;}) {
   const {className} = props;
-  
+
   // without punning
   return <div className={className} />;
   // with punning
   return <div {className} />;
-
 }
 ```
 
 ### Server-side rendering
+
 To server-side render (SSR) React in an [HTTP server](/docs/api/http):
 
 ```tsx#ssr.tsx
@@ -61,3 +61,5 @@ Bun.serve({
   },
 });
 ```
+
+React `18.3` and later includes an [SSR optimization](https://github.com/facebook/react/pull/25597) that takes advantage of Bun's "direct" `ReadableStream` implementation.

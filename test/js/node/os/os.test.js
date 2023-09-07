@@ -1,5 +1,6 @@
 import { it, expect } from "bun:test";
 import * as os from "node:os";
+import { realpathSync } from "fs";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -42,11 +43,16 @@ it("tmpdir", () => {
     expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
     expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
   } else {
+    const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
     if (dir.length > 1 && dir.endsWith("/")) {
       dir = dir.substring(0, dir.length - 1);
     }
-    expect(os.tmpdir()).toBe(dir);
+    expect(realpathSync(os.tmpdir())).toBe(realpathSync(dir));
+
+    process.env.TMPDIR = "/boop";
+    expect(os.tmpdir()).toBe("/boop");
+    process.env.TMPDIR = originalEnv;
   }
 });
 

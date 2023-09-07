@@ -33,7 +33,7 @@ it("remoteAddress works", async () => {
       data() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   await Bun.connect({
@@ -56,6 +56,44 @@ it("remoteAddress works", async () => {
     port: server.port,
   });
   await prom;
+});
+
+it("should not allow invalid tls option", () => {
+  [1, "string", Symbol("symbol")].forEach(value => {
+    expect(() => {
+      // @ts-ignore
+      const server = Bun.listen({
+        socket: {
+          open(ws) {},
+          close() {},
+          data() {},
+        },
+        port: 0,
+        hostname: "localhost",
+        tls: value,
+      });
+      server.stop(true);
+    }).toThrow("tls option expects an object");
+  });
+});
+
+it("should allow using false, null or undefined tls option", () => {
+  [false, null, undefined].forEach(value => {
+    expect(() => {
+      // @ts-ignore
+      const server = Bun.listen({
+        socket: {
+          open(ws) {},
+          close() {},
+          data() {},
+        },
+        port: 0,
+        hostname: "localhost",
+        tls: value,
+      });
+      server.stop(true);
+    }).not.toThrow("tls option expects an object");
+  });
 });
 
 it("echo server 1 on 1", async () => {

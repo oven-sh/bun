@@ -38,7 +38,6 @@
 // #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSLock.h>
-#include <JavaScriptCore/VMEntryScope.h>
 #include <JavaScriptCore/Watchdog.h>
 #include <wtf/Ref.h>
 #include <wtf/Scope.h>
@@ -207,8 +206,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     MarkedArgumentBuffer args;
     args.append(toJS(lexicalGlobalObject, globalObject, &event));
     ASSERT(!args.hasOverflowed());
-
-    VMEntryScope entryScope(vm, vm.entryScope ? vm.entryScope->globalObject() : lexicalGlobalObject);
 
     // JSExecState::instrumentFunction(&scriptExecutionContext, callData);
 

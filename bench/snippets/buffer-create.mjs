@@ -1,6 +1,9 @@
-import { bench, run } from "mitata";
+// @runtime bun,node,deno
+import { bench, run } from "./runner.mjs";
+import process from "node:process";
+import { Buffer } from "node:buffer";
 
-const N = parseInt(process.argv.slice(2).at(0) || "10", 10);
+const N = parseInt(process.env.RUN_COUNTER ?? "10000", 10);
 var isBuffer = new Buffer(0);
 var isNOtBuffer = "not a buffer";
 

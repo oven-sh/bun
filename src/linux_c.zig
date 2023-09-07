@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -148,7 +148,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @intToEnum(SystemErrno, code);
+        return @as(SystemErrno, @enumFromInt(code));
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -167,7 +167,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENXIO, "No such device or address");
         map.put(.E2BIG, "Argument list too long");
         map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file number");
+        map.put(.EBADF, "Bad file descriptor");
         map.put(.ECHILD, "No child processes");
         map.put(.EAGAIN, "Try again");
         map.put(.ENOMEM, "Out of memory");
@@ -292,8 +292,88 @@ pub const SystemErrno = enum(u8) {
     };
 };
 
+pub const preallocate_length = 2048 * 1024;
 pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
-    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
+    // https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
+    //  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
+    //
+    // hyperfine "./micro 1024 temp" "./micro 1024 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 1024 temp
+    //   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.2 ms …   2.3 ms    67 runs
+    // Benchmark 2: ./micro 1024 temp --preallocate
+    //   Time (mean ± σ):       1.8 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.4 ms …   2.2 ms    121 runs
+    // Summary
+    //   './micro 1024 temp --preallocate' ran
+    //     1.01 ± 0.13 times faster than './micro 1024 temp'
+
+    // hyperfine "./micro 65432 temp" "./micro 65432 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 65432 temp
+    //   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.7 ms, System: 0.1 ms]
+    //   Range (min … max):     1.2 ms …   2.3 ms    94 runs
+    // Benchmark 2: ./micro 65432 temp --preallocate
+    //   Time (mean ± σ):       2.0 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+    //   Range (min … max):     1.7 ms …   2.3 ms    108 runs
+    // Summary
+    //   './micro 65432 temp' ran
+    //     1.08 ± 0.12 times faster than './micro 65432 temp --preallocate'
+
+    // hyperfine "./micro 654320 temp" "./micro 654320 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 654320 temp
+    //   Time (mean ± σ):       2.3 ms ±   0.2 ms    [User: 0.9 ms, System: 0.3 ms]
+    //   Range (min … max):     1.9 ms …   2.9 ms    96 runs
+
+    // Benchmark 2: ./micro 654320 temp --preallocate
+    //   Time (mean ± σ):       2.2 ms ±   0.1 ms    [User: 0.9 ms, System: 0.2 ms]
+    //   Range (min … max):     1.9 ms …   2.7 ms    115 runs
+
+    //   Warning: Command took less than 5 ms to complete. Results might be inaccurate.
+
+    // Summary
+    //   './micro 654320 temp --preallocate' ran
+    //     1.04 ± 0.10 times faster than './micro 654320 temp'
+
+    // hyperfine "./micro 6543200 temp" "./micro 6543200 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 6543200 temp
+    //   Time (mean ± σ):       6.3 ms ±   0.4 ms    [User: 0.4 ms, System: 4.9 ms]
+    //   Range (min … max):     5.8 ms …   8.6 ms    84 runs
+
+    // Benchmark 2: ./micro 6543200 temp --preallocate
+    //   Time (mean ± σ):       5.5 ms ±   0.3 ms    [User: 0.5 ms, System: 3.9 ms]
+    //   Range (min … max):     5.1 ms …   7.1 ms    93 runs
+
+    // Summary
+    //   './micro 6543200 temp --preallocate' ran
+    //     1.14 ± 0.09 times faster than './micro 6543200 temp'
+
+    // hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+    // Benchmark 1: ./micro 65432000 temp
+    //   Time (mean ± σ):      52.9 ms ±   0.4 ms    [User: 3.1 ms, System: 48.7 ms]
+    //   Range (min … max):    52.4 ms …  54.4 ms    36 runs
+
+    // Benchmark 2: ./micro 65432000 temp --preallocate
+    //   Time (mean ± σ):      44.6 ms ±   0.8 ms    [User: 2.3 ms, System: 41.2 ms]
+    //   Range (min … max):    44.0 ms …  47.3 ms    37 runs
+
+    // Summary
+    //   './micro 65432000 temp --preallocate' ran
+    //     1.19 ± 0.02 times faster than './micro 65432000 temp'
+
+    // hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp"
+    // Benchmark 1: ./micro 65432000 temp
+    //   Time (mean ± σ):      51.7 ms ±   0.9 ms    [User: 2.1 ms, System: 49.6 ms]
+    //   Range (min … max):    50.7 ms …  54.1 ms    49 runs
+
+    // Benchmark 2: ./micro 65432000 temp --preallocate
+    //   Time (mean ± σ):      43.8 ms ±   2.3 ms    [User: 2.2 ms, System: 41.4 ms]
+    //   Range (min … max):    42.7 ms …  54.7 ms    56 runs
+
+    // Summary
+    //   './micro 65432000 temp --preallocate' ran
+    //     1.18 ± 0.06 times faster than './micro 65432000 temp'
+    //
+    _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
 }
 
 /// splice() moves data between two file descriptors without copying
@@ -304,10 +384,10 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
 pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
     return std.os.linux.syscall6(
         .splice,
-        @bitCast(usize, @as(isize, fd_in)),
-        @ptrToInt(off_in),
-        @bitCast(usize, @as(isize, fd_out)),
-        @ptrToInt(off_out),
+        @as(usize, @bitCast(@as(isize, fd_in))),
+        @intFromPtr(off_in),
+        @as(usize, @bitCast(@as(isize, fd_out))),
+        @intFromPtr(off_out),
         len,
         flags,
     );
@@ -331,42 +411,42 @@ pub const struct_sysinfo = extern struct {
     pub fn _f(self: anytype) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8) {
         const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
         const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
-        return @ptrCast(ReturnType, @alignCast(@alignOf(u8), @ptrCast(Intermediate, self) + 108));
+        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 108)));
     }
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.freeram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.totalram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.uptime);
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.uptime));
     return 0;
 }
 
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
-            std.math.ceil((@intToFloat(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[0])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[1])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[2])) / 65536.0) * 100.0) / 100.0,
         };
     }
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
@@ -374,7 +454,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     return name_buffer[0..result.len];
 }
 
-pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);
@@ -461,6 +541,7 @@ pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
 pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+pub const POSIX_SPAWN_SETSID = @as(c_int, 0x80);
 
 const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
@@ -491,3 +572,10 @@ pub const freeifaddrs = net_c.freeifaddrs;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+
+pub const Mode = u32;
+pub const E = std.os.E;
+
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

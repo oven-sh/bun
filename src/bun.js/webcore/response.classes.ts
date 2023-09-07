@@ -125,6 +125,8 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
+    structuredClone: { transferable: false, tag: 254 },
+    estimatedSize: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -132,9 +134,23 @@ export default [
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData" },
+      exists: { fn: "getExists", length: 0 },
 
       type: {
         getter: "getType",
+      },
+
+      // TODO: Move this to a separate `File` object or BunFile
+      // This is *not* spec-compliant.
+      name: {
+        getter: "getName",
+        cache: true,
+      },
+
+      // TODO: Move this to a separate `File` object or BunFile
+      // This is *not* spec-compliant.
+      lastModified: {
+        getter: "getLastModified",
       },
 
       size: {

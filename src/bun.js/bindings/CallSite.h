@@ -8,6 +8,7 @@
 #include "ErrorStackTrace.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include "BunClientData.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -75,6 +76,11 @@ public:
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
+
+    void setLineNumber(JSC::JSValue lineNumber) { m_lineNumber = lineNumber; }
+    void setColumnNumber(JSC::JSValue columnNumber) { m_columnNumber = columnNumber; }
+
+    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)

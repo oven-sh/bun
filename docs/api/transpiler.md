@@ -195,7 +195,7 @@ interface TranspilerOptions {
 
   // Default platform to target
   // This affects how import and/or require is used
-  platform?: "browser" | "bun" | "macro" | "node",
+  target?: "browser" | "bun" | "node",
 
   // Specify a tsconfig.json file as stringified JSON or an object
   // Use this to set a custom JSX factory, fragment, or import source

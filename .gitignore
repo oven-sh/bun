@@ -13,7 +13,7 @@ dist
 *.log
 *.out.js
 *.out.refresh.js
-/package-lock.json
+**/package-lock.json
 build
 *.wat
 zig-out
@@ -45,6 +45,7 @@ outcss
 txt.js
 .idea
 .vscode/cpp*
+.vscode/clang*
 
 node_modules_*
 *.jsb
@@ -95,6 +96,8 @@ packages/bun-wasm/*.cjs
 packages/bun-wasm/*.map
 packages/bun-wasm/*.js
 packages/bun-wasm/*.d.ts
+packages/bun-wasm/*.d.cts
+packages/bun-wasm/*.d.mts
 *.bc
 
 src/fallback.version
@@ -115,3 +118,18 @@ src/bun.js/debug-bindings-obj
 failing-tests.txt
 test.txt
 myscript.sh
+
+cold-jsc-start
+cold-jsc-start.d
+
+/test.ts
+
+src/js/out/modules*
+src/js/out/functions*
+src/js/out/tmp
+src/js/out/DebugPath.h
+
+make-dev-stats.csv
+
+.uuid
+tsconfig.tsbuildinfo

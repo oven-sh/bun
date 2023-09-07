@@ -1,10 +1,19 @@
-Bun ships with a built-in test runner.
+Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
+
+- TypeScript and JSX
+- Lifecycle hooks
+- Snapshot testing
+- UI & DOM testing
+- Watch mode with `--watch`
+- Script pre-loading with `--preload`
+
+## Run tests
 
 ```bash
 $ bun test
 ```
 
-Tests are written in JavaScript or TypeScript with a Jest-like API.
+Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](/docs/test/writing) for full documentation.
 
 ```ts#math.test.ts
 import { expect, test } from "bun:test";
@@ -14,10 +23,6 @@ test("2 + 2", () => {
 });
 ```
 
-It's fast.
-
-{% image src="/images/buntest.jpeg" caption="Bun runs 266 React SSR tests faster than Jest can print its version number." /%}
-
 The runner recursively searches the working directory for files that match the following patterns:
 
 - `*.test.{js|jsx|ts|tsx}`
@@ -25,11 +30,114 @@ The runner recursively searches the working directory for files that match the f
 - `*.spec.{js|jsx|ts|tsx}`
 - `*_spec.{js|jsx|ts|tsx}`
 
-You can filter the set of tests to run by passing additional positional arguments to `bun test`. Any file in the directory with an _absolute path_ that contains one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
+You can filter the set of _test files_ to run by passing additional positional arguments to `bun test`. Any test file with a path that matches one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
 
 ```bash
 $ bun test <filter> <filter> ...
 ```
+
+To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
+
+```sh
+# run all tests or test suites with "addition" in the name
+$ bun test --test-name-pattern addition
+```
+
+The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+
+## Timeouts
+
+Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, it will be marked as failed. The default value is `5000`.
+
+```bash
+# default value is 5000
+$ bun test --timeout 20
+```
+
+## Rerun tests
+
+Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.
+
+```sh
+$ bun test --rerun-each 100
+```
+
+## Bail out with `--bail`
+
+Use the `--bail` flag to abort the test run early after a pre-determined number of test failures. By default Bun will run all tests and report all failures, but sometimes in CI environments it's preferable to terminate earlier to reduce CPU usage.
+
+```sh
+# bail after 1 failure
+$ bun test --bail
+
+# bail after 10 failure
+$ bun test --bail 10
+```
+
+## Watch mode
+
+Similar to `bun run`, you can pass the `--watch` flag to `bun test` to watch for changes and re-run tests.
+
+```bash
+$ bun test --watch
+```
+
+## Lifecycle hooks
+
+Bun supports the following lifecycle hooks:
+
+| Hook         | Description                 |
+| ------------ | --------------------------- |
+| `beforeAll`  | Runs once before all tests. |
+| `beforeEach` | Runs before each test.      |
+| `afterEach`  | Runs after each test.       |
+| `afterAll`   | Runs once after all tests.  |
+
+These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
+
+```ts
+$ bun test --preload ./setup.ts
+```
+
+See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
+
+## Mocks
+
+Create mocks with the `mock` function. Mocks are automatically reset between tests.
+
+```ts
+import { test, expect, mock } from "bun:test";
+const random = mock(() => Math.random());
+
+test("random", async () => {
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
+});
+```
+
+See [Test > Mocks](/docs/test/mocks) for complete documentation.
+
+## Snapshot testing
+
+Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
+
+## UI & DOM testing
+
+Bun is compatible with popular UI testing libraries:
+
+- [HappyDOM](https://github.com/capricorn86/happy-dom)
+- [DOM Testing Library](https://testing-library.com/docs/dom-testing-library/intro/)
+- [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
+
+See [Test > DOM Testing](/docs/test/dom) for complete documentation.
+
+## Performance
+
+Bun's test runner is fast.
+
+{% image src="/images/buntest.jpeg" caption="Running 266 React SSR tests faster than Jest can print its version number." /%}
 
 <!--
 Consider the following directory structure:
@@ -57,182 +165,3 @@ $ bun test foo
 ```
 
 Any test file in the directory with an _absolute path_ that contains one of the targets will run. Glob patterns are not yet supported. -->
-
-## Writing tests
-
-Define tests with a Jest-like API imported from the built-in `bun:test` module.
-
-```ts#math.test.ts
-import { expect, test } from "bun:test";
-
-test("2 + 2", () => {
-  expect(2 + 2).toBe(4);
-});
-```
-
-Group tests into suites with `describe`.
-
-```ts#math.test.ts
-import { expect, test, describe } from "bun:test";
-
-describe("arithmetic", () => {
-  test("2 + 2", () => {
-    expect(2 + 2).toBe(4);
-  });
-
-  test("2 * 2", () => {
-    expect(2 * 2).toBe(4);
-  });
-});
-```
-
-Tests can be `async`.
-
-```ts
-import { expect, test } from "bun:test";
-
-test("2 * 2", async () => {
-  const result = await Promise.resolve(2 * 2);
-  expect(result).toEqual(4);
-});
-```
-
-Alternatively, use the `done` callback to signal completion. If you include the `done` callback as a parameter in your test definition, you _must_ call it or the test will hang.
-
-```ts
-import { expect, test } from "bun:test";
-
-test("2 * 2", done => {
-  Promise.resolve(2 * 2).then(result => {
-    expect(result).toEqual(4);
-    done();
-  });
-});
-```
-
-Perform per-test setup and teardown logic with `beforeEach` and `afterEach`.
-
-```ts
-import { expect, test } from "bun:test";
-
-beforeEach(() => {
-  console.log("running test.");
-});
-
-afterEach(() => {
-  console.log("done with test.");
-});
-
-// tests...
-```
-
-Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the _scope_ is the current file; in a `describe` block, the scope is the block itself.
-
-```ts
-import { expect, test, beforeAll, afterAll } from "bun:test";
-
-let db: Database;
-beforeAll(() => {
-  // connect to database
-});
-
-afterAll(() => {
-  // close connection
-});
-
-// tests...
-```
-
-Skip individual tests with `test.skip`.
-
-```ts
-import { expect, test } from "bun:test";
-
-test.skip("wat", () => {
-  // TODO: fix this
-  expect(0.1 + 0.2).toEqual(0.3);
-});
-```
-
-## Expect matchers
-
-Bun implements the following matchers. Full Jest compatibility is on the roadmap; track progress [here](https://github.com/oven-sh/bun/issues/1825).
-
-- [x] [`.not`](https://jestjs.io/docs/expect#not)
-- [x] [`.toBe()`](https://jestjs.io/docs/expect#tobevalue)
-- [x] [`.toEqual()`](https://jestjs.io/docs/expect#toequalvalue)
-- [x] [`.toBeNull()`](https://jestjs.io/docs/expect#tobenull)
-- [x] [`.toBeUndefined()`](https://jestjs.io/docs/expect#tobeundefined)
-- [x] [`.toBeNaN()`](https://jestjs.io/docs/expect#tobenan)
-- [x] [`.toBeDefined()`](https://jestjs.io/docs/expect#tobedefined)
-- [x] [`.toBeFalsy()`](https://jestjs.io/docs/expect#tobefalsy)
-- [x] [`.toBeTruthy()`](https://jestjs.io/docs/expect#tobetruthy)
-- [x] [`.toContain()`](https://jestjs.io/docs/expect#tocontainitem)
-- [x] [`.toStrictEqual()`](https://jestjs.io/docs/expect#tostrictequalvalue)
-- [x] [`.toThrow()`](https://jestjs.io/docs/expect#tothrowerror)
-- [x] [`.toHaveLength()`](https://jestjs.io/docs/expect#tohavelengthnumber)
-- [x] [`.toHaveProperty()`](https://jestjs.io/docs/expect#tohavepropertykeypath-value)
-- [ ] [`.extend`](https://jestjs.io/docs/expect#expectextendmatchers)
-- [ ] [`.anything()`](https://jestjs.io/docs/expect#expectanything)
-- [ ] [`.any()`](https://jestjs.io/docs/expect#expectanyconstructor)
-- [ ] [`.arrayContaining()`](https://jestjs.io/docs/expect#expectarraycontainingarray)
-- [ ] [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
-- [ ] [`.closeTo()`](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
-- [ ] [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
-- [ ] [`.objectContaining()`](https://jestjs.io/docs/expect#expectobjectcontainingobject)
-- [ ] [`.stringContaining()`](https://jestjs.io/docs/expect#expectstringcontainingstring)
-- [ ] [`.stringMatching()`](https://jestjs.io/docs/expect#expectstringmatchingstring--regexp)
-- [ ] [`.addSnapshotSerializer()`](https://jestjs.io/docs/expect#expectaddsnapshotserializerserializer)
-- [ ] [`.resolves()`](https://jestjs.io/docs/expect#resolves)
-- [ ] [`.rejects()`](https://jestjs.io/docs/expect#rejects)
-- [ ] [`.toHaveBeenCalled()`](https://jestjs.io/docs/expect#tohavebeencalled)
-- [ ] [`.toHaveBeenCalledTimes()`](https://jestjs.io/docs/expect#tohavebeencalledtimesnumber)
-- [ ] [`.toHaveBeenCalledWith()`](https://jestjs.io/docs/expect#tohavebeencalledwitharg1-arg2-)
-- [ ] [`.toHaveBeenLastCalledWith()`](https://jestjs.io/docs/expect#tohavebeenlastcalledwitharg1-arg2-)
-- [ ] [`.toHaveBeenNthCalledWith()`](https://jestjs.io/docs/expect#tohavebeennthcalledwithnthcall-arg1-arg2-)
-- [ ] [`.toHaveReturned()`](https://jestjs.io/docs/expect#tohavereturned)
-- [ ] [`.toHaveReturnedTimes()`](https://jestjs.io/docs/expect#tohavereturnedtimesnumber)
-- [ ] [`.toHaveReturnedWith()`](https://jestjs.io/docs/expect#tohavereturnedwithvalue)
-- [ ] [`.toHaveLastReturnedWith()`](https://jestjs.io/docs/expect#tohavelastreturnedwithvalue)
-- [ ] [`.toHaveNthReturnedWith()`](https://jestjs.io/docs/expect#tohaventhreturnedwithnthcall-value)
-- [ ] [`.toBeCloseTo()`](https://jestjs.io/docs/expect#tobeclosetonumber-numdigits)
-- [x] [`.toBeGreaterThan()`](https://jestjs.io/docs/expect#tobegreaterthannumber--bigint)
-- [x] [`.toBeGreaterThanOrEqual()`](https://jestjs.io/docs/expect#tobegreaterthanorequalnumber--bigint)
-- [x] [`.toBeLessThan()`](https://jestjs.io/docs/expect#tobelessthannumber--bigint)
-- [x] [`.toBeLessThanOrEqual()`](https://jestjs.io/docs/expect#tobelessthanorequalnumber--bigint)
-- [x] [`.toBeInstanceOf()`](https://jestjs.io/docs/expect#tobeinstanceofclass) (Bun v0.5.8+)
-- [ ] [`.toContainEqual()`](https://jestjs.io/docs/expect#tocontainequalitem)
-- [ ] [`.toMatch()`](https://jestjs.io/docs/expect#tomatchregexp--string)
-- [ ] [`.toMatchObject()`](https://jestjs.io/docs/expect#tomatchobjectobject)
-- [x] [`.toMatchSnapshot()`](https://jestjs.io/docs/expect#tomatchsnapshotpropertymatchers-hint) (Bun v0.5.8+)
-- [ ] [`.toMatchInlineSnapshot()`](https://jestjs.io/docs/expect#tomatchinlinesnapshotpropertymatchers-inlinesnapshot)
-- [ ] [`.toThrowErrorMatchingSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchingsnapshothint)
-- [ ] [`.toThrowErrorMatchingInlineSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchinginlinesnapshotinlinesnapshot)
-
-<!-- ```ts
-test('matchers', ()=>{
-
-  expect(5).toBe(5);
-  expect("do re mi").toContain("mi");
-  expect("do re mi").toEqual("do re mi");
-  expect({}).toStrictEqual({}); // uses Bun.deepEquals()
-  expect([1,2,3]).toHaveLength(3);
-  expect({ name: "foo" }).toHaveProperty("name");
-  expect({ name: "foo" }).toHaveProperty("name", "foo");
-  expect(5).toBeTruthy();
-  expect(0).toBeFalsy();
-  expect("").toBeDefined();
-  expect(undefined).toBeUndefined();
-  expect(parseInt('tuna')).toBeNaN();
-  expect(null).toBeNull();
-  expect(5).toBeGreaterThan(4);
-  expect(5).toBeGreaterThanOrEqual(5);
-  expect(5).toBeLessThan(6);
-  expect(5).toBeLessThanOrEqual(5);
-  expect(()=>throw new Error()).toThrow();
-
-  // negation
-  expect(5).not.toBe(4)
-
-})
-``` -->

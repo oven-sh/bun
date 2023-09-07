@@ -48,7 +48,7 @@ void ReadableStreamToSharedBufferSink::enqueue(const BufferSource& buffer)
         return;
 
     if (m_callback) {
-        Span chunk { buffer.data(), buffer.length() };
+        std::span<const uint8_t> chunk { buffer.data(), buffer.length() };
         m_callback(&chunk);
     }
 }

@@ -1,4 +1,9 @@
 name: bun-linux
+
+concurrency:
+  group: bun-linux-build-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -30,6 +35,7 @@ jobs:
   linux:
     name: ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
+    if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -40,7 +46,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: nehalem
@@ -48,7 +54,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
 
@@ -152,7 +158,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [linux]
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    timeout-minutes: 20
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}
@@ -181,12 +187,17 @@ jobs:
           unzip bun-${{matrix.tag}}.zip
           cd bun-${{matrix.tag}}
           chmod +x bun
-          sudo mv bun /usr/local/bin/bun
-          bun --version
+          pwd >> $GITHUB_PATH
+          ./bun --version
       - id: test
         name: Test (node runner)
+        env:
+          SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
+          TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
+          sudo apt-get update && sudo apt-get install -y openssl
           bun install
           bun install --cwd test
           bun install --cwd packages/bun-internal-test

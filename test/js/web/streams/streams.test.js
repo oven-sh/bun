@@ -1,13 +1,209 @@
 import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText, ArrayBufferSink } from "bun";
-import { expect, it, beforeEach, afterEach, describe } from "bun:test";
+import { expect, it, beforeEach, afterEach, describe, test } from "bun:test";
 import { mkfifo } from "mkfifo";
 import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "os";
-import { gc } from "harness";
 
-beforeEach(() => gc());
-afterEach(() => gc());
+it("TransformStream", async () => {
+  // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
+  const TextEncoderStreamInterface = {
+    start() {
+      this.encoder = new TextEncoder();
+    },
+    transform(chunk, controller) {
+      controller.enqueue(this.encoder.encode(chunk));
+    },
+  };
+
+  let instances = new WeakMap();
+  class JSTextEncoderStream extends TransformStream {
+    constructor() {
+      super(TextEncoderStreamInterface);
+      instances.set(this, TextEncoderStreamInterface);
+    }
+    get encoding() {
+      return instances.get(this).encoder.encoding;
+    }
+  }
+
+  const stream = new JSTextEncoderStream();
+  const { writable, readable } = stream;
+
+  const writer = writable.getWriter();
+  writer.write("hello");
+  writer.write("world");
+  writer.close();
+
+  const reader = readable.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  reader.cancel();
+
+  expect(Buffer.concat(chunks).toString()).toEqual("helloworld");
+});
+
+describe("readableStreamToFormData", () => {
+  const fixtures = {
+    withTextFile: [
+      [
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW\r\n",
+        'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n',
+        "Content-Type: text/plain\r\n",
+        "\r\n",
+        "hello world",
+        "\r\n",
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n",
+        "\r\n",
+      ],
+      (() => {
+        const fd = new FormData();
+        fd.append("file", new Blob(["hello world"]), "test.txt");
+        return fd;
+      })(),
+    ],
+    withTextFileAndField: [
+      [
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW\r\n",
+        'Content-Disposition: form-data; name="field"\r\n',
+        "\r\n",
+        "value",
+        "\r\n",
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW\r\n",
+        'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n',
+        "Content-Type: text/plain\r\n",
+        "\r\n",
+        "hello world",
+        "\r\n",
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n",
+        "\r\n",
+      ],
+      (() => {
+        const fd = new FormData();
+        fd.append("file", new Blob(["hello world"]), "test.txt");
+        fd.append("field", "value");
+        return fd;
+      })(),
+    ],
+
+    with1Field: [
+      [
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW\r\n",
+        'Content-Disposition: form-data; name="field"\r\n',
+        "\r\n",
+        "value",
+        "\r\n",
+        "--WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n",
+        "\r\n",
+      ],
+      (() => {
+        const fd = new FormData();
+        fd.append("field", "value");
+        return fd;
+      })(),
+    ],
+
+    empty: [["--WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n", "\r\n"], new FormData()],
+  };
+  for (let name in fixtures) {
+    const [chunks, expected] = fixtures[name];
+    function responseWithStart(start) {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            for (let chunk of chunks) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "content-type": "multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW",
+          },
+        },
+      );
+    }
+
+    function responseWithPull(start) {
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            for (let chunk of chunks) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "content-type": "multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW",
+          },
+        },
+      );
+    }
+
+    function responseWithPullAsync(start) {
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            for (let chunk of chunks) {
+              await Bun.sleep(0);
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "content-type": "multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW",
+          },
+        },
+      );
+    }
+
+    test("response.formData()", async () => {
+      expect((await responseWithPull().formData()).toJSON()).toEqual(expected.toJSON());
+      expect((await responseWithStart().formData()).toJSON()).toEqual(expected.toJSON());
+      expect((await responseWithPullAsync().formData()).toJSON()).toEqual(expected.toJSON());
+    });
+
+    test("Bun.readableStreamToFormData", async () => {
+      expect(
+        (
+          await Bun.readableStreamToFormData(await responseWithPull().body, "WebKitFormBoundary7MA4YWxkTrZu0gW")
+        ).toJSON(),
+      ).toEqual(expected.toJSON());
+    });
+
+    test("FormData.from", async () => {
+      expect(FormData.from(await responseWithPull().text(), "WebKitFormBoundary7MA4YWxkTrZu0gW").toJSON()).toEqual(
+        expected.toJSON(),
+      );
+
+      expect(FormData.from(await responseWithPull().blob(), "WebKitFormBoundary7MA4YWxkTrZu0gW").toJSON()).toEqual(
+        expected.toJSON(),
+      );
+
+      expect(
+        FormData.from(
+          await (await responseWithPull().blob()).arrayBuffer(),
+          "WebKitFormBoundary7MA4YWxkTrZu0gW",
+        ).toJSON(),
+      ).toEqual(expected.toJSON());
+    });
+  }
+
+  test("URL-encoded example", async () => {
+    const stream = new Response("hello=123").body;
+    const formData = await Bun.readableStreamToFormData(stream);
+    expect(formData.get("hello")).toBe("123");
+  });
+});
 
 describe("WritableStream", () => {
   it("works", async () => {
@@ -17,10 +213,7 @@ describe("WritableStream", () => {
         write(chunk, controller) {
           chunks.push(chunk);
         },
-        close(er) {
-          console.log("closed");
-          console.log(er);
-        },
+        close(er) {},
         abort(reason) {
           console.log("aborted!");
           console.log(reason);

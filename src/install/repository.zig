@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Global = bun.Global;
 const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
@@ -94,7 +94,7 @@ pub const Repository = extern struct {
             if (!formatter.repository.resolved.isEmpty()) {
                 try writer.writeAll("#");
                 var resolved = formatter.repository.resolved.slice(formatter.buf);
-                if (std.mem.lastIndexOfScalar(u8, resolved, '-')) |i| {
+                if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
                 }
                 try writer.writeAll(resolved);
@@ -284,8 +284,8 @@ pub const Repository = extern struct {
             return error.InstallFailed;
         };
         defer json_file.close();
-        const json_stat = try json_file.stat();
-        var json_buf = try allocator.alloc(u8, json_stat.size + 64);
+        const size = try json_file.getEndPos();
+        var json_buf = try allocator.alloc(u8, size + 64);
         const json_len = try json_file.preadAll(json_buf, 0);
 
         const json_path = bun.getFdPath(

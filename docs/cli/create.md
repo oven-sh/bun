@@ -1,3 +1,29 @@
+## `bun init`
+
+Scaffold an empty project with `bun init`. It's an interactive tool.
+
+```bash
+$ bun init
+bun init helps you get started with a minimal project and tries to
+guess sensible defaults. Press ^C anytime to quit.
+
+package name (quickstart):
+entry point (index.ts):
+
+Done! A package.json file was saved in the current directory.
+ + index.ts
+ + .gitignore
+ + tsconfig.json (for editor auto-complete)
+ + README.md
+
+To get started, run:
+  bun run index.ts
+```
+
+Press `enter` to accept the default answer for each prompt, or pass the `-y` flag to auto-accept the defaults.
+
+## `bun create`
+
 Template a new Bun project with `bun create`.
 
 ```bash

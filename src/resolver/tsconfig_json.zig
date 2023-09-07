@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const options = @import("../options.zig");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
@@ -104,7 +104,6 @@ pub const TSConfigJSON = struct {
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
-        is_jsx_development: bool,
     ) anyerror!?*TSConfigJSON {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
@@ -154,16 +153,18 @@ pub const TSConfigJSON = struct {
                 }
             }
 
+            // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    // we don't support "preserve" yet
-                    if (options.JSX.RuntimeMap.get(str)) |runtime| {
+                    var str_lower = allocator.alloc(u8, str.len) catch unreachable;
+                    defer allocator.free(str_lower);
+                    _ = strings.copyLowercase(str, str_lower);
+                    // - We don't support "preserve" yet
+                    // - We rely on NODE_ENV for "jsx" or "jsxDEV"
+                    // - We treat "react-jsx" and "react-jsxDEV" identically
+                    //   because it is too easy to auto-import the wrong one.
+                    if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime;
-                        if (runtime == .automatic) {
-                            result.jsx.development = strings.eqlComptime(str, "react-jsxDEV");
-                            result.jsx_flags.insert(.development);
-                        }
-
                         result.jsx_flags.insert(.runtime);
                     }
                 }
@@ -173,18 +174,12 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     if (str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
-                        result.jsx.import_source = str;
                         result.jsx.runtime = .solid;
                         result.jsx_flags.insert(.runtime);
-                    } else {
-                        if (is_jsx_development) {
-                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
-                        } else {
-                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{str}) catch unreachable;
-                        }
                     }
 
-                    result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.jsx.package_name = str;
+                    result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
                 }
             }
@@ -349,7 +344,7 @@ pub const TSConfigJSON = struct {
         // foo == 1
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
-        const parts_count = std.mem.count(u8, text, ".") + @as(usize, @boolToInt(text[text.len - 1] != '.'));
+        const parts_count = std.mem.count(u8, text, ".") + @as(usize, @intFromBool(text[text.len - 1] != '.'));
         var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
 
         if (parts_count == 1) {
@@ -422,6 +417,11 @@ pub const TSConfigJSON = struct {
                 },
                 else => {},
             }
+        }
+
+        // Absolute unix "/"
+        if (TSConfigJSON.isSlash(c0)) {
+            return true;
         }
 
         const r = source.rangeOfString(loc);

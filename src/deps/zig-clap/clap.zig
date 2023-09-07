@@ -111,7 +111,7 @@ fn parseParamRest(line: []const u8) Param(Help) {
         const len = mem.indexOfScalar(u8, line, '>') orelse break :blk;
         const takes_many = mem.startsWith(u8, line[len + 1 ..], "...");
         const takes_one_optional = mem.startsWith(u8, line[len + 1 ..], "?");
-        const help_start = len + 1 + @as(usize, 3) * @boolToInt(takes_many) + (@as(usize, 1) * @boolToInt(takes_one_optional));
+        const help_start = len + 1 + @as(usize, 3) * @intFromBool(takes_many) + (@as(usize, 1) * @intFromBool(takes_one_optional));
         return .{
             .takes_value = if (takes_many) Values.many else if (takes_one_optional) Values.one_optional else Values.one,
             .id = .{
@@ -241,7 +241,7 @@ fn testDiag(diag: Diagnostic, err: anyerror, expected: []const u8) void {
 
 pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
     return struct {
-        arena: std.heap.ArenaAllocator,
+        arena: @import("root").bun.ArenaAllocator,
         clap: ComptimeClap(Id, params),
         exe_arg: ?[]const u8,
 
@@ -343,7 +343,7 @@ pub fn helpFull(
             var cs = io.countingWriter(io.null_writer);
             try printParam(cs.writer(), Id, param, Error, context, valueText);
             if (res < cs.bytes_written)
-                res = @intCast(usize, cs.bytes_written);
+                res = @as(usize, @intCast(cs.bytes_written));
         }
 
         break :blk res;
@@ -356,7 +356,7 @@ pub fn helpFull(
         var cs = io.countingWriter(stream);
         try stream.print("\t", .{});
         try printParam(cs.writer(), Id, param, Error, context, valueText);
-        try stream.writeByteNTimes(' ', max_spacing - @intCast(usize, cs.bytes_written));
+        try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
         try stream.print("\t{s}\n", .{try helpText(context, param)});
     }
 }
@@ -482,7 +482,7 @@ pub fn usageFull(
 
         // Seems the zig compiler is being a little wierd. I doesn't allow me to write
         // @as(*const [1]u8, s)                  VVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
-        const name = if (param.names.short) |*s| @ptrCast([*]const u8, s)[0..1] else param.names.long orelse {
+        const name = if (param.names.short) |*s| @as([*]const u8, @ptrCast(s))[0..1] else param.names.long orelse {
             positional = param;
             continue;
         };

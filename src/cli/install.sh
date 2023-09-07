@@ -50,7 +50,7 @@ success() {
 }
 
 command -v unzip >/dev/null ||
-    error 'unzip is required to install bun (see: https://github.com/oven-sh/bun#unzip-is-required)'
+    error 'unzip is required to install bun'
 
 if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
@@ -235,6 +235,9 @@ zsh)
     fi
     ;;
 bash)
+    # Install completions, but we don't care if it fails
+    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions &>/dev/null || :
+
     commands=(
         "export $install_env=$quoted_install_dir"
         "export PATH=$bin_env:\$PATH"

@@ -2,12 +2,6 @@ interface VoidFunction {
   (): void;
 }
 
-declare namespace Bun {
-  interface Env extends Dict<string> {
-    NODE_ENV: string;
-  }
-}
-
 /**
  *
  * Bun.js runtime APIs
@@ -28,6 +22,26 @@ declare namespace Bun {
 declare module "bun" {
   type ArrayBufferView = TypedArray | DataView;
   import { Encoding as CryptoEncoding } from "crypto";
+
+  export interface Env extends Dict<string>, NodeJS.ProcessEnv {
+    NODE_ENV?: string;
+
+    /**
+     * The timezone used by Intl, Date, etc.
+     *
+     * To change the timezone, set `Bun.env.TZ` or `process.env.TZ` to the time zone you want to use.
+     *
+     * You can view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
+     *
+     * @example
+     * ```js
+     * Bun.env.TZ = "America/Los_Angeles";
+     * console.log(Intl.DateTimeFormat().resolvedOptions().timeZone); // "America/Los_Angeles"
+     * ```
+     */
+    TZ?: string;
+  }
+
   /**
    * The environment variables of the process
    *
@@ -36,7 +50,11 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: Bun.Env;
+  export const env: Env;
+  /**
+   * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
+   */
+  export const argv: string[];
   export const origin: string;
 
   /**
@@ -50,13 +68,17 @@ declare module "bun" {
   export function which(
     command: string,
     options?: { PATH?: string; cwd?: string },
-  ): string;
+  ): string | null;
 
   export type Serve<WebSocketDataType = undefined> =
     | ServeOptions
     | TLSServeOptions
+    | UnixServeOptions
+    | UnixTLSServeOptions
     | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>;
+    | TLSWebSocketServeOptions<WebSocketDataType>
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
 
   /**
    * Start a fast HTTP server.
@@ -94,18 +116,12 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<T>(
-    options:
-      | ServeOptions
-      | TLSServeOptions
-      | WebSocketServeOptions<T>
-      | TLSWebSocketServeOptions<T>,
-  ): Server;
+  export function serve<T>(options: Serve<T>): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    */
   // tslint:disable-next-line:unified-signatures
   export function resolveSync(moduleId: string, parent: string): string;
@@ -113,7 +129,7 @@ declare module "bun" {
   /**
    * Resolve a `moduleId` as though it were imported from `parent`
    *
-   * On failure, throws a `ResolveError`
+   * On failure, throws a `ResolveMessage`
    *
    * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
    */
@@ -132,7 +148,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   export function write(
-    destination: FileBlob | PathLike,
+    destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
   ): Promise<number>;
 
@@ -147,10 +163,7 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(
-    destination: FileBlob,
-    input: Response,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: Response): Promise<number>;
 
   /**
    *
@@ -189,10 +202,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob,
-    input: FileBlob,
-  ): Promise<number>;
+  export function write(destination: BunFile, input: BunFile): Promise<number>;
 
   /**
    *
@@ -216,7 +226,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destinationPath: PathLike,
-    input: FileBlob,
+    input: BunFile,
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -273,7 +283,7 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
   export function readableStreamToArrayBuffer(
-    stream: ReadableStream,
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
 
   /**
@@ -285,6 +295,38 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
    */
   export function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Reads the multi-part or URL-encoded form data into a {@link FormData} object
+   *
+   * @param stream The stream to consume.
+   * @params multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
+   * @returns A promise that resolves with the data encoded into a {@link FormData} object.
+   *
+   * ## Multipart form data example
+   *
+   * ```ts
+   * // without dashes
+   * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
+   *
+   * const myStream = getStreamFromSomewhere() // ...
+   * const formData = await Bun.readableStreamToFormData(stream, boundary);
+   * formData.get("foo"); // "bar"
+   * ```
+   * ## URL-encoded form data example
+   *
+   * ```ts
+   * const stream = new Response("hello=123").body;
+   * const formData = await Bun.readableStreamToFormData(stream);
+   * formData.get("hello"); // "123"
+   * ```
+   */
+  export function readableStreamToFormData(
+    stream: ReadableStream<string | TypedArray | ArrayBufferView>,
+    multipartBoundaryExcludingDashes?: string | TypedArray | ArrayBufferView,
+  ): Promise<FormData>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -314,7 +356,7 @@ declare module "bun" {
    *
    */
   export function readableStreamToArray<T>(
-    stream: ReadableStream,
+    stream: ReadableStream<T>,
   ): Promise<T[]> | T[];
 
   /**
@@ -586,6 +628,7 @@ declare module "bun" {
     unref(): void;
   }
 
+  export interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -610,7 +653,7 @@ declare module "bun" {
    * ```
    *
    */
-  export interface FileBlob extends Blob {
+  export interface BunFile extends Blob {
     /**
      * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
      *
@@ -620,10 +663,13 @@ declare module "bun" {
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, end?: number, contentType?: string): FileBlob;
+    slice(begin?: number, end?: number, contentType?: string): BunFile;
 
+    /**
+     *
+     */
     /**
      * Offset any operation on the file starting at `begin`
      *
@@ -632,14 +678,14 @@ declare module "bun" {
      * If `begin` > 0, {@link Bun.write()} will be slower on macOS
      *
      * @param begin - start offset in bytes
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(begin?: number, contentType?: string): FileBlob;
+    slice(begin?: number, contentType?: string): BunFile;
 
     /**
-     * @param contentType - MIME type for the new FileBlob
+     * @param contentType - MIME type for the new BunFile
      */
-    slice(contentType?: string): FileBlob;
+    slice(contentType?: string): BunFile;
 
     /**
      * Incremental writer for files and pipes.
@@ -649,6 +695,37 @@ declare module "bun" {
     readonly readable: ReadableStream;
 
     // TODO: writable: WritableStream;
+
+    /**
+     * A UNIX timestamp indicating when the file was last modified.
+     */
+    lastModified: number;
+    /**
+     * The name or path of the file, as specified in the constructor.
+     */
+    readonly name?: string;
+
+    /**
+     * Does the file exist?
+     *
+     * This returns true for regular files and FIFOs. It returns false for
+     * directories. Note that a race condition can occur where the file is
+     * deleted or renamed after this is called but before you open it.
+     *
+     * This does a system call to check if the file exists, which can be
+     * slow.
+     *
+     * If using this in an HTTP server, it's faster to instead use `return new
+     * Response(Bun.file(path))` and then an `error` handler to handle
+     * exceptions.
+     *
+     * Instead of checking for a file's existence and then performing the
+     * operation, it is faster to just perform the operation and handle the
+     * error.
+     *
+     * For empty Blob, this always returns true.
+     */
+    exists(): Promise<boolean>;
   }
 
   /**
@@ -673,55 +750,41 @@ declare module "bun" {
    */
   export const hash: ((
     data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number,
+    seed?: number | bigint,
   ) => number | bigint) &
     Hash;
 
   interface Hash {
     wyhash: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    crc32: (
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     adler32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
+    crc32: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    ) => number;
     cityHash32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
     cityHash64: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     murmur32v3: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
-    ) => number | bigint;
-    murmur64v2: (
+    ) => number;
+    murmur32v2: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
-    ) => number | bigint;
+    ) => number;
+    murmur64v2: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      seed?: bigint,
+    ) => bigint;
   }
-
-  export type Platform =
-    /**
-     * When building for bun.js
-     */
-    | "bun"
-    /**
-     * When building for the web
-     */
-    | "browser"
-    /**
-     * When building for node.js
-     */
-    | "node"
-    | "neutral";
 
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
@@ -738,6 +801,34 @@ declare module "bun" {
     strict?: boolean,
   ): boolean;
 
+  /**
+   * Returns true if all properties in the subset exist in the
+   * other and have equal values.
+   *
+   * This also powers expect().toMatchObject in `bun:test`
+   */
+  export function deepMatch(subset: unknown, a: unknown): boolean;
+
+  /**
+   * tsconfig.json options supported by Bun
+   */
+  interface TSConfig {
+    extends?: string;
+    compilerOptions?: {
+      paths?: Record<string, string[]>;
+      baseUrl?: string;
+      /** "preserve" is not supported yet */
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
+      jsxFactory?: string;
+      jsxFragmentFactory?: string;
+      jsxImportSource?: string;
+      useDefineForClassFields?: boolean;
+      importsNotUsedAsValues?: "remove" | "preserve" | "error";
+      /** moduleSuffixes is not supported yet */
+      moduleSuffixes?: any;
+    };
+  }
+
   export interface TranspilerOptions {
     /**
      * Replace key with value. Value must be a JSON string.
@@ -753,14 +844,14 @@ declare module "bun" {
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
-    platform?: Platform;
+    target?: Target;
 
     /**
      *  TSConfig.json file as stringified JSON or an object
      *  Use this to set a custom JSX factory, fragment, or import source
      *  For example, if you want to use Preact instead of React. Or if you want to use Emotion.
      */
-    tsconfig?: string;
+    tsconfig?: string | TSConfig;
 
     /**
      *    Replace an import statement with a macro.
@@ -925,32 +1016,327 @@ declare module "bun" {
     scanImports(code: StringOrBuffer): Import[];
   }
 
+  export type ImportKind =
+    | "import-statement"
+    | "require-call"
+    | "require-resolve"
+    | "dynamic-import"
+    | "import-rule"
+    | "url-token"
+    | "internal"
+    | "entry-point";
+
   export interface Import {
     path: string;
+    kind: ImportKind;
+  }
 
-    kind:
-      | "import-statement"
-      | "require-call"
-      | "require-resolve"
-      | "dynamic-import"
-      | "import-rule"
-      | "url-token"
-      | "internal"
-      | "entry-point";
+  type ModuleFormat = "esm"; // later: "cjs", "iife"
+
+  interface BuildConfig {
+    entrypoints: string[]; // list of file path
+    outdir?: string; // output directory
+    target?: Target; // default: "browser"
+    format?: ModuleFormat; // later: "cjs", "iife"
+    naming?:
+      | string
+      | {
+          chunk?: string;
+          entry?: string;
+          asset?: string;
+        }; // | string;
+    root?: string; // project root
+    splitting?: boolean; // default true, enable code splitting
+    plugins?: BunPlugin[];
+    // manifest?: boolean; // whether to return manifest
+    external?: Array<string>;
+    publicPath?: string;
+    define?: Record<string, string>;
+    // origin?: string; // e.g. http://mydomain.com
+    loader?: { [k in string]: Loader };
+    sourcemap?: "none" | "inline" | "external"; // default: "none"
+    minify?:
+      | boolean
+      | {
+          whitespace?: boolean;
+          syntax?: boolean;
+          identifiers?: boolean;
+        };
+    // treeshaking?: boolean;
+
+    // jsx?:
+    //   | "automatic"
+    //   | "classic"
+    //   | /* later: "preserve" */ {
+    //       runtime?: "automatic" | "classic"; // later: "preserve"
+    //       /** Only works when runtime=classic */
+    //       factory?: string; // default: "React.createElement"
+    //       /** Only works when runtime=classic */
+    //       fragment?: string; // default: "React.Fragment"
+    //       /** Only works when runtime=automatic */
+    //       importSource?: string; // default: "react"
+    //     };
+  }
+  namespace Password {
+    export type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
+
+    export interface Argon2Algorithm {
+      algorithm: "argon2id" | "argon2d" | "argon2i";
+      /**
+       * Memory cost, which defines the memory usage, given in kibibytes.
+       */
+      memoryCost?: number;
+      /**
+       * Defines the amount of computation realized and therefore the execution
+       * time, given in number of iterations.
+       */
+      timeCost?: number;
+    }
+
+    export interface BCryptAlgorithm {
+      algorithm: "bcrypt";
+      /**
+       * A number between 4 and 31. The default is 10.
+       */
+      cost?: number;
+    }
   }
 
   /**
-   * **0** means the message was **dropped**
+   * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
+   * Password hashing functions are necessarily slow, and this object will
+   * automatically run in a worker thread.
    *
-   * **-1** means **backpressure**
+   * The underlying implementation of these functions are provided by the Zig
+   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * work on this.
    *
-   * **> 0** is the **number of bytes sent**
+   * ### Example with argon2
    *
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world");
+   * const verify = await password.verify("hello world", hash);
+   * console.log(verify); // true
+   * ```
+   *
+   * ### Example with bcrypt
+   * ```ts
+   * import {password} from "bun";
+   *
+   * const hash = await password.hash("hello world", "bcrypt");
+   * // algorithm is optional, will be inferred from the hash if not specified
+   * const verify = await password.verify("hello world", hash, "bcrypt");
+   *
+   * console.log(verify); // true
+   * ```
+   */
+  export const password: {
+    /**
+     * Verify a password against a previously hashed password.
+     *
+     * @returns true if the password matches, false otherwise
+     *
+     * @example
+     * ```ts
+     * import {password} from "bun";
+     * await password.verify("hey", "$argon2id$v=19$m=65536,t=2,p=1$ddbcyBcbAcagei7wSkZFiouX6TqnUQHmTyS5mxGCzeM$+3OIaFatZ3n6LtMhUlfWbgJyNp7h8/oIsLK+LzZO+WI");
+     * // true
+     * ```
+     *
+     * @throws If the algorithm is specified and does not match the hash
+     * @throws If the algorithm is invalid
+     * @throws if the hash is invalid
+     *
+     */
+    verify(
+      /**
+       * The password to verify.
+       *
+       * If empty, always returns false
+       */
+      password: StringOrBuffer,
+      /**
+       * Previously hashed password.
+       * If empty, always returns false
+       */
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       *
+       * If specified and the algorithm does not match the hash, this function
+       * throws an error.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): Promise<boolean>;
+    /**
+     * Asynchronously hash a password using argon2 or bcrypt. The default is argon2.
+     *
+     * @returns A promise that resolves to the hashed password
+     *
+     * ## Example with argon2
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world");
+     * console.log(hash); // $argon2id$v=1...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     * ## Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     * const hash = await password.hash("hello world", "bcrypt");
+     * console.log(hash); // $2b$10$...
+     * const verify = await password.verify("hello world", hash);
+     * ```
+     */
+    hash(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): Promise<string>;
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    verifySync(
+      password: StringOrBuffer,
+      hash: StringOrBuffer,
+      /**
+       * If not specified, the algorithm will be inferred from the hash.
+       */
+      algorithm?: Password.AlgorithmLabel,
+    ): boolean;
+
+    /**
+     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
+     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
+     * instead which runs in a worker thread.
+     *
+     * The underlying implementation of these functions are provided by the Zig
+     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * work on this.
+     *
+     * ### Example with argon2
+     *
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world");
+     * const verify = await password.verifySync("hello world", hash);
+     * console.log(verify); // true
+     * ```
+     *
+     * ### Example with bcrypt
+     * ```ts
+     * import {password} from "bun";
+     *
+     * const hash = await password.hashSync("hello world", "bcrypt");
+     * // algorithm is optional, will be inferred from the hash if not specified
+     * const verify = await password.verifySync("hello world", hash, "bcrypt");
+     *
+     * console.log(verify); // true
+     * ```
+     */
+    hashSync(
+      /**
+       * The password to hash
+       *
+       * If empty, this function throws an error. It is usually a programming
+       * mistake to hash an empty password.
+       */
+      password: StringOrBuffer,
+      /**
+       * @default "argon2id"
+       *
+       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       */
+      algorithm?:
+        | Password.AlgorithmLabel
+        | Password.Argon2Algorithm
+        | Password.BCryptAlgorithm,
+    ): string;
+  };
+
+  interface BuildArtifact extends Blob {
+    path: string;
+    loader: Loader;
+    hash: string | null;
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    sourcemap: BuildArtifact | null;
+  }
+
+  interface BuildOutput {
+    outputs: Array<BuildArtifact>;
+    success: boolean;
+    logs: Array<BuildMessage | ResolveMessage>;
+  }
+
+  function build(config: BuildConfig): Promise<BuildOutput>;
+
+  /**
+   * A status that represents the outcome of a sent message.
+   *
+   * - if **0**, the message was **dropped**.
+   * - if **-1**, there is **backpressure** of messages.
+   * - if **>0**, it represents the **number of bytes sent**.
+   *
+   * @example
+   * ```js
+   * const status = ws.send("Hello!");
+   * if (status === 0) {
+   *   console.log("Message was dropped");
+   * } else if (status === -1) {
+   *   console.log("Backpressure was applied");
+   * } else {
+   *   console.log(`Success! Sent ${status} bytes`);
+   * }
+   * ```
    */
   type ServerWebSocketSendStatus = 0 | -1 | number;
 
   /**
-   * Fast WebSocket API designed for server environments.
+   * A fast WebSocket designed for servers.
    *
    * Features:
    * - **Message compression** - Messages can be compressed
@@ -960,190 +1346,132 @@ declare module "bun" {
    *
    * This is slightly different than the browser {@link WebSocket} which Bun supports for clients.
    *
-   * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets)
+   * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
+   *
+   * @example
+   * import { serve } from "bun";
+   *
+   * serve({
+   *   websocket: {
+   *     open(ws) {
+   *       console.log("Connected", ws.remoteAddress);
+   *     },
+   *     message(ws, data) {
+   *       console.log("Received", data);
+   *       ws.send(data);
+   *     },
+   *     close(ws, code, reason) {
+   *       console.log("Disconnected", code, reason);
+   *     },
+   *   }
+   * });
    */
   export interface ServerWebSocket<T = undefined> {
     /**
+     * Sends a message to the client.
      *
-     * Send a message to the client.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * const status = ws.send("Hello World");
-     * if (status === 0) {
-     *   console.log("Message was dropped");
-     * } else if (status === -1) {
-     *   console.log("Backpressure was applied");
-     * } else {
-     *   console.log(`Message sent! ${status} bytes sent`);
-     * }
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send("Feeling very compressed", true);
-     * ```
-     *
-     * @example
-     *
-     * ```js
+     * ws.send("Hello!");
+     * ws.send("Compress this.", true);
      * ws.send(new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send(new ArrayBuffer(4));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send(new DataView(new ArrayBuffer(4)));
-     * ```
-     *
      */
     send(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      data: string | BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
+     * Sends a text message to the client.
      *
-     * Send a message to the client.
-     *
-     * This function is the same as {@link ServerWebSocket.send} but it only accepts a string. This function includes a fast path.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * const status = ws.send("Hello World");
-     * if (status === 0) {
-     *   console.log("Message was dropped");
-     * } else if (status === -1) {
-     *   console.log("Backpressure was applied");
-     * } else {
-     *   console.log(`Message sent! ${status} bytes sent`);
-     * }
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send("Feeling very compressed", true);
-     * ```
-     *
-     *
+     * ws.send("Hello!");
+     * ws.send("Compress this.", true);
      */
     sendText(data: string, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
+     * Sends a binary message to the client.
      *
-     * Send a message to the client.
-     *
-     * This function is the same as {@link ServerWebSocket.send} but it only accepts Uint8Array.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
-     *
-     * ```js
-     * ws.sendBinary(new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.sendBinary(new ArrayBuffer(4));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.sendBinary(new DataView(new ArrayBuffer(4)));
-     * ```
-     *
+     * ws.send(new TextEncoder().encode("Hello!"));
+     * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      */
-    sendBinary(data: Uint8Array, compress?: boolean): ServerWebSocketSendStatus;
-
-    /**
-     * Gently close the connection.
-     *
-     * @param code The close code
-     *
-     * @param reason The close reason
-     *
-     * To close the connection abruptly, use `close(0, "")`
-     */
-    close(code?: number, reason?: string): void;
-
-    /**
-     * Send a message to all subscribers of a topic
-     *
-     * @param topic The topic to publish to
-     * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
-     * @example
-     *
-     * ```js
-     * ws.publish("chat", "Hello World");
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publish("chat", new ArrayBuffer(4), true);
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publish("chat", new DataView(new ArrayBuffer(4)));
-     * ```
-     */
-    publish(
-      topic: string,
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    sendBinary(
+      data: BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
-     * Send a message to all subscribers of a topic
+     * Closes the connection.
      *
-     * This function is the same as {@link publish} but only accepts string input. This function has a fast path.
+     * Here is a list of close codes:
+     * - `1000` means "normal closure" **(default)**
+     * - `1009` means a message was too big and was rejected
+     * - `1011` means the server encountered an error
+     * - `1012` means the server is restarting
+     * - `1013` means the server is too busy or the client is rate-limited
+     * - `4000` through `4999` are reserved for applications (you can use it!)
      *
-     * @param topic The topic to publish to
+     * To close the connection abruptly, use `terminate()`.
+     *
+     * @param code The close code to send
+     * @param reason The close reason to send
+     */
+    close(code?: number, reason?: string): void;
+
+    /**
+     * Abruptly close the connection.
+     *
+     * To gracefully close the connection, use `close()`.
+     */
+    terminate(): void;
+
+    /**
+     * Sends a ping.
+     *
      * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
+     */
+    ping(data?: string | BufferSource): ServerWebSocketSendStatus;
+
+    /**
+     * Sends a pong.
      *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
+     * @param data The data to send
+     */
+    pong(data?: string | BufferSource): ServerWebSocketSendStatus;
+
+    /**
+     * Sends a message to subscribers of the topic.
      *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
+     * ws.publish("chat", "Hello!");
+     * ws.publish("chat", "Compress this.", true);
+     * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
+     */
+    publish(
+      topic: string,
+      data: string | BufferSource,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
+
+    /**
+     * Sends a text message to subscribers of the topic.
      *
-     * ```js
-     * ws.publishText("chat", "Hello World");
-     * ```
-     *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
+     * @example
+     * ws.publish("chat", "Hello!");
+     * ws.publish("chat", "Compress this.", true);
      */
     publishText(
       topic: string,
@@ -1152,121 +1480,132 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
-     * Send a message to all subscribers of a topic
+     * Sends a binary message to subscribers of the topic.
      *
-     * This function is the same as {@link publish} but only accepts a Uint8Array. This function has a fast path.
-     *
-     * @param topic The topic to publish to
-     * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.publishBinary("chat", "Hello World");
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new ArrayBuffer(4), true);
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new DataView(new ArrayBuffer(4)));
-     * ```
+     * ws.publish("chat", new TextEncoder().encode("Hello!"));
+     * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      */
     publishBinary(
       topic: string,
-      data: Uint8Array,
+      data: BufferSource,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
-     * Subscribe to a topic
-     * @param topic The topic to subscribe to
+     * Subscribes a client to the topic.
      *
+     * @param topic The topic name.
      * @example
-     * ```js
      * ws.subscribe("chat");
-     * ```
      */
     subscribe(topic: string): void;
 
     /**
-     * Unsubscribe from a topic
-     * @param topic The topic to unsubscribe from
+     * Unsubscribes a client to the topic.
      *
+     * @param topic The topic name.
      * @example
-     * ```js
      * ws.unsubscribe("chat");
-     * ```
-     *
      */
     unsubscribe(topic: string): void;
 
     /**
-     * Is the socket subscribed to a topic?
-     * @param topic The topic to check
+     * Is the client subscribed to a topic?
      *
-     * @returns `true` if the socket is subscribed to the topic, `false` otherwise
+     * @param topic The topic name.
+     * @example
+     * ws.subscribe("chat");
+     * console.log(ws.isSubscribed("chat")); // true
      */
     isSubscribed(topic: string): boolean;
 
     /**
-     * The remote address of the client
+     * Batches `send()` and `publish()` operations, which makes it faster to send data.
+     *
+     * The `message`, `open`, and `drain` callbacks are automatically corked, so
+     * you only need to call this if you are sending messages outside of those
+     * callbacks or in async functions.
+     *
+     * @param callback The callback to run.
      * @example
-     * ```js
+     * ws.cork((ctx) => {
+     *   ctx.send("These messages");
+     *   ctx.sendText("are sent");
+     *   ctx.sendBinary(new TextEncoder().encode("together!"));
+     * });
+     */
+    cork<T = unknown>(callback: (ws: ServerWebSocket<T>) => T): T;
+
+    /**
+     * The IP address of the client.
+     *
+     * @example
      * console.log(socket.remoteAddress); // "127.0.0.1"
-     * ```
      */
     readonly remoteAddress: string;
 
     /**
-     * Ready state of the socket
+     * The ready state of the client.
+     *
+     * - if `0`, the client is connecting.
+     * - if `1`, the client is connected.
+     * - if `2`, the client is closing.
+     * - if `3`, the client is closed.
      *
      * @example
-     * ```js
      * console.log(socket.readyState); // 1
-     * ```
      */
-    readonly readyState: -1 | 0 | 1 | 2 | 3;
+    readonly readyState: WebSocketReadyState;
 
     /**
-     * The data from the {@link Server.upgrade} function
+     * Sets how binary data is returned in events.
      *
-     * Put any data you want to share between the `fetch` function and the websocket here.
+     * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
+     * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
+     * - if `uint8array`, binary data is returned as `Uint8Array` objects.
      *
-     * You can read/write to this property at any time.
+     * @example
+     * let ws: WebSocket;
+     * ws.binaryType = "uint8array";
+     * ws.addEventListener("message", ({ data }) => {
+     *   console.log(data instanceof Uint8Array); // true
+     * });
+     */
+    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array";
+
+    /**
+     * Custom data that you can assign to a client, can be read and written at any time.
+     *
+     * @example
+     * import { serve } from "bun";
+     *
+     * serve({
+     *   fetch(request, server) {
+     *     const data = {
+     *       accessToken: request.headers.get("Authorization"),
+     *     };
+     *     if (server.upgrade(request, { data })) {
+     *       return;
+     *     }
+     *     return new Response();
+     *   },
+     *   websocket: {
+     *     open(ws) {
+     *       console.log(ws.data.accessToken);
+     *     }
+     *   }
+     * });
      */
     data: T;
-
-    /**
-     * Batch data sent to a {@link ServerWebSocket}
-     *
-     * This makes it significantly faster to {@link ServerWebSocket.send} or {@link ServerWebSocket.publish} multiple messages
-     *
-     * The `message`, `open`, and `drain` callbacks are automatically corked, so
-     * you only need to call this if you are sending messages outside of those
-     * callbacks or in async functions
-     */
-    cork: (callback: (ws: ServerWebSocket<T>) => any) => void | Promise<void>;
-
-    /**
-     * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} instead of a {@link Uint8Array}
-     *
-     * @default "uint8array"
-     */
-    binaryType?: "arraybuffer" | "uint8array";
   }
 
+  /**
+   * Compression options for WebSocket messages.
+   */
   type WebSocketCompressor =
     | "disable"
     | "shared"
@@ -1287,9 +1626,9 @@ declare module "bun" {
    * ```ts
    * import { websocket, serve } from "bun";
    *
-   * serve({
+   * serve<{name: string}>({
    *   port: 3000,
-   *   websocket: websocket<{name: string}>({
+   *   websocket: {
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -1299,10 +1638,11 @@ declare module "bun" {
    *     close: (ws) => {
    *       console.log("Client disconnected");
    *    },
-   *  }),
+   *  },
    *
    *   fetch(req, server) {
-   *     if (req.url === "/chat") {
+   *     const url = new URL(req.url);
+   *     if (url.pathname === "/chat") {
    *       const upgraded = server.upgrade(req, {
    *         data: {
    *           name: new URL(req.url).searchParams.get("name"),
@@ -1317,114 +1657,188 @@ declare module "bun" {
    *  },
    * });
    */
-  export interface WebSocketHandler<T = undefined> {
+  export type WebSocketHandler<T = undefined> = {
     /**
-     * Handle an incoming message to a {@link ServerWebSocket}
+     * Called when the server receives an incoming message.
      *
-     * @param ws The {@link ServerWebSocket} that received the message
+     * If the message is not a `string`, its type is based on the value of `binaryType`.
+     * - if `nodebuffer`, then the message is a `Buffer`.
+     * - if `arraybuffer`, then the message is an `ArrayBuffer`.
+     * - if `uint8array`, then the message is a `Uint8Array`.
+     *
+     * @param ws The websocket that sent the message
      * @param message The message received
-     *
-     * To change `message` to be an `ArrayBuffer` instead of a `Uint8Array`, set `ws.binaryType = "arraybuffer"`
      */
-    message: (
+    message(
       ws: ServerWebSocket<T>,
-      message: string | Uint8Array,
-    ) => void | Promise<void>;
+      message: string | Buffer,
+    ): void | Promise<void>;
 
     /**
-     * The {@link ServerWebSocket} has been opened
+     * Called when a connection is opened.
      *
-     * @param ws The {@link ServerWebSocket} that was opened
+     * @param ws The websocket that was opened
      */
-    open?: (ws: ServerWebSocket<T>) => void | Promise<void>;
+    open?(ws: ServerWebSocket<T>): void | Promise<void>;
+
     /**
-     * The {@link ServerWebSocket} is ready for more data
+     * Called when a connection was previously under backpressure,
+     * meaning it had too many queued messages, but is now ready to receive more data.
      *
-     * @param ws The {@link ServerWebSocket} that is ready
+     * @param ws The websocket that is ready for more data
      */
-    drain?: (ws: ServerWebSocket<T>) => void | Promise<void>;
+    drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+
     /**
-     * The {@link ServerWebSocket} is being closed
-     * @param ws The {@link ServerWebSocket} that was closed
+     * Called when a connection is closed.
+     *
+     * @param ws The websocket that was closed
      * @param code The close code
      * @param message The close message
      */
-    close?: (
+    close?(
       ws: ServerWebSocket<T>,
       code: number,
-      message: string,
-    ) => void | Promise<void>;
+      reason: string,
+    ): void | Promise<void>;
 
     /**
-     * Enable compression for clients that support it. By default, compression is disabled.
+     * Called when a ping is sent.
      *
-     * @default false
-     *
-     * `true` is equivalent to `"shared"
+     * @param ws The websocket that received the ping
+     * @param data The data sent with the ping
      */
-    perMessageDeflate?:
-      | true
-      | false
-      | {
-          /**
-           * Enable compression on the {@link ServerWebSocket}
-           *
-           * @default false
-           *
-           * `true` is equivalent to `"shared"
-           */
-          compress?: WebSocketCompressor | false | true;
-          /**
-           * Configure decompression
-           *
-           * @default false
-           *
-           * `true` is equivalent to `"shared"
-           */
-          decompress?: WebSocketCompressor | false | true;
-        };
+    ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
-     * The maximum size of a message
+     * Called when a pong is received.
+     *
+     * @param ws The websocket that received the ping
+     * @param data The data sent with the ping
+     */
+    pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+
+    /**
+     * Sets the maximum size of messages in bytes.
+     *
+     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
      */
     maxPayloadLength?: number;
+
     /**
-     * After a connection has not received a message for this many seconds, it will be closed.
-     * @default 120 (2 minutes)
-     */
-    idleTimeout?: number;
-    /**
-     * The maximum number of bytes that can be buffered for a single connection.
-     * @default 16MB
+     * Sets the maximum number of bytes that can be buffered on a single connection.
+     *
+     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
      */
     backpressureLimit?: number;
+
     /**
-     * Close the connection if the backpressure limit is reached.
-     * @default false
-     * @see {@link backpressureLimit}
-     * @see {@link ServerWebSocketSendStatus}
-     * @see {@link ServerWebSocket.send}
-     * @see {@link ServerWebSocket.publish}
+     * Sets if the connection should be closed if `backpressureLimit` is reached.
+     *
+     * Default is `false`.
      */
     closeOnBackpressureLimit?: boolean;
 
     /**
-     * Control whether or not ws.publish() should include the ServerWebSocket
-     * that published the message. This is enabled by default, but it was an API
-     * design mistake. A future version of Bun will change this default to
-     * `false` and eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to no messages or pings.
      *
-     * if `true` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
+     * Default is 2 minutes, or `120` in seconds.
+     */
+    idleTimeout?: number;
+
+    /**
+     * Should `ws.publish()` also send a message to `ws` (itself), if it is subscribed?
      *
-     * if `false`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
-     *
-     * @default true
-     *
+     * Default is `false`.
      */
     publishToSelf?: boolean;
-  }
+
+    /**
+     * Should the server automatically send and respond to pings to clients?
+     *
+     * Default is `true`.
+     */
+    sendPings?: boolean;
+
+    /**
+     * Sets the compression level for messages, for clients that supports it. By default, compression is disabled.
+     *
+     * Default is `false`.
+     */
+    perMessageDeflate?:
+      | boolean
+      | {
+          /**
+           * Sets the compression level.
+           */
+          compress?: WebSocketCompressor | boolean;
+          /**
+           * Sets the decompression level.
+           */
+          decompress?: WebSocketCompressor | boolean;
+        };
+  };
 
   interface GenericServeOptions {
+    /**
+     *
+     * What URI should be used to make {@link Request.url} absolute?
+     *
+     * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
+     *
+     * @example
+     *```js
+     * "http://my-app.com"
+     * ```
+     *
+     * @example
+     *```js
+     * "https://wongmjane.com/"
+     * ```
+     *
+     * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
+     *
+     * @example
+     * "http://localhost:3000"
+     */
+    // baseURI?: string;
+
+    /**
+     * What is the maximum size of a request body? (in bytes)
+     * @default 1024 * 1024 * 128 // 128MB
+     */
+    maxRequestBodySize?: number;
+
+    /**
+     * Render contextual errors? This enables bun's error page
+     * @default process.env.NODE_ENV !== 'production'
+     */
+    development?: boolean;
+
+    error?: (
+      this: Server,
+      request: Errorlike,
+    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
+
+    /**
+     * Uniquely identify a server instance with an ID
+     *
+     * ### When bun is started with the `--hot` flag
+     *
+     * This string will be used to hot reload the server without interrupting
+     * pending requests or websockets. If not provided, a value will be
+     * generated. To disable hot reloading, set this value to `null`.
+     *
+     * ### When bun is not started with the `--hot` flag
+     *
+     * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+     */
+    id?: string | null;
+  }
+
+  export type AnyFunction = (..._: any[]) => any;
+  export interface ServeOptions extends GenericServeOptions {
     /**
      * What port should the server listen on?
      * @default process.env.PORT || "3000"
@@ -1452,48 +1866,11 @@ declare module "bun" {
     hostname?: string;
 
     /**
-     * What URI should be used to make {@link Request.url} absolute?
-     *
-     * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
-     *
-     * @example
-     *```js
-     * "http://my-app.com"
-     * ```
-     *
-     * @example
-     *```js
-     * "https://wongmjane.com/"
-     * ```
-     *
-     * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
-     *
-     * @example
-     * "http://localhost:3000"
-     *
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
      */
-    // baseURI?: string;
+    unix?: never;
 
-    /**
-     * What is the maximum size of a request body? (in bytes)
-     * @default 1024 * 1024 * 128 // 128MB
-     */
-    maxRequestBodySize?: number;
-
-    /**
-     * Render contextual errors? This enables bun's error page
-     * @default process.env.NODE_ENV !== 'production'
-     */
-    development?: boolean;
-
-    error?: (
-      this: Server,
-      request: Errorlike,
-    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
-  }
-
-  export type AnyFunction = (..._: any[]) => any;
-  export interface ServeOptions extends GenericServeOptions {
     /**
      * Handle HTTP requests
      *
@@ -1507,8 +1884,52 @@ declare module "bun" {
     ): Response | Promise<Response>;
   }
 
+  export interface UnixServeOptions extends GenericServeOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
+    /**
+     * Handle HTTP requests
+     *
+     * Respond to {@link Request} objects with a {@link Response} object.
+     */
+    fetch(
+      this: Server,
+      request: Request,
+      server: Server,
+    ): Response | Promise<Response>;
+  }
+
   export interface WebSocketServeOptions<WebSocketDataType = undefined>
     extends GenericServeOptions {
+    /**
+     * What port should the server listen on?
+     * @default process.env.PORT || "3000"
+     */
+    port?: string | number;
+
+    /**
+     * What hostname should the server listen on?
+     *
+     * @default
+     * ```js
+     * "0.0.0.0" // listen on all interfaces
+     * ```
+     * @example
+     *  ```js
+     * "127.0.0.1" // Only listen locally
+     * ```
+     * @example
+     * ```js
+     * "remix.run" // Only listen on remix.run
+     * ````
+     *
+     * note: hostname should not include a {@link port}
+     */
+    hostname?: string;
+
     /**
      * Enable websockets with {@link Bun.serve}
      *
@@ -1516,9 +1937,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     *import { serve, websocket } from "bun";
+     *import { serve } from "bun";
      *serve({
-     *  websocket: websocket({
+     *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
      *    },
@@ -1528,9 +1949,71 @@ declare module "bun" {
      *    close: (ws) => {
      *      console.log("Client disconnected");
      *    },
-     *  }),
+     *  },
      *  fetch(req, server) {
-     *    if (req.url === "/chat") {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
+     *      const upgraded = server.upgrade(req);
+     *      if (!upgraded) {
+     *        return new Response("Upgrade failed", { status: 400 });
+     *      }
+     *    }
+     *    return new Response("Hello World");
+     *  },
+     *});
+     *```
+     * Upgrade a {@link Request} to a {@link ServerWebSocket} via {@link Server.upgrade}
+     *
+     * Pass `data` in @{link Server.upgrade} to attach data to the {@link ServerWebSocket.data} property
+     *
+     *
+     */
+    websocket: WebSocketHandler<WebSocketDataType>;
+
+    /**
+     * Handle HTTP requests or upgrade them to a {@link ServerWebSocket}
+     *
+     * Respond to {@link Request} objects with a {@link Response} object.
+     *
+     */
+    fetch(
+      this: Server,
+      request: Request,
+      server: Server,
+    ): Response | undefined | Promise<Response | undefined>;
+  }
+
+  export interface UnixWebSocketServeOptions<WebSocketDataType = undefined>
+    extends GenericServeOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
+
+    /**
+     * Enable websockets with {@link Bun.serve}
+     *
+     * For simpler type safety, see {@link Bun.websocket}
+     *
+     * @example
+     * ```js
+     *import { serve } from "bun";
+     *serve({
+     *  websocket: {
+     *    open: (ws) => {
+     *      console.log("Client connected");
+     *    },
+     *    message: (ws, message) => {
+     *      console.log("Client sent message", message);
+     *    },
+     *    close: (ws) => {
+     *      console.log("Client disconnected");
+     *    },
+     *  },
+     *  fetch(req, server) {
+     *    const url = new URL(req.url);
+     *    if (url.pathname === "/chat") {
      *      const upgraded = server.upgrade(req);
      *      if (!upgraded) {
      *        return new Response("Upgrade failed", { status: 400 });
@@ -1563,7 +2046,20 @@ declare module "bun" {
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {}
+      TLSOptions {
+    unix?: never;
+    tls?: TLSOptions;
+  }
+  export interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
+    extends UnixWebSocketServeOptions<WebSocketDataType>,
+      TLSOptions {
+    /**
+     * If set, the HTTP server will listen on a unix socket instead of a port.
+     * (Cannot be used with hostname+port)
+     */
+    unix: string;
+    tls?: TLSOptions;
+  }
   export interface Errorlike extends Error {
     code?: string;
     errno?: number;
@@ -1575,14 +2071,18 @@ declare module "bun" {
      * File path to a TLS key
      *
      * To enable TLS, this option is required.
+     *
+     * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
      */
-    keyFile: string;
+    keyFile?: string;
     /**
      * File path to a TLS certificate
      *
      * To enable TLS, this option is required.
+     *
+     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
      */
-    certFile: string;
+    certFile?: string;
 
     /**
      * Passphrase for the TLS key
@@ -1590,6 +2090,8 @@ declare module "bun" {
     passphrase?: string;
     /**
      *  File path to a .pem file for a custom root CA
+     *
+     * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
      */
     caFile?: string;
 
@@ -1609,6 +2111,57 @@ declare module "bun" {
      * @default false
      */
     lowMemoryMode?: boolean;
+
+    /**
+     * Optionally override the trusted CA certificates. Default is to trust
+     * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
+     * replaced when CAs are explicitly specified using this option.
+     */
+    ca?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     *  Cert chains in PEM format. One cert chain should be provided per
+     *  private key. Each cert chain should consist of the PEM formatted
+     *  certificate for a provided private key, followed by the PEM
+     *  formatted intermediate certificates (if any), in order, and not
+     *  including the root CA (the root CA must be pre-known to the peer,
+     *  see ca). When providing multiple cert chains, they do not have to
+     *  be in the same order as their private keys in key. If the
+     *  intermediate certificates are not provided, the peer will not be
+     *  able to validate the certificate, and the handshake will fail.
+     */
+    cert?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     * Private keys in PEM format. PEM allows the option of private keys
+     * being encrypted. Encrypted keys will be decrypted with
+     * options.passphrase. Multiple keys using different algorithms can be
+     * provided either as an array of unencrypted key strings or buffers,
+     * or an array of objects in the form {pem: <string|buffer>[,
+     * passphrase: <string>]}. The object form can only occur in an array.
+     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase if provided, or options.passphrase if it is not.
+     */
+    key?:
+      | string
+      | Buffer
+      | BunFile
+      | Array<string | Buffer | BunFile>
+      | undefined;
+    /**
+     * Optionally affect the OpenSSL protocol behavior, which is not
+     * usually necessary. This should be used carefully if at all! Value is
+     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     */
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
   export interface TLSServeOptions extends ServeOptions, TLSOptions {
@@ -1617,6 +2170,18 @@ declare module "bun" {
      *  The values are SSL options objects.
      */
     serverNames?: Record<string, TLSOptions>;
+
+    tls?: TLSOptions;
+  }
+
+  export interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
+    /**
+     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+     *  The values are SSL options objects.
+     */
+    serverNames?: Record<string, TLSOptions>;
+
+    tls?: TLSOptions;
   }
 
   /**
@@ -1629,7 +2194,6 @@ declare module "bun" {
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
-   *
    */
   export interface Server {
     /**
@@ -1677,7 +2241,7 @@ declare module "bun" {
      * consistently in all cases and it doesn't yet call the `error` handler
      * consistently. This needs to be fixed
      */
-    fetch(request: Request): Response | Promise<Response>;
+    fetch(request: Request | string): Response | Promise<Response>;
 
     /**
      * Upgrade a {@link Request} to a {@link ServerWebSocket}
@@ -1689,9 +2253,9 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve, websocket } from "bun";
+     * import { serve } from "bun";
      *  serve({
-     *    websocket: websocket({
+     *    websocket: {
      *      open: (ws) => {
      *        console.log("Client connected");
      *      },
@@ -1701,9 +2265,10 @@ declare module "bun" {
      *      close: (ws) => {
      *        console.log("Client disconnected");
      *      },
-     *    }),
+     *    },
      *    fetch(req, server) {
-     *      if (req.url === "/chat") {
+     *      const url = new URL(req.url);
+     *      if (url.pathname === "/chat") {
      *        const upgraded = server.upgrade(req);
      *        if (!upgraded) {
      *          return new Response("Upgrade failed", { status: 400 });
@@ -1795,6 +2360,15 @@ declare module "bun" {
      *
      */
     readonly development: boolean;
+
+    /**
+     * An identifier of the server instance
+     *
+     * When bun is started with the `--hot` flag, this ID is used to hot reload the server without interrupting pending requests or websockets.
+     *
+     * When bun is not started with the `--hot` flag, this ID is currently unused.
+     */
+    readonly id: string;
   }
 
   /**
@@ -1823,7 +2397,7 @@ declare module "bun" {
    *
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(path: string | URL, options?: BlobPropertyBag): FileBlob;
+  export function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -1845,7 +2419,7 @@ declare module "bun" {
   export function file(
     path: ArrayBufferLike | Uint8Array,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1865,7 +2439,7 @@ declare module "bun" {
   export function file(
     fileDescriptor: number,
     options?: BlobPropertyBag,
-  ): FileBlob;
+  ): BunFile;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -1874,6 +2448,12 @@ declare module "bun" {
    */
   export function allocUnsafe(size: number): Uint8Array;
 
+  export interface BunInspectOptions {
+    colors?: boolean;
+    depth?: number;
+    sorted?: boolean;
+  }
+
   /**
    * Pretty-print an object the same as {@link console.log} to a `string`
    *
@@ -1881,7 +2461,13 @@ declare module "bun" {
    *
    * @param args
    */
-  export function inspect(...args: any): string;
+  export function inspect(arg: any, options?: BunInspectOptions): string;
+  export namespace inspect {
+    /**
+     * That can be used to declare custom inspect functions.
+     */
+    const custom: typeof import("util").inspect.custom;
+  }
 
   interface MMapOptions {
     /**
@@ -1917,15 +2503,15 @@ declare module "bun" {
   export function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
   /** Write to stdout */
-  const stdout: FileBlob;
+  const stdout: BunFile;
   /** Write to stderr */
-  const stderr: FileBlob;
+  const stderr: BunFile;
   /**
    * Read from stdin
    *
    * This is read-only
    */
-  const stdin: FileBlob;
+  const stdin: BunFile;
 
   interface unsafe {
     /**
@@ -2008,8 +2594,8 @@ declare module "bun" {
    * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
-    /** "2" */
-    version: string;
+    /** 2 */
+    version: number;
 
     /** "Inspector" */
     type: string;
@@ -2142,7 +2728,12 @@ declare module "bun" {
     update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
-     * Finalize the hash
+     * Perform a deep copy of the hasher
+     */
+    copy(): CryptoHasher;
+
+    /**
+     * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
      * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
      */
@@ -2250,7 +2841,7 @@ declare module "bun" {
    * openssl sha512-256 /path/to/file
    *```
    */
-  export function sha(input: StringOrBuffer, hashInto?: Uint8Array): Uint8Array;
+  export function sha(input: StringOrBuffer, hashInto?: TypedArray): TypedArray;
 
   /**
    *
@@ -2448,9 +3039,15 @@ declare module "bun" {
    */
   export function gunzipSync(data: Uint8Array): Uint8Array;
 
-  export type PluginTarget =
+  export type Target =
     /**
-     * The default environment when using `bun run` or `bun` to load a script
+     * For generating bundles that are intended to be run by the Bun runtime. In many cases,
+     * it isn't necessary to bundle server-side code; you can directly execute the source code
+     * without modification. However, bundling your server code can reduce startup times and
+     * improve running performance.
+     *
+     * All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which
+     * indicates to the Bun runtime that there's no need to re-transpile the file before execution.
      */
     | "bun"
     /**
@@ -2461,6 +3058,19 @@ declare module "bun" {
      * The plugin will be applied to browser builds
      */
     | "browser";
+
+  /** https://bun.sh/docs/bundler/loaders */
+  type Loader =
+    | "js"
+    | "jsx"
+    | "ts"
+    | "tsx"
+    | "json"
+    | "toml"
+    | "file"
+    | "napi"
+    | "wasm"
+    | "text";
 
   interface PluginConstraints {
     /**
@@ -2503,7 +3113,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
+    loader?: Loader;
   }
 
   interface OnLoadResultObject {
@@ -2540,6 +3150,14 @@ declare module "bun" {
      * ```
      */
     path: string;
+    /**
+     * The namespace of the module being loaded
+     */
+    namespace: string;
+    /**
+     * The default loader for this file extension
+     */
+    loader: Loader;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
@@ -2556,6 +3174,16 @@ declare module "bun" {
      * The module that imported the module being resolved
      */
     importer: string;
+    /**
+     * The namespace of the importer.
+     */
+    namespace: string;
+    /**
+     * The kind of import this resolve is for.
+     */
+    kind: ImportKind;
+    // resolveDir: string;
+    // pluginData: any;
   }
 
   interface OnResolveResult {
@@ -2572,9 +3200,17 @@ declare module "bun" {
      * ```
      */
     namespace?: string;
+    external?: boolean;
   }
 
-  type OnResolveCallback = (args: OnResolveArgs) => OnResolveResult | void;
+  type OnResolveCallback = (
+    args: OnResolveArgs,
+  ) =>
+    | OnResolveResult
+    | Promise<OnResolveResult | void | undefined | null>
+    | void
+    | undefined
+    | null;
 
   interface PluginBuilder {
     /**
@@ -2613,9 +3249,48 @@ declare module "bun" {
       callback: OnResolveCallback,
     ): void;
     /**
-     * The current target environment
+     * The config object passed to `Bun.build` as is. Can be mutated.
      */
-    target: PluginTarget;
+    config: BuildConfig & { plugins: BunPlugin[] };
+  }
+
+  interface BunPlugin {
+    /**
+     * Human-readable name of the plugin
+     *
+     * In a future version of Bun, this will be used in error messages.
+     */
+    name?: string;
+
+    /**
+     * The target JavaScript environment the plugin should be applied to.
+     * - `bun`: The default environment when using `bun run` or `bun` to load a script
+     * - `browser`: The plugin will be applied to browser builds
+     * - `node`: The plugin will be applied to Node.js builds
+     *
+     * If in Bun's runtime, the default target is `bun`.
+     *
+     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     */
+    target?: Target;
+    /**
+     * A function that will be called when the plugin is loaded.
+     *
+     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     */
+    setup(
+      /**
+       * A builder object that can be used to register plugin hooks
+       * @example
+       * ```ts
+       * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
+       *   loader: "object",
+       *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
+       * }));
+       * ```
+       */
+      build: PluginBuilder,
+    ): void | Promise<void>;
   }
 
   /**
@@ -2657,45 +3332,8 @@ declare module "bun" {
    *
    * ```
    */
-  interface BunPlugin {
-    (options: {
-      /**
-       * Human-readable name of the plugin
-       *
-       * In a future version of Bun, this will be used in error messages.
-       */
-      name?: string;
-
-      /**
-       * The target JavaScript environment the plugin should be applied to.
-       * - `bun`: The default environment when using `bun run` or `bun` to load a script
-       * - `browser`: The plugin will be applied to browser builds
-       * - `node`: The plugin will be applied to Node.js builds
-       *
-       * If in Bun's runtime, the default target is `bun`.
-       *
-       * If unspecified, it is assumed that the plugin is compatible with the default target.
-       */
-      target?: PluginTarget;
-      /**
-       * A function that will be called when the plugin is loaded.
-       *
-       * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
-       */
-      setup(
-        /**
-         * A builder object that can be used to register plugin hooks
-         * @example
-         * ```ts
-         * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
-         *   loader: "object",
-         *   exports: require("js-yaml").load(fs.readFileSync(path, "utf8")),
-         * }));
-         * ```
-         */
-        builder: PluginBuilder,
-      ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+  interface BunRegisterPlugin {
+    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2705,7 +3343,12 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  const plugin: BunPlugin;
+  const plugin: BunRegisterPlugin;
+
+  /**
+   * Is the current global scope the main thread?
+   */
+  const isMainThread: boolean;
 
   interface Socket<Data = undefined> {
     /**
@@ -2844,6 +3487,11 @@ declare module "bun" {
     Data = unknown,
     DataBinaryType extends BinaryType = "buffer",
   > {
+    /**
+     * Is called when the socket connects, or in case of TLS if no handshake is provided
+     * this will be called only after handshake
+     * @param socket
+     */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
@@ -2852,6 +3500,18 @@ declare module "bun" {
       data: BinaryTypeList[DataBinaryType],
     ): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When handshake is completed, this functions is called.
+     * @param socket
+     * @param success Indicates if the server authorized despite the authorizationError.
+     * @param authorizationError Certificate Authorization Error or null.
+     */
+    handshake?(
+      socket: Socket<Data>,
+      success: boolean,
+      authorizationError: Error | null,
+    ): void;
 
     /**
      * When the socket has been shutdown from the other end, this function is
@@ -2938,10 +3598,10 @@ declare module "bun" {
    */
   export function connect<Data = undefined>(
     options: TCPSocketConnectOptions<Data>,
-  ): Promise<TCPSocketListener<typeof options>>;
+  ): Promise<Socket<Data>>;
   export function connect<Data = undefined>(
     options: UnixSocketOptions<Data>,
-  ): Promise<UnixSocketListener<typeof options>>;
+  ): Promise<Socket<Data>>;
 
   /**
    *
@@ -2964,31 +3624,41 @@ declare module "bun" {
   ): UnixSocketListener<Data>;
 
   namespace SpawnOptions {
+    /**
+     * Option for stdout/stderr
+     */
     type Readable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | undefined
-      | FileBlob
+      | null // equivalent to "ignore"
+      | undefined // to use default
+      | BunFile
       | ArrayBufferView
       | number;
 
+    /**
+     * Option for stdin
+     */
     type Writable =
+      | "pipe"
       | "inherit"
       | "ignore"
-      | "pipe"
-      | null
-      | ReadableStream // supported by stdin
-      | undefined
-      | FileBlob
+      | null // equivalent to "ignore"
+      | undefined // to use default
+      | BunFile
       | ArrayBufferView
-      | Blob
       | number
+      | ReadableStream
+      | Blob
       | Response
       | Request;
 
-    interface OptionsObject {
+    interface OptionsObject<
+      In extends Writable = Writable,
+      Out extends Readable = Readable,
+      Err extends Readable = Readable,
+    > {
       /**
        * The current working directory of the process
        *
@@ -3004,25 +3674,69 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string | number>;
+      env?: Record<string, string | undefined>;
 
       /**
-       * The standard file descriptors of the process
-       * - `inherit`: The process will inherit the standard input of the current process
-       * - `pipe`: The process will have a new pipe for standard input
-       * - `null`: The process will have no standard input
+       * The standard file descriptors of the process, in the form [stdin, stdout, stderr].
+       * This overrides the `stdin`, `stdout`, and `stderr` properties.
+       *
+       * For stdin you may pass:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
+       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
+       * - `number`: The process will read from the file descriptor
+       *
+       * For stdout and stdin you may pass:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default ["ignore", "pipe", "inherit"] for `spawn`
+       * ["ignore", "pipe", "pipe"] for `spawnSync`
+       */
+      stdio?: [In, Out, Err];
+      /**
+       * The file descriptor for the standard input. It may be:
+       *
+       * - `"ignore"`, `null`, `undefined`: The process will have no standard input
+       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
+       * - `"inherit"`: The process will inherit the standard input of the current process
        * - `ArrayBufferView`, `Blob`: The process will read from the buffer
        * - `number`: The process will read from the file descriptor
-       * - `undefined`: The default value
+       *
+       * @default "ignore"
        */
-      stdio?: [
-        SpawnOptions.Writable,
-        SpawnOptions.Readable,
-        SpawnOptions.Readable,
-      ];
-      stdin?: SpawnOptions.Writable;
-      stdout?: SpawnOptions.Readable;
-      stderr?: SpawnOptions.Readable;
+      stdin?: In;
+      /**
+       * The file descriptor for the standard output. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "pipe"
+       */
+      stdout?: Out;
+      /**
+       * The file descriptor for the standard error. It may be:
+       *
+       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process will have no standard output/error
+       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
+       * - `number`: The process will write to the file descriptor
+       *
+       * @default "inherit" for `spawn`
+       * "pipe" for `spawnSync`
+       */
+      stderr?: Err;
 
       /**
        * Callback that runs when the {@link Subprocess} exits
@@ -3045,7 +3759,7 @@ declare module "bun" {
        * ```
        */
       onExit?(
-        subprocess: Subprocess,
+        subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
         signalCode: number | null,
         /**
@@ -3053,25 +3767,90 @@ declare module "bun" {
          */
         error?: Errorlike,
       ): void | Promise<void>;
+
+      /**
+       * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
+       * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
+       * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+       *
+       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+       *
+       * Currently, this is only compatible with processes that are other `bun` instances.
+       */
+      ipc?(
+        message: any,
+        /**
+         * The {@link Subprocess} that sent the message
+         */
+        subprocess: Subprocess<In, Out, Err>,
+      ): void;
     }
+
+    type OptionsToSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<infer In, infer Out, infer Err>
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
+
+    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<any, infer Out, infer Err>
+        ? SyncSubprocess<
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "pipe" : Err
+          >
+        : SyncSubprocess<Readable, Readable>;
+
+    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
+
+    type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
+      ? ReadableStream<Uint8Array>
+      : X extends BunFile | ArrayBufferView | number
+      ? number
+      : undefined;
+
+    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
+      ? Uint8Array
+      : undefined;
+
+    type WritableIO = FileSink | number | undefined;
+
+    type WritableToIO<X extends Writable> = X extends "pipe"
+      ? FileSink
+      : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
+      ? number
+      : undefined;
   }
 
-  interface SubprocessIO {
-    readonly stdin?: undefined | number | ReadableStream | FileSink;
-    readonly stdout?: undefined | number | ReadableStream;
-    readonly stderr?: undefined | number | ReadableStream;
-  }
-  interface Subprocess<T extends SubprocessIO = SubprocessIO> {
-    readonly stdin: T["stdin"] | undefined;
-    readonly stdout: T["stdout"] | undefined;
-    readonly stderr: T["stderr"] | undefined;
+  /**
+   * A process created by {@link Bun.spawn}.
+   *
+   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSubprocess} (any, pipe, pipe)
+   * - {@link WritableSubprocess} (pipe, any, any)
+   * - {@link PipedSubprocess} (pipe, pipe, pipe)
+   * - {@link NullSubprocess} (ignore, ignore, ignore)
+   */
+  interface Subprocess<
+    In extends SpawnOptions.Writable = SpawnOptions.Writable,
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    readonly stdin: SpawnOptions.WritableToIO<In>;
+    readonly stdout: SpawnOptions.ReadableToIO<Out>;
+    readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: T["stdout"] | undefined;
+    readonly readable: SpawnOptions.ReadableToIO<Out>;
 
     /**
      * The process ID of the child process
@@ -3133,7 +3912,183 @@ declare module "bun" {
      * This method will tell Bun to not wait for this process to exit before shutting down.
      */
     unref(): void;
+
+    /**
+     * Send a message to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option, and is another instance of `bun`.
+     *
+     * Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+     */
+    send(message: any): void;
+
+    /**
+     * Disconnect the IPC channel to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option.
+     */
+    disconnect(): void;
   }
+
+  /**
+   * A process created by {@link Bun.spawnSync}.
+   *
+   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * - {@link ReadableSyncSubprocess} (pipe, pipe)
+   * - {@link NullSyncSubprocess} (ignore, ignore)
+   */
+  interface SyncSubprocess<
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
+    stdout: SpawnOptions.ReadableToSyncIO<Out>;
+    stderr: SpawnOptions.ReadableToSyncIO<Err>;
+    exitCode: number;
+    success: boolean;
+  }
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const subprocess = Bun.spawn({
+   *  cmd: ["echo", "hello"],
+   *  stdout: "pipe",
+   * });
+   * const text = await readableStreamToText(subprocess.stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn(["echo", "hello"]);
+       * ```
+       */
+      cmd: string[]; // to support dynamically constructed commands
+    },
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawn(["echo", "hello"]));
+   * const text = await readableStreamToText(stdout);
+   * console.log(text); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawn(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSubprocess<Opts>;
+
+  /**
+   * Spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync({
+   *  cmd: ["echo", "hello"],
+   * });
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
+      /**
+       * The command to run
+       *
+       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       *
+       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       *
+       * To check if the command exists before running it, use `Bun.which(bin)`.
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawnSync({ cmd: ["echo", "hello"] });
+       * ```
+       */
+      cmd: string[];
+    },
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /**
+   * Synchronously spawn a new process
+   *
+   * ```js
+   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   *
+   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
+   */
+  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+    /**
+     * The command to run
+     *
+     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     *
+     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     *
+     * To check if the command exists before running it, use `Bun.which(bin)`.
+     *
+     * @example
+     * ```ts
+     * const subprocess = Bun.spawnSync(["echo", "hello"]);
+     * ```
+     */
+    cmds: string[],
+    options?: Opts,
+  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+
+  /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */
+  type WritableSubprocess = Subprocess<"pipe", any, any>;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
+  type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
+  type NullSubprocess = Subprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"pipe"` */
+  type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
+  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `null` or similar */
+  type NullSyncSubprocess = SyncSubprocess<
+    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null | undefined
+  >;
 
   export class FileSystemRouter {
     /**
@@ -3211,128 +4166,6 @@ declare module "bun" {
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
   }
-
-  interface SyncSubprocess {
-    stdout?: Buffer;
-    stderr?: Buffer;
-    exitCode: number;
-    success: boolean;
-  }
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const subprocess = Bun.spawn({
-   *  cmd: ["echo", "hello"],
-   *  stdout: "pipe",
-   * });
-   * const text = await readableStreamToText(subprocess.stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: string[]; // to support dynamically constructed commands
-    },
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]));
-   * const text = await readableStreamToText(stdout);
-   * console.log(text); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: string[],
-    options?: Opts,
-  ): Subprocess<OptionsToSubprocessIO<Opts>>;
-  type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
-    stdin?: Opts["stdin"] extends number
-      ? number
-      : Opts["stdin"] extends "pipe"
-      ? FileSink
-      : ReadableStream;
-    stdout?: Opts["stdout"] extends number ? number : ReadableStream;
-    stderr?: Opts["stderr"] extends number ? number : ReadableStream;
-  };
-
-  /**
-   * Spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync({
-   *  cmd: ["echo", "hello"],
-   * });
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    options: SpawnOptions.OptionsObject & {
-      /**
-       * The command to run
-       *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
-       *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
-       *
-       * To check if the command exists before running it, use `Bun.which(bin)`.
-       *
-       */
-      cmd: [string, ...string[]];
-    },
-  ): SyncSubprocess;
-
-  /**
-   * Synchronously spawn a new process
-   *
-   * ```js
-   * const {stdout} = Bun.spawnSync(["echo", "hello"]));
-   * console.log(stdout.toString()); // "hello\n"
-   * ```
-   *
-   * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
-   */
-  function spawnSync(
-    /**
-     * The command to run
-     * @example
-     * ```ts
-     * const subprocess = Bun.spawn(["echo", "hello"]);
-     */
-    cmds: [
-      /** One command is required */
-      string,
-      /** Additional arguments */
-      ...string[],
-    ],
-    options?: SpawnOptions.OptionsObject,
-  ): SyncSubprocess;
 
   /**
    * The current version of Bun

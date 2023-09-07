@@ -1,7 +1,7 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const JSC = bun.JSC;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
@@ -35,8 +36,39 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
+    pub fn isFile(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "file");
+    }
+
+    pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
+        var href = JSC.URL.hrefFromJS(globalObject, js_value);
+        if (href.tag == .Dead) {
+            return error.InvalidURL;
+        }
+
+        return URL.parse(try href.toOwnedSlice(allocator));
+    }
+
+    pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
+        var href = JSC.URL.hrefFromString(input);
+        if (href.tag == .Dead) {
+            return error.InvalidURL;
+        }
+
+        defer href.deref();
+        return URL.parse(try href.toOwnedSlice(allocator));
+    }
+
+    pub fn fromUTF8(allocator: std.mem.Allocator, input: []const u8) !URL {
+        return fromString(allocator, bun.String.fromUTF8(input));
+    }
+
     pub fn isLocalhost(this: *const URL) bool {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
+    }
+
+    pub inline fn isUnix(this: *const URL) bool {
+        return strings.hasPrefixComptime(this.protocol, "unix");
     }
 
     pub fn displayProtocol(this: *const URL) string {
@@ -197,8 +229,7 @@ pub const URL = struct {
         }
     }
 
-    pub fn parse(base_: string) URL {
-        const base = std.mem.trim(u8, base_, &std.ascii.whitespace);
+    pub fn parse(base: string) URL {
         if (base.len == 0) return URL{};
         var url = URL{};
         url.href = base;
@@ -254,14 +285,14 @@ pub const URL = struct {
         }
 
         if (strings.indexOfChar(base[offset..], '?')) |q| {
-            offset += @intCast(u31, q);
+            offset += @as(u31, @intCast(q));
             url.path = base[path_offset..][0..q];
             can_update_path = false;
             url.search = base[offset..];
         }
 
         if (strings.indexOfChar(base[offset..], '#')) |hash| {
-            offset += @intCast(u31, hash);
+            offset += @as(u31, @intCast(hash));
             hash_offset = offset;
             if (can_update_path) {
                 url.path = base[path_offset..][0..hash];
@@ -275,8 +306,8 @@ pub const URL = struct {
 
         if (base.len > path_offset and base[path_offset] == '/' and offset > 0) {
             if (url.search.len > 0) {
-                url.pathname = base[path_offset..std.math.min(
-                    std.math.min(offset + url.search.len, base.len),
+                url.pathname = base[path_offset..@min(
+                    @min(offset + url.search.len, base.len),
                     hash_offset,
                 )];
             } else if (hash_offset < std.math.maxInt(u32)) {
@@ -289,8 +320,8 @@ pub const URL = struct {
         if (url.path.len > 1) {
             const trimmed = std.mem.trim(u8, url.path, "/");
             if (trimmed.len > 1) {
-                url.path = url.path[std.math.min(
-                    std.math.max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1,
+                url.path = url.path[@min(
+                    @max(@intFromPtr(trimmed.ptr) - @intFromPtr(url.path.ptr), 1) - 1,
                     hash_offset,
                 )..];
             } else {
@@ -304,7 +335,7 @@ pub const URL = struct {
             url.pathname = "/";
         }
 
-        while (url.pathname.len > 1 and @bitCast(u16, url.pathname[0..2].*) == comptime std.mem.readIntNative(u16, "//")) {
+        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readIntNative(u16, "//")) {
             url.pathname = url.pathname[1..];
         }
 
@@ -348,8 +379,8 @@ pub const URL = struct {
                     url.username = str[0..i];
                     return i + 1;
                 },
-                // if we reach a slash, there's no username
-                '/' => {
+                // if we reach a slash or "?", there's no username
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -374,8 +405,8 @@ pub const URL = struct {
                     if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
                     return i + 1;
                 },
-                // if we reach a slash, there's no password
-                '/' => {
+                // if we reach a slash or "?", there's no password
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -402,8 +433,8 @@ pub const URL = struct {
                 ipv6_i = if (ipv6_i == null and str[i] == ']') i else ipv6_i;
                 colon_i = if (ipv6_i != null and colon_i == null and str[i] == ':') i else colon_i;
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},
@@ -421,8 +452,8 @@ pub const URL = struct {
             }
         } else {
 
-            // look for the first "/"
-            // if we have a slash, anything before that is the host
+            // look for the first "/" or "?"
+            // if we have a slash or "?", anything before that is the host
             // anything before the colon is the hostname
             // anything after the colon but before the slash is the port
             // the origin is the scheme before the slash
@@ -432,8 +463,8 @@ pub const URL = struct {
                 colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
 
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},
@@ -542,12 +573,12 @@ pub const QueryStringMap = struct {
     }
 
     pub fn getIndex(this: *const QueryStringMap, input: string) ?usize {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         return std.mem.indexOfScalar(u64, this.list.items(.name_hash), hash);
     }
 
     pub fn get(this: *const QueryStringMap, input: string) ?string {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         const _slice = this.list.slice();
         const i = std.mem.indexOfScalar(u64, _slice.items(.name_hash), hash) orelse return null;
         return this.str(_slice.items(.value)[i]);
@@ -558,7 +589,7 @@ pub const QueryStringMap = struct {
     }
 
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         const _slice = this.list.slice();
         return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
@@ -633,12 +664,12 @@ pub const QueryStringMap = struct {
             var value = result.value;
             const name_slice = result.rawName(scanner.pathname.routename);
 
-            name.length = @truncate(u32, name_slice.len);
+            name.length = @as(u32, @truncate(name_slice.len));
             name.offset = buf_writer_pos;
             try writer.writeAll(name_slice);
-            buf_writer_pos += @truncate(u32, name_slice.len);
+            buf_writer_pos += @as(u32, @truncate(name_slice.len));
 
-            var name_hash: u64 = std.hash.Wyhash.hash(0, name_slice);
+            var name_hash: u64 = bun.hash(name_slice);
 
             value.length = PercentEncoding.decode(Writer, writer, result.rawValue(scanner.pathname.pathname)) catch continue;
             value.offset = buf_writer_pos;
@@ -659,9 +690,9 @@ pub const QueryStringMap = struct {
                 name.length = PercentEncoding.decode(Writer, writer, scanner.query.query_string[name.offset..][0..name.length]) catch continue;
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
-                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
+                name_hash = bun.hash(buf.items[name.offset..][0..name.length]);
             } else {
-                name_hash = std.hash.Wyhash.hash(0, result.rawName(scanner.query.query_string));
+                name_hash = bun.hash(result.rawName(scanner.query.query_string));
                 if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
 
                     // query string parameters should not override route parameters
@@ -726,7 +757,7 @@ pub const QueryStringMap = struct {
 
                 var name = result.name;
                 var value = result.value;
-                const name_hash: u64 = std.hash.Wyhash.hash(0, result.rawName(query_string));
+                const name_hash: u64 = bun.hash(result.rawName(query_string));
                 list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
             }
 
@@ -752,9 +783,9 @@ pub const QueryStringMap = struct {
                 name.length = PercentEncoding.decode(Writer, writer, query_string[name.offset..][0..name.length]) catch continue;
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
-                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
+                name_hash = bun.hash(buf.items[name.offset..][0..name.length]);
             } else {
-                name_hash = std.hash.Wyhash.hash(0, result.rawName(query_string));
+                name_hash = bun.hash(result.rawName(query_string));
                 if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
                     name = list_slice.items(.name)[index];
                 } else {
@@ -844,7 +875,7 @@ pub const PercentEncoding = struct {
                     // scan ahead assuming .writeAll is faster than .writeByte one at a time
                     while (i < input.len and input[i] != '%') : (i += 1) {}
                     try writer.writeAll(input[start..i]);
-                    written += @truncate(u32, i - start);
+                    written += @as(u32, @truncate(i - start));
                 },
             }
         }
@@ -856,6 +887,7 @@ pub const PercentEncoding = struct {
 pub const FormData = struct {
     fields: Map,
     buffer: []const u8,
+    const log = Output.scoped(.FormData, false);
 
     pub const Map = std.ArrayHashMapUnmanaged(
         bun.Semver.String,
@@ -870,7 +902,7 @@ pub const FormData = struct {
 
         pub fn get(content_type: []const u8) ?Encoding {
             if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
-                return Encoding{ .URLEncoded = void{} };
+                return Encoding{ .URLEncoded = {} };
 
             if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
 
@@ -905,9 +937,10 @@ pub const FormData = struct {
             this.allocator.destroy(this);
         }
 
-        pub fn toJS(this: *AsyncFormData, global: *bun.JSC.JSGlobalObject, data: []const u8, promise: bun.JSC.AnyPromise) void {
+        pub fn toJS(this: *AsyncFormData, global: *JSC.JSGlobalObject, data: []const u8, promise: JSC.AnyPromise) void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
-                promise.reject(global, bun.JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
+                promise.reject(global, JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
 
@@ -916,10 +949,10 @@ pub const FormData = struct {
                 data,
                 this.encoding,
             ) catch |err| {
+                log("AsnycFormData.toJS -> failed ", .{});
                 promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
                 return;
             };
-
             promise.resolve(global, js_value);
         }
     };
@@ -931,7 +964,7 @@ pub const FormData = struct {
         if (begin.len == 0)
             return null;
 
-        var boundary_end = strings.indexOfChar(begin, ';') orelse @truncate(u32, begin.len);
+        var boundary_end = strings.indexOfChar(begin, ';') orelse @as(u32, @truncate(begin.len));
         if (begin[0] == '"' and boundary_end > 0 and begin[boundary_end -| 1] == '"') {
             boundary_end -|= 1;
             return begin[1..boundary_end];
@@ -953,45 +986,116 @@ pub const FormData = struct {
         };
 
         pub const External = extern struct {
-            name: bun.JSC.ZigString,
-            value: bun.JSC.ZigString,
-            blob: ?*bun.JSC.WebCore.Blob = null,
+            name: JSC.ZigString,
+            value: JSC.ZigString,
+            blob: ?*JSC.WebCore.Blob = null,
         };
     };
 
-    pub fn toJS(globalThis: *bun.JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !bun.JSC.JSValue {
+    pub fn toJS(globalThis: *JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !JSC.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = bun.JSC.ZigString.fromUTF8(input);
-                return bun.JSC.DOMFormData.createFromURLQuery(globalThis, &str);
+                var str = JSC.ZigString.fromUTF8(input);
+                return JSC.DOMFormData.createFromURLQuery(globalThis, &str);
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
         }
     }
 
+    pub fn jsFunctionFromMultipartData(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        const args_ = callframe.arguments(2);
+
+        const args = args_.ptr[0..2];
+
+        const input_value = args[0];
+        const boundary_value = args[1];
+        var boundary_slice = JSC.ZigString.Slice.empty;
+        defer boundary_slice.deinit();
+
+        var encoding = Encoding{
+            .URLEncoded = {},
+        };
+
+        if (input_value.isEmptyOrUndefinedOrNull()) {
+            globalThis.throwInvalidArguments("input must not be empty", .{});
+            return .zero;
+        }
+
+        if (!boundary_value.isEmptyOrUndefinedOrNull()) {
+            if (boundary_value.asArrayBuffer(globalThis)) |array_buffer| {
+                if (array_buffer.byteSlice().len > 0)
+                    encoding = .{ .Multipart = array_buffer.byteSlice() };
+            } else if (boundary_value.isString()) {
+                boundary_slice = boundary_value.toSliceOrNull(globalThis) orelse return .zero;
+                if (boundary_slice.len > 0) {
+                    encoding = .{ .Multipart = boundary_slice.slice() };
+                }
+            } else {
+                globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
+                return .zero;
+            }
+        }
+        var input_slice = JSC.ZigString.Slice{};
+        defer input_slice.deinit();
+        var input: []const u8 = "";
+
+        if (input_value.asArrayBuffer(globalThis)) |array_buffer| {
+            input = array_buffer.byteSlice();
+        } else if (input_value.isString()) {
+            input_slice = input_value.toSliceOrNull(globalThis) orelse return .zero;
+            input = input_slice.slice();
+        } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
+            input = blob.sharedView();
+        } else {
+            globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
+            return .zero;
+        }
+
+        return FormData.toJS(globalThis, input, encoding) catch |err| {
+            globalThis.throwError(err, "while parsing FormData");
+            return .zero;
+        };
+    }
+
+    comptime {
+        if (!JSC.is_bindgen)
+            @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
+    }
+
     pub fn toJSFromMultipartData(
-        globalThis: *bun.JSC.JSGlobalObject,
+        globalThis: *JSC.JSGlobalObject,
         input: []const u8,
         boundary: []const u8,
-    ) !bun.JSC.JSValue {
-        const form_data_value = bun.JSC.DOMFormData.create(globalThis);
+    ) !JSC.JSValue {
+        const form_data_value = JSC.DOMFormData.create(globalThis);
         form_data_value.ensureStillAlive();
-        var form = bun.JSC.DOMFormData.fromJS(form_data_value).?;
+        var form = JSC.DOMFormData.fromJS(form_data_value) orelse {
+            log("failed to create DOMFormData.fromJS", .{});
+            return error.@"failed to parse multipart data";
+        };
         const Wrapper = struct {
-            globalThis: *bun.JSC.JSGlobalObject,
-            form: *bun.JSC.DOMFormData,
+            globalThis: *JSC.JSGlobalObject,
+            form: *JSC.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 var value_str = field.value.slice(buf);
-                var key = bun.JSC.ZigString.initUTF8(name.slice(buf));
+                var key = JSC.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
                     var filename_str = field.filename.slice(buf);
 
-                    var blob = bun.JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    var blob = JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
-                    var filename = bun.JSC.ZigString.initUTF8(filename_str);
+                    var filename = JSC.ZigString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
+                        if (!field.content_type.isEmpty()) {
+                            break :brk field.content_type.slice(buf);
+                        }
                         if (filename_str.len > 0) {
                             if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
                                 break :brk mime.value;
@@ -1006,13 +1110,20 @@ pub const FormData = struct {
                     };
 
                     if (content_type.len > 0) {
-                        blob.content_type = content_type;
-                        blob.content_type_allocated = false;
+                        if (!field.content_type.isEmpty()) {
+                            blob.content_type_allocated = true;
+                            blob.content_type = bun.default_allocator.dupe(u8, content_type) catch @panic("failed to allocate memory for blob content type");
+                            blob.content_type_was_set = true;
+                        } else {
+                            blob.content_type = content_type;
+                            blob.content_type_was_set = false;
+                            blob.content_type_allocated = false;
+                        }
                     }
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = bun.JSC.ZigString.initUTF8(value_str);
+                    var value = JSC.ZigString.initUTF8(value_str);
                     wrap.form.append(&key, &value);
                 }
             }
@@ -1024,7 +1135,10 @@ pub const FormData = struct {
                 .form = form,
             };
 
-            try forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry);
+            forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry) catch |err| {
+                log("failed to parse multipart data", .{});
+                return err;
+            };
         }
 
         return form_data_value;
@@ -1108,7 +1222,7 @@ pub const FormData = struct {
                                         break;
                                     },
                                     '\\' => {
-                                        i += @boolToInt(field_value.len > i + 1 and field_value[i + 1] == '"');
+                                        i += @intFromBool(field_value.len > i + 1 and field_value[i + 1] == '"');
                                     },
                                     // the spec requires a end quote, but some browsers don't send it
                                     else => {},
@@ -1189,8 +1303,8 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
             }
 
             return Api.StringPointer{
-                .offset = @truncate(u32, i),
-                .length = @truncate(u32, in.len),
+                .offset = @as(u32, @truncate(i)),
+                .length = @as(u32, @truncate(in.len)),
             };
         }
     }
@@ -1283,7 +1397,7 @@ pub const Scanner = struct {
 
             var slice = this.query_string[this.i..];
             relative_i = 0;
-            var name = Api.StringPointer{ .offset = @truncate(u32, this.i), .length = 0 };
+            var name = Api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
             var value = Api.StringPointer{ .offset = 0, .length = 0 };
             var name_needs_decoding = false;
 
@@ -1291,10 +1405,10 @@ pub const Scanner = struct {
                 const char = slice[relative_i];
                 switch (char) {
                     '=' => {
-                        name.length = @truncate(u32, relative_i);
+                        name.length = @as(u32, @truncate(relative_i));
                         relative_i += 1;
 
-                        value.offset = @truncate(u32, relative_i + this.i);
+                        value.offset = @as(u32, @truncate(relative_i + this.i));
 
                         const offset = relative_i;
                         var value_needs_decoding = false;
@@ -1304,7 +1418,7 @@ pub const Scanner = struct {
                                 else => false,
                             };
                         }
-                        value.length = @truncate(u32, relative_i - offset);
+                        value.length = @as(u32, @truncate(relative_i - offset));
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if (name.length == 0) return null;
@@ -1316,7 +1430,7 @@ pub const Scanner = struct {
                     '&' => {
                         // key&
                         if (relative_i > 0) {
-                            name.length = @truncate(u32, relative_i);
+                            name.length = @as(u32, @truncate(relative_i));
                             return Result{ .name = name, .value = value, .name_needs_decoding = name_needs_decoding, .value_needs_decoding = false };
                         }
 
@@ -1337,7 +1451,7 @@ pub const Scanner = struct {
                 return null;
             }
 
-            name.length = @truncate(u32, relative_i);
+            name.length = @as(u32, @truncate(relative_i));
             return Result{ .name = name, .value = value, .name_needs_decoding = name_needs_decoding };
         }
     }
@@ -1416,7 +1530,7 @@ test "Scanner.next - % encoded" {
 
 test "PercentEncoding.decode" {
     var buffer: [4096]u8 = undefined;
-    std.mem.set(u8, &buffer, 0);
+    @memset(&buffer, 0);
 
     var stream = std.io.fixedBufferStream(&buffer);
     var writer = stream.writer();

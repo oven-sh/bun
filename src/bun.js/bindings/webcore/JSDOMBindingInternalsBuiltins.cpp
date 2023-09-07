@@ -29,7 +29,6 @@
 // // builtins by the script: Source/JavaScriptCore/Scripts/generate-js-builtins.py
 
 // #include "config.h"
-// #include "JSDOMBindingInternalsBuiltins.h"
 
 // #include "WebCoreJSClientData.h"
 // #include "JavaScriptCore/HeapInlines.h"

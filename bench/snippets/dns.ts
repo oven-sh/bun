@@ -1,5 +1,5 @@
 import { dns } from "bun";
-import { bench, run, group } from "mitata";
+import { bench, run, group } from "./runner.mjs";
 
 async function forEachBackend(name, fn) {
   group(name, () => {

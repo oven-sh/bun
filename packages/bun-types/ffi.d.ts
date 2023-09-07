@@ -344,12 +344,13 @@ declare module "bun:ffi" {
      *
      */
     u64_fast = 16,
+    function = 17,
   }
 
   type UNTYPED = never;
   export type Pointer = number & {};
 
-  interface FFITypeToType {
+  interface FFITypeToArgsType {
     [FFIType.char]: number;
     [FFIType.int8_t]: number;
     [FFIType.i8]: number;
@@ -364,21 +365,54 @@ declare module "bun:ffi" {
     [FFIType.int]: number;
     [FFIType.uint32_t]: number;
     [FFIType.u32]: number;
-    [FFIType.int64_t]: UNTYPED;
-    [FFIType.i64]: UNTYPED;
-    [FFIType.uint64_t]: UNTYPED;
-    [FFIType.u64]: UNTYPED;
-    [FFIType.double]: UNTYPED;
-    [FFIType.f64]: UNTYPED;
-    [FFIType.float]: UNTYPED;
-    [FFIType.f32]: UNTYPED;
+    [FFIType.int64_t]: number | bigint;
+    [FFIType.i64]: number | bigint;
+    [FFIType.uint64_t]: number | bigint;
+    [FFIType.u64]: number | bigint;
+    [FFIType.double]: number;
+    [FFIType.f64]: number;
+    [FFIType.float]: number;
+    [FFIType.f32]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: Pointer;
-    [FFIType.pointer]: Pointer;
-    [FFIType.void]: UNTYPED;
+    [FFIType.ptr]: TypedArray | Pointer | CString | null;
+    [FFIType.pointer]: TypedArray | Pointer | CString | null;
+    [FFIType.void]: void;
+    [FFIType.cstring]: TypedArray | Pointer | CString | null;
+    [FFIType.i64_fast]: number | bigint;
+    [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: Pointer | JSCallback; // cannot be null
+  }
+  interface FFITypeToReturnsType {
+    [FFIType.char]: number;
+    [FFIType.int8_t]: number;
+    [FFIType.i8]: number;
+    [FFIType.uint8_t]: number;
+    [FFIType.u8]: number;
+    [FFIType.int16_t]: number;
+    [FFIType.i16]: number;
+    [FFIType.uint16_t]: number;
+    [FFIType.u16]: number;
+    [FFIType.int32_t]: number;
+    [FFIType.i32]: number;
+    [FFIType.int]: number;
+    [FFIType.uint32_t]: number;
+    [FFIType.u32]: number;
+    [FFIType.int64_t]: bigint;
+    [FFIType.i64]: bigint;
+    [FFIType.uint64_t]: bigint;
+    [FFIType.u64]: bigint;
+    [FFIType.double]: number;
+    [FFIType.f64]: number;
+    [FFIType.float]: number;
+    [FFIType.f32]: number;
+    [FFIType.bool]: boolean;
+    [FFIType.ptr]: Pointer | null;
+    [FFIType.pointer]: Pointer | null;
+    [FFIType.void]: void;
     [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: Pointer | null;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -413,38 +447,7 @@ declare module "bun:ffi" {
     ["callback"]: FFIType.pointer; // for now
   }
 
-  export type FFITypeOrString =
-    | FFIType
-    | "char"
-    | "int8_t"
-    | "i8"
-    | "uint8_t"
-    | "u8"
-    | "int16_t"
-    | "i16"
-    | "uint16_t"
-    | "u16"
-    | "int32_t"
-    | "i32"
-    | "int"
-    | "uint32_t"
-    | "u32"
-    | "int64_t"
-    | "i64"
-    | "uint64_t"
-    | "u64"
-    | "double"
-    | "f64"
-    | "float"
-    | "f32"
-    | "bool"
-    | "ptr"
-    | "pointer"
-    | "void"
-    | "cstring"
-    | "function"
-    | "usize"
-    | "callback";
+  export type FFITypeOrString = FFIType | keyof FFITypeStringToType;
 
   interface FFIFunction {
     /**
@@ -475,7 +478,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    args?: FFITypeOrString[];
+    readonly args?: readonly FFITypeOrString[];
     /**
      * Return type to a FFI function (C ABI)
      *
@@ -503,7 +506,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    returns?: FFITypeOrString;
+    readonly returns?: FFITypeOrString;
 
     /**
      * Function pointer to the native function
@@ -514,7 +517,7 @@ declare module "bun:ffi" {
      * This is useful if the library has already been loaded
      * or if the module is also using Node-API.
      */
-    ptr?: number | bigint;
+    readonly ptr?: number | bigint;
 
     /**
      * Can C/FFI code call this function from a separate thread?
@@ -531,10 +534,10 @@ declare module "bun:ffi" {
      *
      * @default false
      */
-    threadsafe?: boolean;
+    readonly threadsafe?: boolean;
   }
 
-  type Symbols = Record<string, FFIFunction>;
+  type Symbols = Readonly<Record<string, FFIFunction>>;
 
   // /**
   //  * Compile a callback function
@@ -544,7 +547,9 @@ declare module "bun:ffi" {
   //  */
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
-  export interface Library<Fns extends Record<string, Narrow<FFIFunction>>> {
+  export interface Library<
+    Fns extends Readonly<Record<string, Narrow<FFIFunction>>>,
+  > {
     symbols: ConvertFns<Fns>;
 
     /**
@@ -575,12 +580,16 @@ declare module "bun:ffi" {
     | (T extends object ? { [K in keyof T]: Narrow<T[K]> } : never)
     | Extract<{} | null | undefined, T>;
 
-  type ConvertFns<Fns extends Record<string, FFIFunction>> = {
+  type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
     [K in keyof Fns]: (
-      ...args: Fns[K]["args"] extends infer A extends FFITypeOrString[]
-        ? { [L in keyof A]: FFITypeToType[ToFFIType<A[L]>] }
+      ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
+        ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
+        : [unknown] extends [Fns[K]["args"]]
+        ? []
         : never
-    ) => FFITypeToType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+    ) => [unknown] extends [Fns[K]["returns"]]
+      ? void
+      : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };
 
   /**
@@ -747,6 +756,165 @@ declare module "bun:ffi" {
     byteOffset?: number,
     byteLength?: number,
   ): ArrayBuffer;
+
+  export namespace read {
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u8(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i8(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u16(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i16(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function f32(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function u64(ptr: Pointer, byteOffset?: number): bigint;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function i64(ptr: Pointer, byteOffset?: number): bigint;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function f64(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function ptr(ptr: Pointer, byteOffset?: number): number;
+    /**
+     * The read function behaves similarly to DataView,
+     * but it's usually faster because it doesn't need to create a DataView or ArrayBuffer.
+     *
+     * @param ptr The memory address to read
+     * @param byteOffset bytes to skip before reading
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    export function intptr(ptr: Pointer, byteOffset?: number): number;
+  }
 
   /**
    * Get the pointer backing a {@link TypedArray} or {@link ArrayBuffer}

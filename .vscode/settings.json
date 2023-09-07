@@ -7,10 +7,9 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  "zig.buildArgs": [
-    "obj",
-    "-Dfor-editor"
-  ],
+  // We do this until we upgrade to latest Zig so that zls doesn't break our code.
+  "zig.formattingProvider": "extension",
+  "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
@@ -27,6 +26,8 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true
   },
+  "zig.zls.enableInlayHints": false,
+
   "[jsx]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true
@@ -38,13 +39,11 @@
   "[yaml]": {
     "editor.formatOnSave": true
   },
-  "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
-  "zig.testCmd": "make test ${file} ${filter} ${bin}",
   "[markdown]": {
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
     "diffEditor.ignoreTrimWhitespace": false,
-    "editor.defaultFormatter": "yzhang.markdown-all-in-one",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
@@ -78,7 +77,10 @@
     "src/deps/lol-html": true,
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
-    "test/snippets/package-json-exports/_node_modules_copy": true
+    "src/deps/zstd": true,
+    "test/snippets/package-json-exports/_node_modules_copy": true,
+    "src/js/out": true,
+    "src/packages/bun-uws/fuzzing/seed-corpus/": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
@@ -205,12 +207,21 @@
     "compare": "cpp",
     "concepts": "cpp",
     "typeindex": "cpp",
-    "__verbose_abort": "cpp"
+    "__verbose_abort": "cpp",
+    "__std_stream": "cpp",
+    "any": "cpp",
+    "charconv": "cpp",
+    "csignal": "cpp",
+    "format": "cpp",
+    "forward_list": "cpp",
+    "future": "cpp",
+    "regex": "cpp",
+    "span": "cpp",
+    "valarray": "cpp",
+    "codecvt": "cpp"
   },
   "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "Enabled",
-  "eslint.workingDirectories": [
-    "packages/bun-types"
-  ],
-  "files.insertFinalNewline": true
+  "C_Cpp.errorSquiggles": "enabled",
+  "eslint.workingDirectories": ["packages/bun-types"],
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

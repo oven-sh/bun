@@ -1,10 +1,11 @@
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 const Environment = @import("./env.zig");
 
-const PlatformSpecific = switch (@import("builtin").target.os.tag) {
-    .macos => @import("./darwin_c.zig"),
+const PlatformSpecific = switch (Environment.os) {
+    .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
+    .windows => @import("./windows_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -18,7 +19,9 @@ const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const errno = os.errno;
 const mode_t = C.mode_t;
-const libc_stat = C.Stat;
+// TODO: this is wrong on Windows
+const libc_stat = bun.Stat;
+
 const zeroes = mem.zeroes;
 pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
@@ -29,14 +32,20 @@ pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn chown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
+// TODO: this is wrong on Windows
 pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
+// TODO: this is wrong on Windows
 pub extern "c" fn fstat64([*c]const u8, [*c]libc_stat) c_int;
+// TODO: this is wrong on Windows
 pub extern "c" fn stat64([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn truncate([*:0]const u8, i64) c_int; // note: truncate64 is not a thing
 
 pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) c_int;
 pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
+
+pub extern "c" fn memcmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
+pub extern "c" fn memchr(s: [*]const u8, c: u8, n: usize) ?[*]const u8;
 
 pub const lstat = lstat64;
 pub const fstat = fstat64;
@@ -65,27 +74,27 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
     const ctime = st.ctime();
     return Stat{
         .inode = st.ino,
-        .size = @bitCast(u64, st.size),
+        .size = @as(u64, @bitCast(st.size)),
         .mode = st.mode,
         .kind = switch (builtin.os.tag) {
             .wasi => switch (st.filetype) {
-                os.FILETYPE_BLOCK_DEVICE => Kind.BlockDevice,
-                os.FILETYPE_CHARACTER_DEVICE => Kind.CharacterDevice,
-                os.FILETYPE_DIRECTORY => Kind.Directory,
-                os.FILETYPE_SYMBOLIC_LINK => Kind.SymLink,
-                os.FILETYPE_REGULAR_FILE => Kind.File,
-                os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.UnixDomainSocket,
-                else => Kind.Unknown,
+                os.FILETYPE_BLOCK_DEVICE => Kind.block_device,
+                os.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
+                os.FILETYPE_DIRECTORY => Kind.directory,
+                os.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
+                os.FILETYPE_REGULAR_FILE => Kind.file,
+                os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
+                else => Kind.unknown,
             },
             else => switch (st.mode & os.S.IFMT) {
-                os.S.IFBLK => Kind.BlockDevice,
-                os.S.IFCHR => Kind.CharacterDevice,
-                os.S.IFDIR => Kind.Directory,
-                os.S.IFIFO => Kind.NamedPipe,
-                os.S.IFLNK => Kind.SymLink,
-                os.S.IFREG => Kind.File,
-                os.S.IFSOCK => Kind.UnixDomainSocket,
-                else => Kind.Unknown,
+                os.S.IFBLK => Kind.block_device,
+                os.S.IFCHR => Kind.character_device,
+                os.S.IFDIR => Kind.directory,
+                os.S.IFIFO => Kind.named_pipe,
+                os.S.IFLNK => Kind.sym_link,
+                os.S.IFREG => Kind.file,
+                os.S.IFSOCK => Kind.unix_domain_socket,
+                else => Kind.unknown,
             },
         },
         .atime = @as(i128, atime.tv_sec) * std.time.ns_per_s + atime.tv_nsec,
@@ -113,7 +122,8 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
     std.os.renameatZ(from_dir, filename, to_dir, destination) catch |err| {
         switch (err) {
             error.RenameAcrossMountPoints => {
-                try moveFileZSlowWithHandle(from_handle, to_dir, destination);
+                try copyFileZSlowWithHandle(from_handle, to_dir, destination);
+                std.os.unlinkatZ(from_dir, filename, 0) catch {};
             },
             else => {
                 return err;
@@ -125,30 +135,45 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
-    try moveFileZSlowWithHandle(in_handle, to_dir, destination);
+    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o600);
+    defer std.os.close(in_handle);
+    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    std.os.unlinkatZ(from_dir, filename, 0) catch {};
 }
 
-pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const stat_ = try std.os.fstat(in_handle);
+pub fn copyFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
+    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle) else void{};
+    const size = brk: {
+        if (comptime Environment.isPosix) {
+            break :brk stat_.size;
+        }
+
+        break :brk try std.os.windows.GetFileSizeEx(in_handle);
+    };
+
     // delete if exists, don't care if it fails. it may fail due to the file not existing
     // delete here because we run into weird truncation issues if we do not
     // ftruncate() instead didn't work.
     // this is technically racy because it could end up deleting the file without saving
     std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 0o022);
+    const out_handle = try std.os.openatZ(
+        to_dir,
+        destination,
+        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC,
+        if (comptime Environment.isPosix) 0o022 else 0,
+    );
     defer std.os.close(out_handle);
     if (comptime Environment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
+        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(size)));
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
     } else {
         if (comptime Environment.isMac) {
             // if this fails, it doesn't matter
             // we only really care about read & write succeeding
             PlatformSpecific.preallocate_file(
                 out_handle,
-                @intCast(std.os.off_t, 0),
-                @intCast(std.os.off_t, stat_.size),
+                @as(std.os.off_t, @intCast(0)),
+                @as(std.os.off_t, @intCast(size)),
             ) catch {};
         }
 
@@ -164,20 +189,25 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
         }
     }
 
-    _ = fchmod(out_handle, stat_.mode);
-    _ = fchown(out_handle, stat_.uid, stat_.gid);
+    if (comptime Environment.isPosix) {
+        _ = fchmod(out_handle, stat_.mode);
+        _ = fchown(out_handle, stat_.uid, stat_.gid);
+    }
 }
 
 pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
+    if (comptime Environment.isWindows) {
+        return bun.todo(@src(), std.fs.File.Kind.unknown);
+    }
     return switch (mode & os.S.IFMT) {
-        os.S.IFBLK => std.fs.File.Kind.BlockDevice,
-        os.S.IFCHR => std.fs.File.Kind.CharacterDevice,
-        os.S.IFDIR => std.fs.File.Kind.Directory,
-        os.S.IFIFO => std.fs.File.Kind.NamedPipe,
-        os.S.IFLNK => std.fs.File.Kind.SymLink,
-        os.S.IFREG => std.fs.File.Kind.File,
-        os.S.IFSOCK => std.fs.File.Kind.UnixDomainSocket,
-        else => .Unknown,
+        os.S.IFBLK => std.fs.File.Kind.block_device,
+        os.S.IFCHR => std.fs.File.Kind.character_device,
+        os.S.IFDIR => std.fs.File.Kind.directory,
+        os.S.IFIFO => std.fs.File.Kind.named_pipe,
+        os.S.IFLNK => std.fs.File.Kind.sym_link,
+        os.S.IFREG => std.fs.File.Kind.file,
+        os.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+        else => .unknown,
     };
 }
 
@@ -309,53 +339,16 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///     with POSIX_ prefix for the advice system call argument.
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
 
-// System related
-pub fn getFreeMemory() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_free_memory();
-    } else if (comptime Environment.isMac) {
-        return darwin.get_free_memory();
-    } else {
-        return -1;
-    }
-}
-
-pub fn getTotalMemory() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_total_memory();
-    } else if (comptime Environment.isMac) {
-        return darwin.get_total_memory();
-    } else {
-        return -1;
-    }
-}
-
-pub fn getSystemUptime() u64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_system_uptime();
-    } else {
-        return darwin.get_system_uptime();
-    }
-}
-
-pub fn getSystemLoadavg() [3]f64 {
-    if (comptime Environment.isLinux) {
-        return linux.get_system_loadavg();
-    } else {
-        return darwin.get_system_loadavg();
-    }
-}
-
 pub fn getProcessPriority(pid_: i32) i32 {
-    const pid = @intCast(c_uint, pid_);
+    const pid = @as(c_uint, @intCast(pid_));
     return get_process_priority(pid);
 }
 
 pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (pid_ < 0) return .SRCH;
 
-    const pid = @intCast(c_uint, pid_);
-    const priority = @intCast(c_int, priority_);
+    const pid = @as(c_uint, @intCast(pid_));
+    const priority = @as(c_int, @intCast(priority_));
 
     const code: i32 = set_process_priority(pid, priority);
 
@@ -368,21 +361,21 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
 
 pub fn getVersion(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_version(buf.ptr[0..std.os.HOST_NAME_MAX]);
+        return linux.get_version(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return "unknown";
+        return bun.todo(@src(), "unknown");
     }
 }
 
 pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_release(buf.ptr[0..std.os.HOST_NAME_MAX]);
+        return linux.get_release(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return "unknown";
+        return bun.todo(@src(), "unknown");
     }
 }
 
@@ -428,9 +421,9 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
     const handle_getter = struct {
         const RTLD_DEFAULT = if (bun.Environment.isMac)
-            @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
+            @as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(@as(isize, -2)))))
         else
-            @intToPtr(?*anyopaque, @as(usize, 0));
+            @as(?*anyopaque, @ptrFromInt(@as(usize, 0)));
 
         pub fn getter() ?*anyopaque {
             return RTLD_DEFAULT;
@@ -446,3 +439,6 @@ pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
 pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
+
+// https://man7.org/linux/man-pages/man3/fmod.3.html
+pub extern fn fmod(f64, f64) f64;

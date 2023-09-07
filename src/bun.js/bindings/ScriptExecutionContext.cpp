@@ -1,16 +1,21 @@
 #include "root.h"
 #include "headers.h"
 #include "ScriptExecutionContext.h"
+#include "MessagePort.h"
 
 #include "webcore/WebSocket.h"
 #include "libusockets.h"
 #include "_libusockets.h"
+#include "BunClientData.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
 
-static unsigned lastUniqueIdentifier = 0;
+static std::atomic<unsigned> lastUniqueIdentifier = 0;
+
+WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
+WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -18,6 +23,12 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
     static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
     ASSERT(allScriptExecutionContextsMapLock.isLocked());
     return contexts;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(identifier);
 }
 
 template<bool SSL, bool isServer>
@@ -38,15 +49,46 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 {
     if (!m_ssl_client_websockets_ctx) {
         us_loop_t* loop = (us_loop_t*)uws_get_loop();
-        us_socket_context_options_t opts;
-        memset(&opts, 0, sizeof(us_socket_context_options_t));
-        this->m_ssl_client_websockets_ctx = us_create_socket_context(1, loop, sizeof(size_t), opts);
+        us_bun_socket_context_options_t opts;
+        memset(&opts, 0, sizeof(us_bun_socket_context_options_t));
+        // adds root ca
+        opts.request_cert = true;
+        // but do not reject unauthorized
+        opts.reject_unauthorized = false;
+        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
     }
 
     return m_ssl_client_websockets_ctx;
+}
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+void ScriptExecutionContext::refEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+}
+void ScriptExecutionContext::unrefEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
+}
+
+ScriptExecutionContext::~ScriptExecutionContext()
+{
+    checkConsistency();
+
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
+    }
+
+    auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
+    for (auto& completionHandler : postMessageCompletionHandlers)
+        completionHandler();
+
+    while (auto* destructionObserver = m_destructionObservers.takeAny())
+        destructionObserver->contextDestroyed();
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
@@ -59,6 +101,130 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
     context->postTaskConcurrently(WTFMove(task));
     return true;
+}
+
+void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
+{
+    ASSERT(!m_inScriptExecutionContextDestructor);
+    m_destructionObservers.add(&observer);
+}
+
+void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
+{
+    m_destructionObservers.remove(&observer);
+}
+
+bool ScriptExecutionContext::isJSExecutionForbidden()
+{
+    return !m_vm || m_vm->executionForbidden();
+}
+
+extern "C" void* Bun__getVM();
+
+bool ScriptExecutionContext::isContextThread()
+{
+    auto clientData = WebCore::clientData(vm());
+    return clientData && clientData->bunVM == Bun__getVM();
+}
+
+bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+{
+    ScriptExecutionContext* context = nullptr;
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        context = allScriptExecutionContextsMap().get(identifier);
+
+        if (!context)
+            return false;
+
+        if (!context->isContextThread()) {
+            context->postTaskConcurrently(WTFMove(task));
+            return true;
+        }
+    }
+
+    task(*context);
+    return true;
+}
+
+bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(1);
+
+    if (!context) {
+        return false;
+    }
+
+    context->postTaskConcurrently(WTFMove(task));
+    return true;
+}
+
+void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
+{
+    ASSERT(isContextThread());
+    m_processMessageWithMessagePortsSoonHandlers.append(WTFMove(completionHandler));
+
+    if (m_willProcessMessageWithMessagePortsSoon) {
+        return;
+    }
+
+    m_willProcessMessageWithMessagePortsSoon = true;
+
+    postTask([](ScriptExecutionContext& context) {
+        context.dispatchMessagePortEvents();
+    });
+}
+
+void ScriptExecutionContext::dispatchMessagePortEvents()
+{
+    ASSERT(isContextThread());
+    checkConsistency();
+
+    ASSERT(m_willprocessMessageWithMessagePortsSoon);
+    m_willProcessMessageWithMessagePortsSoon = false;
+
+    auto completionHandlers = std::exchange(m_processMessageWithMessagePortsSoonHandlers, Vector<CompletionHandler<void()>> {});
+
+    // Make a frozen copy of the ports so we can iterate while new ones might be added or destroyed.
+    for (auto* messagePort : copyToVector(m_messagePorts)) {
+        // The port may be destroyed, and another one created at the same address,
+        // but this is harmless. The worst that can happen as a result is that
+        // dispatchMessages() will be called needlessly.
+        if (m_messagePorts.contains(messagePort) && messagePort->started())
+            messagePort->dispatchMessages();
+    }
+
+    for (auto& completionHandler : completionHandlers)
+        completionHandler();
+}
+
+void ScriptExecutionContext::checkConsistency() const
+{
+    for (auto* messagePort : m_messagePorts)
+        ASSERT(messagePort->scriptExecutionContext() == this);
+
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
+
+    // for (auto* activeDOMObject : m_activeDOMObjects) {
+    //     ASSERT(activeDOMObject->scriptExecutionContext() == this);
+    //     activeDOMObject->assertSuspendIfNeededWasCalled();
+    // }
+}
+
+void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)
+{
+    ASSERT(isContextThread());
+
+    m_messagePorts.add(&messagePort);
+}
+
+void ScriptExecutionContext::destroyedMessagePort(MessagePort& messagePort)
+{
+    ASSERT(isContextThread());
+
+    m_messagePorts.remove(&messagePort);
 }
 
 us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
@@ -100,17 +266,17 @@ us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
     return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }
 
+ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
+{
+    return ++lastUniqueIdentifier;
+}
+
 void ScriptExecutionContext::regenerateIdentifier()
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-
-    ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().remove(m_identifier);
 
     m_identifier = ++lastUniqueIdentifier;
 
-    ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().add(m_identifier, this);
+    addToContextsMap();
 }
 
 void ScriptExecutionContext::addToContextsMap()
@@ -125,6 +291,13 @@ void ScriptExecutionContext::removeFromContextsMap()
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().remove(m_identifier);
+}
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
+{
+    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
+        return nullptr;
+    return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
 }
 
 }

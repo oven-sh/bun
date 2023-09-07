@@ -1,7 +1,7 @@
 const boring = @import("./deps/boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 const builtin = @import("builtin");
 var loaded = false;
@@ -65,7 +65,8 @@ export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
-    @memset(@ptrCast([*]u8, ptr), 0, bun.Mimalloc.mi_usable_size(ptr));
+    const len = bun.Mimalloc.mi_usable_size(ptr);
+    @memset(@as([*]u8, @ptrCast(ptr))[0..len], 0);
     bun.Mimalloc.mi_free(ptr);
 }
 

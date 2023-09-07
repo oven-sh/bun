@@ -3,7 +3,7 @@ pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;
 pub const CodePoint = i32;
-const bun = @import("bun");
+const bun = @import("root").bun;
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
@@ -15,7 +15,7 @@ pub const PathString = packed struct {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = @import("bun").JSC;
+    const JSC = @import("root").bun.JSC;
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
             JSC.JSError(JSC.getAllocator(global), "Only path strings are supported for now", .{}, global, exception);
@@ -31,6 +31,10 @@ pub const PathString = packed struct {
         return this.toValue().asObjectRef();
     }
 
+    pub fn estimatedSize(this: *const PathString) usize {
+        return @as(usize, this.len);
+    }
+
     pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         var zig_str = JSC.ZigString.init(this.slice());
         zig_str.detectEncoding();
@@ -40,20 +44,20 @@ pub const PathString = packed struct {
 
     pub inline fn slice(this: anytype) string {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
-        return @intToPtr([*]u8, @intCast(usize, this.ptr))[0..this.len];
+        return @as([*]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len];
     }
 
     pub inline fn sliceAssumeZ(this: anytype) stringZ {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
-        return @intToPtr([*:0]u8, @intCast(usize, this.ptr))[0..this.len :0];
+        return @as([*:0]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len :0];
     }
 
     pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 
-        return @This(){
-            .ptr = @truncate(PointerIntType, @ptrToInt(str.ptr)),
-            .len = @truncate(PathInt, str.len),
+        return .{
+            .ptr = @as(PointerIntType, @truncate(@intFromPtr(str.ptr))),
+            .len = @as(PathInt, @truncate(str.len)),
         };
     }
 
@@ -78,20 +82,20 @@ pub const HashedString = struct {
     len: u32,
     hash: u32,
 
-    pub const empty = HashedString{ .ptr = @intToPtr([*]const u8, 0xDEADBEEF), .len = 0, .hash = 0 };
+    pub const empty = HashedString{ .ptr = @as([*]const u8, @ptrFromInt(0xDEADBEEF)), .len = 0, .hash = 0 };
 
     pub fn init(buf: string) HashedString {
         return HashedString{
             .ptr = buf.ptr,
-            .len = @truncate(u32, buf.len),
-            .hash = @truncate(u32, std.hash.Wyhash.hash(0, buf)),
+            .len = @as(u32, @truncate(buf.len)),
+            .hash = @as(u32, @truncate(bun.hash(buf))),
         };
     }
 
     pub fn initNoHash(buf: string) HashedString {
         return HashedString{
             .ptr = buf.ptr,
-            .len = @truncate(u32, buf.len),
+            .len = @as(u32, @truncate(buf.len)),
             .hash = 0,
         };
     }
@@ -106,7 +110,7 @@ pub const HashedString = struct {
                 return ((@max(this.hash, other.hash) > 0 and this.hash == other.hash) or (this.ptr == other.ptr)) and this.len == other.len;
             },
             else => {
-                return @as(usize, this.len) == other.len and @truncate(u32, std.hash.Wyhash.hash(0, other[0..other.len])) == this.hash;
+                return @as(usize, this.len) == other.len and @as(u32, @truncate(bun.hash(other[0..other.len]))) == this.hash;
             },
         }
     }

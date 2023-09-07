@@ -1,9 +1,0 @@
-{
-  "zig_exe_path": "/build/zig/zig",
-  "enable_snippets": true,
-  "warn_style": false,
-  "enable_semantic_tokens": true,
-  "operator_completions": true,
-  "include_at_in_builtins": false,
-  "max_detail_length": 1048576
-}

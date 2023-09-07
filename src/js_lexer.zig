@@ -1,10 +1,10 @@
 const std = @import("std");
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
 const js_ast = bun.JSAst;
 
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -36,6 +36,26 @@ fn notimpl() noreturn {
 
 pub var emptyJavaScriptString = ([_]u16{0});
 
+pub const JSXPragma = struct {
+    _jsx: js_ast.Span = .{},
+    _jsxFrag: js_ast.Span = .{},
+    _jsxRuntime: js_ast.Span = .{},
+    _jsxImportSource: js_ast.Span = .{},
+
+    pub fn jsx(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsx.text.len > 0) this._jsx else null;
+    }
+    pub fn jsxFrag(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxFrag.text.len > 0) this._jsxFrag else null;
+    }
+    pub fn jsxRuntime(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxRuntime.text.len > 0) this._jsxRuntime else null;
+    }
+    pub fn jsxImportSource(this: *const JSXPragma) ?js_ast.Span {
+        return if (this._jsxImportSource.text.len > 0) this._jsxImportSource else null;
+    }
+};
+
 pub const JSONOptions = struct {
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
@@ -54,6 +74,19 @@ pub const JSONOptions = struct {
     /// mark as originally for a macro to enable inlining
     was_originally_macro: bool = false,
 };
+
+pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var source = logger.Source.initEmptyFile("");
+    var lexer = try NewLexer(.{}).init(&log, source, allocator);
+    defer lexer.deinit();
+
+    var buf = std.ArrayList(u16).init(allocator);
+    try lexer.decodeEscapeSequences(0, bytes, @TypeOf(buf), &buf);
+
+    return buf.items;
+}
 
 pub fn NewLexer(
     comptime json_options: JSONOptions,
@@ -92,7 +125,7 @@ fn NewLexer_(
         const is_json = json_options.is_json;
         const json = json_options;
         const JSONBool = if (is_json) bool else void;
-        const JSONBoolDefault: JSONBool = if (is_json) true else void{};
+        const JSONBoolDefault: JSONBool = if (is_json) true else {};
 
         pub const Error = error{
             UTF8Fail,
@@ -124,11 +157,10 @@ fn NewLexer_(
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
         comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
-        all_original_comments: ?[]js_ast.G.Comment = null,
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
-        jsx_factory_pragma_comment: ?js_ast.Span = null,
-        jsx_fragment_pragma_comment: ?js_ast.Span = null,
+        jsx_pragma: JSXPragma = .{},
+        bun_pragma: bool = false,
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
@@ -145,6 +177,8 @@ fn NewLexer_(
         /// Only used for JSON stringification when bundling
         /// This is a zero-bit type unless we're parsing JSON.
         is_ascii_only: JSONBool = JSONBoolDefault,
+        track_comments: bool = false,
+        all_comments: std.ArrayList(logger.Range),
 
         pub fn clone(self: *const LexerType) LexerType {
             return LexerType{
@@ -163,12 +197,10 @@ fn NewLexer_(
                 .is_legacy_octal_literal = self.is_legacy_octal_literal,
                 .is_log_disabled = self.is_log_disabled,
                 .comments_to_preserve_before = self.comments_to_preserve_before,
-                .all_original_comments = self.all_original_comments,
                 .code_point = self.code_point,
                 .identifier = self.identifier,
                 .regex_flags_start = self.regex_flags_start,
-                .jsx_factory_pragma_comment = self.jsx_factory_pragma_comment,
-                .jsx_fragment_pragma_comment = self.jsx_fragment_pragma_comment,
+                .jsx_pragma = self.jsx_pragma,
                 .source_mapping_url = self.source_mapping_url,
                 .number = self.number,
                 .rescan_close_brace_as_template_token = self.rescan_close_brace_as_template_token,
@@ -179,6 +211,7 @@ fn NewLexer_(
                 .string_literal = self.string_literal,
                 .string_literal_is_ascii = self.string_literal_is_ascii,
                 .is_ascii_only = self.is_ascii_only,
+                .all_comments = self.all_comments,
             };
         }
 
@@ -254,10 +287,13 @@ fn NewLexer_(
         }
 
         pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
-            return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
+            return @intFromEnum(lexer.token) >= @intFromEnum(T.t_identifier);
         }
 
-        pub fn deinit(_: *LexerType) void {}
+        pub fn deinit(this: *LexerType) void {
+            this.all_comments.clearAndFree();
+            this.comments_to_preserve_before.clearAndFree();
+        }
 
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
@@ -281,7 +317,7 @@ fn NewLexer_(
 
                         // Convert '\r\n' into '\n'
                         const next_i: usize = iter.i + 1;
-                        iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+                        iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -384,10 +420,10 @@ fn NewLexer_(
                                     },
                                 }
 
-                                iter.c = @intCast(i32, value);
+                                iter.c = @as(i32, @intCast(value));
                                 if (is_bad) {
                                     lexer.addRangeError(
-                                        logger.Range{ .loc = .{ .start = @intCast(i32, octal_start) }, .len = @intCast(i32, iter.i - octal_start) },
+                                        logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
                                         "Invalid legacy octal literal",
                                         .{},
                                         false,
@@ -499,7 +535,7 @@ fn NewLexer_(
 
                                     if (is_out_of_range) {
                                         try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, ((iter.i + start) - hex_start)) },
+                                            .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast(((iter.i + start) - hex_start))) },
                                             "Unicode escape sequence is out of range",
                                             .{},
                                             true,
@@ -539,7 +575,7 @@ fn NewLexer_(
                                     }
                                 }
 
-                                iter.c = @truncate(CodePoint, value);
+                                iter.c = @as(CodePoint, @truncate(value));
                             },
                             '\r' => {
                                 if (comptime is_json) {
@@ -549,7 +585,7 @@ fn NewLexer_(
 
                                 // Make sure Windows CRLF counts as a single newline
                                 const next_i: usize = iter.i + 1;
-                                iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+                                iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
 
                                 // Ignore line continuations. A line continuation is not an escaped newline.
                                 continue;
@@ -583,13 +619,13 @@ fn NewLexer_(
                 switch (iter.c) {
                     -1 => return try lexer.addDefaultError("Unexpected end of file"),
                     0...0xFFFF => {
-                        buf.append(@intCast(u16, iter.c)) catch unreachable;
+                        buf.append(@as(u16, @intCast(iter.c))) catch unreachable;
                     },
                     else => {
                         iter.c -= 0x10000;
                         buf.ensureUnusedCapacity(2) catch unreachable;
-                        buf.appendAssumeCapacity(@intCast(u16, 0xD800 + ((iter.c >> 10) & 0x3FF)));
-                        buf.appendAssumeCapacity(@intCast(u16, 0xDC00 + (iter.c & 0x3FF)));
+                        buf.appendAssumeCapacity(@as(u16, @intCast(0xD800 + ((iter.c >> 10) & 0x3FF))));
+                        buf.appendAssumeCapacity(@as(u16, @intCast(0xDC00 + (iter.c & 0x3FF))));
                     },
                 }
             }
@@ -674,11 +710,11 @@ fn NewLexer_(
                             if (lexer.code_point == '{') {
                                 suffix_len = 2;
                                 lexer.step();
-                                if (lexer.rescan_close_brace_as_template_token) {
-                                    lexer.token = T.t_template_middle;
-                                } else {
-                                    lexer.token = T.t_template_head;
-                                }
+                                lexer.token = if (lexer.rescan_close_brace_as_template_token)
+                                    T.t_template_middle
+                                else
+                                    T.t_template_head;
+
                                 break :stringLiteral;
                             }
                             continue :stringLiteral;
@@ -698,7 +734,7 @@ fn NewLexer_(
                             needs_slow_path = true;
                         } else if (is_json and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
-                        } else if (comptime quote == '"' or quote == '\'') {
+                        } else if (comptime (quote == '"' or quote == '\'') and Environment.isNative) {
                             const remainder = lexer.source.contents[lexer.current..];
                             if (remainder.len >= 4096) {
                                 lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse {
@@ -763,18 +799,18 @@ fn NewLexer_(
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
         inline fn nextCodepoint(it: *LexerType) CodePoint {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 
             const code_point = switch (slice.len) {
                 0 => -1,
                 1 => @as(CodePoint, slice[0]),
-                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
+                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
             };
 
             it.end = it.current;
@@ -796,7 +832,7 @@ fn NewLexer_(
             // This count is approximate because it handles "\n" and "\r\n" (the common
             // cases) but not "\r" or "\u2028" or "\u2029". Getting this wrong is harmless
             // because it's only a preallocation. The array will just grow if it's too small.
-            lexer.approximate_newline_count += @boolToInt(lexer.code_point == '\n');
+            lexer.approximate_newline_count += @intFromBool(lexer.code_point == '\n');
         }
 
         pub inline fn expect(self: *LexerType, comptime token: T) !void {
@@ -935,7 +971,7 @@ fn NewLexer_(
 
             if (!isIdentifier(identifier)) {
                 try lexer.addRangeError(
-                    .{ .loc = logger.usize2Loc(lexer.start), .len = @intCast(i32, lexer.end - lexer.start) },
+                    .{ .loc = logger.usize2Loc(lexer.start), .len = @as(i32, @intCast(lexer.end - lexer.start)) },
                     "Invalid identifier: \"{s}\"",
                     .{result.contents},
                     true,
@@ -1037,6 +1073,23 @@ fn NewLexer_(
                         try lexer.next();
                     }
                 },
+
+                .t_greater_than_equals => {
+                    lexer.token = .t_equals;
+                    lexer.start += 1;
+                    try lexer.maybeExpandEquals();
+                },
+
+                .t_greater_than_greater_than_equals => {
+                    lexer.token = .t_greater_than_equals;
+                    lexer.start += 1;
+                },
+
+                .t_greater_than_greater_than_greater_than_equals => {
+                    lexer.token = .t_greater_than_greater_than_equals;
+                    lexer.start += 1;
+                },
+
                 .t_greater_than_greater_than => {
                     lexer.token = .t_greater_than;
                     lexer.start += 1;
@@ -1047,20 +1100,6 @@ fn NewLexer_(
                     lexer.start += 1;
                 },
 
-                .t_greater_than_equals => {
-                    lexer.token = .t_equals;
-                    lexer.start += 1;
-                    try lexer.maybeExpandEquals();
-                },
-
-                .t_greater_than_greater_than_equals => {
-                    lexer.token = .t_greater_than_greater_than;
-                    lexer.start += 1;
-                },
-                .t_greater_than_greater_than_greater_than_equals => {
-                    lexer.token = .t_greater_than_greater_than_equals;
-                    lexer.start += 1;
-                },
                 else => {
                     try lexer.expected(.t_greater_than);
                 },
@@ -1069,6 +1108,7 @@ fn NewLexer_(
 
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
+            lexer.has_pure_comment_before = false;
 
             while (true) {
                 lexer.start = lexer.end;
@@ -1671,16 +1711,23 @@ fn NewLexer_(
                     },
 
                     '_', '$', 'a'...'z', 'A'...'Z' => {
+                        const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
+
+                        lexer.end = lexer.current + advance;
+                        lexer.current = lexer.end;
+
                         lexer.step();
-                        while (isIdentifierContinue(lexer.code_point)) {
-                            lexer.step();
+
+                        if (lexer.code_point >= 0x80) {
+                            while (isIdentifierContinue(lexer.code_point)) {
+                                lexer.step();
+                            }
                         }
 
                         if (lexer.code_point != '\\') {
                             // this code is so hot that if you save lexer.raw() into a temporary variable
                             // it shows up in profiling
                             lexer.identifier = lexer.raw();
-                            // switching to strings.ExactSizeMatcher doesn't seem to have an impact here
                             lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                         } else {
                             const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
@@ -1750,7 +1797,7 @@ fn NewLexer_(
 
         pub fn unexpected(lexer: *LexerType) !void {
             const found = finder: {
-                lexer.start = std.math.min(lexer.start, lexer.end);
+                lexer.start = @min(lexer.start, lexer.end);
 
                 if (lexer.start == lexer.source.contents.len) {
                     break :finder "end of file";
@@ -1759,6 +1806,7 @@ fn NewLexer_(
                 }
             };
 
+            lexer.did_panic = true;
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 
@@ -1771,29 +1819,41 @@ fn NewLexer_(
         }
 
         pub fn expectedString(self: *LexerType, text: string) !void {
-            const found = finder: {
-                if (self.source.contents.len != self.start) {
-                    break :finder self.raw();
-                } else {
-                    break :finder "end of file";
-                }
-            };
-
-            try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
+            if (self.source.contents.len != self.start) {
+                try self.addRangeError(
+                    self.range(),
+                    "Expected {s} but found \"{s}\"",
+                    .{ text, self.raw() },
+                    true,
+                );
+            } else {
+                try self.addRangeError(
+                    self.range(),
+                    "Expected {s} but found end of file",
+                    .{text},
+                    true,
+                );
+            }
         }
 
         fn scanCommentText(lexer: *LexerType) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
-            const has_preserve_annotation = text.len > 2 and text[2] == '!';
-            const is_multiline_comment = text[1] == '*';
+            const has_legal_annotation = text.len > 2 and text[2] == '!';
+            const is_multiline_comment = text.len > 1 and text[1] == '*';
+
+            if (lexer.track_comments)
+                // Save the original comment text so we can subtract comments from the
+                // character frequency analysis used by symbol minification
+                lexer.all_comments.append(lexer.range()) catch unreachable;
 
             // Omit the trailing "*/" from the checks below
-            var endCommentText = text.len;
-            if (is_multiline_comment) {
-                endCommentText -= 2;
-            }
+            const end_comment_text =
+                if (is_multiline_comment)
+                text.len - 2
+            else
+                text.len;
 
-            if (has_preserve_annotation or lexer.preserve_all_comments_before) {
+            if (has_legal_annotation or lexer.preserve_all_comments_before) {
                 if (is_multiline_comment) {
                     // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
                 }
@@ -1803,10 +1863,125 @@ fn NewLexer_(
                     .loc = lexer.loc(),
                 }) catch unreachable;
             }
+
+            // tsconfig.json doesn't care about annotations
+            if (comptime is_json)
+                return;
+
+            var rest = text[0..end_comment_text];
+            const end = rest.ptr + rest.len;
+
+            if (comptime Environment.enableSIMD) {
+                const wrapped_len = rest.len - (rest.len % strings.ascii_vector_size);
+                const comment_end = rest.ptr + wrapped_len;
+                while (rest.ptr != comment_end) {
+                    const vec: strings.AsciiVector = rest.ptr[0..strings.ascii_vector_size].*;
+
+                    // lookahead for any # or @ characters
+                    const hashtag = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '#')))));
+                    const at = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '@')))));
+
+                    if (@reduce(.Max, hashtag + at) == 1) {
+                        rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(
+                                strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
+                                    strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '@'),
+                            );
+                        }
+
+                        for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
+                            switch (c) {
+                                '@', '#' => {
+                                    const chunk = rest[i + 1 ..];
+                                    if (!lexer.has_pure_comment_before) {
+                                        if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
+                                            lexer.has_pure_comment_before = true;
+                                            continue;
+                                        }
+                                    }
+
+                                    if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
+                                        lexer.bun_pragma = true;
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
+                                            lexer.jsx_pragma._jsx = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxFrag = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxRuntime = span;
+                                        }
+                                    } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
+                                        if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
+                                            lexer.jsx_pragma._jsxImportSource = span;
+                                        }
+                                    } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
+                                        if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
+                                            lexer.source_mapping_url = span;
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
+                    rest.ptr += strings.ascii_vector_size;
+                }
+                rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
+            }
+
+            if (comptime Environment.allow_assert)
+                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
+
+            while (rest.len > 0) {
+                const c = rest[0];
+                rest = rest[1..];
+                switch (c) {
+                    '@', '#' => {
+                        const chunk = rest;
+                        const i = @intFromPtr(chunk.ptr) - @intFromPtr(text.ptr);
+                        if (!lexer.has_pure_comment_before) {
+                            if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
+                                lexer.has_pure_comment_before = true;
+                                continue;
+                            }
+                        }
+
+                        if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
+                            lexer.bun_pragma = true;
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
+                                lexer.jsx_pragma._jsx = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxFrag")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxFrag", chunk)) |span| {
+                                lexer.jsx_pragma._jsxFrag = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxRuntime")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxRuntime", chunk)) |span| {
+                                lexer.jsx_pragma._jsxRuntime = span;
+                            }
+                        } else if (strings.hasPrefixWithWordBoundary(chunk, "jsxImportSource")) {
+                            if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsxImportSource", chunk)) |span| {
+                                lexer.jsx_pragma._jsxImportSource = span;
+                            }
+                        } else if (i == 2 and strings.hasPrefixComptime(chunk, " sourceMappingURL=")) {
+                            if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
+                                lexer.source_mapping_url = span;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
         }
 
         // TODO: implement this
-        // it's too complicated to handle all the edgecases right now given the state of Zig's standard library
         pub fn removeMultilineCommentIndent(_: *LexerType, _: string, text: string) string {
             return text;
         }
@@ -1829,6 +2004,7 @@ fn NewLexer_(
                 .string_literal_is_ascii = true,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -1846,6 +2022,7 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
             lex.step();
             try lex.next();
@@ -1853,9 +2030,9 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
             var empty_string_literal: JavascriptString = &emptyJavaScriptString;
-            var lex = LexerType{
+            return LexerType{
                 .log = log,
                 .source = source,
                 .string_literal = empty_string_literal,
@@ -1863,7 +2040,12 @@ fn NewLexer_(
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
+                .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
+        }
+
+        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+            var lex = initWithoutReading(log, source, allocator);
             lex.step();
             try lex.next();
 
@@ -1902,23 +2084,24 @@ fn NewLexer_(
                         lexer.step();
 
                         var has_set_flags_start = false;
-                        const min_flag = comptime std.mem.min(u8, "dgimsuy");
-                        const max_flag = comptime std.mem.max(u8, "dgimsuy");
+                        const flag_characters = "dgimsuvy";
+                        const min_flag = comptime std.mem.min(u8, flag_characters);
+                        const max_flag = comptime std.mem.max(u8, flag_characters);
                         const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
                         var flags = RegexpFlags.initEmpty();
                         while (isIdentifierContinue(lexer.code_point)) {
                             switch (lexer.code_point) {
-                                'd', 'g', 'i', 'm', 's', 'u', 'y' => {
+                                'd', 'g', 'i', 'm', 's', 'u', 'y', 'v' => {
                                     if (!has_set_flags_start) {
-                                        lexer.regex_flags_start = @truncate(u16, lexer.end - lexer.start);
+                                        lexer.regex_flags_start = @as(u16, @truncate(lexer.end - lexer.start));
                                         has_set_flags_start = true;
                                     }
-                                    const flag = max_flag - @intCast(u8, lexer.code_point);
+                                    const flag = max_flag - @as(u8, @intCast(lexer.code_point));
                                     if (flags.isSet(flag)) {
                                         lexer.addError(
                                             lexer.current,
                                             "Duplicate flag \"{u}\" in regular expression",
-                                            .{@intCast(u21, lexer.code_point)},
+                                            .{@as(u21, @intCast(lexer.code_point))},
                                             false,
                                         );
                                     }
@@ -1930,7 +2113,7 @@ fn NewLexer_(
                                     lexer.addError(
                                         lexer.current,
                                         "Invalid flag \"{u}\" in regular expression",
-                                        .{@intCast(u21, lexer.code_point)},
+                                        .{@as(u21, @intCast(lexer.code_point))},
                                         false,
                                     );
 
@@ -1965,9 +2148,9 @@ fn NewLexer_(
             var list = std.ArrayList(u8).initCapacity(lexer.allocator, js.len) catch unreachable;
             var i: usize = 0;
             while (i < js.len) : (i += 1) {
-                var r1 = @intCast(i32, js[i]);
+                var r1 = @as(i32, @intCast(js[i]));
                 if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < js.len) {
-                    const r2 = @intCast(i32, js[i] + 1);
+                    const r2 = @as(i32, @intCast(js[i] + 1));
                     if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
                         r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
                         i += 1;
@@ -2148,7 +2331,7 @@ fn NewLexer_(
 
                     '\\' => {
                         backslash = logger.Range{ .loc = logger.Loc{
-                            .start = @intCast(i32, lexer.end),
+                            .start = @as(i32, @intCast(lexer.end)),
                         }, .len = 1 };
                         lexer.step();
 
@@ -2362,11 +2545,11 @@ fn NewLexer_(
                         break :brk strings.unicode_replacement;
                     };
 
-                    cursor.i += @intCast(u32, length) + 1;
+                    cursor.i += @as(u32, @intCast(length)) + 1;
                     cursor.width = 1;
                 } else if (tables.jsxEntity.get(entity)) |ent| {
                     cursor.c = ent;
-                    cursor.i += @intCast(u32, length) + 1;
+                    cursor.i += @as(u32, @intCast(length)) + 1;
                 }
             }
         }
@@ -2381,18 +2564,18 @@ fn NewLexer_(
                 if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, &cursor);
 
                 if (cursor.c <= 0xFFFF) {
-                    try out.append(@intCast(u16, cursor.c));
+                    try out.append(@as(u16, @intCast(cursor.c)));
                 } else {
                     cursor.c -= 0x10000;
                     try out.ensureUnusedCapacity(2);
                     (out.items.ptr + out.items.len)[0..2].* = [_]u16{
-                        @truncate(
+                        @as(
                             u16,
-                            @bitCast(u32, @as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)),
+                            @truncate(@as(u32, @bitCast(@as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)))),
                         ),
-                        @truncate(
+                        @as(
                             u16,
-                            @bitCast(u32, @as(i32, 0xDC00) + (cursor.c & 0x3FF)),
+                            @truncate(@as(u32, @bitCast(@as(i32, 0xDC00) + (cursor.c & 0x3FF)))),
                         ),
                     };
                     out.items = out.items.ptr[0 .. out.items.len + 2];
@@ -2472,7 +2655,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
+            var bytes = MutableString.initCopy(lexer.allocator, text) catch @panic("Out of memory");
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -2494,7 +2677,7 @@ fn NewLexer_(
                 end += 1;
             }
 
-            return bytes.toOwnedSliceLength(end + 1);
+            return bytes.toOwnedSliceLength(end);
         }
 
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
@@ -2781,9 +2964,9 @@ fn NewLexer_(
                     // Parse a 32-bit integer (very fast path);
                     var number: u32 = 0;
                     for (text) |c| {
-                        number = number * 10 + @intCast(u32, c - '0');
+                        number = number * 10 + @as(u32, @intCast(c - '0'));
                     }
-                    lexer.number = @intToFloat(f64, number);
+                    lexer.number = @as(f64, @floatFromInt(number));
                 } else {
                     // Parse a double-precision floating-point number
                     if (bun.parseDouble(text)) |num| {
@@ -2920,7 +3103,7 @@ pub fn isIdentifierUTF16(text: []const u16) bool {
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     const contents = source.contents;
-    if (loc.start == -1 or @intCast(usize, loc.start) >= contents.len) return logger.Range.None;
+    if (loc.start == -1 or @as(usize, @intCast(loc.start)) >= contents.len) return logger.Range.None;
 
     const iter = strings.CodepointIterator.init(contents[loc.toUsize()..]);
     var cursor = strings.CodepointIterator.Cursor{};
@@ -2930,7 +3113,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
         return r;
     }
     const text = iter.bytes;
-    const end = @intCast(u32, text.len);
+    const end = @as(u32, @intCast(text.len));
 
     if (!iter.next(&cursor)) return r;
 
@@ -2943,7 +3126,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     }
 
     if (isIdentifierStart(cursor.c) or cursor.c == '\\') {
-        defer r.len = @intCast(i32, cursor.i);
+        defer r.len = @as(i32, @intCast(cursor.i));
         while (iter.next(&cursor)) {
             if (cursor.c == '\\') {
 
@@ -2986,7 +3169,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
 }
 
 inline fn float64(num: anytype) f64 {
-    return @intToFloat(f64, num);
+    return @as(f64, @floatFromInt(num));
 }
 
 pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
@@ -3001,7 +3184,7 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
         else => return false,
     }
 
-    if (name.len > 0) {
+    if (name.len > 1) {
         for (name[1..]) |c| {
             switch (c) {
                 '0'...'9',
@@ -3018,11 +3201,127 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     return true;
 }
 
+fn latin1IdentifierContinueLength(name: []const u8) usize {
+    var remaining = name;
+    const wrap_len = 16;
+    const len_wrapped: usize = if (comptime Environment.enableSIMD) remaining.len - (remaining.len % wrap_len) else 0;
+    var wrapped = name[0..len_wrapped];
+    remaining = name[wrapped.len..];
+
+    if (comptime Environment.enableSIMD) {
+        // This is not meaningfully faster on aarch64.
+        // Earlier attempt: https://zig.godbolt.org/z/j5G8M9ooG
+        // Later: https://zig.godbolt.org/z/7Yzh7df9v
+        const Vec = @Vector(wrap_len, u8);
+
+        while (wrapped.len > 0) : (wrapped = wrapped[wrap_len..]) {
+            var other: [wrap_len]u8 = undefined;
+            const vec: [wrap_len]u8 = wrapped[0..wrap_len].*;
+            for (vec, &other) |c, *dest| {
+                dest.* = switch (c) {
+                    '0'...'9',
+                    'a'...'z',
+                    'A'...'Z',
+                    '$',
+                    '_',
+                    => 0,
+                    else => 1,
+                };
+            }
+
+            if (std.simd.firstIndexOfValue(@as(Vec, @bitCast(other)), 1)) |first| {
+                if (comptime Environment.allow_assert) {
+                    for (vec[0..first]) |c| {
+                        std.debug.assert(isIdentifierContinue(c));
+                    }
+
+                    if (vec[first] < 128)
+                        std.debug.assert(!isIdentifierContinue(vec[first]));
+                }
+
+                return @as(usize, first) +
+                    @intFromPtr(wrapped.ptr) - @intFromPtr(name.ptr);
+            }
+        }
+    }
+
+    for (remaining, 0..) |c, len| {
+        switch (c) {
+            '0'...'9',
+            'a'...'z',
+            'A'...'Z',
+            '$',
+            '_',
+            => {},
+            else => return len + len_wrapped,
+        }
+    }
+
+    return name.len;
+}
+
+pub const PragmaArg = enum {
+    no_space_first,
+    skip_space_first,
+
+    pub fn scan(kind: PragmaArg, offset_: usize, pragma: string, text_: string) ?js_ast.Span {
+        var text = text_[pragma.len..];
+        var iter = strings.CodepointIterator.init(text);
+
+        var cursor = strings.CodepointIterator.Cursor{};
+        if (!iter.next(&cursor)) {
+            return null;
+        }
+
+        var start: u32 = 0;
+
+        // One or more whitespace characters
+        if (kind == .skip_space_first) {
+            if (!isWhitespace(cursor.c)) {
+                return null;
+            }
+
+            while (isWhitespace(cursor.c)) {
+                if (!iter.next(&cursor)) {
+                    break;
+                }
+            }
+            start = cursor.i;
+            text = text[cursor.i..];
+            cursor = .{};
+            iter = strings.CodepointIterator.init(text);
+            _ = iter.next(&cursor);
+        }
+
+        var i: usize = 0;
+        while (!isWhitespace(cursor.c)) {
+            i += cursor.width;
+            if (i >= text.len) {
+                break;
+            }
+
+            if (!iter.next(&cursor)) {
+                break;
+            }
+        }
+
+        return js_ast.Span{
+            .range = logger.Range{
+                .len = @as(i32, @intCast(i)),
+                .loc = logger.Loc{
+                    .start = @as(i32, @intCast(start + @as(u32, @intCast(offset_)) + @as(u32, @intCast(pragma.len)))),
+                },
+            },
+            .text = text[0..i],
+        };
+    }
+};
+
 fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     var text = text_;
-    const star = @splat(strings.ascii_vector_size, @as(u8, '*'));
-    const carriage = @splat(strings.ascii_vector_size, @as(u8, '\r'));
-    const newline = @splat(strings.ascii_vector_size, @as(u8, '\n'));
+    const star: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '*'));
+    const carriage: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\r'));
+    const newline: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\n'));
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
@@ -3035,50 +3334,51 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         const vec: strings.AsciiVector = text.ptr[0..strings.ascii_vector_size].*;
 
         const any_significant =
-            @bitCast(V1x16, vec > strings.max_16_ascii) |
-            @bitCast(V1x16, star == vec) |
-            @bitCast(V1x16, carriage == vec) |
-            @bitCast(V1x16, newline == vec);
+            @as(V1x16, @bitCast(vec > strings.max_16_ascii)) |
+            @as(V1x16, @bitCast(star == vec)) |
+            @as(V1x16, @bitCast(carriage == vec)) |
+            @as(V1x16, @bitCast(newline == vec));
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @bitCast(u16, any_significant);
+            const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
-            return @truncate(u32, first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr)));
+            return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;
     }
 
-    return @truncate(u32, @ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
+    return @as(u32, @truncate(@intFromPtr(text.ptr) - @intFromPtr(text_.ptr)));
 }
 
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     var text = text_;
-    const quote_ = @splat(strings.ascii_vector_size, @as(u8, quote));
-    const backslash = @splat(strings.ascii_vector_size, @as(u8, '\\'));
+    const quote_: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, quote));
+    const backslash: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\\'));
     const V1x16 = strings.AsciiVectorU1;
 
     while (text.len >= strings.ascii_vector_size) {
         const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
 
         const any_significant =
-            @bitCast(V1x16, vec > strings.max_16_ascii) |
-            @bitCast(V1x16, vec < strings.min_16_ascii) |
-            @bitCast(V1x16, quote_ == vec) |
-            @bitCast(V1x16, backslash == vec);
+            @as(V1x16, @bitCast(vec > strings.max_16_ascii)) |
+            @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
+            @as(V1x16, @bitCast(quote_ == vec)) |
+            @as(V1x16, @bitCast(backslash == vec));
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @bitCast(u16, any_significant);
+            const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
-            return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
+            return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
         }
         text = text[strings.ascii_vector_size..];
     }
 
     return null;
 }
+
 test "isIdentifier" {
     const expect = std.testing.expect;
     try expect(!isIdentifierStart(0x2029));

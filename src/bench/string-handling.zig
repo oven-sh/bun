@@ -1,4 +1,4 @@
-const strings = @import("bun").strings;
+const strings = @import("root").bun.strings;
 const std = @import("std");
 
 pub fn main() anyerror!void {
@@ -34,7 +34,7 @@ pub fn main() anyerror!void {
         var i: usize = 0;
         while (j < amount) : (j += 1) {
             i = 0;
-            @memcpy(duped.ptr, contents.ptr, contents.len);
+            @memcpy(duped[0..contents.len], contents);
         }
 
         if (index == std.math.maxInt(usize)) {

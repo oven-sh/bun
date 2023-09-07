@@ -93,7 +93,7 @@ pub const Reader = struct {
                     },
                     .Enum => |type_info| {
                         const enum_values = try this.read(length * @sizeOf(type_info.tag_type));
-                        return @ptrCast([*]T, enum_values.ptr)[0..length];
+                        return @as([*]T, @ptrCast(enum_values.ptr))[0..length];
                     },
                     else => {},
                 }
@@ -156,7 +156,7 @@ pub const Reader = struct {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
                                 var slice = try this.read(sizeof);
-                                return @ptrCast(*align(1) T, slice[0..sizeof]).*;
+                                return @as(*align(1) T, @ptrCast(slice[0..sizeof])).*;
                             },
                             else => {},
                         }
@@ -201,7 +201,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub inline fn writeEnum(this: *Self, val: anytype) !void {
-            try this.writeInt(@enumToInt(val));
+            try this.writeInt(@intFromEnum(val));
         }
 
         pub fn writeValue(this: *Self, comptime SliceType: type, slice: SliceType) !void {
@@ -264,7 +264,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub fn writeArray(this: *Self, comptime T: type, slice: anytype) !void {
-            try this.writeInt(@truncate(u32, slice.len));
+            try this.writeInt(@as(u32, @truncate(slice.len)));
 
             switch (T) {
                 u8 => {
@@ -362,10 +362,19 @@ pub const Api = struct {
         /// napi
         napi,
 
+        /// base64
+        base64,
+
+        /// dataurl
+        dataurl,
+
+        /// text
+        text,
+
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -382,8 +391,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -409,8 +418,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -639,8 +648,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -790,12 +799,12 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
-    pub const Platform = enum(u8) {
+    pub const Target = enum(u8) {
         _none,
         /// browser
         browser,
@@ -811,8 +820,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -829,8 +838,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -847,8 +856,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -887,9 +896,9 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.factory), this.factory);
             try writer.writeEnum(this.runtime);
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
-            try writer.writeInt(@as(u8, @boolToInt(this.development)));
+            try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
-            try writer.writeInt(@as(u8, @boolToInt(this.react_fast_refresh)));
+            try writer.writeInt(@as(u8, @intFromBool(this.react_fast_refresh)));
         }
     };
 
@@ -1115,8 +1124,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1130,8 +1139,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1157,7 +1166,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeEnum(this.kind);
             try writer.writeValue(@TypeOf(this.path), this.path);
-            try writer.writeInt(@as(u8, @boolToInt(this.dynamic)));
+            try writer.writeInt(@as(u8, @intFromBool(this.dynamic)));
         }
     };
 
@@ -1237,8 +1246,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -1396,7 +1405,7 @@ pub const Api = struct {
             }
             if (this.development) |development| {
                 try writer.writeFieldID(5);
-                try writer.writeInt(@as(u8, @boolToInt(development)));
+                try writer.writeInt(@as(u8, @intFromBool(development)));
             }
             if (this.client_css_in_js) |client_css_in_js| {
                 try writer.writeFieldID(6);
@@ -1570,7 +1579,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeValue(@TypeOf(this.package), this.package);
             try writer.writeValue(@TypeOf(this.display_name), this.display_name);
-            try writer.writeInt(@as(u8, @boolToInt(this.development)));
+            try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.entry_points), this.entry_points);
             try writer.writeEnum(this.client_css_in_js);
             try writer.writeValue(@TypeOf(this.override_modules), this.override_modules);
@@ -1714,23 +1723,14 @@ pub const Api = struct {
         /// main_fields
         main_fields: []const []const u8,
 
-        /// platform
-        platform: ?Platform = null,
+        /// target
+        target: ?Target = null,
 
         /// serve
         serve: ?bool = null,
 
         /// extension_order
         extension_order: []const []const u8,
-
-        /// generate_node_module_bundle
-        generate_node_module_bundle: ?bool = null,
-
-        /// node_modules_bundle_path
-        node_modules_bundle_path: ?[]const u8 = null,
-
-        /// node_modules_bundle_path_server
-        node_modules_bundle_path_server: ?[]const u8 = null,
 
         /// framework
         framework: ?FrameworkConfig = null,
@@ -1805,7 +1805,7 @@ pub const Api = struct {
                         this.main_fields = try reader.readArray([]const u8);
                     },
                     15 => {
-                        this.platform = try reader.readValue(Platform);
+                        this.target = try reader.readValue(Target);
                     },
                     16 => {
                         this.serve = try reader.readValue(bool);
@@ -1814,33 +1814,24 @@ pub const Api = struct {
                         this.extension_order = try reader.readArray([]const u8);
                     },
                     18 => {
-                        this.generate_node_module_bundle = try reader.readValue(bool);
-                    },
-                    19 => {
-                        this.node_modules_bundle_path = try reader.readValue([]const u8);
-                    },
-                    20 => {
-                        this.node_modules_bundle_path_server = try reader.readValue([]const u8);
-                    },
-                    21 => {
                         this.framework = try reader.readValue(FrameworkConfig);
                     },
-                    22 => {
+                    19 => {
                         this.router = try reader.readValue(RouteConfig);
                     },
-                    23 => {
+                    20 => {
                         this.no_summary = try reader.readValue(bool);
                     },
-                    24 => {
+                    21 => {
                         this.disable_hmr = try reader.readValue(bool);
                     },
-                    25 => {
+                    22 => {
                         this.port = try reader.readValue(u16);
                     },
-                    26 => {
+                    23 => {
                         this.log_level = try reader.readValue(MessageLevel);
                     },
-                    27 => {
+                    24 => {
                         this.source_map = try reader.readValue(SourceMapMode);
                     },
                     else => {
@@ -1878,7 +1869,7 @@ pub const Api = struct {
             }
             if (this.preserve_symlinks) |preserve_symlinks| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @boolToInt(preserve_symlinks)));
+                try writer.writeInt(@as(u8, @intFromBool(preserve_symlinks)));
             }
             if (this.entry_points) |entry_points| {
                 try writer.writeFieldID(8);
@@ -1886,7 +1877,7 @@ pub const Api = struct {
             }
             if (this.write) |write| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @boolToInt(write)));
+                try writer.writeInt(@as(u8, @intFromBool(write)));
             }
             if (this.inject) |inject| {
                 try writer.writeFieldID(10);
@@ -1908,56 +1899,44 @@ pub const Api = struct {
                 try writer.writeFieldID(14);
                 try writer.writeArray([]const u8, main_fields);
             }
-            if (this.platform) |platform| {
+            if (this.target) |target| {
                 try writer.writeFieldID(15);
-                try writer.writeEnum(platform);
+                try writer.writeEnum(target);
             }
             if (this.serve) |serve| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @boolToInt(serve)));
+                try writer.writeInt(@as(u8, @intFromBool(serve)));
             }
             if (this.extension_order) |extension_order| {
                 try writer.writeFieldID(17);
                 try writer.writeArray([]const u8, extension_order);
             }
-            if (this.generate_node_module_bundle) |generate_node_module_bundle| {
-                try writer.writeFieldID(18);
-                try writer.writeInt(@as(u8, @boolToInt(generate_node_module_bundle)));
-            }
-            if (this.node_modules_bundle_path) |node_modules_bundle_path| {
-                try writer.writeFieldID(19);
-                try writer.writeValue(@TypeOf(node_modules_bundle_path), node_modules_bundle_path);
-            }
-            if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
-                try writer.writeFieldID(20);
-                try writer.writeValue(@TypeOf(node_modules_bundle_path_server), node_modules_bundle_path_server);
-            }
             if (this.framework) |framework| {
-                try writer.writeFieldID(21);
+                try writer.writeFieldID(18);
                 try writer.writeValue(@TypeOf(framework), framework);
             }
             if (this.router) |router| {
-                try writer.writeFieldID(22);
+                try writer.writeFieldID(19);
                 try writer.writeValue(@TypeOf(router), router);
             }
             if (this.no_summary) |no_summary| {
-                try writer.writeFieldID(23);
-                try writer.writeInt(@as(u8, @boolToInt(no_summary)));
+                try writer.writeFieldID(20);
+                try writer.writeInt(@as(u8, @intFromBool(no_summary)));
             }
             if (this.disable_hmr) |disable_hmr| {
-                try writer.writeFieldID(24);
-                try writer.writeInt(@as(u8, @boolToInt(disable_hmr)));
+                try writer.writeFieldID(21);
+                try writer.writeInt(@as(u8, @intFromBool(disable_hmr)));
             }
             if (this.port) |port| {
-                try writer.writeFieldID(25);
+                try writer.writeFieldID(22);
                 try writer.writeInt(port);
             }
             if (this.log_level) |log_level| {
-                try writer.writeFieldID(26);
+                try writer.writeFieldID(23);
                 try writer.writeEnum(log_level);
             }
             if (this.source_map) |source_map| {
-                try writer.writeFieldID(27);
+                try writer.writeFieldID(24);
                 try writer.writeEnum(source_map);
             }
             try writer.endMessage();
@@ -1974,8 +1953,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2138,17 +2117,22 @@ pub const Api = struct {
         /// imports
         imports: []const ScannedImport,
 
+        /// errors
+        errors: []const Message,
+
         pub fn decode(reader: anytype) anyerror!ScanResult {
             var this = std.mem.zeroes(ScanResult);
 
             this.exports = try reader.readArray([]const u8);
             this.imports = try reader.readArray(ScannedImport);
+            this.errors = try reader.readArray(Message);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeArray([]const u8, this.exports);
             try writer.writeArray(ScannedImport, this.imports);
+            try writer.writeArray(Message, this.errors);
         }
     };
 
@@ -2201,8 +2185,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2216,8 +2200,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2287,8 +2271,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2418,7 +2402,7 @@ pub const Api = struct {
             }
             if (this.build) |build| {
                 try writer.writeFieldID(2);
-                try writer.writeInt(@as(u8, @boolToInt(build)));
+                try writer.writeInt(@as(u8, @intFromBool(build)));
             }
             try writer.endMessage();
         }
@@ -2494,8 +2478,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2527,8 +2511,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2545,8 +2529,8 @@ pub const Api = struct {
 
         _,
 
-        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
-            return try std.json.stringify(@tagName(self), opts, o);
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
         }
     };
 
@@ -2892,6 +2876,12 @@ pub const Api = struct {
         /// global_bin_dir
         global_bin_dir: ?[]const u8 = null,
 
+        /// frozen_lockfile
+        frozen_lockfile: ?bool = null,
+
+        /// exact
+        exact: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2955,6 +2945,12 @@ pub const Api = struct {
                     18 => {
                         this.global_bin_dir = try reader.readValue([]const u8);
                     },
+                    19 => {
+                        this.frozen_lockfile = try reader.readValue(bool);
+                    },
+                    20 => {
+                        this.exact = try reader.readValue(bool);
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -2986,35 +2982,35 @@ pub const Api = struct {
             }
             if (this.dry_run) |dry_run| {
                 try writer.writeFieldID(6);
-                try writer.writeInt(@as(u8, @boolToInt(dry_run)));
+                try writer.writeInt(@as(u8, @intFromBool(dry_run)));
             }
             if (this.force) |force| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @boolToInt(force)));
+                try writer.writeInt(@as(u8, @intFromBool(force)));
             }
             if (this.save_dev) |save_dev| {
                 try writer.writeFieldID(8);
-                try writer.writeInt(@as(u8, @boolToInt(save_dev)));
+                try writer.writeInt(@as(u8, @intFromBool(save_dev)));
             }
             if (this.save_optional) |save_optional| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @boolToInt(save_optional)));
+                try writer.writeInt(@as(u8, @intFromBool(save_optional)));
             }
             if (this.save_peer) |save_peer| {
                 try writer.writeFieldID(10);
-                try writer.writeInt(@as(u8, @boolToInt(save_peer)));
+                try writer.writeInt(@as(u8, @intFromBool(save_peer)));
             }
             if (this.save_lockfile) |save_lockfile| {
                 try writer.writeFieldID(11);
-                try writer.writeInt(@as(u8, @boolToInt(save_lockfile)));
+                try writer.writeInt(@as(u8, @intFromBool(save_lockfile)));
             }
             if (this.production) |production| {
                 try writer.writeFieldID(12);
-                try writer.writeInt(@as(u8, @boolToInt(production)));
+                try writer.writeInt(@as(u8, @intFromBool(production)));
             }
             if (this.save_yarn_lockfile) |save_yarn_lockfile| {
                 try writer.writeFieldID(13);
-                try writer.writeInt(@as(u8, @boolToInt(save_yarn_lockfile)));
+                try writer.writeInt(@as(u8, @intFromBool(save_yarn_lockfile)));
             }
             if (this.native_bin_links) |native_bin_links| {
                 try writer.writeFieldID(14);
@@ -3022,11 +3018,11 @@ pub const Api = struct {
             }
             if (this.disable_cache) |disable_cache| {
                 try writer.writeFieldID(15);
-                try writer.writeInt(@as(u8, @boolToInt(disable_cache)));
+                try writer.writeInt(@as(u8, @intFromBool(disable_cache)));
             }
             if (this.disable_manifest_cache) |disable_manifest_cache| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @boolToInt(disable_manifest_cache)));
+                try writer.writeInt(@as(u8, @intFromBool(disable_manifest_cache)));
             }
             if (this.global_dir) |global_dir| {
                 try writer.writeFieldID(17);
@@ -3036,7 +3032,170 @@ pub const Api = struct {
                 try writer.writeFieldID(18);
                 try writer.writeValue(@TypeOf(global_bin_dir), global_bin_dir);
             }
+            if (this.frozen_lockfile) |frozen_lockfile| {
+                try writer.writeFieldID(19);
+                try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
+            }
+            if (this.exact) |exact| {
+                try writer.writeFieldID(20);
+                try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
             try writer.endMessage();
+        }
+    };
+
+    pub const ClientServerModule = struct {
+        /// moduleId
+        module_id: u32 = 0,
+
+        /// inputName
+        input_name: StringPointer,
+
+        /// assetName
+        asset_name: StringPointer,
+
+        /// exportNames
+        export_names: StringPointer,
+
+        pub fn decode(reader: anytype) anyerror!ClientServerModule {
+            var this = std.mem.zeroes(ClientServerModule);
+
+            this.module_id = try reader.readValue(u32);
+            this.input_name = try reader.readValue(StringPointer);
+            this.asset_name = try reader.readValue(StringPointer);
+            this.export_names = try reader.readValue(StringPointer);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.module_id);
+            try writer.writeValue(@TypeOf(this.input_name), this.input_name);
+            try writer.writeValue(@TypeOf(this.asset_name), this.asset_name);
+            try writer.writeValue(@TypeOf(this.export_names), this.export_names);
+        }
+    };
+
+    pub const ClientServerModuleManifest = struct {
+        /// version
+        version: u32 = 0,
+
+        /// clientModules
+        client_modules: []const ClientServerModule,
+
+        /// serverModules
+        server_modules: []const ClientServerModule,
+
+        /// ssrModules
+        ssr_modules: []const ClientServerModule,
+
+        /// exportNames
+        export_names: []const StringPointer,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!ClientServerModuleManifest {
+            var this = std.mem.zeroes(ClientServerModuleManifest);
+
+            this.version = try reader.readValue(u32);
+            this.client_modules = try reader.readArray(ClientServerModule);
+            this.server_modules = try reader.readArray(ClientServerModule);
+            this.ssr_modules = try reader.readArray(ClientServerModule);
+            this.export_names = try reader.readArray(StringPointer);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.version);
+            try writer.writeArray(ClientServerModule, this.client_modules);
+            try writer.writeArray(ClientServerModule, this.server_modules);
+            try writer.writeArray(ClientServerModule, this.ssr_modules);
+            try writer.writeArray(StringPointer, this.export_names);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
+
+    pub const GetTestsRequest = struct {
+        /// path
+        path: []const u8,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsRequest {
+            var this = std.mem.zeroes(GetTestsRequest);
+
+            this.path = try reader.readValue([]const u8);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.path), this.path);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
+
+    pub const TestKind = enum(u8) {
+        _none,
+        /// test_fn
+        test_fn,
+
+        /// describe_fn
+        describe_fn,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const TestResponseItem = struct {
+        /// byteOffset
+        byte_offset: i32 = 0,
+
+        /// label
+        label: StringPointer,
+
+        /// kind
+        kind: TestKind,
+
+        pub fn decode(reader: anytype) anyerror!TestResponseItem {
+            var this = std.mem.zeroes(TestResponseItem);
+
+            this.byte_offset = try reader.readValue(i32);
+            this.label = try reader.readValue(StringPointer);
+            this.kind = try reader.readValue(TestKind);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.byte_offset);
+            try writer.writeValue(@TypeOf(this.label), this.label);
+            try writer.writeEnum(this.kind);
+        }
+    };
+
+    pub const GetTestsResponse = struct {
+        /// tests
+        tests: []const TestResponseItem,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsResponse {
+            var this = std.mem.zeroes(GetTestsResponse);
+
+            this.tests = try reader.readArray(TestResponseItem);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(TestResponseItem, this.tests);
+            try writer.writeArray(u8, this.contents);
         }
     };
 };

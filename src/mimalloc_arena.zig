@@ -7,7 +7,7 @@ const Environment = @import("./env.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
-const bun = @import("bun");
+const bun = @import("root").bun;
 
 pub const GlobalArena = struct {
     arena: Arena,
@@ -73,6 +73,60 @@ pub const GlobalArena = struct {
     }
 };
 
+const ArenaRegistry = struct {
+    arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.default_allocator),
+    mutex: std.Thread.Mutex = .{},
+
+    var registry = ArenaRegistry{};
+
+    pub fn register(arena: Arena) void {
+        if (comptime Environment.allow_assert and Environment.isNative) {
+            registry.mutex.lock();
+            defer registry.mutex.unlock();
+            var entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
+            const received = std.Thread.getCurrentId();
+
+            if (entry.found_existing) {
+                const expected = entry.value_ptr.*;
+                if (expected != received) {
+                    bun.unreachablePanic("Arena created on wrong thread! Expected: {d} received: {d}", .{
+                        expected,
+                        received,
+                    });
+                }
+            }
+            entry.value_ptr.* = received;
+        }
+    }
+
+    pub fn assert(arena: Arena) void {
+        if (comptime Environment.allow_assert and Environment.isNative) {
+            registry.mutex.lock();
+            defer registry.mutex.unlock();
+            const expected = registry.arenas.get(arena.heap.?) orelse {
+                bun.unreachablePanic("Arena not registered!", .{});
+            };
+            const received = std.Thread.getCurrentId();
+            if (expected != received) {
+                bun.unreachablePanic("Arena accessed on wrong thread! Expected: {d} received: {d}", .{
+                    expected,
+                    received,
+                });
+            }
+        }
+    }
+
+    pub fn unregister(arena: Arena) void {
+        if (comptime Environment.allow_assert and Environment.isNative) {
+            registry.mutex.lock();
+            defer registry.mutex.unlock();
+            if (!registry.arenas.swapRemove(arena.heap.?)) {
+                bun.unreachablePanic("Arena not registered!", .{});
+            }
+        }
+    }
+};
+
 pub const Arena = struct {
     heap: ?*mimalloc.Heap = null,
 
@@ -95,6 +149,9 @@ pub const Arena = struct {
     }
 
     pub fn deinit(this: *Arena) void {
+        if (comptime Environment.allow_assert) {
+            ArenaRegistry.unregister(this.*);
+        }
         mimalloc.mi_heap_destroy(this.heap.?);
 
         this.heap = null;
@@ -128,7 +185,11 @@ pub const Arena = struct {
     }
 
     pub fn init() !Arena {
-        return Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
+        const arena = Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
+        if (comptime Environment.allow_assert) {
+            ArenaRegistry.register(arena);
+        }
+        return arena;
     }
 
     pub fn gc(this: Arena, force: bool) void {
@@ -156,7 +217,7 @@ pub const Arena = struct {
         }
 
         return if (ptr) |p|
-            @ptrCast([*]u8, p)
+            @as([*]u8, @ptrCast(p))
         else
             null;
     }
@@ -165,9 +226,21 @@ pub const Arena = struct {
         return mimalloc.mi_malloc_usable_size(ptr);
     }
 
-    fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
+    fn alloc(arena: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
         var this = bun.cast(*mimalloc.Heap, arena);
-        return alignedAlloc(this, len, ptr_align);
+        // if (comptime Environment.allow_assert)
+        //     ArenaRegistry.assert(.{ .heap = this });
+        if (comptime FeatureFlags.alignment_tweak) {
+            return alignedAlloc(this, len, log2_align);
+        }
+
+        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
+
+        return alignedAlloc(
+            this,
+            len,
+            alignment,
+        );
     }
 
     fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {

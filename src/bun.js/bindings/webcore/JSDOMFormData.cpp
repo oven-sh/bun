@@ -108,6 +108,18 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMFormDataConstructor);
 
+JSC_DEFINE_CUSTOM_GETTER(jsDOMFormDataPrototype_getLength, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto* thisObject = jsDynamicCast<JSDOMFormData*>(JSValue::decode(thisValue));
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(!thisObject))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+
+    size_t length = thisObject->wrapped().count();
+    return JSValue::encode(jsNumber(length));
+}
+
 class JSDOMFormDataPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -172,6 +184,8 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
+extern "C" EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -179,6 +193,7 @@ template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMG
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMFormData::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, FormData__jsFunctionFromMultipartData, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 /* Hash table for prototype */
@@ -196,6 +211,7 @@ static const HashTableValue JSDOMFormDataPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_forEach, 1 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMFormDataPrototypeFunction_toJSON, 1 } },
+    { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMFormDataPrototype_getLength, 0 } }
 };
 
 const ClassInfo JSDOMFormDataPrototype::s_info = { "FormData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFormDataPrototype) };
@@ -270,6 +286,8 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
 }
 
+extern "C" BunString Blob__getFileNameString(void* impl);
+
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -282,10 +300,6 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
 
-    EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
     RefPtr<Blob> blobValue = nullptr;
     if (argument1.value().inherits<JSBlob>()) {
         blobValue = Blob::create(argument1.value());
@@ -294,6 +308,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
     }
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    auto filename = argument2.value().isUndefined() ? Bun::toWTFString(Blob__getFileNameString(blobValue->impl())) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
@@ -488,64 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_set, (JSGlobalObject * l
  **/
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto& impl = castedThis->wrapped();
-    size_t size = impl.count();
-    JSObject* obj;
-    if (size == 0) {
-        obj = constructEmptyObject(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
-    } else if (size < 64) {
-        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size + 1);
-    } else {
-        obj = constructEmptyObject(lexicalGlobalObject);
-    }
-
-    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("FormData"_s)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-
-    auto iter = impl.items();
-    WTF::HashSet<String> seenKeys;
-
-    auto toJSValue = [&](const DOMFormData::FormDataEntryValue& entry) -> JSValue {
-        return toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, entry);
-    };
-
-    for (auto& entry : iter) {
-        auto& key = entry.name;
-        auto& value = entry.data;
-        auto ident = Identifier::fromString(vm, key);
-        if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
-            if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
-                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-
-                JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-                    initializationScope, &deferralContext,
-                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                    2);
-
-                array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, toJSValue(value));
-                obj->putDirect(vm, ident, array, 0);
-            } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
-                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                array->push(lexicalGlobalObject, toJSValue(value));
-                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        } else {
-            seenKeys.add(key);
-            obj->putDirect(vm, ident, toJSValue(value), 0);
-        }
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+    return JSValue::encode(getInternalProperties(lexicalGlobalObject->vm(), lexicalGlobalObject, castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -644,6 +605,77 @@ static inline EncodedJSValue jsDOMFormDataPrototypeFunction_forEachCaller(JSGlob
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_forEach, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSDOMFormData>::call<jsDOMFormDataPrototypeFunction_forEachCaller>(*lexicalGlobalObject, *callFrame, "forEach");
+}
+
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObject, JSDOMFormData* castedThis)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto& impl = castedThis->wrapped();
+    size_t size = impl.count();
+    JSObject* obj;
+    if (size == 0) {
+        obj = constructEmptyObject(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, obj);
+    } else if (size < 64) {
+        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size + 1);
+    } else {
+        obj = constructEmptyObject(lexicalGlobalObject);
+    }
+
+    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("FormData"_s)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+
+    auto iter = impl.items();
+    WTF::HashSet<String> seenKeys;
+
+    auto toJSValue = [&](const DOMFormData::FormDataEntryValue& entry) -> JSValue {
+        return toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, entry);
+    };
+
+    for (auto& entry : iter) {
+        auto& key = entry.name;
+        auto& value = entry.data;
+        auto ident = Identifier::fromString(vm, key);
+        if (seenKeys.contains(key)) {
+            JSValue jsValue = obj->getDirect(vm, ident);
+            if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
+                // Make sure this runs before the deferral scope is called.
+                JSValue resultValue = toJSValue(value);
+                ensureStillAliveHere(resultValue);
+
+                JSC::JSArray* array = nullptr;
+
+                {
+                    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
+                    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+
+                    array = JSC::JSArray::tryCreateUninitializedRestricted(
+                        initializationScope, &deferralContext,
+                        lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                        2);
+                    RELEASE_ASSERT(array);
+
+                    array->initializeIndex(initializationScope, 0, jsValue);
+                    array->initializeIndex(initializationScope, 1, resultValue);
+                }
+
+                obj->putDirect(vm, ident, array, 0);
+            } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
+                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
+                array->push(lexicalGlobalObject, toJSValue(value));
+                RETURN_IF_EXCEPTION(throwScope, {});
+
+            } else {
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        } else {
+            seenKeys.add(key);
+            obj->putDirect(vm, ident, toJSValue(value), 0);
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, obj);
 }
 
 JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)

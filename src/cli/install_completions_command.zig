@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = @import("root").bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -25,7 +25,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const ParseJSON = @import("../json_parser.zig").ParseJSON;
@@ -35,9 +35,9 @@ const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("bun").clap;
+const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 
@@ -45,6 +45,11 @@ pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
 
     fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 
@@ -133,10 +138,10 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.IterableDir = found: {
-            for (std.os.argv, 0..) |arg, i| {
+            for (bun.argv(), 0..) |arg, i| {
                 if (strings.eqlComptime(std.mem.span(arg), "completions")) {
-                    if (std.os.argv.len > i + 1) {
-                        const input = std.mem.span(std.os.argv[i + 1]);
+                    if (bun.argv().len > i + 1) {
+                        const input = std.mem.span(bun.argv()[i + 1]);
 
                         if (!std.fs.path.isAbsolute(input)) {
                             completions_dir = resolve_path.joinAbs(

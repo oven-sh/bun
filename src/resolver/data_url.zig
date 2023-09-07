@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -34,7 +34,7 @@ pub const PercentEncoding = struct {
         if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
-            '%' => str.len > 3 and isHex(str[1]) and isHex(str[2]),
+            '%' => str.len >= 3 and isHex(str[1]) and isHex(str[2]),
             else => false,
         };
     }
@@ -53,7 +53,7 @@ pub const PercentEncoding = struct {
                 }
                 if (ret == null) {
                     ret = try allocator.alloc(u8, path.len);
-                    bun.copy(u8, ret, path[0..i]);
+                    bun.copy(u8, ret.?, path[0..i]);
                     ret_index = i;
                 }
 
@@ -71,45 +71,28 @@ pub const PercentEncoding = struct {
             }
         }
 
-        if (ret) |some| return allocator.shrink(some, ret_index);
+        if (ret) |some| return some[0..ret_index];
         return null;
     }
 };
 
-pub const MimeType = enum {
-    Unsupported,
-    TextCSS,
-    TextJavaScript,
-    ApplicationJSON,
-
-    pub const Map = ComptimeStringMap(MimeType, .{
-        .{ "text/css", MimeType.TextCSS },
-        .{ "text/javascript", MimeType.TextJavaScript },
-        .{ "application/json", MimeType.ApplicationJSON },
-    });
-
-    pub fn decode(str: string) MimeType {
-        // Remove things like ";charset=utf-8"
-        var mime_type = str;
-        if (strings.indexOfChar(mime_type, ';')) |semicolon| {
-            mime_type = mime_type[0..semicolon];
-        }
-
-        return Map.get(mime_type) orelse MimeType.Unsupported;
-    }
-};
-
 pub const DataURL = struct {
+    url: bun.String = bun.String.empty,
     mime_type: string,
     data: string,
     is_base64: bool = false,
 
-    pub fn parse(url: string) ?DataURL {
+    pub fn parse(url: string) !?DataURL {
         if (!strings.startsWith(url, "data:")) {
             return null;
         }
 
-        const comma = strings.indexOfChar(url, ',') orelse return null;
+        var result = try parseWithoutCheck(url);
+        return result;
+    }
+
+    pub fn parseWithoutCheck(url: string) !DataURL {
+        const comma = strings.indexOfChar(url, ',') orelse return error.InvalidDataURL;
 
         var parsed = DataURL{
             .mime_type = url["data:".len..comma],
@@ -124,7 +107,22 @@ pub const DataURL = struct {
         return parsed;
     }
 
-    pub fn decode_mime_type(d: DataURL) MimeType {
-        return MimeType.decode(d.mime_type);
+    pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
+        return bun.HTTP.MimeType.init(d.mime_type, null, null);
+    }
+
+    pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
+        const percent_decoded = PercentEncoding.decode(allocator, url.data) catch url.data orelse url.data;
+        if (url.is_base64) {
+            const len = bun.base64.decodeLen(percent_decoded);
+            var buf = try allocator.alloc(u8, len);
+            const result = bun.base64.decode(buf, percent_decoded);
+            if (result.fail or result.written != len) {
+                return error.Base64DecodeError;
+            }
+            return buf;
+        }
+
+        return allocator.dupe(u8, percent_decoded);
     }
 };

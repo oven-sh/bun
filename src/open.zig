@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,21 +17,21 @@ const opener = switch (@import("builtin").target.os.tag) {
     else => "xdg-open",
 };
 
-pub fn openURL(url: string) !void {
-    if (comptime Environment.isWasi) {
-        Output.prettyln("-> {s}", .{url});
-        Output.flush();
-        return;
-    }
+fn fallback(url: string) void {
+    Output.prettyln("-> {s}", .{url});
+    Output.flush();
+}
+
+pub fn openURL(url: string) void {
+    if (comptime Environment.isWasi) return fallback(url);
 
     var args_buf = [_]string{ opener, url };
     var child_process = std.ChildProcess.init(&args_buf, default_allocator);
     child_process.stderr_behavior = .Pipe;
     child_process.stdin_behavior = .Ignore;
     child_process.stdout_behavior = .Pipe;
-    try child_process.spawn();
-    _ = try child_process.wait();
-    return;
+    child_process.spawn() catch return fallback(url);
+    _ = child_process.wait() catch return fallback(url);
 }
 
 pub const Editor = enum(u8) {

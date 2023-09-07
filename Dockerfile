@@ -10,9 +10,9 @@ ARG ARCH=x86_64
 ARG BUILD_MACHINE_ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
-ARG WEBKIT_TAG=feb9
+ARG WEBKIT_TAG=2023-aug3-5
 ARG ZIG_TAG=jul1
-ARG ZIG_VERSION="0.11.0-dev.1783+436e99d13"
+ARG ZIG_VERSION="0.12.0-dev.163+6780a6bbf"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
 
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
@@ -20,7 +20,7 @@ ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.5
+ARG BUN_BASE_VERSION=1.0
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -284,7 +284,8 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/uws ${BUN_DIR}/src/deps/uws
+COPY packages/bun-uws ${BUN_DIR}/packages/bun-uws
+COPY packages/bun-usockets ${BUN_DIR}/packages/bun-usockets
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
@@ -293,7 +294,28 @@ COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make uws && rm -rf src/deps/uws Makefile
+    make uws && rm -rf packages/bun-uws Makefile
+
+FROM bun-base as base64
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/base64 ${BUN_DIR}/src/deps/base64
+
+WORKDIR $BUN_DIR
+
+RUN cd $BUN_DIR && \
+    make base64 && rm -rf src/deps/base64 Makefile
 
 FROM bun-base as picohttp
 
@@ -503,6 +525,33 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 
+FROM bun-base as zstd
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make zstd
+
 FROM scratch as build_release_cpp
 
 COPY --from=compile_cpp /tmp/*.o /
@@ -529,12 +578,14 @@ ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=sqlite ${BUN_DEPS_OUT_DIR}/*.o  ${BUN_DEPS_OUT_DIR}/
+COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*.a  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/

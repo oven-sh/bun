@@ -312,16 +312,16 @@ test(function headersInitMultiple() {
     ];
     assertEquals(actual, [
         [
+            "x-deno",
+            "foo, bar"
+        ],
+        [
             "set-cookie",
             "foo=bar"
         ],
         [
             "set-cookie",
             "bar=baz"
-        ],
-        [
-            "x-deno",
-            "foo, bar"
         ]
     ]);
 });
@@ -363,16 +363,16 @@ test(function headersAppendMultiple() {
     ];
     assertEquals(actual, [
         [
+            "x-deno",
+            "foo, bar"
+        ],
+        [
             "set-cookie",
             "foo=bar"
         ],
         [
             "set-cookie",
             "bar=baz"
-        ],
-        [
-            "x-deno",
-            "foo, bar"
         ]
     ]);
 });

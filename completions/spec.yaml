@@ -115,6 +115,7 @@ subcommands:
       - yarn -- "Write a yarn.lock file (yarn v1)"
       - production -- "Don't install devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
@@ -152,6 +153,7 @@ subcommands:
       - development -- "Add dependency to devDependencies"
       - d -- "Add dependency to devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
@@ -192,6 +194,7 @@ subcommands:
       - yarn -- "Write a yarn.lock file (yarn v1)"
       - production -- "Don't install devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"

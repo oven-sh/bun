@@ -98,21 +98,23 @@ import { stuff } from "foo";
 
 The full specification of this algorithm are officially documented in the [Node.js documentation](https://nodejs.org/api/modules.html); we won't rehash it here. Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
 
-Once it finds the `foo` package, Bun reads the `package.json` to determine how the package should be imported. Unless `"type": "module"` is specified, Bun assumes the package is using CommonJS and transpiles into a synchronous ES module internally. To determine the package's entrypoint, Bun first reads the `exports` field in and checks the following conditions in order:
+Once it finds the `foo` package, Bun reads the `package.json` to determine how the package should be imported. To determine the package's entrypoint, Bun first reads the `exports` field and checks for the following conditions.
 
 ```jsonc#package.json
 {
   "name": "foo",
   "exports": {
-    "bun": "./index.js",        // highest priority
+    "bun": "./index.js",
     "worker": "./index.js",
-    "module": "./index.js",
     "node": "./index.js",
-    "browser": "./index.js",
-    "default": "./index.js"     // lowest priority
+    "require": "./index.js", # if importer is CommonJS
+    "import": "./index.mjs", # if importer is ES module
+    "default": "./index.js",
   }
 }
 ```
+
+Whichever one of these conditions occurs _first_ in the `package.json` is used to determine the package's entrypoint.
 
 Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-exports) and [`"imports"`](https://nodejs.org/api/packages.html#imports). Specifying any subpath in the `"exports"` map will prevent other subpaths from being importable.
 
@@ -121,7 +123,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
   "name": "foo",
   "exports": {
     ".": "./index.js",
-    "./package.json": "./package.json" # subpath
+    "./package.json": "./package.json" // subpath
   }
 }
 ```
@@ -157,103 +159,83 @@ In the spirit of treating TypeScript as a first-class citizen, the Bun runtime w
 
 If you aren't a TypeScript user, you can create a [`jsconfig.json`](https://code.visualstudio.com/docs/languages/jsconfig) in your project root to achieve the same behavior.
 
-## Bun-style resolution
+## CommonJS
 
-{% callout %}
-**Note** — Added in Bun v0.3.0
-{% /callout %}
+Bun has native support for CommonJS modules. ES Modules are the recommended module format, but CommonJS modules are still widely used in the Node.js ecosystem. Bun supports both module formats.
 
-If no `node_modules` directory is found in the working directory or higher, Bun will abandon Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
+In Bun's JavaScript runtime, `require` can be used by both ES Modules and CommonJS modules. If the target module is an ES Module, `require` returns the module namespace object (equivalent to `import * as`). If the target module is a CommonJS module, `require` returns the `module.exports` object (as in Node.js).
 
-Under Bun-style module resolution, all imported packages are auto-installed on the fly into a [global module cache](/docs/cli/install#global-cache) during execution (the same cache used by [`bun install`](/docs/cli/install)).
+| Module Type | `require()`      | `import * as`                                                           |
+| ----------- | ---------------- | ----------------------------------------------------------------------- |
+| ES Module   | Module Namespace | Module Namespace                                                        |
+| CommonJS    | module.exports   | `default` is `module.exports`, keys of module.exports are named exports |
 
-```ts
-import { foo } from "foo"; // install `latest` version
+### What is a CommonJS module?
 
-foo();
-```
+In 2016, ECMAScript added support for [ES Modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules). ES Modules are the standard for JavaScript modules. However, millions of npm packages still use CommonJS modules.
 
-The first time you run this script, Bun will auto-install `"foo"` and cache it. The next time you run the script, it will use the cached version.
-
-### Version resolution
-
-To determine which version to install, Bun follows the following algorithm:
-
-1. Check for a `bun.lockb` file in the project root. If it exists, use the version specified in the lockfile.
-2. Otherwise, scan up the tree for a `package.json` that includes `"foo"` as a dependency. If found, use the specified semver version or version range.
-3. Otherwise, use `latest`.
-
-### Cache behavior
-
-Once a version or version range has been determined, Bun will:
-
-1. Check the module cache for a compatible version. If one exists, use it.
-2. When resolving `latest`, Bun will check if `package@latest` has been downloaded and cached in the last _24 hours_. If so, use it.
-3. Otherwise, download and install the appropriate version from the `npm` registry.
-
-### Installation
-
-Packages are installed and cached into `<cache>/<pkg>@<version>`, so multiple versions of the same package can be cached at once. Additionally, a symlink is created under `<cache>/<pkg>/<version>` to make it faster to look up all versions of a package that exist in the cache.
-
-### Version specifiers
-
-This entire resolution algorithm can be short-circuited by specifying a version or version range directly in your import statement.
+CommonJS modules are modules that use `module.exports` to export values. Typically, `require` is used to import CommonJS modules.
 
 ```ts
-import { z } from "zod@3.0.0"; // specific version
-import { z } from "zod@next"; // npm tag
-import { z } from "zod@^3.20.0"; // semver range
+// my-commonjs.cjs
+const stuff = require("./stuff");
+module.exports = { stuff };
 ```
 
-### Benefits
+The biggest difference between CommonJS and ES Modules is that CommonJS modules are synchronous, while ES Modules are asynchronous. There are other differences too, like ES Modules support top-level `await` and CommonJS modules don't. ES Modules are always in [strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode), while CommonJS modules are not. Browsers do not have native support for CommonJS modules, but they do have native support for ES Modules (`<script type="module">`). CommonJS modules are not statically analyzable, while ES Modules only allow static imports and exports.
 
-This auto-installation approach is useful for a few reasons:
+### Importing CommonJS from ESM
 
-- **Space efficiency** — Each version of a dependency only exists in one place on disk. This is a huge space and time savings compared to redundant per-project installations.
-- **Portability** — To share simple scripts and gists, your source file is _self-contained_. No need to `zip` together a directory containing your code and config files. With version specifiers in `import` statements, even a `package.json` isn't necessary.
-- **Convenience** — There's no need to run `npm install` or `bun install` before running a file or script. Just `bun run` it.
-- **Backwards compatibility** — Because Bun still respects the versions specified in `package.json` if one exists, you can switch to Bun-style resolution with a single command: `rm -rf node_modules`.
+You can `import` or `require` CommonJS modules from ESM modules.
 
-### Limitations
-
-- No Intellisense. TypeScript auto-completion in IDEs relies on the existence of type declaration files inside `node_modules`. We are investigating various solutions to this.
-- No [patch-package](https://github.com/ds300/patch-package) support
-
-<!-- - The implementation details of Bun's install cache will change between versions. Don't think of it as an API. To reliably resolve packages, use Bun's builtin APIs (such as `Bun.resolveSync` or `import.meta.resolve`) instead of relying on the filesystem directly. Bun will likely move to a binary archive format where packages may not correspond to files/folders on disk at all - so if you depend on the filesystem structure instead of the JavaScript API, your code will eventually break. -->
-
-<!-- ### Customizing behavior
-
-To prefer locally-installed versions of packages. Instead of checking npm for latest versions, you can pass the `--prefer-offline` flag to prefer locally-installed versions of packages.
-
-```bash
-$ bun run --prefer-offline my-script.ts
+```ts
+import { stuff } from "./my-commonjs.cjs";
+import Stuff from "./my-commonjs.cjs";
+const myStuff = require("./my-commonjs.cjs");
 ```
 
-This will check the install cache for installed versions of packages before checking the npm registry. If no matching version of a package is installed, only then will it check npm for the latest version.
+### Importing ESM from CommonJS
 
-#### Prefer latest
+```ts
+// this works in Bun but not Node.js
+const { stuff } = require("./my-esm.mjs");
+```
 
-To always use the latest version of a package, you can pass the `--prefer-latest` flag.
+#### Top-level await
 
-```bash
-$ bun run --prefer-latest my-script.ts
-``` -->
+If you are using top-level await, you must use `import()` to import ESM modules from CommonJS modules.
 
-### FAQ
+```ts
+import("./my-esm.js").then(({ stuff }) => {
+  // ...
+});
 
-{% details summary="How is this different from what pnpm does?" %}
+// this will throw an error if "my-esm.js" uses top-level await
+const { stuff } = require("./my-esm.js");
+```
 
-With pnpm, you have to run `pnpm install`, which creates a `node_modules` folder of symlinks for the runtime to resolve. By contrast, Bun resolves dependencies on the fly when you run a file; there's no need to run any `install` command ahead of time. Bun also doesn't create a `node_modules` folder.
+{% details summary="Low-level details of CommonJS interop in Bun" %}
 
-{% /details %}
+Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
 
-{% details summary="How is this different from Yarn Plug'N'Play does?" %}
-With Yarn, you must run `yarn install` before you run a script. By contrast, Bun resolves dependencies on the fly when you run a file; there's no need to run any `install` command ahead of time.
+### Importing CommonJS from CommonJS
 
-Yarn Plug'N'Play also uses zip files to store dependencies. This makes dependency loading [slower at runtime](https://twitter.com/jarredsumner/status/1458207919636287490), as random access reads on zip files tend to be slower than the equivalent disk lookup.
-{% /details %}
+You can `require()` CommonJS modules from CommonJS modules.
 
-{% details summary="How is this different from what Deno does?" %}
+```ts
+const { stuff } = require("./my-commonjs.cjs");
+```
 
-Deno requires an `npm:` specifier before each npm `import`, lacks support for import maps via `compilerOptions.paths` in `tsconfig.json`, and has incomplete support for `package.json` settings. Unlike Deno, Bun does not currently support URL imports.
+```js
+(function (module, exports, require) {
+  // transpiled module
+})(module, exports, require);
+```
+
+`module`, `exports`, and `require` are very much like the `module`, `exports`, and `require` in Node.js. These are assigned via a [`with scope`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with) in C++. An internal `Map` stores the `exports` object to handle cyclical `require` calls before the module is fully loaded.
+
+Once the CommonJS module is successfully evaluated, a Synthetic Module Record is created with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213) and keys of the `module.exports` object are re-exported as named exports (if the `module.exports` object is an object).
+
+When using Bun's bundler, this works differently. The bundler will wrap the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
+
 {% /details %}

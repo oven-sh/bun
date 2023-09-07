@@ -1,4 +1,4 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,13 +12,13 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("bun").HTTP;
+const HTTP = @import("root").bun.HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("bun").HTTP.Headers;
+const Headers = @import("root").bun.HTTP.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
@@ -95,7 +95,7 @@ pub const Features = struct {
 
     pub const Serializer = struct {
         inline fn shiftIndex(index: u32) !u32 {
-            return @intCast(u32, @as(Bitset.MaskInt, 1) << @intCast(Bitset.ShiftInt, index));
+            return @as(u32, @intCast(@as(Bitset.MaskInt, 1) << @as(Bitset.ShiftInt, @intCast(index))));
         }
 
         fn writeField(comptime WriterType: type, writer: WriterType, field_name: string, index: u32) !void {
@@ -200,9 +200,9 @@ pub const Event = struct {
     pub fn init(comptime name: EventName) Event {
         const millis = std.time.milliTimestamp();
 
-        const timestamp = if (millis < 0) 0 else @intCast(u64, millis);
+        const timestamp = if (millis < 0) 0 else @as(u64, @intCast(millis));
 
-        return Event{ .timestamp = timestamp, .data = @unionInit(Data, @tagName(name), void{}) };
+        return Event{ .timestamp = timestamp, .data = @unionInit(Data, @tagName(name), {}) };
     }
 };
 
@@ -239,7 +239,7 @@ pub const GenerateHeader = struct {
             return Analytics.EventListHeader{
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
-                .build_id = comptime @truncate(u32, Global.build_id),
+                .build_id = comptime @as(u32, @truncate(Global.build_id)),
                 .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
@@ -249,7 +249,7 @@ pub const GenerateHeader = struct {
             return Analytics.EventListHeader{
                 .machine_id = GenerateMachineID.forLinux() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forLinux(),
-                .build_id = comptime @truncate(u32, Global.build_id),
+                .build_id = comptime @as(u32, @truncate(Global.build_id)),
                 .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
@@ -261,7 +261,7 @@ pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
         pub fn forMac() Analytics.Platform {
-            @memset(&osversion_name, 0, osversion_name.len);
+            @memset(&osversion_name, 0);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
@@ -281,9 +281,16 @@ pub const GenerateHeader = struct {
             if (comptime Environment.isMac) {
                 platform_ = forMac();
                 return platform_.?;
+            } else if (comptime Environment.isPosix) {
+                platform_ = forLinux();
+            } else {
+                platform_ = Platform{
+                    .os = Analytics.OperatingSystem.windows,
+                    .version = &[_]u8{},
+                    .arch = platform_arch,
+                };
             }
 
-            platform_ = forLinux();
             return platform_.?;
         }
 
@@ -294,7 +301,7 @@ pub const GenerateHeader = struct {
             _ = forOS();
             const release = bun.sliceTo(&linux_os_name.release, 0);
             const sliced_string = Semver.SlicedString.init(release, release);
-            const result = Semver.Version.parse(sliced_string, bun.default_allocator);
+            const result = Semver.Version.parse(sliced_string);
             // we only care about major, minor, patch so we don't care about the string
             return result.version.fill();
         }
@@ -340,7 +347,7 @@ pub const GenerateHeader = struct {
             offset = std.mem.indexOfScalar(u8, out, '"') orelse return Analytics.Uint64{};
             out = out[0..offset];
 
-            const hash = std.hash.Wyhash.hash(0, std.mem.trim(u8, out, "\n\r "));
+            const hash = bun.hash(std.mem.trim(u8, out, "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
                 .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
@@ -357,7 +364,7 @@ pub const GenerateHeader = struct {
             defer file.close();
             var read_count = try file.read(&linux_machine_id);
 
-            const hash = std.hash.Wyhash.hash(0, std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
+            const hash = bun.hash(std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
                 .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
@@ -380,10 +387,10 @@ fn spawn() !void {}
 
 const headers_buf: string = "Content-Type binary/peechy";
 const header_entry = Headers.Kv{
-    .name = .{ .offset = 0, .length = @intCast(u32, "Content-Type".len) },
+    .name = .{ .offset = 0, .length = @as(u32, @intCast("Content-Type".len)) },
     .value = .{
         .offset = std.mem.indexOf(u8, headers_buf, "binary/peechy").?,
-        .length = @intCast(u32, "binary/peechy".len),
+        .length = @as(u32, @intCast("binary/peechy".len)),
     },
 };
 
@@ -435,7 +442,7 @@ pub const EventList = struct {
     in_buffer: MutableString,
 
     pub fn init() EventList {
-        random = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
+        random = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
         return EventList{
             .header = GenerateHeader.generate(),
             .events = std.ArrayList(Event).init(default_allocator),
@@ -465,19 +472,19 @@ pub const EventList = struct {
         var in_buffer = &this.in_buffer;
         var buffer_writer = in_buffer.writer();
         var analytics_writer = AnalyticsWriter.init(&buffer_writer);
-        const Root = @import("bun");
+        const Root = @import("root").bun;
         const start_time: i128 = if (@hasDecl(Root, "start_time"))
             Root.start_time
         else
             0;
         const now = std.time.nanoTimestamp();
 
-        this.header.session_length = @truncate(u32, @intCast(u64, (now - start_time)) / std.time.ns_per_ms);
+        this.header.session_length = @as(u32, @truncate(@as(u64, @intCast((now - start_time))) / std.time.ns_per_ms));
         this.header.feature_usage = Features.toInt();
 
         var list = Analytics.EventList{
             .header = this.header,
-            .event_count = @intCast(u32, this.events.items.len),
+            .event_count = @as(u32, @intCast(this.events.items.len)),
         };
 
         try list.encode(&analytics_writer);
@@ -540,8 +547,8 @@ pub const EventList = struct {
         }
 
         @atomicStore(bool, &is_stuck, retry_remaining == 0, .Release);
-        stuck_count += @intCast(u8, @boolToInt(retry_remaining == 0));
-        stuck_count *= @intCast(u8, @boolToInt(retry_remaining == 0));
+        stuck_count += @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
+        stuck_count *= @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
         disabled = disabled or stuck_count > 4;
 
         this.in_buffer.reset();

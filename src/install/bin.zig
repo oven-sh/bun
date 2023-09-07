@@ -3,14 +3,14 @@ const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
-const strings = @import("bun").strings;
+const strings = @import("root").bun.strings;
 const Environment = @import("../env.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
-const stringZ = @import("bun").stringZ;
+const stringZ = @import("root").bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
-const bun = @import("bun");
+const bun = @import("root").bun;
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)
@@ -18,6 +18,8 @@ const bun = @import("bun");
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
+    _padding_tag: [3]u8 = .{0} ** 3,
+
     value: Value = Value{ .none = {} },
 
     pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
@@ -56,7 +58,7 @@ pub const Bin = extern struct {
                 for (list) |*extern_string| {
                     builder.count(extern_string.slice(buf));
                 }
-                return @truncate(u32, list.len);
+                return @as(u32, @truncate(list.len));
             },
             else => {},
         }
@@ -172,7 +174,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.IterableDir.Iterator = null,
         package_name: String,
-        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
+        package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = bun.fdcast(bun.invalid_fd) },
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -257,8 +259,8 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
-        package_installed_node_modules: std.os.fd_t = std.math.maxInt(std.os.fd_t),
-        root_node_modules_folder: std.os.fd_t = std.math.maxInt(std.os.fd_t),
+        package_installed_node_modules: bun.FileDescriptor = bun.invalid_fd,
+        root_node_modules_folder: bun.FileDescriptor = bun.invalid_fd,
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -281,7 +283,7 @@ pub const Bin = extern struct {
             if (name[0] != '@') return name;
             var name_ = name;
             name_ = name[1..];
-            return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
+            return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
         }
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
@@ -290,6 +292,10 @@ pub const Bin = extern struct {
         }
 
         fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), {});
+                return;
+            }
             std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
                 // Silently ignore PathAlreadyExists
                 // Most likely, the symlink was already created by another package
@@ -320,7 +326,7 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = std.fs.Dir{ .fd = this.root_node_modules_folder };
+                const root_dir = std.fs.Dir{ .fd = bun.fdcast(this.root_node_modules_folder) };
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |err| {
                     this.err = err;
                     return;
@@ -337,7 +343,7 @@ pub const Bin = extern struct {
                 from_remain[0..dot_bin.len].* = dot_bin.*;
                 from_remain = from_remain[dot_bin.len..];
             } else {
-                if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
+                if (bun.toFD(this.global_bin_dir.fd) == bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -354,7 +360,7 @@ pub const Bin = extern struct {
                 remain[0] = std.fs.path.sep;
                 remain = remain[1..];
 
-                this.root_node_modules_folder = this.global_bin_dir.fd;
+                this.root_node_modules_folder = bun.toFD(this.global_bin_dir.fd);
             }
 
             const name = this.package_name.slice();
@@ -364,7 +370,9 @@ pub const Bin = extern struct {
             remain = remain[1..];
 
             if (comptime Environment.isWindows) {
-                @compileError("Bin.Linker.link() needs to be updated to generate .cmd files on Windows");
+                // TODO: Bin.Linker.link() needs to be updated to generate .cmd files on Windows
+                bun.todo(@src(), {});
+                return;
             }
 
             switch (this.bin.tag) {
@@ -382,7 +390,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                    const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                     remain = remain[1..];
 
                     var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -392,7 +400,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     this.setSimlinkAndPermissions(target_path, dest_path);
                 },
@@ -404,7 +412,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                    const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                     remain = remain[1..];
 
                     var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -412,7 +420,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     this.setSimlinkAndPermissions(target_path, dest_path);
                 },
@@ -434,7 +442,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, remain, target);
                         remain = remain[target.len..];
                         remain[0] = 0;
-                        const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                        const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                         remain = remain[1..];
 
                         var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -442,7 +450,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
-                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                        var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                         this.setSimlinkAndPermissions(target_path, dest_path);
                     }
@@ -458,10 +466,10 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+                    var dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
@@ -482,12 +490,12 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
-                                var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
+                                var from_path: [:0]u8 = target_buf[0 .. @intFromPtr(target_buf_remain.ptr) - @intFromPtr(&target_buf) :0];
                                 var to_path = if (!link_global)
                                     std.fmt.bufPrintZ(&dest_buf, dot_bin ++ "{s}", .{entry.name}) catch continue
                                 else
@@ -514,12 +522,12 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
+                if (this.global_bin_dir.fd >= bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
 
-                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                @memcpy(target_buf[0..this.global_bin_path.len], this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -557,7 +565,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
@@ -566,7 +574,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
@@ -594,7 +602,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
-                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                        var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                         std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                     }
@@ -610,10 +618,10 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+                    var dir = std.fs.Dir{ .fd = bun.fdcast(this.package_installed_node_modules) };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
@@ -634,7 +642,7 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];

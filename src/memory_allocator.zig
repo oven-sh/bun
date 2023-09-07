@@ -71,15 +71,20 @@ const CAllocator = struct {
             }
         }
 
-        return @ptrCast(?[*]u8, ptr);
+        return @as(?[*]u8, @ptrCast(ptr));
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
         return CAllocator.malloc_size(ptr);
     }
 
-    fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
-        return alignedAlloc(len, ptr_align);
+    fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
+        if (comptime FeatureFlags.alignment_tweak) {
+            return alignedAlloc(len, log2_align);
+        }
+
+        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
+        return alignedAlloc(len, alignment);
     }
 
     fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
@@ -127,7 +132,7 @@ const ZAllocator = struct {
             }
         }
 
-        return @ptrCast(?[*]u8, ptr);
+        return @as(?[*]u8, @ptrCast(ptr));
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
@@ -206,7 +211,7 @@ const HugeAllocator = struct {
         _: u29,
         _: usize,
     ) void {
-        std.os.munmap(@alignCast(std.meta.alignment([]align(std.mem.page_size) u8), buf));
+        std.os.munmap(@alignCast(buf));
     }
 };
 

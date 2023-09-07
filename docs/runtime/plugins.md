@@ -1,44 +1,36 @@
-{% callout %}
-**Note** — Introduced in Bun v0.1.11.
-{% /callout %}
+Bun provides a universal plugin API that can be used to extend both the _runtime_ and [_bundler_](/docs/bundler).
 
-Bun's runtime can be extended to support additional file types using _plugins_. Plugins can intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to extend Bun's runtime with _loaders_ for additional file types.
+Plugins intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to add support for additional file types, like `.scss` or `.yaml`. In the context of Bun's bundler, plugins can be used to implement framework-level features like CSS extraction, macros, and client-server code co-location.
 
 ## Usage
 
 A plugin is defined as simple JavaScript object containing a `name` property and a `setup` function. Register a plugin with Bun using the `plugin` function.
 
-```tsx#yamlPlugin.ts
-import { plugin } from "bun";
+```tsx#myPlugin.ts
+import { plugin, type BunPlugin } from "bun";
 
-plugin({
-  name: "YAML loader",
+const myPlugin: BunPlugin = {
+  name: "Custom loader",
   setup(build) {
     // implementation
   },
-});
+};
 ```
 
-To consume this plugin, add this file to the `preload` option in your [`bunfig.toml`](/docs/project/configuration). Bun automatically loads the files/modules specified in `preload` before running a file. 
+Plugins have to be registered before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
-preload = ["./yamlPlugin.ts"]
+preload = ["./myPlugin.ts"]
 ```
 
-{% details summary="Usage without preload" %} 
+To preload files before `bun test`:
 
-Alternatively, you can import this file manually at the top of your project's entrypoint, before any application code is imported.
-
-```ts#app.ts
-import "./yamlPlugin.ts";
-import { config } from "./config.yml";
-
-console.log(config);
+```toml
+[test]
+preload = ["./myPlugin.ts"]
 ```
 
-{% /details %}
-
-## Third party plugins
+## Third-party plugins
 
 By convention, third-party plugins intended for consumption should export a factory function that accepts some configuration and returns a plugin object.
 
@@ -51,45 +43,18 @@ plugin(
     // configuration
   }),
 );
-
-// application code
 ```
 
-Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only a subset of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
 import mdx from "@mdx-js/esbuild";
 
 plugin(mdx());
-
-import { renderToStaticMarkup } from "react-dom/server";
-import Foo from "./bar.mdx";
-console.log(renderToStaticMarkup(<Foo />));
 ```
 
 ## Loaders
-
-<!-- The plugin logic is implemented in the `setup` function using the builder provided as the first argument (`build` in the example above). The `build` variable provides two methods: `onResolve` and `onLoad`. -->
-
-<!-- ## `onResolve` -->
-
-<!-- The `onResolve` method lets you intercept imports that match a particular regex and modify the resolution behavior, such as re-mapping the import to another file. In the simplest case, you can simply remap the matched import to a new path.
-
-```ts
-import { plugin } from "bun";
-
-plugin({
-  name: "YAML loader",
-  setup(build) {
-    build.onResolve();
-    // implementation
-  },
-});
-``` -->
-
-<!--
-Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration. -->
 
 Plugins are primarily used to extend Bun with loaders for additional file types. Let's look at a simple plugin that implements a loader for `.yaml` files.
 
@@ -139,7 +104,7 @@ releaseYear: 2023
 
 Note that the returned object has a `loader` property. This tells Bun which of its internal loaders should be used to handle the result. Even though we're implementing a loader for `.yaml`, the result must still be understandable by one of Bun's built-in loaders. It's loaders all the way down.
 
-In this case we're using `"object"`—a special loader (intended for use by plugins) that converts a plain JavaScript object to an equivalent ES module. Any of Bun's built-in loaders are supported; these same loaders are used by Bun internally for handling files of various extensions.
+In this case we're using `"object"`—a built-in loader (intended for use by plugins) that converts a plain JavaScript object to an equivalent ES module. Any of Bun's built-in loaders are supported; these same loaders are used by Bun internally for handling files of various kinds. The table below is a quick reference; refer to [Bundler > Loaders](/docs/bundler/loaders) for complete documentation.
 
 {% table %}
 
@@ -150,13 +115,13 @@ In this case we're using `"object"`—a special loader (intended for use by plug
 ---
 
 - `js`
-- `.js` `.mjs` `.cjs`
+- `.mjs` `.cjs`
 - Transpile to JavaScript files
 
 ---
 
 - `jsx`
-- `.jsx`
+- `.js` `.jsx`
 - Transform JSX then transpile
 
 ---
@@ -185,8 +150,20 @@ In this case we're using `"object"`—a special loader (intended for use by plug
 
 ---
 
+- `napi`
+- `.node`
+- Import a native Node.js addon
+
+---
+
+- `wasm`
+- `.wasm`
+- Import a native Node.js addon
+
+---
+
 - `object`
-- —
+- _none_
 - A special loader intended for plugins that converts a plain JavaScript object to an equivalent ES module. Each key in the object corresponds to a named export.
 
 {% /callout %}
@@ -235,23 +212,61 @@ import MySvelteComponent from "./component.svelte";
 console.log(mySvelteComponent.render());
 ```
 
+## Reading the config
+
+Plugins can read and write to the [build config](/docs/bundler#api) with `build.config`.
+
+```ts
+Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  sourcemap: "external",
+  plugins: [
+    {
+      name: "demo",
+      setup(build) {
+        console.log(build.config.sourcemap); // "external"
+
+        build.config.minify = true; // enable minification
+
+        // `plugins` is readonly
+        console.log(`Number of plugins: ${build.config.plugins.length}`);
+      },
+    },
+  ],
+});
+```
+
 ## Reference
 
 ```ts
 namespace Bun {
-  function plugin(plugin: { name: string; setup: (build: PluginBuilder) => void }): void;
+  function plugin(plugin: {
+    name: string;
+    setup: (build: PluginBuilder) => void;
+  }): void;
 }
 
 type PluginBuilder = {
+  onResolve: (
+    args: { filter: RegExp; namespace?: string },
+    callback: (args: { path: string; importer: string }) => {
+      path: string;
+      namespace?: string;
+    } | void,
+  ) => void;
   onLoad: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string }) => {
-      loader?: "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
+      loader?: Loader;
       contents?: string;
       exports?: Record<string, any>;
     },
   ) => void;
+  config: BuildConfig;
 };
+
+type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
 ```
 
 The `onLoad` method optionally accepts a `namespace` in addition to the `filter` regex. This namespace will be be used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.

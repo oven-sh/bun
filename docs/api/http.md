@@ -1,19 +1,12 @@
+The page primarily documents the Bun-native `Bun.serve` API. Bun also implements [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) and the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
+
 {% callout %}
-**Note** — This page documents the `Bun.serve` API. This API is heavily optimized and represents the recommended way to build HTTP servers in Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/ecosystem/nodejs#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
+These modules have been re-implemented to use Bun's fast internal HTTP infrastructure. Feel free to use these modules directly; frameworks like [Express](https://expressjs.com/) that depend on these modules should work out of the box. For granular compatibility information, see [Runtime > Node.js APIs](/docs/runtime/nodejs-apis).
 {% /callout %}
 
-## Send a request
+To start a high-performance HTTP server with a clean API, the recommended approach is [`Bun.serve`](#start-a-server-bun-serve).
 
-Bun implements the Web `fetch` API for making HTTP requests. The `fetch` function is available in the global scope.
-
-```ts
-const response = await fetch("https://bun.sh/manifest.json");
-const result = (await response.json()) as any;
-console.log(result.icons[0].src);
-// => "/logo-square.jpg"
-```
-
-## Start a server
+## `Bun.serve()`
 
 Start an HTTP server in Bun with `Bun.serve`.
 
@@ -42,7 +35,7 @@ To configure which port and hostname the server will listen on:
 
 ```ts
 Bun.serve({
-  port: 8080, // defaults to $PORT, then 3000
+  port: 8080, // defaults to $BUN_PORT, $PORT, $NODE_PORT otherwise 3000
   hostname: "mydomain.com", // defaults to "0.0.0.0"
   fetch(req) {
     return new Response(`404!`);
@@ -50,7 +43,18 @@ Bun.serve({
 });
 ```
 
-### Error handling
+To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket):
+
+```ts
+Bun.serve({
+  unix: "/tmp/my-socket.sock", // path to socket
+  fetch(req) {
+    return new Response(`404!`);
+  },
+});
+```
+
+## Error handling
 
 To activate development mode, set `development: true`. By default, development mode is _enabled_ unless `NODE_ENV` is `production`.
 
@@ -74,7 +78,7 @@ Bun.serve({
   fetch(req) {
     throw new Error("woops!");
   },
-  error(error: Error) {
+  error(error) {
     return new Response(`<pre>${error}\n${error.stack}</pre>`, {
       headers: {
         "Content-Type": "text/html",
@@ -85,7 +89,7 @@ Bun.serve({
 ```
 
 {% callout %}
-**Note** — Full debugger support is planned.
+[Learn more about debugging in Bun](https://bun.sh/docs/runtime/debugger)
 {% /callout %}
 
 The call to `Bun.serve` returns a `Server` object. To stop the server, call the `.stop()` method.
@@ -100,36 +104,86 @@ const server = Bun.serve({
 server.stop();
 ```
 
-### TLS
+## TLS
 
-Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `keyFile` and `certFile`; both are required to enable TLS. If needed, supply a `passphrase` to decrypt the `keyFile`.
+Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
+
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
+
++   tls: {
++     key: Bun.file("./key.pem"),
++     cert: Bun.file("./cert.pem"),
++   }
+  });
+```
+
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
 
 ```ts
 Bun.serve({
-  fetch(req) {
-    return new Response("Hello!!!");
+  fetch() {},
+
+  tls: {
+    // BunFile
+    key: Bun.file("./key.pem"),
+    // Buffer
+    key: fs.readFileSync("./key.pem"),
+    // string
+    key: fs.readFileSync("./key.pem", "utf8"),
+    // array of above
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")],
   },
-  keyFile: "./key.pem", // path to TLS key
-  certFile: "./cert.pem", // path to TLS cert
-  passphrase: "super-secret", // optional passphrase
 });
 ```
 
-The root CA and Diffie-Helman parameters can be configured as well.
+If your private key is encrypted with a passphrase, provide a value for `passphrase` to decrypt it.
+
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
+
+    tls: {
+      key: Bun.file("./key.pem"),
+      cert: Bun.file("./cert.pem"),
++     passphrase: "my-secret-passphrase",
+    }
+  });
+```
+
+Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
+
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
+    tls: {
+      key: Bun.file("./key.pem"), // path to TLS key
+      cert: Bun.file("./cert.pem"), // path to TLS cert
++     ca: Bun.file("./ca.pem"), // path to root CA certificate
+    }
+  });
+```
+
+To override Diffie-Helman parameters:
 
 ```ts
 Bun.serve({
-  fetch(req) {
-    return new Response("Hello!!!");
+  // ...
+  tls: {
+    // other config
+    dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Helman parameters
   },
-  keyFile: "./key.pem", // path to TLS key
-  certFile: "./cert.pem", // path to TLS cert
-  caFile: "./ca.pem", // path to root CA certificate
-  dhParamsFile: "./dhparams.pem", // Diffie Helman parameters
 });
 ```
 
-### Hot reloading
+## Object syntax
 
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
@@ -143,17 +197,17 @@ export default {
 } satisfies Serve;
 ```
 
-Instead of passing the server options into `Bun.serve`, export it. This file can be executed as-is; when Bun runs a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
+Instead of passing the server options into `Bun.serve`, `export default` it. This file can be executed as-is; when Bun sees a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
 
-This syntax has one major advantage: it is hot-reloadable out of the box. When any source file is changed, Bun will reload the server with the updated code _without restarting the process_. This makes hot reloads nearly instantaneous. Use the `--hot` flag when starting the server to enable hot reloading.
+<!-- This syntax has one major advantage: it is hot-reloadable out of the box. When any source file is changed, Bun will reload the server with the updated code _without restarting the process_. This makes hot reloads nearly instantaneous. Use the `--hot` flag when starting the server to enable hot reloading. -->
 
-```bash
+<!-- ```bash
 $ bun --hot server.ts
-```
+``` -->
 
-It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](/docs/runtime/hot).
+<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](/docs/runtime/hot). -->
 
-### Streaming files
+## Streaming files
 
 To stream a file, return a `Response` object with a `BunFile` object as the body.
 
@@ -171,7 +225,7 @@ serve({
 ⚡️ **Speed** — Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 {% /callout %}
 
-**[v0.3.0+]** You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
+You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
 
 ```ts
 Bun.serve({
@@ -191,7 +245,7 @@ Bun.serve({
 });
 ```
 
-### Benchmarks
+## Benchmarks
 
 Below are Bun and Node.js implementations of a simple HTTP server that responds `Bun!` to each incoming `Request`.
 
@@ -234,7 +288,7 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 
 {% image width="499" alt="image" src="https://user-images.githubusercontent.com/709451/162389032-fc302444-9d03-46be-ba87-c12bd8ce89a0.png" /%}
 
-### Reference
+## Reference
 
 {% details summary="See TypeScript definitions" %}
 
@@ -246,11 +300,21 @@ interface Bun {
     port?: number;
     development?: boolean;
     error?: (error: Error) => Response | Promise<Response>;
-    keyFile?: string;
-    certFile?: string;
-    caFile?: string;
-    dhParamsFile?: string;
-    passphrase?: string;
+    tls?: {
+      key?:
+        | string
+        | TypedArray
+        | BunFile
+        | Array<string | TypedArray | BunFile>;
+      cert?:
+        | string
+        | TypedArray
+        | BunFile
+        | Array<string | TypedArray | BunFile>;
+      ca?: string | TypedArray | BunFile | Array<string | TypedArray | BunFile>;
+      passphrase?: string;
+      dhParamsFile?: string;
+    };
     maxRequestBodySize?: number;
     lowMemoryMode?: boolean;
   }): Server;

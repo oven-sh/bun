@@ -1,6 +1,6 @@
 // Top-level so it can access all files
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
-
+pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/bindings/bindings.zig");
@@ -12,6 +12,8 @@ pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
+pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
+pub const ResolveMessage = @import("./bun.js/ResolveMessage.zig").ResolveMessage;
 pub const Cloudflare = struct {
     pub const HTMLRewriter = @import("./bun.js/api/html_rewriter.zig").HTMLRewriter;
     pub const ContentOptions = @import("./bun.js/api/html_rewriter.zig").ContentOptions;
@@ -24,14 +26,18 @@ pub const Cloudflare = struct {
     pub const AttributeIterator = @import("./bun.js/api/html_rewriter.zig").AttributeIterator;
 };
 pub const Jest = @import("./bun.js/test/jest.zig");
+pub const Expect = @import("./bun.js/test/expect.zig");
+pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
-    pub const Transpiler = @import("./bun.js/api/transpiler.zig");
-    pub const Server = @import("./bun.js/api/server.zig").Server;
+    pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
+    pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
+    pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
+    pub const HTTPServer = @import("./bun.js/api/server.zig").HTTPServer;
     pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;
-    pub const SSLServer = @import("./bun.js/api/server.zig").SSLServer;
-    pub const DebugServer = @import("./bun.js/api/server.zig").DebugServer;
-    pub const DebugSSLServer = @import("./bun.js/api/server.zig").DebugSSLServer;
+    pub const HTTPSServer = @import("./bun.js/api/server.zig").HTTPSServer;
+    pub const DebugHTTPServer = @import("./bun.js/api/server.zig").DebugHTTPServer;
+    pub const DebugHTTPSServer = @import("./bun.js/api/server.zig").DebugHTTPSServer;
     pub const Bun = @import("./bun.js/api/bun.zig");
     pub const FileSystemRouter = @import("./bun.js/api/filesystem_router.zig").FileSystemRouter;
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;
@@ -44,9 +50,10 @@ pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/types.zig");
     pub usingnamespace @import("./bun.js/node/node_fs.zig");
+    pub usingnamespace @import("./bun.js/node/node_fs_watcher.zig");
+    pub usingnamespace @import("./bun.js/node/node_fs_stat_watcher.zig");
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
-    pub const Syscall = @import("./bun.js/node/syscall.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
 };
 pub const Maybe = Node.Maybe;

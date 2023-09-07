@@ -4,7 +4,7 @@ const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const os = std.os;
-const bun = @import("bun");
+const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -34,7 +34,7 @@ pub const Opcode = enum(u4) {
     ResF = 0xF,
 
     pub fn isControl(opcode: Opcode) bool {
-        return @enumToInt(opcode) & 0x8 != 0;
+        return @intFromEnum(opcode) & 0x8 != 0;
     }
 };
 
@@ -53,20 +53,20 @@ pub const WebsocketHeader = packed struct {
         if (comptime Environment.allow_assert) {
             var buf_ = [2]u8{ 0, 0 };
             var stream = std.io.fixedBufferStream(&buf_);
-            stream.writer().writeIntBig(u16, @bitCast(u16, header)) catch unreachable;
+            stream.writer().writeIntBig(u16, @as(u16, @bitCast(header))) catch unreachable;
             stream.pos = 0;
             const casted = stream.reader().readIntBig(u16) catch unreachable;
-            std.debug.assert(casted == @bitCast(u16, header));
-            std.debug.assert(std.meta.eql(@bitCast(WebsocketHeader, casted), header));
+            std.debug.assert(casted == @as(u16, @bitCast(header)));
+            std.debug.assert(std.meta.eql(@as(WebsocketHeader, @bitCast(casted)), header));
         }
 
-        try writer.writeIntBig(u16, @bitCast(u16, header));
+        try writer.writeIntBig(u16, @as(u16, @bitCast(header)));
         std.debug.assert(header.len == packLength(n));
     }
 
     pub fn packLength(length: usize) u7 {
         return switch (length) {
-            0...125 => @truncate(u7, length),
+            0...125 => @as(u7, @truncate(length)),
             126...0xFFFF => 126,
             else => 127,
         };
@@ -156,7 +156,7 @@ pub const Websocket = struct {
         var socket = Websocket{
             .read_stream = undefined,
             .reader = undefined,
-            .stream = std.net.Stream{ .handle = @intCast(std.os.socket_t, fd) },
+            .stream = std.net.Stream{ .handle = @as(std.os.socket_t, @intCast(fd)) },
             .flags = flags,
         };
 
@@ -185,7 +185,7 @@ pub const Websocket = struct {
     // Close and send the status
     pub fn close(self: *Websocket, code: u16) !void {
         const c = if (native_endian == .Big) code else @byteSwap(code);
-        const data = @bitCast([2]u8, c);
+        const data = @as([2]u8, @bitCast(c));
         _ = try self.writeMessage(.Close, &data);
     }
 
@@ -230,13 +230,13 @@ pub const Websocket = struct {
 
         if (!dataframe.isValid()) return error.InvalidMessage;
 
-        try stream.writeIntBig(u16, @bitCast(u16, dataframe.header));
+        try stream.writeIntBig(u16, @as(u16, @bitCast(dataframe.header)));
 
         // Write extended length if needed
         const n = dataframe.data.len;
         switch (n) {
             0...126 => {}, // Included in header
-            127...0xFFFF => try stream.writeIntBig(u16, @truncate(u16, n)),
+            127...0xFFFF => try stream.writeIntBig(u16, @as(u16, @truncate(n))),
             else => try stream.writeIntBig(u64, n),
         }
 
@@ -261,7 +261,7 @@ pub const Websocket = struct {
     }
 
     pub fn read(self: *Websocket) !WebsocketDataFrame {
-        @memset(&self.buf, 0, self.buf.len);
+        @memset(&self.buf, 0);
 
         // Read and retry if we hit the end of the stream buffer
         var start = try self.stream.read(&self.buf);
@@ -274,7 +274,7 @@ pub const Websocket = struct {
     }
 
     pub fn eatAt(self: *Websocket, offset: usize, _len: usize) []u8 {
-        const len = std.math.min(self.read_stream.buffer.len, _len);
+        const len = @min(self.read_stream.buffer.len, _len);
         self.read_stream.pos = len;
         return self.read_stream.buffer[offset..len];
     }
@@ -292,9 +292,9 @@ pub const Websocket = struct {
         // header.rsv1 = header_bytes[0] & 0x40 == 0x40;
         // header.rsv2 = header_bytes[0] & 0x20;
         // header.rsv3 = header_bytes[0] & 0x10;
-        header.opcode = @intToEnum(Opcode, @truncate(u4, header_bytes[0]));
+        header.opcode = @as(Opcode, @enumFromInt(@as(u4, @truncate(header_bytes[0]))));
         header.mask = header_bytes[1] & 0x80 == 0x80;
-        header.len = @truncate(u7, header_bytes[1]);
+        header.len = @as(u7, @truncate(header_bytes[1]));
 
         // Decode length
         var length: u64 = header.len;

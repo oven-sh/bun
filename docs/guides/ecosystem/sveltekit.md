@@ -63,3 +63,58 @@ Visit [http://localhost:5173](http://localhost:5173/) in a browser to see the te
 ---
 
 If you edit and save `src/routes/+page.svelte`, you should see your changes hot-reloaded in the browser.
+
+---
+
+To build for production, you'll need to add the right sveltekit adapter. 
+
+`bun add -D svelte-adapter-bun`.
+
+Now, make the following changes to your `svelte.config.js`.
+
+```diff
+- import adapter from '@sveltejs/adapter-auto'
++ import adapter from 'svelte-adapter-bun';
+import { vitePreprocess } from '@sveltejs/kit/vite';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+        kit: {
+                adapter: adapter()
+        },
+        preprocess: vitePreprocess()
+};
+
+export default config;
+```
+
+---
+
+To build a production bundle for deployment execute `bun run build` in the root folder of your project.
+
+```sh
+$ vite build
+
+vite v4.4.9 building SSR bundle for production...
+transforming (60) node_modules/@sveltejs/kit/src/utils/escape.js
+
+✓ 98 modules transformed.
+Generated an empty chunk: "entries/endpoints/waitlist/_server.ts".
+
+vite v4.4.9 building for production...
+✓ 92 modules transformed.
+Generated an empty chunk: "7".
+.svelte-kit/output/client/_app/version.json                                     0.03 kB │ gzip:  0.05 kB
+
+...
+
+.svelte-kit/output/server/index.js                                             86.47 kB
+
+Run npm run preview to preview your production build locally.
+
+> Using svelte-adapter-bun
+  ✔ Start server with: bun ./build/index.js
+  ✔ done
+✓ built in 7.81s
+```
+

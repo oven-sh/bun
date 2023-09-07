@@ -2,7 +2,7 @@
 name: Create a Discord bot
 ---
 
-Discord.js works [out of the box](https://bun.sh/blog/bun-v0.6.7) with Bun. Let's write a simple bot. First create a directory and initialize it with `bun init`.
+Discord.js works out of the box with Bun. Let's write a simple bot. First create a directory and initialize it with `bun init`.
 
 ```bash
 mkdir my-bot

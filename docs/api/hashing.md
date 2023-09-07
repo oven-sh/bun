@@ -6,10 +6,6 @@ Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](
 
 ## `Bun.password`
 
-{% callout %}
-**Note** — Added in Bun 0.6.8.
-{% /callout %}
-
 `Bun.password` is a collection of utility functions for hashing and verifying passwords with various cryptographically secure algorithms.
 
 ```ts

@@ -8,7 +8,7 @@ While Vite currently works with Bun, it has not been heavily optimized, nor has 
 
 ---
 
-Vite works out of the box with Bun (v0.7 and later). Get started with one of Vite's templates.
+Vite works out of the box with Bun. Get started with one of Vite's templates.
 
 ```bash
 $ bunx create-vite my-app

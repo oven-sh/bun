@@ -94,9 +94,7 @@ it("Module._cache", () => {
 });
 
 it("Module._resolveFilename()", () => {
-  const expected = Bun.resolveSync(import.meta.path, "/");
-  const result = Module._resolveFilename(import.meta.path, "/", true);
-  expect(result).toBe(expected);
+  expect(Module._resolveFilename).toBeUndefined();
 });
 
 it("Module.createRequire(file://url).resolve(file://url)", () => {

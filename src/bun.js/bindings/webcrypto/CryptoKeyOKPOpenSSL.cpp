@@ -33,6 +33,7 @@
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
+#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -296,9 +297,9 @@ String CryptoKeyOKP::generateJwkD() const
     ASSERT(type() == CryptoKeyType::Private);
     if (namedCurve() == NamedCurve::Ed25519) {
         ASSERT(m_exportKey);
-        return base64URLEncodeToString(*m_exportKey);
+        return Bun_base64URLEncodeToString(*m_exportKey);
     }
-    return base64URLEncodeToString(m_data);
+    return Bun_base64URLEncodeToString(m_data);
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PublicFromPrivate(const KeyMaterial& seed)
@@ -333,15 +334,15 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& see
 String CryptoKeyOKP::generateJwkX() const
 {
     if (type() == CryptoKeyType::Public)
-        return base64URLEncodeToString(m_data);
+        return Bun_base64URLEncodeToString(m_data);
 
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+        return Bun_base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+    return Bun_base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 }
 
 CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const

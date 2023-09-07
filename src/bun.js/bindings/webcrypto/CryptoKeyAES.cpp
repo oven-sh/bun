@@ -35,6 +35,7 @@
 #include "JsonWebKey.h"
 #include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
+#include "Bun_base64URLEncodeToString.h"
 
 namespace WebCore {
 
@@ -107,7 +108,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
 {
     JsonWebKey result;
     result.kty = "oct"_s;
-    result.k = base64URLEncodeToString(m_key);
+    result.k = Bun_base64URLEncodeToString(m_key);
     result.key_ops = usages();
     result.ext = extractable();
     return result;

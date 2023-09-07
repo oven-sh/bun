@@ -1020,6 +1020,7 @@ pub const Fetch = struct {
 
         pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo) bool {
             if (this.check_server_identity.get()) |check_server_identity| {
+                check_server_identity.ensureStillAlive();
                 if (certificate_info.cert.len > 0) {
                     var cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
@@ -1029,6 +1030,8 @@ pub const Fetch = struct {
                         const js_cert = X509.toJS(x509, globalObject);
                         var hostname: bun.String = bun.String.create(certificate_info.hostname);
                         const js_hostname = hostname.toJS(globalObject);
+                        js_hostname.ensureStillAlive();
+                        js_cert.ensureStillAlive();
                         const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {

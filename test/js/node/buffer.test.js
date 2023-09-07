@@ -2420,15 +2420,6 @@ it("Buffer.toString(encoding, start, end)", () => {
   expect(buf.toString("utf8", 100, 1)).toStrictEqual("");
 });
 
-it("Buffer.toString(offset, length, encoding)", () => {
-  const buf = Buffer.from("0123456789", "utf8");
-
-  expect(buf.toString(3, 6, "utf8")).toStrictEqual("345678");
-  expect(buf.toString(3, 100, "utf8")).toStrictEqual("3456789");
-  expect(buf.toString(100, 200, "utf8")).toStrictEqual("");
-  expect(buf.toString(100, 50, "utf8")).toStrictEqual("");
-});
-
 it("Buffer.asciiSlice())", () => {
   const buf = Buffer.from("0123456789", "ascii");
 

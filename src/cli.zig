@@ -888,7 +888,7 @@ pub const HelpCommand = struct {
             \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
             \\  <b><magenta>test<r>                           Run unit tests with Bun
             \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
-            // \\  <b><magenta>repl<r>                               Start a REPL session with Bun
+            \\  <b><magenta>repl<r>                           Start a REPL session with Bun
             \\
             \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
             \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
@@ -929,7 +929,7 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner.\n\n" ++ fmt,
+                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(
@@ -947,6 +947,21 @@ pub const HelpCommand = struct {
         if (reason == .invalid_command) {
             std.process.exit(1);
         }
+    }
+};
+
+pub const ReservedCommand = struct {
+    pub fn exec(_: std.mem.Allocator) !void {
+        @setCold(true);
+        const command_name = bun.argv()[1];
+        Output.prettyError(
+            \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
+            \\
+            \\If you were trying to run a package.json script called {s}, use <b><magenta>bun run {s}<r>.
+            \\
+        , .{ command_name, command_name, command_name });
+        Output.flush();
+        std.process.exit(1);
     }
 };
 
@@ -1116,8 +1131,11 @@ pub const Command = struct {
             RootCommandMatcher.case("link") => .LinkCommand,
             RootCommandMatcher.case("unlink") => .UnlinkCommand,
             RootCommandMatcher.case("x") => .BunxCommand,
+            RootCommandMatcher.case("repl") => .ReplCommand,
 
-            RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => brk: {
+            RootCommandMatcher.case("i"),
+            RootCommandMatcher.case("install"),
+            => brk: {
                 for (args_iter.buf) |arg| {
                     const span = std.mem.span(arg);
                     if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
@@ -1129,17 +1147,41 @@ pub const Command = struct {
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
+            RootCommandMatcher.case("test") => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
+
             RootCommandMatcher.case("update") => .UpdateCommand,
-            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
+
+            RootCommandMatcher.case("r"),
+            RootCommandMatcher.case("remove"),
+            RootCommandMatcher.case("rm"),
+            RootCommandMatcher.case("uninstall"),
+            => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
-
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            // These are reserved for future use by Bun, so that someone
+            // doing `bun deploy` to run a script doesn't accidentally break
+            // when we add our actual command
+            RootCommandMatcher.case("deploy") => .ReservedCommand,
+            RootCommandMatcher.case("cloud") => .ReservedCommand,
+            RootCommandMatcher.case("info") => .ReservedCommand,
+            RootCommandMatcher.case("config") => .ReservedCommand,
+            RootCommandMatcher.case("use") => .ReservedCommand,
+            RootCommandMatcher.case("auth") => .ReservedCommand,
+            RootCommandMatcher.case("login") => .ReservedCommand,
+            RootCommandMatcher.case("logout") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("publish") => .ReservedCommand,
+            RootCommandMatcher.case("prune") => .ReservedCommand,
+            RootCommandMatcher.case("outdated") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("why") => .ReservedCommand,
+
             else => .AutoCommand,
         };
     }
@@ -1158,6 +1200,7 @@ pub const Command = struct {
         "discord",
         "pm",
         "x",
+        "repl",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -1236,6 +1279,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
+            .ReservedCommand => return try ReservedCommand.exec(allocator),
             else => {},
         }
 
@@ -1277,6 +1321,16 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx, bun.argv()[1..]);
+                return;
+            },
+            .ReplCommand => {
+                // TODO: Put this in native code.
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
+                var ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
+                var args = bun.argv()[1..];
+                args[0] = @constCast("bun-repl");
+                try BunxCommand.exec(ctx, args);
                 return;
             },
             .RemoveCommand => {
@@ -1403,10 +1457,11 @@ pub const Command = struct {
             },
             .CreateCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .CreateCommand) unreachable;
+                // These are templates from the legacy `bun create`
+                // most of them aren't useful but these few are kinda nice.
                 const HardcodedNonBunXList = bun.ComptimeStringMap(void, .{
                     .{"elysia"},
                     .{"elysia-buchta"},
-                    .{"bun-bakery"},
                     .{"stric"},
                 });
 
@@ -1416,7 +1471,6 @@ pub const Command = struct {
                 var args = try std.process.argsAlloc(allocator);
 
                 if (args.len <= 2) {
-                    // Help
                     Output.prettyErrorln(
                         \\<b><cyan>bun create<r>: create a new project from a template
                         \\
@@ -1445,7 +1499,7 @@ pub const Command = struct {
                         var slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
                             if (positional_i == 0) {
-                                template_name_start = remainder_i;
+                                template_name_start = remainder_i + 2;
                             }
                             positionals[positional_i] = slice;
                             positional_i += 1;
@@ -1698,6 +1752,8 @@ pub const Command = struct {
         UnlinkCommand,
         UpdateCommand,
         UpgradeCommand,
+        ReplCommand,
+        ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {

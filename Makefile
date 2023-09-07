@@ -764,7 +764,7 @@ USOCKETS_DIR = $(BUN_DIR)/packages/bun-usockets
 USOCKETS_SRC_DIR = $(USOCKETS_DIR)/src
 
 usockets:
-	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s
+	rm -rf $(USOCKETS_DIR)/*.i $(USOCKETS_DIR)/*.bc $(USOCKETS_DIR)/*.o $(USOCKETS_DIR)/*.s $(USOCKETS_DIR)/*.ii $(USOCKETS_DIR)/*.s  $(BUN_DEPS_OUT_DIR)/libusockets.a
 	cd $(USOCKETS_DIR) && $(CC_WITH_CCACHE) -I$(USOCKETS_SRC_DIR)  -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
 	cd $(USOCKETS_DIR) && $(CXX_WITH_CCACHE)  -I$(USOCKETS_SRC_DIR) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL)  -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
 	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}

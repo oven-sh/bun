@@ -1392,60 +1392,6 @@ pub const Fetch = struct {
             if (this.http != null) {
                 HTTPClient.http_thread.scheduleShutdown(this.http.?);
             }
-
-            var ref = this.promise;
-
-            const promise_value = ref.valueOrEmpty();
-
-            defer ref.strong.deinit();
-
-            if (this.signal) |signal| {
-                this.signal = null;
-                signal.detach(this);
-            }
-            err.ensureStillAlive();
-
-            if (promise_value.isEmptyOrUndefinedOrNull()) {
-                log("abortListener no promise", .{});
-                if (this.readable_stream_ref.get()) |readable| {
-                    readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = err },
-                        },
-                        bun.default_allocator,
-                    );
-                    return;
-                }
-                if (this.response.get()) |response_js| {
-                    if (response_js.as(Response)) |response| {
-                        const body = response.body;
-                        if (body.value == .Locked) {
-                            if (body.value.Locked.readable) |readable| {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .err = .{ .JSValue = err },
-                                    },
-                                    bun.default_allocator,
-                                );
-                                return;
-                            }
-                        }
-
-                        response.body.value.toErrorInstance(err, globalThis);
-                        return;
-                    }
-                }
-
-                globalThis.throwValue(err);
-                return;
-            }
-
-            log("abortListener with promise", .{});
-
-            promise_value.ensureStillAlive();
-            const promise = promise_value.asAnyPromise() orelse return;
-
-            promise.reject(globalThis, err);
         }
 
         const FetchOptions = struct {

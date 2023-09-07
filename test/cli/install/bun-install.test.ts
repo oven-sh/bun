@@ -3427,13 +3427,13 @@ describe("Git URLs", () => {
       expect(stdout).toBeDefined();
       let out = await new Response(stdout).text();
       out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, ""); // remove timings
-      
+
       const has_sha = dep.commit_sha !== null;
       if (!has_sha) out = out.replace(/(\.git)?#[a-f0-9]+/, "$1"); // remove commit SHA
 
       const expected_out_url = dep.expected_out_url === null ? dep.url : dep.expected_out_url;
       expect(out.split(/\r?\n/)).toEqual([
-        ` + ${dep.name}@${expected_out_url}${has_sha ? ('#' + dep.commit_sha) : ""}`,
+        ` + ${dep.name}@${expected_out_url}${has_sha ? "#" + dep.commit_sha : ""}`,
         "",
         " 1 packages installed",
       ]);
@@ -3449,7 +3449,7 @@ describe("Git URLs", () => {
       expect(cache).not.toBeEmpty();
       if (has_sha) expect(cache).toContain(`@G@${dep.commit_sha}`);
       expect(await readdirSorted(join(package_dir, "node_modules", dep.name))).toContain("package.json");
-      
+
       const package_json = await file(join(package_dir, "node_modules", dep.name, "package.json")).json();
       expect(package_json.name).toBe(dep.name);
       await access(join(package_dir, "bun.lockb"));
@@ -3493,7 +3493,7 @@ describe("Git URLs", () => {
       expect(err.code).toBe("ENOENT");
     }
   });
-  
+
   it("should fail on invalid committish", async () => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
@@ -3533,7 +3533,7 @@ describe("Git URLs", () => {
       expect(err.code).toBe("ENOENT");
     }
   }, 20000);
-  
+
   it("should de-duplicate committish", async () => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
@@ -3620,7 +3620,7 @@ describe("Git URLs", () => {
     expect(ver_json.version).toBe("3.14.1");
     await access(join(package_dir, "bun.lockb"));
   }, 20000);
-  
+
   it("should handle Git URL with existing lockfile", async () => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
@@ -3762,7 +3762,7 @@ describe("Git URLs", () => {
         "upper-case",
       ].map(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true })),
     );
-  
+
     urls.length = 0;
     const {
       stdout: stdout3,
@@ -3816,7 +3816,6 @@ describe("Git URLs", () => {
     await access(join(package_dir, "bun.lockb"));
   }, 20000);
 });
-
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];

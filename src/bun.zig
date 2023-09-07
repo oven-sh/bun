@@ -773,7 +773,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
     } else {
-        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwrap();
+        const fd = try sys.openat(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }
@@ -783,7 +783,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.IterableDir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return std.fs.IterableDir{ .dir = .{ .fd = fdcast(res) } };
     } else {
-        const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwrap();
+        const fd = try sys.openatA(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return std.fs.IterableDir{ .dir = .{ .fd = fd } };
     }
 }
@@ -793,7 +793,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
         return std.fs.Dir{ .fd = fdcast(res) };
     } else {
-        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0).unwrap();
+        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return std.fs.Dir{ .fd = fd };
     }
 }

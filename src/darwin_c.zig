@@ -307,7 +307,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.E2BIG, "Argument list too long");
         map.put(.EACCES, "Permission denied");
         map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Can’t assign requested address");
+        map.put(.EADDRNOTAVAIL, "Can't assign requested address");
         map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
         map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
         map.put(.EALREADY, "Operation already in progress");
@@ -350,7 +350,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EMULTIHOP, "Reserved");
         map.put(.ENAMETOOLONG, "File name too long");
         map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software – operational errors Network is down");
+        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
         map.put(.ENETRESET, "Network dropped connection on reset");
         map.put(.ENETUNREACH, "Network is unreachable");
         map.put(.ENFILE, "Too many open files in system");
@@ -375,7 +375,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOTDIR, "Not a directory");
         map.put(.ENOTEMPTY, "Directory not empty");
         map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software – argument errors. Socket operation on non-socket");
+        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
         map.put(.ENOTSUP, "Operation not supported");
         map.put(.ENOTTY, "Inappropriate ioctl for device");
         map.put(.ENXIO, "Device not configured");
@@ -405,7 +405,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ESTALE, "Network File System. Stale NFS file handle");
         map.put(.ETIME, "STREAM ioctl timeout");
         map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can’t splice");
+        map.put(.ETOOMANYREFS, "Too many references: can't splice");
         map.put(.ETXTBSY, "Text file busy");
         map.put(.EUSERS, "Too many users");
         // map.put(.EWOULDBLOCK, "Operation would block");

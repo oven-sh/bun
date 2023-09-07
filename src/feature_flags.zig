@@ -177,4 +177,4 @@ pub const streaming_file_uploads_for_http_client = true;
 
 pub const concurrent_transpiler = true;
 
-pub const disable_on_windows_due_to_bugs = true;
+pub const disable_on_windows_due_to_bugs = env.isWindows;

@@ -89,7 +89,7 @@ const NODE_HTTP_WARNING =
 
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
-var kInternalSocketData = Symbol.for("::bunternal::");
+const kInternalSocketData = Symbol.for("::bunternal::");
 
 const kEmptyBuffer = Buffer.alloc(0);
 
@@ -134,6 +134,7 @@ function getHeader(headers, name) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
+  [kInternalSocketData]: any;
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -525,7 +526,7 @@ class Server extends EventEmitter {
 
           const upgrade = req.headers.get("upgrade");
           if (upgrade) {
-            const socket = new FakeSocket();
+            const socket = http_req.socket;
             socket[kInternalSocketData] = [_server, http_res, req];
             server.emit("upgrade", http_req, socket, kEmptyBuffer);
           } else {

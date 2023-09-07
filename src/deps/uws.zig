@@ -187,7 +187,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @as(*NativeSocketHandleType(is_ssl), @ptrCast(us_socket_get_native_handle(comptime ssl_int, this.socket).?));
         }
 
-        pub fn fd(this: ThisSocket) i32 {
+        pub inline fn fd(this: ThisSocket) i32 {
             if (comptime is_ssl) {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
@@ -2359,3 +2359,26 @@ extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (
 extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+extern fn us_socket_pair(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+extern fn us_socket_from_fd(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
+    };
+}
+
+pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
+    };
+}

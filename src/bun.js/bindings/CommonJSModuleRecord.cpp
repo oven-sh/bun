@@ -228,7 +228,13 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
         JSC::Identifier::fromString(vm, "main"_s),
         JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, jsUndefined()),
         PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
+
+    auto extensions = constructEmptyObject(globalObject());
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
+
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), extensions, 0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

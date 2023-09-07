@@ -1445,12 +1445,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t offset = 0;
-    uint32_t length = castedThis->length();
-    uint32_t byteLength = length;
+    uint32_t start = 0;
+    uint32_t end = castedThis->length();
+    uint32_t byteLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    if (length == 0)
+    if (end == 0)
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
 
     size_t argsCount = callFrame->argumentCount();
@@ -1459,66 +1459,33 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     JSC::JSValue arg2 = callFrame->argument(1);
     JSC::JSValue arg3 = callFrame->argument(2);
 
-    // This method could be called in following forms:
-    // - toString()
-    // - toString(encoding)
-    // - toString(encoding, start)
-    // - toString(encoding, start, end)
-    // - toString(offset, length)
-    // - toString(offset, length, encoding)
     if (argsCount == 0)
-        return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+        return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end, encoding);
 
-    if (arg1.isString()) {
+    if (!arg1.isUndefined()) {
         encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    }
 
-        if (!arg3.isUndefined()) {
-            // length is end
-            length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        }
-
-        int32_t istart = 0;
-
-        if (!arg2.isUndefined()) {
-            istart = arg2.toInt32(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        }
+    if (!arg2.isUndefined()) {
+        int32_t istart = arg2.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
         if (istart < 0) {
             throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
             return JSC::JSValue::encode(jsUndefined());
         }
-        offset = static_cast<uint32_t>(istart);
-        length = (length > offset) ? (length - offset) : 0;
-    } else {
 
-        int32_t ioffset = 0;
-
-        if (!arg1.isUndefined()) {
-            ioffset = arg1.toInt32(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        }
-
-        if (ioffset < 0) {
-            throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
-            return JSC::JSValue::encode(jsUndefined());
-        }
-
-        offset = static_cast<uint32_t>(ioffset);
-        length = (length > offset) ? (length - offset) : 0;
-
-        if (!arg3.isUndefined()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        }
-
-        if (!arg2.isUndefined())
-            length = std::min(length, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
+        start = static_cast<uint32_t>(istart);
     }
 
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+    if (!arg3.isUndefined()) {
+        // length is end
+        end = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    }
+
+    return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end > start ? end - start : 0, encoding);
 }
 
 // DOMJIT makes it slower! TODO: investigate why

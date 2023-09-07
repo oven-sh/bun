@@ -4917,6 +4917,13 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
+
+    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: isize) JSValue;
+
+    /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
+    pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
+        return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;

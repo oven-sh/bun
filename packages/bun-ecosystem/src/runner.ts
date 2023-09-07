@@ -44,7 +44,7 @@ async function loadPackage(pkg: Package, cwd?: string): Promise<void> {
     }
     await spawn({
       cwd: dir,
-      cmd: ["bun", "wiptest", path],
+      cmd: ["bun", "test", path],
     });
   }
 }

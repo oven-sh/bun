@@ -247,7 +247,7 @@ pub const PackageManagerCommand = struct {
         }
 
         Output.prettyln(
-            \\bun pm - package manager related commands
+            \\<b><blue>bun pm<r>: package manager related commands
             \\
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
@@ -258,6 +258,8 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
+            \\
+            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
             \\
         , .{});
 

@@ -1670,7 +1670,7 @@ pub const CreateCommand = struct {
                 child.stderr_behavior = .Inherit;
 
                 const open = @import("../open.zig");
-                open.openURL("http://localhost:3000/") catch {};
+                open.openURL("http://localhost:3000/");
 
                 try child.spawn();
                 _ = child.wait() catch {};

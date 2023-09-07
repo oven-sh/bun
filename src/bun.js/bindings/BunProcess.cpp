@@ -83,7 +83,10 @@ extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
@@ -582,6 +585,21 @@ static void loadSignalNumberMap()
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    if (eventName.string() == "message"_s) {
+        if (isAdded) {
+            if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                && eventEmitter.listenerCount(eventName) == 1) {
+                eventEmitter.scriptExecutionContext()->refEventLoop();
+                eventEmitter.m_hasIPCRef = true;
+            }
+        } else {
+            if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
+                eventEmitter.scriptExecutionContext()->unrefEventLoop();
+            }
+        }
+        return;
+    }
+
     loadSignalNumberMap();
 
     static std::once_flag signalNumberToNameMapOnceFlag;
@@ -802,6 +820,20 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsBoolean(Bun__GlobalObject__hasIPC(process->globalObject())));
+}
+JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    return false;
+}
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -981,6 +1013,26 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
+}
+
+static JSValue constructProcessSend(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), Bun__Process__send, ImplementationVisibility::Public);
+    } else {
+        return jsNumber(4);
+    }
+}
+
+static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process__disconnect, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
 }
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
@@ -1831,6 +1883,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    auto ident = Identifier::fromString(vm, "message"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(ident, args);
+    }
+}
+
+extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    auto ident = Identifier::fromString(vm, "disconnect"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        process->wrapped().emit(ident, args);
+    }
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                    Function 1
@@ -1843,9 +1918,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
+  connected                        processConnected                         CustomAccessor
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor
+  disconnect                       constructProcessDisconnect               PropertyCallback
   dlopen                           Process_functionDlopen                   Function 1
   emitWarning                      Process_emitWarning                      Function 1
   env                              constructEnv                             PropertyCallback
@@ -1875,6 +1952,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   release                          constructProcessReleaseObject            PropertyCallback
   revision                         constructRevision                        PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                Function 1
+  send                             constructProcessSend                     PropertyCallback
   stderr                           constructStderr                          PropertyCallback
   stdin                            constructStdin                           PropertyCallback
   stdout                           constructStdout                          PropertyCallback

@@ -270,6 +270,40 @@ template <std::size_t N, class T> consteval std::size_t countof(T (&)[N]) {
   return N;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(get_resolveFilename, (JSGlobalObject * globalObject,
+                                               EncodedJSValue thisValue,
+                                               PropertyName propertyName)) {
+  auto override = static_cast<Zig::GlobalObject *>(globalObject)
+                      ->m_nodeModuleOverriddenResolveFilename.get();
+  if (override) {
+    return JSValue::encode(override);
+  }
+  // Instead of storing the original function on the global object and have
+  // those extra bytes, just have it be a property alias.
+  JSObject *thisObject = JSValue::decode(thisValue).getObject();
+  if (!thisObject)
+    return JSValue::encode(jsUndefined());
+  auto &vm = globalObject->vm();
+  return JSValue::encode(thisObject->getDirect(
+      vm, Identifier::fromString(vm, "__resolveFilename"_s)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
+                         (JSGlobalObject * globalObject,
+                          EncodedJSValue thisValue, EncodedJSValue value,
+                          PropertyName propertyName)) {
+  auto valueJS = JSValue::decode(value);
+  if (valueJS.isCell()) {
+    if (auto fn = jsDynamicCast<JSFunction *>(valueJS.asCell())) {
+      static_cast<Zig::GlobalObject *>(globalObject)
+          ->m_nodeModuleOverriddenResolveFilename.set(globalObject->vm(),
+                                                      globalObject, fn);
+      return true;
+    }
+  }
+  return false;
+}
+
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
@@ -303,6 +337,14 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   put(Identifier::fromString(vm, "Module"_s), defaultObject);
 
+  defaultObject->putDirectCustomAccessor(
+      vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),
+      JSC::CustomGetterSetter::create(vm, get_resolveFilename,
+                                      set_resolveFilename),
+      JSC::PropertyAttribute::CustomAccessor | 0);
+  putNativeFn(Identifier::fromString(vm, "__resolveFilename"_s),
+              jsFunctionResolveFileName);
+
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);
   putNativeFn(Identifier::fromString(vm, "paths"_s),
@@ -314,8 +356,6 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   putNativeFn(Identifier::fromString(vm, "SourceMap"_s), jsFunctionSourceMap);
   putNativeFn(Identifier::fromString(vm, "isBuiltin"_s),
               jsFunctionIsBuiltinModule);
-  putNativeFn(Identifier::fromString(vm, "_resolveFilename"_s),
-              jsFunctionResolveFileName);
   putNativeFn(Identifier::fromString(vm, "_nodeModulePaths"_s),
               Resolver__nodeModulePathsForJS);
   putNativeFn(Identifier::fromString(vm, "wrap"_s), jsFunctionWrap);

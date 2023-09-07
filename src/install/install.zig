@@ -1347,7 +1347,7 @@ const PackageInstall = struct {
                         .fail = .{ .err = err, .step = .copying_files },
                     };
                 }
-            } else if (err == error.NotSameFileSystem) {
+            } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
                 return err;
             }
 

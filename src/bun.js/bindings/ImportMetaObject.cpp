@@ -239,6 +239,20 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
 
+    if (!isESM) {
+        auto* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+        if (LIKELY(global)) {
+            auto overrideHandler = global->m_nodeModuleOverriddenResolveFilename.get();
+            if (UNLIKELY(overrideHandler)) {
+                ASSERT(overrideHandler.isCallable(globalObject));
+                MarkedArgumentBuffer args;
+                args.append(moduleName);
+                args.append(from);
+                return JSValue::encode(JSC::call(globalObject, overrideHandler, JSC::getCallData(overrideHandler), JSC::jsUndefined(), args));
+            }
+        }
+    }
+
     auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
 
     if (!JSC::JSValue::decode(result).isString()) {

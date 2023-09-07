@@ -1324,7 +1324,6 @@ pub const InternalState = struct {
             reader.deinit();
         }
 
-        
         if (this.cloned_metadata != null) {
             this.cloned_metadata.?.deinit(allocator);
             this.cloned_metadata = null;

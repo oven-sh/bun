@@ -105,15 +105,11 @@ it("should fail on .consume() with invalid items", () => {
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
   expect(list.length).toBe(1);
-  // expect(list.consume(0, false)).toEqual("");
-  // expect(list.consume(1, false)).toEqual("f");
-  // expect(list.consume(2, true)).toBe("oo");
-  // ---
-  // expect(list.consume(0, false)).toEqual(new Uint8Array([]));
-  // expect(() => {
-  //   list.consume(1, false);
-  // }).toThrow(TypeError);
-  // expect(list.consume(3, true)).toBe("foo");
+  expect(list.consume(0, false)).toEqual(new Uint8Array([]));
+  expect(() => {
+    list.consume(1, false);
+  }).toThrow(TypeError);
+  expect(list.consume(3, true)).toBe("foo");
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("bar"))).toBeUndefined();
   expect(list.length).toBe(1);

@@ -1520,7 +1520,6 @@ pub const Command = struct {
                     for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
                         dest.* = src;
                     }
-                    std.debug.print("{s};\n", .{bunx_args});
 
                     try BunxCommand.exec(ctx, bunx_args);
                     return;

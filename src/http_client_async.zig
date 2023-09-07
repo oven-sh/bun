@@ -937,7 +937,7 @@ pub fn onCertError(
                         if (BoringSSL.X509_get_ext(x509, index)) |ext| {
                             const method = BoringSSL.X509V3_EXT_get(ext);
                             if (method != BoringSSL.X509V3_EXT_get_nid(BoringSSL.NID_subject_alt_name)) {
-                                client.closeAndFail(error.ERR_TLS_CERT_ALTNAME_INVALID, true, socket);
+                                client.closeAndFail(error.ERR_TLS_CERT_ALTNAME_INVALID, is_ssl, socket);
                                 return false;
                             }
                             var hostname = client.hostname orelse client.url.hostname;
@@ -994,7 +994,7 @@ pub fn onCertError(
             }
         }
         // SSL error so we fail the connection
-        client.closeAndFail(error.ERR_TLS_CERT_ALTNAME_INVALID, true, socket);
+        client.closeAndFail(error.ERR_TLS_CERT_ALTNAME_INVALID, is_ssl, socket);
         return false;
     }
     // we allow the connection to continue anyway

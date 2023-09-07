@@ -2030,6 +2030,10 @@ pub const JSPromise = extern struct {
             return this.strong.get().?;
         }
 
+        pub fn valueOrEmpty(this: *Strong) JSValue {
+            return this.strong.get() orelse .zero;
+        }
+
         pub fn swap(this: *Strong) *JSC.JSPromise {
             var prom = this.strong.swap().asPromise().?;
             this.strong.deinit();

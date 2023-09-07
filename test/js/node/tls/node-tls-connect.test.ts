@@ -50,7 +50,7 @@ it("Bun.serve() should work with tls and Bun.file()", async () => {
       key: COMMON_CERT.key,
     },
   });
-  const res = await fetch(`https://${server.hostname}:${server.port}/`);
+  const res = await fetch(`https://${server.hostname}:${server.port}/`, { tls: { rejectUnauthorized: false } });
   expect(await res.text()).toBe("<h1>HELLO</h1>");
   server.stop();
 });

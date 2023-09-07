@@ -58,9 +58,6 @@ const Async = bun.Async;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 
-const BoringSSL = bun.BoringSSL;
-const X509 = @import("../api/bun/x509.zig");
-
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;

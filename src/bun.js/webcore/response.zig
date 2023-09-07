@@ -1378,13 +1378,12 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        pub fn abortListener(this: *FetchTasklet, err: JSValue) void {
+        pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
             log("abortListener", .{});
             const globalThis = this.global_this;
-            err.ensureStillAlive();
-            err.protect();
-            this.is_waiting_abort = true;
-            this.abort_reason = err;
+            reason.ensureStillAlive();
+            reason.protect();
+            this.abort_reason = reason;
 
             this.signal_store.aborted.store(true, .Monotonic);
             this.tracker.didCancel(globalThis);

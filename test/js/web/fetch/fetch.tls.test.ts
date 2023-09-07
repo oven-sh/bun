@@ -129,3 +129,23 @@ it("fetch with invalid tls + rejectUnauthorized: false should not throw", async 
     }
   });
 });
+
+it("can handle multiple requests with non native checkServerIdentity", async () => {
+  await createServer(CERT_LOCALHOST_IP, async port => {
+    async function request() {
+      try {
+        const result = await fetch(`https://localhost:${port}`, {
+          tls: { checkServerIdentity: tls.checkServerIdentity },
+        }).then((res: Response) => res.text());
+        expect(result).toBe("Hello World");
+      } catch (e: any) {
+        expect(e).toBe("unreachable");
+      }
+    }
+    const promises = [];
+    for (let i = 0; i < 100; i++) {
+      promises.push(request());
+    }
+    await Promise.all(promises);
+  });
+});

@@ -7258,9 +7258,11 @@ pub const PackageManager = struct {
         const cwd = std.fs.cwd();
         var node_modules_folder = cwd.openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
-            bun.sys.mkdir("node_modules", 0).throw() catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
-                Global.crash();
+            bun.sys.mkdir("node_modules", 0o755).throw() catch |err| {
+                if (err != error.EEXIST) {
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
+                    Global.crash();
+                }
             };
             break :brk cwd.openIterableDir("node_modules", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});

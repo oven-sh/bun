@@ -1099,6 +1099,7 @@ pub const Command = struct {
             RootCommandMatcher.case("link") => .LinkCommand,
             RootCommandMatcher.case("unlink") => .UnlinkCommand,
             RootCommandMatcher.case("x") => .BunxCommand,
+            RootCommandMatcher.case("repl") => .ReplCommand,
 
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => brk: {
                 for (args_iter.buf) |arg| {
@@ -1174,6 +1175,7 @@ pub const Command = struct {
 
         const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
         const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+        const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
 
         if (comptime bun.fast_debug_build_mode) {
             // _ = AddCommand;
@@ -1274,6 +1276,13 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx);
+                return;
+            },
+            .ReplCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .ReplCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .ReplCommand);
+
+                try ReplCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
@@ -1641,6 +1650,7 @@ pub const Command = struct {
         InstallCompletionsCommand,
         LinkCommand,
         PackageManagerCommand,
+        ReplCommand,
         RemoveCommand,
         RunCommand,
         TestCommand,

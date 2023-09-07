@@ -18,6 +18,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::InternalFSCp: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:fs/cp"_s, "internal/fs/cp.js"_s, InternalModuleRegistryConstants::InternalFSCpCode, "builtin://internal/fs/cp"_s);
     }
+    case Field::InternalRepl: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:repl"_s, "internal/repl.js"_s, InternalModuleRegistryConstants::InternalReplCode, "builtin://internal/repl"_s);
+    }
     case Field::InternalShared: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:shared"_s, "internal/shared.js"_s, InternalModuleRegistryConstants::InternalSharedCode, "builtin://internal/shared"_s);
     }

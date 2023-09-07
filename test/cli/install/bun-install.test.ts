@@ -3344,12 +3344,6 @@ describe("Git URLs", () => {
     },
     {
       name: "uglify-js",
-      url: "ssh://git@github.com:mishoo/UglifyJS.git",
-      expected_out_url: "git+ssh://git@github.com:mishoo/UglifyJS.git",
-      commit_sha: null,
-    },
-    {
-      name: "uglify-js",
       url: "github.com:mishoo/UglifyJS.git",
       expected_out_url: "git+ssh://github.com:mishoo/UglifyJS.git",
       commit_sha: null,
@@ -3382,12 +3376,6 @@ describe("Git URLs", () => {
       name: "@gitlab-examples/semantic-release-npm",
       url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
       expected_out_url: null,
-      commit_sha: null,
-    },
-    {
-      name: "@gitlab-examples/semantic-release-npm",
-      url: "ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
-      expected_out_url: "git+ssh://git@gitlab.com:gitlab-examples/semantic-release-npm.git",
       commit_sha: null,
     },
     {

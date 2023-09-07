@@ -521,16 +521,6 @@ pub const Version = struct {
                         return .npm;
                     }
                 },
-                // ssh://user@example.com/user/repo
-                // ssh://user@example.com:user/repo
-                // ssh://example.com/user/repo
-                // ssh://example.com:user/repo
-                's' => {
-                    if (strings.hasPrefixComptime(dependency, "ssh://")) {
-                        return .git;
-                    }
-                },
-
                 // v1.2.3
                 // verilog
                 // verilog.tar.gz

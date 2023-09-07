@@ -99,7 +99,7 @@ export function applyReplacements(src: string, length: number) {
     if (name === "debug") {
       const innerSlice = sliceSourceCode(rest, true);
       return [
-        slice.slice(0, match.index) + "void (IS_BUN_DEVELOPMENT?$debug_log" + innerSlice.result + ":void 0)",
+        slice.slice(0, match.index) + "(IS_BUN_DEVELOPMENT?$debug_log" + innerSlice.result + ":void 0)",
         innerSlice.rest,
         true,
       ];
@@ -107,7 +107,7 @@ export function applyReplacements(src: string, length: number) {
       const checkSlice = sliceSourceCode(rest, true, undefined, true);
       return [
         slice.slice(0, match.index) +
-          "void (IS_BUN_DEVELOPMENT?$assert(" +
+          "(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(checkSlice.result.slice(1, -1).replace(/__intrinsic__/g, "$")) +

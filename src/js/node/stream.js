@@ -2,7 +2,7 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const EE = require("node:events");
+const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -24,6 +24,7 @@ function validateBoolean(value, name) {
 
 $debug("node:stream loaded");
 
+<<<<<<< HEAD
 function highWaterMarkFrom(options, isDuplex, duplexKey) {
   return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
 }
@@ -293,6 +294,8 @@ function ReadableState(options, stream, isDuplex) {
   }
 }
 
+=======
+>>>>>>> parent of e063a47a5 (remove native events from streams)
 /**
  * @callback validateObject
  * @param {*} value
@@ -311,7 +314,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && $isArray(value)) ||
+    (!allowArray && ArrayIsArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
@@ -329,6 +332,8 @@ const validateObject = (value, name, options = null) => {
 function validateString(value, name) {
   if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
+
+var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -348,7 +353,7 @@ var require_primordials = __commonJS({
     "use strict";
     module.exports = {
       ArrayIsArray(self) {
-        return $isArray(self);
+        return Array.isArray(self);
       },
       ArrayPrototypeIncludes(self, el) {
         return self.includes(el);
@@ -432,6 +437,9 @@ var require_primordials = __commonJS({
       SymbolAsyncIterator: Symbol.asyncIterator,
       SymbolHasInstance: Symbol.hasInstance,
       SymbolIterator: Symbol.iterator,
+      TypedArrayPrototypeSet(self, buf, len) {
+        return self.set(buf, len);
+      },
       Uint8Array,
     };
   },
@@ -450,7 +458,21 @@ var require_util = __commonJS({
         : function isBlob2(b) {
             return false;
           };
-
+    var AggregateError = class extends Error {
+      constructor(errors) {
+        if (!Array.isArray(errors)) {
+          throw new TypeError(`Expected input to be an Array, got ${typeof errors}`);
+        }
+        let message = "";
+        for (let i = 0; i < errors.length; i++) {
+          message += `    ${errors[i].stack}
+`;
+        }
+        super(message);
+        this.name = "AggregateError";
+        this.errors = errors;
+      }
+    };
     module.exports = {
       AggregateError,
       once(callback) {
@@ -549,8 +571,8 @@ var require_util = __commonJS({
 var require_errors = __commonJS({
   "node_modules/readable-stream/lib/ours/errors.js"(exports, module) {
     "use strict";
-    var { format, inspect } = require_util();
-    var AggregateError = globalThis.AggregateError;
+    var { format, inspect, AggregateError: CustomAggregateError } = require_util();
+    var AggregateError = globalThis.AggregateError || CustomAggregateError;
     var kIsNodeError = Symbol("kIsNodeError");
     var kTypes = ["string", "function", "number", "object", "Function", "Object", "boolean", "bigint", "symbol"];
     var classRegExp = /^([A-Z][a-z0-9]*)+$/;
@@ -2510,6 +2532,7 @@ var require_readable = __commonJS({
       Symbol: Symbol2,
     } = require_primordials();
 
+    var ReadableState = $lazy("bun:stream").ReadableState;
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -2759,127 +2782,15 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
+    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable, onEofChunk } = $lazy("bun:stream");
     function maybeReadMore(stream, state) {
-      if (!state.readingMore && state.constructed) {
-        state.readingMore = true;
-        process.nextTick(maybeReadMore_, stream, state);
-      }
+      process.nextTick(_maybeReadMore, stream, state);
     }
-    function maybeReadMore_(stream, state) {
-      // Attempt to read more data if we should.
-      //
-      // The conditions for reading more data are (one of):
-      // - Not enough data buffered (state.length < state.highWaterMark). The loop
-      //   is responsible for filling the buffer with enough data if such data
-      //   is available. If highWaterMark is 0 and we are not in the flowing mode
-      //   we should _not_ attempt to buffer any extra data. We'll get more data
-      //   when the stream consumer calls read() instead.
-      // - No data in the buffer, and the stream is in flowing mode. In this mode
-      //   the loop below is responsible for ensuring read() is called. Failing to
-      //   call read here would abort the flow and there's no other mechanism for
-      //   continuing the flow if the stream consumer has just subscribed to the
-      //   'data' event.
-      //
-      // In addition to the above conditions to keep reading data, the following
-      // conditions prevent the data from being read:
-      // - The stream has ended (state.ended).
-      // - There is already a pending 'read' operation (state.reading). This is a
-      //   case where the stream has called the implementation defined _read()
-      //   method, but they are processing the call asynchronously and have _not_
-      //   called push() with new data. In this case we skip performing more
-      //   read()s. The execution ends in this method again after the _read() ends
-      //   up calling push() with more data.
-      while (
-        !state.reading &&
-        !state.ended &&
-        (state.length < state.highWaterMark || (state.flowing && state.length === 0))
-      ) {
-        const len = state.length;
-        $debug("maybeReadMore read 0");
-        stream.read(0);
-        if (len === state.length)
-          // Didn't get any data, stop spinning.
-          break;
-      }
-      state.readingMore = false;
+    // REVERT ME
+    function emitReadable(stream, state) {
+      $debug("NativeReadable - emitReadable", stream.__id);
+      _emitReadable(stream, state);
     }
-    // Don't emit readable right away in sync mode, because this can trigger
-    // another read() call => stack overflow.  This way, it might trigger
-    // a nextTick recursion warning, but that's not so bad.
-    function emitReadable(stream) {
-      const state = stream._readableState;
-      $debug("emitReadable", state.needReadable, state.emittedReadable);
-      state.needReadable = false;
-      if (!state.emittedReadable) {
-        $debug("emitReadable", state.flowing);
-        state.emittedReadable = true;
-        process.nextTick(emitReadable_, stream);
-      }
-    }
-    function emitReadable_(stream) {
-      const state = stream._readableState;
-      $debug("emitReadable_", state.destroyed, state.length, state.ended);
-      if (!state.destroyed && !state.errored && (state.length || state.ended)) {
-        stream.emit("readable");
-        state.emittedReadable = false;
-      }
-
-      // The stream needs another readable event if:
-      // 1. It is not flowing, as the flow mechanism will take
-      //    care of it.
-      // 2. It is not ended.
-      // 3. It is below the highWaterMark, so we can schedule
-      //    another readable later.
-      state.needReadable = !state.flowing && !state.ended && state.length <= state.highWaterMark;
-      flow(stream);
-    }
-    function flow(stream) {
-      const state = stream._readableState;
-      $debug("flow", state.flowing);
-      while (state.flowing && stream.read() !== null);
-    }
-    function onEofChunk(stream, state) {
-      $debug("onEofChunk");
-      if (state.ended) return;
-      if (state.decoder) {
-        const chunk = state.decoder.end();
-        if (chunk && chunk.length) {
-          state.buffer.push(chunk);
-          state.length += state.objectMode ? 1 : chunk.length;
-        }
-      }
-      state.ended = true;
-      if (state.sync) {
-        // If we are sync, wait until next tick to emit the data.
-        // Otherwise we risk emitting data in the flow()
-        // the readable code triggers during a read() call.
-        emitReadable(stream);
-      } else {
-        // Emit 'readable' now to make sure it gets picked up.
-        state.needReadable = false;
-        state.emittedReadable = true;
-        // We have to emit readable now that we are EOF. Modules
-        // in the ecosystem (e.g. dicer) rely on this event being sync.
-        emitReadable_(stream);
-      }
-    }
-    function resume(stream, state) {
-      if (!state.resumeScheduled) {
-        state.resumeScheduled = true;
-        process.nextTick(resume_, stream, state);
-      }
-    }
-    function resume_(stream, state) {
-      $debug("resume", state.reading);
-      if (!state.reading) {
-        stream.read(0);
-      }
-      state.resumeScheduled = false;
-      stream.emit("resume");
-      flow(stream);
-      if (state.flowing && !state.reading) stream.read(0);
-    }
-
     var destroyImpl = require_destroy();
     var {
       aggregateTwoErrors,
@@ -5967,7 +5878,5 @@ Object.defineProperty(exports, "promises", {
 exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
 exports.eos = require_end_of_stream();
 exports.EventEmitter = EE;
-
-var Duplex = exports.Duplex;
 
 export default exports;

@@ -1,7 +1,7 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("$shared");
-const jsc = require("bun:jsc");
+const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -32,7 +32,24 @@ function getHeapSnapshot() {
   notimpl("getHeapSnapshot");
 }
 function getHeapStatistics() {
-  notimpl("getHeapStatistics");
+  const stats = jsc.heapStats();
+  // this is not very correct
+  return {
+    total_heap_size: stats.heapCapacity,
+    total_heap_size_executable: 0,
+    total_physical_size: stats.heapSize,
+    total_available_size: Infinity,
+    used_heap_size: stats.heapSize,
+    heap_size_limit: Infinity,
+    malloced_memory: stats.heapSize,
+    peak_malloced_memory: Infinity,
+    does_zap_garbage: 0,
+    number_of_native_contexts: Infinity,
+    number_of_detached_contexts: Infinity,
+    total_global_handles_size: Infinity,
+    used_global_handles_size: Infinity,
+    external_memory: Infinity,
+  };
 }
 function getHeapSpaceStatistics() {
   notimpl("getHeapSpaceStatistics");

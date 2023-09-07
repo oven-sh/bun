@@ -15,6 +15,28 @@ const Run = @import("./run_command.zig").RunCommand;
 pub const BunxCommand = struct {
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
+    /// clones the string
+    pub fn addCreatePrefix(allocator: std.mem.Allocator, input: []const u8) ![:0]const u8 {
+        const prefixLength = "create-".len;
+
+        if (input.len == 0) return try allocator.dupeZ(u8, input);
+
+        var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
+        if (input[0] == '@') {
+            if (strings.indexAnyComptime(input, "/")) |index| {
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "create-");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+        }
+
+        @memcpy(new_str[0..prefixLength], "create-");
+        @memcpy(new_str[prefixLength..], input);
+
+        return new_str;
+    }
+
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: std.os.fd_t, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try std.os.openatZ(dir_fd, subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
@@ -137,15 +159,13 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context) !void {
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, bun.argv().len -| 1);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = bun.argv()[1..];
-
             var found_subcommand_name = false;
 
             for (argv) |positional_| {

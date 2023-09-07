@@ -63,7 +63,7 @@ function codegenRequireId(id: string) {
 }
 
 function codegenRequireNativeModule(id: string) {
-  return `(__intrinsic__requireNativeModule(${id}))`;
+  return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
 }
 
 globalThis.requireTransformer = (specifier: string, from: string) => {

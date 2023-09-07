@@ -238,10 +238,6 @@ public:
     JSC::JSObject* JSStringDecoder() { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* JSReadableStateStructure() { return m_JSReadableStateClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
-
     JSC::Structure* NodeVMScriptStructure() { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -260,8 +256,6 @@ public:
     JSC::JSFunction* utilInspectFunction() { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
-
-    JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
@@ -385,6 +379,10 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
+    // This is set when doing `require('module')._resolveFilename = ...`
+    // a hack used by Next.js to inject their versions of webpack and react
+    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+
     mutable WriteBarrier<Unknown> m_nextTickQueue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
     mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
@@ -502,7 +500,6 @@ private:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
@@ -526,7 +523,7 @@ private:
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
+
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;

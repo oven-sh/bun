@@ -2480,7 +2480,7 @@ pub const Process = struct {
         }
 
         vm.onExit();
-        std.os.exit(code);
+        bun.Global.exit(code);
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

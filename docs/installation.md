@@ -12,10 +12,6 @@ Bun ships as a single executable that can be installed a few different ways.
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 ```
 
-<!-- ```sh#Windows
-PS> irm https://bun.sh/install | iex
-``` -->
-
 ```bash#NPM
 $ npm install -g bun # the last `npm` command you'll ever need
 ```

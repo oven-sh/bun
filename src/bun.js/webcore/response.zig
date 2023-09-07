@@ -618,19 +618,88 @@ pub const Fetch = struct {
         }
     }
 
+    pub const FetchTaskletPromiseResult = struct {
+        const log = Output.scoped(.FetchTaskletPromiseResult, false);
+        promise: JSC.JSPromise.Strong,
+        result: JSC.Strong,
+        globalThis: *JSGlobalObject = undefined,
+        success: bool,
+        pub fn run(this: *FetchTaskletPromiseResult) void {
+            log("run", .{});
+            defer this.deinit();
+
+            const promise_value = this.promise.valueOrEmpty();
+            promise_value.ensureStillAlive();
+            const promise = promise_value.asAnyPromise() orelse return;
+
+            const result = this.result.get() orelse JSC.JSValue.jsUndefined();
+            result.ensureStillAlive();
+
+            switch (this.success) {
+                true => {
+                    promise.resolve(this.globalThis, result);
+                },
+                false => {
+                    promise.reject(this.globalThis, result);
+                },
+            }
+        }
+
+        pub fn deinit(this: *FetchTaskletPromiseResult) void {
+            log("deinit", .{});
+            this.promise.strong.deinit();
+            this.result.deinit();
+            bun.default_allocator.destroy(this);
+        }
+    };
+
+    const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
+    
+    pub const HTTPClientQueueResult = struct {
+        body: MutableString,
+        has_more: bool,
+        redirected: bool, 
+        fail: anyerror,
+        certificate_info: ?HTTPClient.CertificateInfo,
+
+        next: ?*HTTPClientQueueResult = null,
+
+        pub fn isSuccess(this: *HTTPClientQueueResult) bool {
+            return this.fail == error.NoError;
+        }
+        
+        pub fn isTimeout(this: *HTTPClientQueueResult) bool {
+            return this.fail == error.Timeout;
+        }
+
+        pub fn isAbort(this: *HTTPClientQueueResult) bool {
+            return this.fail == error.Aborted;
+        }
+
+        pub fn deinit(this: *HTTPClientQueueResult) void {
+            this.body.deinit();
+            if (this.certificate_info) |certificate_info| {
+                defer certificate_info.deinit(bun.default_allocator);
+            }
+            bun.default_allocator.destroy(this);
+        }
+    };
+
+    const HTTPClientResultQueue = UnboundedQueue(HTTPClientQueueResult, .next);
+
     pub const FetchTasklet = struct {
         const log = Output.scoped(.FetchTasklet, false);
 
         http: ?*HTTPClient.AsyncHTTP = null,
-        result: HTTPClient.HTTPClientResult = .{},
+        
+        result_queue: HTTPClientResultQueue = HTTPClientResultQueue{},
+
         metadata: ?HTTPClient.HTTPResponseMetadata = null,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
         /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
-        /// buffer used to stream response to JS
-        scheduled_response_buffer: MutableString = undefined,
         /// response strong ref
         response: JSC.Strong = .{},
         /// stream strong ref if any is available
@@ -653,7 +722,6 @@ pub const Fetch = struct {
         signal: ?*JSC.WebCore.AbortSignal = null,
         signals: HTTPClient.Signals = .{},
         signal_store: HTTPClient.Signals.Store = .{},
-        has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
@@ -665,7 +733,6 @@ pub const Fetch = struct {
         hostname: ?[]u8 = null,
         is_waiting_body: bool = false,
         is_waiting_abort: bool = false,
-        mutex: Mutex,
 
         tracker: JSC.AsyncTaskTracker,
 
@@ -734,7 +801,6 @@ pub const Fetch = struct {
             this.response.deinit();
             this.readable_stream_ref.deinit();
 
-            this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
             if (this.abort_reason != .zero)
@@ -759,14 +825,11 @@ pub const Fetch = struct {
             bun.default_allocator.destroy(reporter);
         }
 
-        pub fn onBodyReceived(this: *FetchTasklet) void {
-            this.mutex.lock();
-            const success = this.result.isSuccess();
+        pub fn onBodyReceived(this: *FetchTasklet, result: *HTTPClientQueueResult) void {
+            const success = result.isSuccess();
             const globalThis = this.global_this;
-            const is_done = !success or !this.result.has_more;
+            const is_done = !success or !result.has_more;
             defer {
-                this.has_schedule_callback.store(false, .Monotonic);
-                this.mutex.unlock();
                 if (is_done) {
                     var vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
@@ -776,7 +839,7 @@ pub const Fetch = struct {
             }
 
             if (!success) {
-                const err = this.onReject();
+                const err = this.onReject(result);
                 err.ensureStillAlive();
                 if (this.response.get()) |response_js| {
                     if (response_js.as(Response)) |response| {
@@ -805,12 +868,14 @@ pub const Fetch = struct {
             if (this.readable_stream_ref.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     readable.ptr.Bytes.size_hint = this.getSizeHint();
+
+
                     // body can be marked as used but we still need to pipe the data
-                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                    var scheduled_response_buffer = result.body.list;
 
                     const chunk = scheduled_response_buffer.items;
 
-                    if (this.result.has_more) {
+                    if (result.has_more) {
                         readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.initConst(chunk),
@@ -818,8 +883,6 @@ pub const Fetch = struct {
                             bun.default_allocator,
                         );
 
-                        // clean for reuse later
-                        this.scheduled_response_buffer.reset();
                     } else {
                         readable.ptr.Bytes.onData(
                             .{
@@ -840,11 +903,11 @@ pub const Fetch = struct {
                             if (readable.ptr == .Bytes) {
                                 readable.ptr.Bytes.size_hint = this.getSizeHint();
 
-                                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                                var scheduled_response_buffer = result.body.list;
 
                                 const chunk = scheduled_response_buffer.items;
 
-                                if (this.result.has_more) {
+                                if (result.has_more) {
                                     readable.ptr.Bytes.onData(
                                         .{
                                             .temporary = bun.ByteList.initConst(chunk),
@@ -852,8 +915,6 @@ pub const Fetch = struct {
                                         bun.default_allocator,
                                     );
 
-                                    // clean for reuse later
-                                    this.scheduled_response_buffer.reset();
                                 } else {
                                     readable.ptr.Bytes.onData(
                                         .{
@@ -869,9 +930,8 @@ pub const Fetch = struct {
                             response.body.value.Locked.size_hint = this.getSizeHint();
                         }
                         // we will reach here when not streaming
-                        if (!this.result.has_more) {
-                            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                        if (!result.has_more) {
+                            var scheduled_response_buffer = result.body.list;
 
                             // done resolve body
                             var old = body.value;
@@ -880,15 +940,14 @@ pub const Fetch = struct {
                                     .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
                                 },
                             };
-                            response.body.value = body_value;
-
-                            this.scheduled_response_buffer = .{
-                                .allocator = this.memory_reporter.allocator(),
+                            result.body = MutableString{
+                                .allocator =  bun.default_allocator,
                                 .list = .{
                                     .items = &.{},
                                     .capacity = 0,
                                 },
                             };
+                            response.body.value = body_value;
 
                             if (old == .Locked) {
                                 old.resolve(&response.body.value, this.global_this);
@@ -902,22 +961,21 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            var result = this.result_queue.pop() orelse return;
+            defer result.deinit();
+
             if (this.is_waiting_body) {
-                return this.onBodyReceived();
+                return this.onBodyReceived(result);
             }
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
             const globalThis = this.global_this;
-            this.mutex.lock();
-
             if (this.is_waiting_abort) {
                 // has_more will be false when the request is aborted/finished
-                if (this.result.has_more) {
-                    this.mutex.unlock();
+                if (result.has_more) {
                     return;
                 }
-                this.mutex.unlock();
                 var poll_ref = this.poll_ref;
                 var vm = globalThis.bunVM();
 
@@ -936,35 +994,31 @@ pub const Fetch = struct {
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 ref.strong.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
-                this.mutex.unlock();
                 poll_ref.unref(vm);
                 this.clearData();
                 this.deinit();
                 return;
             }
 
-            if (this.result.certificate_info) |certificate_info| {
-                this.result.certificate_info = null;
+            if (result.certificate_info) |certificate_info| {
+                result.certificate_info = null;
                 defer certificate_info.deinit(bun.default_allocator);
 
                 // we receive some error
-                if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+                if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info, result)) {
                     log("onProgressUpdate: aborted due certError", .{});
                     // we need to abort the request
                     const promise = promise_value.asAnyPromise().?;
                     const tracker = this.tracker;
-                    const result = this.onReject();
+                    const js_result = this.onReject(result);
 
-                    result.ensureStillAlive();
+                    js_result.ensureStillAlive();
                     promise_value.ensureStillAlive();
 
-                    promise.reject(globalThis, result);
+                    promise.reject(globalThis, js_result);
 
                     tracker.didDispatch(globalThis);
                     ref.strong.deinit();
-                    this.has_schedule_callback.store(false, .Monotonic);
-                    this.mutex.unlock();
                     if (this.is_waiting_abort) {
                         return;
                     }
@@ -977,48 +1031,61 @@ pub const Fetch = struct {
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    this.has_schedule_callback.store(false, .Monotonic);
                     // cannot continue without metadata
-                    this.mutex.unlock();
                     return;
                 }
             }
 
-            const promise = promise_value.asAnyPromise().?;
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 ref.strong.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
-                this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
                 }
             }
-            const success = this.result.isSuccess();
-            const result = switch (success) {
-                true => this.onResolve(),
-                false => this.onReject(),
+            const success = result.isSuccess();
+
+            const js_result = switch (success) {
+                true => this.onResolve(result),
+                false => this.onReject(result),
             };
-            result.ensureStillAlive();
+
 
             promise_value.ensureStillAlive();
+            const promise = promise_value.asAnyPromise() orelse return;
+
+            js_result.ensureStillAlive();
 
             switch (success) {
                 true => {
-                    promise.resolve(globalThis, result);
+                    promise.resolve(globalThis, js_result);
                 },
                 false => {
-                    promise.reject(globalThis, result);
+                    promise.reject(globalThis, js_result);
                 },
             }
+
+            // // send response to the next tick
+            // var fetch_result = bun.default_allocator.create(FetchTaskletPromiseResult) catch @panic("OOM");
+            // fetch_result.* = FetchTaskletPromiseResult{
+            //     .promise = this.promise,
+            //     .result = JSC.Strong.create(js_result, globalThis),
+            //     .globalThis = globalThis,
+            //     .success = success,
+            // };
+            // this.promise = .{ .strong = .{} };
+
+            // var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
+            // task.* = JSC.AnyTask.New(FetchTaskletPromiseResult, FetchTaskletPromiseResult.run).init(fetch_result);
+            // vm.enqueueTask(JSC.Task.init(task));
         }
 
-        pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo) bool {
+        pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo, result: *HTTPClientQueueResult) bool {
             if (this.check_server_identity.get()) |check_server_identity| {
                 check_server_identity.ensureStillAlive();
                 if (certificate_info.cert.len > 0) {
@@ -1036,7 +1103,7 @@ pub const Fetch = struct {
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
-                            this.is_waiting_abort = this.result.has_more;
+                            this.is_waiting_abort = result.has_more;
 
                             check_result.ensureStillAlive();
                             check_result.protect();
@@ -1048,17 +1115,17 @@ pub const Fetch = struct {
                             if (this.http != null) {
                                 HTTPClient.http_thread.scheduleShutdown(this.http.?);
                             }
-                            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                            result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                             return false;
                         }
                         return true;
                     }
                 }
             }
-            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+            result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
             return false;
         }
-        pub fn onReject(this: *FetchTasklet) JSValue {
+        pub fn onReject(this: *FetchTasklet, result: *HTTPClientQueueResult) JSValue {
             log("onReject", .{});
 
             if (this.signal) |signal| {
@@ -1070,12 +1137,12 @@ pub const Fetch = struct {
                 return this.abort_reason;
             }
 
-            if (this.result.isTimeout()) {
+            if (result.isTimeout()) {
                 // Timeout without reason
                 return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
             }
 
-            if (this.result.isAbort()) {
+            if (result.isAbort()) {
                 // Abort without reason
                 return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
@@ -1092,8 +1159,8 @@ pub const Fetch = struct {
             }
 
             const fetch_error = JSC.SystemError{
-                .code = bun.String.static(@errorName(this.result.fail)),
-                .message = switch (this.result.fail) {
+                .code = bun.String.static(@errorName(result.fail)),
+                .message = switch (result.fail) {
                     error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -1122,29 +1189,7 @@ pub const Fetch = struct {
                 };
             }
 
-            this.mutex.lock();
-            defer this.mutex.unlock();
             const size_hint = this.getSizeHint();
-
-            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-            // This means we have received part of the body but not the whole thing
-            if (scheduled_response_buffer.items.len > 0) {
-                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
-                this.scheduled_response_buffer = .{
-                    .allocator = this.memory_reporter.allocator(),
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-
-                return .{
-                    .owned = .{
-                        .list = scheduled_response_buffer.toManaged(bun.default_allocator),
-                        .size_hint = size_hint,
-                    },
-                };
-            }
 
             return .{
                 .estimated_size = size_hint,
@@ -1159,7 +1204,7 @@ pub const Fetch = struct {
             };
         }
 
-        fn toBodyValue(this: *FetchTasklet) Body.Value {
+        fn toBodyValue(this: *FetchTasklet, result: *HTTPClientQueueResult) Body.Value {
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
@@ -1172,16 +1217,14 @@ pub const Fetch = struct {
                 };
                 return response;
             }
-
-            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+            var scheduled_response_buffer = result.body.list;
             const response = Body.Value{
                 .InternalBlob = .{
                     .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
                 },
             };
-            this.scheduled_response_buffer = .{
-                .allocator = this.memory_reporter.allocator(),
+            result.body = MutableString{
+                .allocator =  bun.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1191,33 +1234,33 @@ pub const Fetch = struct {
             return response;
         }
 
-        fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+        fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator, result: *HTTPClientQueueResult) Response {
             log("toResponse", .{});
             std.debug.assert(this.metadata != null);
             // at this point we always should have metadata
             var metadata = this.metadata.?;
             const http_response = metadata.response;
-            this.is_waiting_body = this.result.has_more;
+            this.is_waiting_body = result.has_more;
             return Response{
                 .allocator = allocator,
                 .url = bun.String.createAtomIfPossible(metadata.url),
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
-                .redirected = this.result.redirected,
+                .redirected = result.redirected,
                 .body = .{
                     .init = .{
                         .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                         .status_code = @as(u16, @truncate(http_response.status_code)),
                     },
-                    .value = this.toBodyValue(),
+                    .value = this.toBodyValue(result),
                 },
             };
         }
 
-        pub fn onResolve(this: *FetchTasklet) JSValue {
+        pub fn onResolve(this: *FetchTasklet, result: *HTTPClientQueueResult) JSValue {
             log("onResolve", .{});
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
-            response.* = this.toResponse(allocator);
+            response.* = this.toResponse(allocator, result);
             const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
             this.response = JSC.Strong.create(response_js, this.global_this);
@@ -1234,14 +1277,6 @@ pub const Fetch = struct {
             var fetch_tasklet = try allocator.create(FetchTasklet);
 
             fetch_tasklet.* = .{
-                .mutex = Mutex.init(),
-                .scheduled_response_buffer = .{
-                    .allocator = fetch_options.memory_reporter.allocator(),
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                },
                 .response_buffer = MutableString{
                     .allocator = fetch_options.memory_reporter.allocator(),
                     .list = .{
@@ -1396,11 +1431,8 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
-            task.mutex.lock();
-            defer task.mutex.unlock();
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
-            task.result = result;
-
+            
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
                 log("added callback metadata", .{});
@@ -1409,20 +1441,17 @@ pub const Fetch = struct {
             }
             task.body_size = result.body_size;
 
-            const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-            if (success) {
-                _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
-            }
-            // reset for reuse
+            var item = bun.default_allocator.create(HTTPClientQueueResult) catch @panic("OOM");
+            item.* = .{ 
+                .has_more = result.has_more, 
+                .redirected = result.redirected, 
+                .fail = result.fail,
+                .certificate_info = result.certificate_info,
+                .body = MutableString.initCopy(bun.default_allocator, result.body.?.*.list.items) catch @panic("OOM"),
+            };
+            task.result_queue.push(item);
             task.response_buffer.reset();
-
-            if (task.has_schedule_callback.compareAndSwap(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
-                if (has_schedule_callback) {
-                    return;
-                }
-            }
-
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };

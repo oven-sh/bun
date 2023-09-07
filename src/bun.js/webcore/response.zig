@@ -618,41 +618,6 @@ pub const Fetch = struct {
         }
     }
 
-    pub const FetchTaskletPromiseResult = struct {
-        const log = Output.scoped(.FetchTaskletPromiseResult, false);
-        promise: JSC.JSPromise.Strong,
-        result: JSC.Strong,
-        globalThis: *JSGlobalObject = undefined,
-        success: bool,
-        pub fn run(this: *FetchTaskletPromiseResult) void {
-            log("run", .{});
-            defer this.deinit();
-
-            const promise_value = this.promise.valueOrEmpty();
-            promise_value.ensureStillAlive();
-            const promise = promise_value.asAnyPromise() orelse return;
-
-            const result = this.result.get() orelse JSC.JSValue.jsUndefined();
-            result.ensureStillAlive();
-
-            switch (this.success) {
-                true => {
-                    promise.resolve(this.globalThis, result);
-                },
-                false => {
-                    promise.reject(this.globalThis, result);
-                },
-            }
-        }
-
-        pub fn deinit(this: *FetchTaskletPromiseResult) void {
-            log("deinit", .{});
-            this.promise.strong.deinit();
-            this.result.deinit();
-            bun.default_allocator.destroy(this);
-        }
-    };
-
     const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
     
     pub const HTTPClientQueueResult = struct {
@@ -661,6 +626,11 @@ pub const Fetch = struct {
         redirected: bool, 
         fail: anyerror,
         certificate_info: ?HTTPClient.CertificateInfo,
+        /// For Http Client requests
+        /// when Content-Length is provided this represents the whole size of the request
+        /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+        /// If is not chunked encoded and Content-Length is not provided this will be unknown
+        body_size: HTTPClient.HTTPClientResult.BodySize = .unknown,
 
         next: ?*HTTPClientQueueResult = null,
 
@@ -674,6 +644,14 @@ pub const Fetch = struct {
 
         pub fn isAbort(this: *HTTPClientQueueResult) bool {
             return this.fail == error.Aborted;
+        }
+        
+        fn getSizeHint(this: *HTTPClientQueueResult) Blob.SizeType {
+            return switch (this.body_size) {
+                .content_length => @truncate(this.body_size.content_length),
+                .total_received => @truncate(this.body_size.total_received),
+                else => 0,
+            };
         }
 
         pub fn deinit(this: *HTTPClientQueueResult) void {
@@ -709,12 +687,7 @@ pub const Fetch = struct {
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: JSC.PollRef = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
-        /// For Http Client requests
-        /// when Content-Length is provided this represents the whole size of the request
-        /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
-        /// If is not chunked encoded and Content-Length is not provided this will be unknown
-        body_size: HTTPClient.HTTPClientResult.BodySize = .unknown,
-
+        size_hint: Blob.SizeType,
         /// This is url + proxy memory buffer and is owned by FetchTasklet
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
@@ -867,7 +840,7 @@ pub const Fetch = struct {
 
             if (this.readable_stream_ref.get()) |readable| {
                 if (readable.ptr == .Bytes) {
-                    readable.ptr.Bytes.size_hint = this.getSizeHint();
+                    readable.ptr.Bytes.size_hint = result.getSizeHint();
 
 
                     // body can be marked as used but we still need to pipe the data
@@ -901,7 +874,7 @@ pub const Fetch = struct {
                     if (body.value == .Locked) {
                         if (body.value.Locked.readable) |readable| {
                             if (readable.ptr == .Bytes) {
-                                readable.ptr.Bytes.size_hint = this.getSizeHint();
+                                readable.ptr.Bytes.size_hint = result.getSizeHint();
 
                                 var scheduled_response_buffer = result.body.list;
 
@@ -927,7 +900,7 @@ pub const Fetch = struct {
                                 return;
                             }
                         } else {
-                            response.body.value.Locked.size_hint = this.getSizeHint();
+                            response.body.value.Locked.size_hint = result.getSizeHint();
                         }
                         // we will reach here when not streaming
                         if (!result.has_more) {
@@ -1069,20 +1042,6 @@ pub const Fetch = struct {
                     promise.reject(globalThis, js_result);
                 },
             }
-
-            // // send response to the next tick
-            // var fetch_result = bun.default_allocator.create(FetchTaskletPromiseResult) catch @panic("OOM");
-            // fetch_result.* = FetchTaskletPromiseResult{
-            //     .promise = this.promise,
-            //     .result = JSC.Strong.create(js_result, globalThis),
-            //     .globalThis = globalThis,
-            //     .success = success,
-            // };
-            // this.promise = .{ .strong = .{} };
-
-            // var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
-            // task.* = JSC.AnyTask.New(FetchTaskletPromiseResult, FetchTaskletPromiseResult.run).init(fetch_result);
-            // vm.enqueueTask(JSC.Task.init(task));
         }
 
         pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo, result: *HTTPClientQueueResult) bool {
@@ -1189,18 +1148,8 @@ pub const Fetch = struct {
                 };
             }
 
-            const size_hint = this.getSizeHint();
-
             return .{
-                .estimated_size = size_hint,
-            };
-        }
-
-        fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
-            return switch (this.body_size) {
-                .content_length => @truncate(this.body_size.content_length),
-                .total_received => @truncate(this.body_size.total_received),
-                else => 0,
+                .estimated_size = this.size_hint,
             };
         }
 
@@ -1208,7 +1157,7 @@ pub const Fetch = struct {
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
-                        .size_hint = this.getSizeHint(),
+                        .size_hint = result.getSizeHint(),
                         .task = this,
                         .global = this.global_this,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
@@ -1277,6 +1226,7 @@ pub const Fetch = struct {
             var fetch_tasklet = try allocator.create(FetchTasklet);
 
             fetch_tasklet.* = .{
+                .size_hint = 0,
                 .response_buffer = MutableString{
                     .allocator = fetch_options.memory_reporter.allocator(),
                     .list = .{
@@ -1439,17 +1389,18 @@ pub const Fetch = struct {
                 std.debug.assert(task.metadata == null);
                 task.metadata = metadata;
             }
-            task.body_size = result.body_size;
 
             task.response_buffer = result.body.?.*;
             var item = bun.default_allocator.create(HTTPClientQueueResult) catch @panic("OOM");
             item.* = .{ 
+                .body_size = result.body_size,
                 .has_more = result.has_more, 
                 .redirected = result.redirected, 
                 .fail = result.fail,
                 .certificate_info = result.certificate_info,
                 .body = MutableString.initCopy(bun.default_allocator, result.body.?.*.list.items) catch @panic("OOM"),
             };
+            task.size_hint = item.getSizeHint();
             task.result_queue.push(item);
             task.response_buffer.reset();
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));

@@ -680,7 +680,6 @@ pub const Fetch = struct {
         response_buffer: MutableString = undefined,
         // all shedule buffers are stored here when not streaming
         scheduled_response_buffer: MutableString = undefined,
-        has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
         /// response strong ref
         response: JSC.Strong = .{},
         /// stream strong ref if any is available
@@ -1080,16 +1079,9 @@ pub const Fetch = struct {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
 
-            var has_more = false;
             while (this.result_queue.pop()) |result| {
                 defer result.deinit();
-                has_more = result.has_more;
                 this.processResult(result);
-            }
-
-            if (has_more) {
-                this.has_schedule_callback.store(false, .Monotonic);
-                return;
             }
         }
 
@@ -1522,14 +1514,12 @@ pub const Fetch = struct {
                 .body = MutableString.initCopy(bun.default_allocator, result.body.?.*.list.items) catch @panic("OOM"),
             };
             task.size_hint = item.getSizeHint();
+            const is_empty = task.result_queue.isEmpty();
             task.result_queue.push(item);
             task.response_buffer.reset();
-            if (task.has_schedule_callback.compareAndSwap(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
-                if (has_schedule_callback) {
-                    return;
-                }
+            if (is_empty) {
+                task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
             }
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
 

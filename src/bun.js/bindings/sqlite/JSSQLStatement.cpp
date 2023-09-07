@@ -37,7 +37,7 @@
 // we only call one pointer for the actual library
 // and it means there's less work for DYLD to do on startup
 // i.e. it shouldn't have any impact on startup time
-#ifdef LAZY_LOAD_SQLITE
+#if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #else
 static inline int lazyLoadSQLite()
@@ -509,9 +509,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     if (UNLIKELY(!sqliteStrValue.isString())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite path"_s));
         return JSValue::encode(JSC::jsUndefined());
-}
+    }
 
-#ifdef LAZY_LOAD_SQLITE
+#if LAZY_LOAD_SQLITE
     if (sqlite3_handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
         return JSValue::encode(JSC::jsUndefined());

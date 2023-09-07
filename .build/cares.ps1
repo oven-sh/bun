@@ -15,7 +15,10 @@ if (-not (Test-Path $BUN_DEPS_OUT_DIR)) {
     New-Item -ItemType Directory -Path $BUN_DEPS_OUT_DIR
 }
 
-Set-Location (Join-Path $BUN_DEPS_DIR 'zstd\build\cmake')
-cmake $CMAKE_FLAGS -DZSTD_BUILD_STATIC=ON -DCMAKE_BUILD_TYPE=Release
+Set-Location (Join-Path $BUN_DEPS_DIR 'c-ares')
+rm -r build -ErrorAction SilentlyContinue
+mkdir build -ErrorAction SilentlyContinue
+cd build
+cmake $CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Release -G "Visual Studio 17 2022" -DCARES_STATIC=ON -DCARES_SHARED=OFF .. 
 cmake --build . --clean-first --config Release
-Copy-Item lib\*\**.lib $BUN_DEPS_OUT_DIR
+cp ./lib/Release/*.lib $BUN_DEPS_OUT_DIR

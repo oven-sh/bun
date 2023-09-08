@@ -2038,6 +2038,12 @@ it("test syscall errno, issue#4198", () => {
 
   mkdirSync(path);
   expect(() => mkdirSync(path)).toThrow("File or folder exists");
-  expect(() => unlinkSync(path)).toThrow("Operation not permitted");
+  expect(() => unlinkSync(path)).toThrow(
+    {
+      ["darwin"]: "Operation not permitted",
+      ["linux"]: "Is a directory",
+      // TODO: windows
+    }[process.platform] as const,
+  );
   rmdirSync(path);
 });

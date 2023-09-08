@@ -192,7 +192,7 @@ Bun uses a series of make commands to rebuild parts of the codebase. The general
 ---
 
 - Code using `cppFn`/`JSC.markBinding`
-- `make headers` (TODO: explain explain what this is used for and why it's useful)
+- `make headers` (TODO: explain what this is used for and why it's useful)
 
 {% /table %}
 

@@ -73,7 +73,7 @@ You can use the following configurations to debug JavaScript and TypeScript file
       "name": "Attach to Bun",
 
       // The URL of the WebSocket inspector to attach to.
-      // This value can be retreived by using `bun --inspect`.
+      // This value can be retrieved by using `bun --inspect`.
       "url": "ws://localhost:6499/",
     }
   ]

@@ -2047,8 +2047,8 @@ pub const PackageManager = struct {
     fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
         var github_api_domain: string = "api.github.com";
         if (this.env.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-            if (api_domain.len > 0) {
-                github_api_domain = api_domain;
+            if (api_domain.value.len > 0) {
+                github_api_domain = api_domain.value;
             }
         }
         return std.fmt.allocPrint(
@@ -3650,21 +3650,21 @@ pub const PackageManager = struct {
     const CacheDir = struct { path: string, is_node_modules: bool };
     pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
         if (env.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
-            return CacheDir{ .path = dir, .is_node_modules = false };
+            return CacheDir{ .path = dir.value, .is_node_modules = false };
         }
 
         if (env.map.get("BUN_INSTALL")) |dir| {
-            var parts = [_]string{ dir, "install/", "cache/" };
+            var parts = [_]string{ dir.value, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
         if (env.map.get("XDG_CACHE_HOME")) |dir| {
-            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            var parts = [_]string{ dir.value, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
         if (env.map.get("HOME")) |dir| {
-            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            var parts = [_]string{ dir.value, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
@@ -4595,13 +4595,13 @@ pub const PackageManager = struct {
                 inline for (registry_keys) |registry_key| {
                     if (!did_set) {
                         if (env.map.get(registry_key)) |registry_| {
-                            if (registry_.len > 0 and
-                                (strings.startsWith(registry_, "https://") or
-                                strings.startsWith(registry_, "http://")))
+                            if (registry_.value.len > 0 and
+                                (strings.startsWith(registry_.value, "https://") or
+                                strings.startsWith(registry_.value, "http://")))
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                api_registry.url = registry_;
+                                api_registry.url = registry_.value;
                                 api_registry.token = prev_scope.token;
                                 this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
                                 did_set = true;
@@ -4622,8 +4622,8 @@ pub const PackageManager = struct {
                 inline for (token_keys) |registry_key| {
                     if (!did_set) {
                         if (env.map.get(registry_key)) |registry_| {
-                            if (registry_.len > 0) {
-                                this.scope.token = registry_;
+                            if (registry_.value.len > 0) {
+                                this.scope.token = registry_.value;
                                 did_set = true;
                                 // stage1 bug: break inside inline is broken
                                 // break :load_registry;
@@ -4654,7 +4654,7 @@ pub const PackageManager = struct {
             }
 
             if (env.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
-                this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
+                this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path.value);
             }
 
             if (env.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
@@ -4662,16 +4662,16 @@ pub const PackageManager = struct {
             }
 
             if (env.map.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
-                if (std.fmt.parseInt(u16, retry_count, 10)) |int| this.max_retry_count = int else |_| {}
+                if (std.fmt.parseInt(u16, retry_count.value, 10)) |int| this.max_retry_count = int else |_| {}
             }
 
             if (env.map.get("BUN_CONFIG_LINK_NATIVE_BINS")) |native_packages| {
-                const len = std.mem.count(u8, native_packages, " ");
+                const len = std.mem.count(u8, native_packages.value, " ");
                 if (len > 0) {
                     var all = try allocator.alloc(PackageNameHash, this.native_bin_link_allowlist.len + len);
                     bun.copy(PackageNameHash, all, this.native_bin_link_allowlist);
                     var remain = all[this.native_bin_link_allowlist.len..];
-                    var splitter = std.mem.split(u8, native_packages, " ");
+                    var splitter = std.mem.split(u8, native_packages.value, " ");
                     var i: usize = 0;
                     while (splitter.next()) |name| {
                         remain[i] = String.Builder.stringHash(name);
@@ -4688,19 +4688,19 @@ pub const PackageManager = struct {
             AsyncHTTP.loadEnv(allocator, log, env);
 
             if (env.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
-                this.do.save_lockfile = strings.eqlComptime(check_bool, "0");
+                this.do.save_lockfile = strings.eqlComptime(check_bool.value, "0");
             }
 
             if (env.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE")) |check_bool| {
-                this.do.load_lockfile = strings.eqlComptime(check_bool, "0");
+                this.do.load_lockfile = strings.eqlComptime(check_bool.value, "0");
             }
 
             if (env.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES")) |check_bool| {
-                this.do.install_packages = strings.eqlComptime(check_bool, "0");
+                this.do.install_packages = strings.eqlComptime(check_bool.value, "0");
             }
 
             if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
-                this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+                this.do.verify_integrity = !strings.eqlComptime(check_bool.value, "0");
             }
 
             if (cli_) |cli| {
@@ -5243,7 +5243,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, entries_option.entries, .production);
+        try env.load(entries_option.entries, .production);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
@@ -5257,7 +5257,7 @@ pub const PackageManager = struct {
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
         if (env.map.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+            if (std.fmt.parseInt(u32, max_procs.value, 10)) |cpu_count_| {
                 cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
         }
@@ -5290,10 +5290,10 @@ pub const PackageManager = struct {
         }
 
         if (env.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
-            if (strings.eqlComptime(manifest_cache, "1")) {
+            if (strings.eqlComptime(manifest_cache.value, "1")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = false;
-            } else if (strings.eqlComptime(manifest_cache, "2")) {
+            } else if (strings.eqlComptime(manifest_cache.value, "2")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = true;
             } else {
@@ -5328,7 +5328,7 @@ pub const PackageManager = struct {
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
         if (env.map.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+            if (std.fmt.parseInt(u32, max_procs.value, 10)) |cpu_count_| {
                 cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
         }
@@ -5375,10 +5375,10 @@ pub const PackageManager = struct {
         }
 
         if (env.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
-            if (strings.eqlComptime(manifest_cache, "1")) {
+            if (strings.eqlComptime(manifest_cache.value, "1")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = false;
-            } else if (strings.eqlComptime(manifest_cache, "2")) {
+            } else if (strings.eqlComptime(manifest_cache.value, "2")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = true;
             } else {

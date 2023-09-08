@@ -669,7 +669,7 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(fd);
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -677,9 +677,9 @@ pub const VirtualMachine = struct {
         }
 
         if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
-            if (strings.eqlComptime(gc_level, "1")) {
+            if (strings.eqlComptime(gc_level.value, "1")) {
                 this.aggressive_garbage_collection = .mild;
-            } else if (strings.eqlComptime(gc_level, "2")) {
+            } else if (strings.eqlComptime(gc_level.value, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
             }
         }
@@ -716,12 +716,13 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        const no_clear_on_reload = if (this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")) |entry| entry.value else "0";
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(no_clear_on_reload, "true"));
         }
 
-        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (!strings.eqlComptime(no_clear_on_reload, "true")) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();

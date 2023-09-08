@@ -279,7 +279,7 @@ pub const CreateCommand = struct {
             if (!std.fs.path.isAbsolute(positional)) {
                 outer: {
                     if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
-                        var parts = [_]string{ home_dir, positional };
+                        var parts = [_]string{ home_dir.value, positional };
                         var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
@@ -307,7 +307,7 @@ pub const CreateCommand = struct {
 
                 outer: {
                     if (env_loader.map.get("HOME")) |home_dir| {
-                        var parts = [_]string{ home_dir, BUN_CREATE_DIR, positional };
+                        var parts = [_]string{ home_dir.value, BUN_CREATE_DIR, positional };
                         var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
@@ -695,7 +695,7 @@ pub const CreateCommand = struct {
         var preinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var postinstall_tasks = std.mem.zeroes(std.ArrayListUnmanaged([]const u8));
         var has_dependencies: bool = false;
-        const PATH = env_loader.map.get("PATH") orelse "";
+        const PATH = if (env_loader.map.get("PATH")) |entry| entry.value else "";
 
         {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
@@ -1738,7 +1738,7 @@ pub const Example = struct {
                 .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } },
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
-                var parts = [_]string{home_dir};
+                var parts = [_]string{home_dir.value};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
@@ -1750,7 +1750,7 @@ pub const Example = struct {
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
-                var parts = [_]string{ home_dir, BUN_CREATE_DIR };
+                var parts = [_]string{ home_dir.value, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = bun.fdcast(bun.invalid_fd) } };
             }
@@ -1824,8 +1824,8 @@ pub const Example = struct {
 
         var github_api_domain: string = "api.github.com";
         if (env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-            if (api_domain.len > 0) {
-                github_api_domain = api_domain;
+            if (api_domain.value.len > 0) {
+                github_api_domain = api_domain.value;
             }
         }
 
@@ -1841,8 +1841,8 @@ pub const Example = struct {
         var headers_buf: string = "";
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
-            if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token});
+            if (access_token.value.len > 0) {
+                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token.value});
                 try header_entries.append(
                     ctx.allocator,
                     Headers.Kv{
@@ -2185,7 +2185,7 @@ pub const CreateListExamplesCommand = struct {
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(
                 "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-                .{homedir},
+                .{homedir.value},
             );
         } else {
             Output.prettyln(

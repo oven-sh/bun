@@ -33,7 +33,7 @@ Template a new Bun project with `bun create`. This is a flexible command that ca
 ### From `npm`
 
 ```sh
-$ bun create template [<destination>]
+$ bun create <template> [<destination>]
 ```
 
 Assuming you don't have a [local template](#local-templates) with the same name, this command will download and execute the `create-<template>` package from npm. The following two commands will behave identically:

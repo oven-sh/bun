@@ -1786,8 +1786,8 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getNativeHandle(res: *Response) i32 {
                 return @as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast()))));
             }
-            pub fn getRemoteAddressAsText(res: *Response, buf: []u8) usize {
-                return uws_res_get_remote_address_as_text(ssl_flag, res, buf);
+            pub fn getRemoteAddressAsText(res: *Response, buf: *[*]const u8) usize {
+                return uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), buf);
             }
             pub fn onWritable(
                 res: *Response,

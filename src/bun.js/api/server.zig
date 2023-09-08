@@ -1127,31 +1127,44 @@ fn NewFlags(comptime debug_mode: bool) type {
 
 pub const AnyRequestContext = union(enum) {
     none: void,
-    RequestContext: *NewRequestContext(false, false, Server),
-    SSLRequestContext: *NewRequestContext(true, false, SSLServer),
-    DebugRequestContext: *NewRequestContext(false, true, DebugServer),
-    DebugSSLRequestContext: *NewRequestContext(true, true, DebugSSLServer),
+    RequestContext: *HTTPServer.RequestContext,
+    SSLRequestContext: *HTTPSServer.RequestContext,
+    DebugRequestContext: *DebugHTTPServer.RequestContext,
+    DebugSSLRequestContext: *DebugHTTPSServer.RequestContext,
 
-    // TODO need to cast a runtime NewRequestContext to one of the valid ones in the enum
-    pub fn fromExisting(request_ctx: anytype) AnyRequestContext {
-        return switch (@TypeOf(request_ctx)) {
-            @TypeOf(AnyRequestContext.RequestContext) => .{ .RequestContext = request_ctx },
-            @TypeOf(AnyRequestContext.SSLRequestContext) => .{ .SSLRequestContext = request_ctx },
-            @TypeOf(AnyRequestContext.DebugRequestContext) => .{ .DebugRequestContext = request_ctx },
-            @TypeOf(AnyRequestContext.DebugSSLRequestContext) => .{ .DebugSSLRequestContext = request_ctx },
+    pub fn fromExisting(comptime Server: type, request_ctx: anytype) AnyRequestContext {
+        return switch (Server) {
+            HTTPServer => .{ .RequestContext = request_ctx },
+            HTTPSServer => .{ .SSLRequestContext = request_ctx },
+            DebugHTTPServer => .{ .DebugRequestContext = request_ctx },
+            DebugHTTPSServer => .{ .DebugSSLRequestContext = request_ctx },
             else => .{ .none = {} },
         };
     }
 
-    /// Returns length of text written to dests
-    pub fn getRemoteAddressAsText(self: AnyRequestContext, dest: []u8) usize {
-        return switch (self) {
-            .none => 0,
-            inline else => |req_ctx| if (req_ctx.resp) |response|
-                response.getRemoteAddressAsText(dest)
-            else
-                0,
-        };
+    pub fn getRemoteAddressAsText(self: AnyRequestContext, out: *?[]const u8) void {
+        switch (self) {
+            .none => out.* = null,
+            inline else => |req_ctx| {
+                if (req_ctx.resp) |response| {
+                    var dest: [*]const u8 = undefined;
+                    const len = response.getRemoteAddressAsText(&dest);
+                    out.* = dest[0..len];
+                } else {
+                    out.* = null;
+                }
+            },
+        }
+    }
+
+    /// Wont actually set anything if `self` is `.none`
+    pub fn setRequest(self: AnyRequestContext, req: *uws.Request) void {
+        switch (self) {
+            .none => {},
+            inline else => |ctx| {
+                ctx.req = req;
+            },
+        }
     }
 
     pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
@@ -1160,10 +1173,6 @@ pub const AnyRequestContext = union(enum) {
             inline else => |req_ctx| req_ctx.req,
         };
     }
-
-    // pub fn getURL(req_ctx: AnyRequestContext) void {
-
-    // }
 };
 
 // This is defined separately partially to work-around an LLVM debugger bug.
@@ -2297,7 +2306,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
-            request_object.uws_request = req;
+            request_object.request_context.setRequest(req);
 
             request_object.ensureURL() catch {
                 request_object.url = bun.String.empty;
@@ -2310,7 +2319,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // This object dies after the stack frame is popped
             // so we have to clear it in here too
-            request_object.uws_request = null;
+            request_object.request_context = .{ .none = {} };
         }
 
         fn toAsync(
@@ -4745,7 +4754,7 @@ pub const ServerWebSocket = struct {
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub const ssl_enabled = ssl_enabled_;
-        const debug_mode = debug_mode_;
+        pub const debug_mode = debug_mode_;
 
         const ThisServer = @This();
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
@@ -4783,6 +4792,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
         pub const doFetch = onFetch;
+        pub const doRequestIp = JSC.wrapInstanceMethod(ThisServer, "requestIp", false);
 
         pub usingnamespace NamespaceType;
 
@@ -4791,16 +4801,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return null;
         }
 
-        pub fn requestIp(this: ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
-            var buf = [_]u8{0} ** 64;
+        pub fn requestIp(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            var text: ?[]const u8 = null;
+            request.request_context.getRemoteAddressAsText(&text);
 
-            const len = request.request_context.getRemoteAddressAsText(&buf);
-
-            if (len == 0) {
-                return JSValue.jsNull();
-            }
-
-            return ZigString.init(buf[0..len]).toValueGC(this.globalThis);
+            return if (text) |ip|
+                ZigString.init(ip).toValueGC(this.globalThis)
+            else
+                JSValue.jsNull();
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
@@ -5566,7 +5574,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+            var request_object: *JSC.WebCore.Request = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
@@ -5578,7 +5586,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .request_context = AnyRequestContext.fromExisting(ctx),
+                .request_context = AnyRequestContext.fromExisting(ThisServer, ctx),
                 .https = ssl_enabled,
                 .signal = ctx.signal,
                 .body = body.ref(),
@@ -5647,7 +5655,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.uws_request = null;
+                request_object.request_context = .{ .none = {} };
             }
 
             var should_deinit_context = false;
@@ -5662,7 +5670,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
-                request_object.uws_request = null;
+                request_object.request_context = .{ .none = {} };
                 ctx.deinit();
                 return;
             }
@@ -5699,7 +5707,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .request_context = AnyRequestContext.fromExisting(ctx),
+                .request_context = AnyRequestContext.fromExisting(ThisServer, ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = ctx.signal,
@@ -5717,7 +5725,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.uws_request = null;
+                request_object.request_context = .{ .none = {} };
             }
 
             var should_deinit_context = false;
@@ -5732,7 +5740,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
-                request_object.uws_request = null;
+                request_object.request_context = .{ .none = {} };
                 ctx.deinit();
                 return;
             }

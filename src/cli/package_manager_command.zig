@@ -162,7 +162,7 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
 
-            if (pm.options.positionals.len > 0 and strings.eqlComptime(pm.options.positionals[0], "rm")) {
+            if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
                     Global.crash();

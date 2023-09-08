@@ -5117,39 +5117,67 @@ it("should handle trustedDependencies", async () => {
   });
   await writeFile(join(package_dir, "moo", "package.json"), moo_package);
   await writeFile(join(package_dir, "moo", "echo.js"), "console.log(`moo|${process.argv[2]}|${import.meta.dir}`);");
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  const moo_dir = await realpath(join(package_dir, "node_modules", "moo"));
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    `moo|preinstall|${moo_dir}`,
-    " + bar@bar",
-    " + moo@moo",
-    `moo|install|${moo_dir}`,
-    `moo|postinstall|${moo_dir}`,
-    `moo|preprepare|${moo_dir}`,
-    `moo|prepare|${moo_dir}`,
-    `moo|postprepare|${moo_dir}`,
-    "",
-    " 2 packages installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["echo.js", "package.json"]);
-  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
-  expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["echo.js", "package.json"]);
-  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
-  await access(join(package_dir, "bun.lockb"));
+
+  async function installPackages(shouldSaveLockfile: boolean, shouldRunLifeCycleScripts: boolean) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    if (shouldSaveLockfile) {
+      expect(err).toContain("Saved lockfile");
+    } else {
+      expect(err).not.toContain("Saved lockfile");
+    }
+
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    const moo_dir = await realpath(join(package_dir, "node_modules", "moo"));
+
+    if (shouldRunLifeCycleScripts) {
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        `moo|preinstall|${moo_dir}`,
+        " + bar@bar",
+        " + moo@moo",
+        `moo|install|${moo_dir}`,
+        `moo|postinstall|${moo_dir}`,
+        `moo|preprepare|${moo_dir}`,
+        `moo|prepare|${moo_dir}`,
+        `moo|postprepare|${moo_dir}`,
+        "",
+        " 2 packages installed",
+      ]);
+    } else {
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        " + bar@bar",
+        " + moo@moo",
+        "",
+        " 2 packages installed",
+      ]);
+    }
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
+    expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["echo.js", "package.json"]);
+    expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
+    expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["echo.js", "package.json"]);
+    expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
+    await access(join(package_dir, "bun.lockb"));
+  }
+
+  await installPackages(true, true);
+  await installPackages(false, false);
+  await rm(join(package_dir, "bun.lockb"));
+  await installPackages(true, true);
+  await rm(join(package_dir, "bun.lockb"));
+  await rm(join(package_dir, "node_modules"), { recursive: true });
+  await installPackages(true, true);
+  await rm(join(package_dir, "node_modules"), { recursive: true });
+  await installPackages(false, true);
 });
 
 it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {

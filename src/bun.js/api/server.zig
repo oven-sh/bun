@@ -1125,6 +1125,8 @@ fn NewFlags(comptime debug_mode: bool) type {
     };
 }
 
+/// A generic wrapper for the HTTP(s) Server`RequestContext`s.
+/// Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 pub const AnyRequestContext = union(enum) {
     none: void,
     RequestContext: *HTTPServer.RequestContext,
@@ -1145,11 +1147,12 @@ pub const AnyRequestContext = union(enum) {
     pub fn getRemoteAddressAsText(self: AnyRequestContext, out: *?[]const u8) void {
         switch (self) {
             .none => out.* = null,
+
             inline else => |req_ctx| {
                 if (req_ctx.resp) |response| {
                     var dest: [*]const u8 = undefined;
-                    const len = response.getRemoteAddressAsText(&dest);
-                    out.* = dest[0..len];
+                    const len: usize = response.getRemoteAddressAsText(&dest);
+                    out.* = if (len > 0) dest[0..len] else null;
                 } else {
                     out.* = null;
                 }
@@ -4717,17 +4720,6 @@ pub const ServerWebSocket = struct {
         return JSValue.jsBoolean(this.websocket.isSubscribed(topic.slice()));
     }
 
-    // pub fn getTopics(
-    //     this: *ServerWebSocket,
-    //     globalThis: *JSC.JSGlobalObject,
-    // ) callconv(.C) JSValue {
-    //     if (this.closed) {
-    //         return JSValue.createStringArray(globalThis, bun.default_allocator, null, 0, false);
-    //     }
-
-    //      this
-    // }
-
     pub fn getRemoteAddress(
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
@@ -4806,9 +4798,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             request.request_context.getRemoteAddressAsText(&text);
 
             return if (text) |ip|
-                ZigString.init(ip).toValueGC(this.globalThis)
+                bun.String.init(ip).toJSConst(this.globalThis)
             else
-                JSValue.jsNull();
+                JSValue.jsUndefined();
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {

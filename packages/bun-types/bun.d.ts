@@ -2332,6 +2332,25 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * Returns the client IP address of the given Request.
+     *
+     * @param request The incoming request
+     *
+     * @returns An ipv6 address `string`, or `undefined` if it couldn't find one.
+     * @todo Return a `SocketAddress` object instead.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    return new Response(server.requestIp(request));
+     *  }
+     * }
+     * ```
+     */
+    requestIp(request: Request): string | undefined;
+
+    /**
      * How many requests are in-flight right now?
      */
     readonly pendingRequests: number;

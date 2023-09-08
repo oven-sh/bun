@@ -1,4 +1,4 @@
-import * as tls from 'node:tls';
+// import * as tls from 'node:tls';
 
 /**
  * "blob" is not supported yet
@@ -1309,7 +1309,7 @@ interface FetchRequestInit extends RequestInit {
    */
   tls?: {
     rejectUnauthorized?: boolean | undefined; // Defaults to true
-    checkServerIdentity?: typeof tls.checkServerIdentity | undefined;
+    checkServerIdentity?: any | undefined; // TODO: change `any` to `checkServerIdentity`
   };
 }
 

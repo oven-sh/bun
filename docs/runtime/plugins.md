@@ -173,7 +173,7 @@ Loading a YAML file is useful, but plugins support more than just data loading. 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
 
-await plugin({
+plugin({
   name: "svelte loader",
   async setup(build) {
     const { compile } = await import("svelte/compiler");

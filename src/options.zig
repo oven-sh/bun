@@ -1506,7 +1506,7 @@ pub const BundleOptions = struct {
             env,
             node_env: {
                 if (loader_) |e|
-                    if (e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")) |env_| break :node_env env_.value;
+                    if (e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")) |env_| break :node_env env_;
 
                 if (this.isTest()) {
                     break :node_env "\"test\"";

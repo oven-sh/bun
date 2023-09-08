@@ -39,7 +39,7 @@ pub const Loader = struct {
 
     pub fn isProduction(this: *const Loader) bool {
         const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
-        return strings.eqlComptime(env.value, "production");
+        return strings.eqlComptime(env, "production");
     }
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
@@ -49,7 +49,7 @@ pub const Loader = struct {
             return buf[0..node.len :0];
         }
 
-        if (which(buf, if (this.map.get("PATH")) |entry| entry.value else return null, fs.top_level_dir, "node")) |node| {
+        if (which(buf, this.map.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
             return node;
         }
 
@@ -93,20 +93,20 @@ pub const Loader = struct {
 
         if (url.isHTTP()) {
             if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
-                if (proxy.value.len > 0) http_proxy = URL.parse(proxy.value);
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
             }
         } else {
             if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
-                if (proxy.value.len > 0) http_proxy = URL.parse(proxy.value);
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
             }
         }
 
         // NO_PROXY filter
         if (http_proxy != null) {
             if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
-                if (no_proxy_text.value.len == 0) return http_proxy;
+                if (no_proxy_text.len == 0) return http_proxy;
 
-                var no_proxy_list = std.mem.split(u8, no_proxy_text.value, ",");
+                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();
                 while (next != null) {
                     var host = next.?;
@@ -135,8 +135,8 @@ pub const Loader = struct {
             var node = this.getNodePath(fs, &buf) orelse return false;
             node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
         }
-        try this.map.put("NODE", node_path_to_use, false);
-        try this.map.put("npm_node_execpath", node_path_to_use, false);
+        try this.map.put("NODE", node_path_to_use);
+        try this.map.put("npm_node_execpath", node_path_to_use);
         return true;
     }
 
@@ -148,7 +148,7 @@ pub const Loader = struct {
 
         if (_key.len == 0) return null;
 
-        return if (this.map.get(_key)) |entry| entry.value else null;
+        return this.map.get(_key);
     }
 
     pub fn getAuto(this: *const Loader, key: string) string {
@@ -337,23 +337,23 @@ pub const Loader = struct {
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
                     if (value.len > 0) {
-                        this.map.put(key, value, false) catch unreachable;
+                        this.map.put(key, value) catch unreachable;
                     } else {
-                        this.map.put(key, empty_string_value, false) catch unreachable;
+                        this.map.put(key, empty_string_value) catch unreachable;
                     }
                 }
             } else {
                 if (env.len > 0) {
-                    this.map.put(env, empty_string_value, false) catch unreachable;
+                    this.map.put(env, empty_string_value) catch unreachable;
                 }
             }
         }
         this.did_load_process = true;
 
         if (this.map.get("HOME")) |home_folder| {
-            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder.value;
+            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
         } else if (this.map.get("USER")) |home_folder| {
-            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder.value;
+            Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
         }
     }
 
@@ -761,7 +761,7 @@ const Parser = struct {
                             else => break,
                         }
                     }
-                    const lookup_value = if (map.get(value[key_start..end])) |entry| entry.value else null;
+                    const lookup_value = map.get(value[key_start..end]);
                     const default_value = if (strings.hasPrefixComptime(value[end..], ":-")) brk: {
                         end += ":-".len;
                         const value_start = end;
@@ -898,10 +898,10 @@ pub const Map = struct {
         return this.map.iterator();
     }
 
-    pub inline fn put(this: *Map, key: string, value: string, comptime conditional: bool) !void {
+    pub inline fn put(this: *Map, key: string, value: string) !void {
         try this.map.put(key, .{
             .value = value,
-            .conditional = conditional,
+            .conditional = false,
         });
     }
 
@@ -916,7 +916,7 @@ pub const Map = struct {
 
             _ = try writer.write(": ");
 
-            writer.write(entry.value_ptr.value) catch unreachable;
+            writer.write(entry.value_ptr.*) catch unreachable;
 
             if (iterator.index <= self.map.count() - 1) {
                 _ = try writer.write(", ");
@@ -929,28 +929,28 @@ pub const Map = struct {
     pub inline fn get(
         this: *const Map,
         key: string,
-    ) ?HashTableValue {
-        return this.map.get(key);
+    ) ?string {
+        return if (this.map.get(key)) |entry| entry.value else null;
     }
 
     pub fn get_(
         this: *const Map,
         key: string,
-    ) ?HashTableValue {
-        return this.map.get(key);
+    ) ?string {
+        return if (this.map.get(key)) |entry| entry.value else null;
     }
 
-    pub inline fn putDefault(this: *Map, key: string, value: string, comptime conditional: bool) !void {
+    pub inline fn putDefault(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
-            .conditional = conditional,
+            .conditional = false,
         });
     }
 
-    pub inline fn getOrPut(this: *Map, key: string, value: string, comptime conditional: bool) !void {
+    pub inline fn getOrPut(this: *Map, key: string, value: string) !void {
         _ = try this.map.getOrPutValue(key, .{
             .value = value,
-            .conditional = conditional,
+            .conditional = false,
         });
     }
 };

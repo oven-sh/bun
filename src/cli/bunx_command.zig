@@ -251,7 +251,7 @@ pub const BunxCommand = struct {
             force_using_bun,
         );
 
-        var PATH = this_bundler.env.map.get("PATH").?.value;
+        var PATH = this_bundler.env.map.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
@@ -271,7 +271,7 @@ pub const BunxCommand = struct {
                 .{ update_request.name, display_version },
             );
         }
-        try this_bundler.env.map.put("PATH", PATH, false);
+        try this_bundler.env.map.put("PATH", PATH);
         const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx@".len + update_request.name.len + display_version.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

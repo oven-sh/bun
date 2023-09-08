@@ -322,7 +322,7 @@ pub fn which(
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
-        if (globalThis.bunVM().bundler.env.map.get("PATH")) |entry| entry.value else "",
+        globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
     );
     cwd_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.fs.top_level_dir,
@@ -4431,8 +4431,8 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.map.map.get(sliced.slice()) orelse return null;
-        return ZigString.initUTF8(value.value);
+        const value = vm.bundler.env.map.get(sliced.slice()) orelse return null;
+        return ZigString.initUTF8(value);
     }
 };
 

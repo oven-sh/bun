@@ -234,7 +234,7 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
     ) !bool {
-        const shell_bin = findShell(if (env.map.get("PATH")) |path_entry| path_entry.value else "", cwd) orelse return error.MissingShell;
+        const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -511,7 +511,7 @@ pub const RunCommand = struct {
             this_bundler.env.loadProcess();
 
             if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
-                if (strings.eqlComptime(node_env.value, "production")) {
+                if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
             }
@@ -541,7 +541,7 @@ pub const RunCommand = struct {
             }
         }
 
-        var PATH = if (this_bundler.env.map.get("PATH")) |entry| entry.value else "";
+        var PATH = this_bundler.env.map.get("PATH") orelse "";
         ORIGINAL_PATH.* = PATH;
 
         const found_node = this_bundler.env.loadNodeJSConfig(
@@ -572,9 +572,9 @@ pub const RunCommand = struct {
         if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
             if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node", false) catch unreachable;
-                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node", false) catch unreachable;
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path, false) catch unreachable;
+                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
+                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
             }
 
             needs_to_force_bun = false;
@@ -611,10 +611,10 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items, false) catch unreachable;
+        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
         PATH = new_path.items;
 
-        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir, false) catch unreachable;
+        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
@@ -625,28 +625,27 @@ pub const RunCommand = struct {
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
             "bun/" ++ Global.package_json_version ++ " npm/? node/v18.15.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
-            false,
         ) catch unreachable;
 
         if (this_bundler.env.get("npm_execpath") == null) {
             // we don't care if this fails
             if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
-                this_bundler.env.map.putDefault("npm_execpath", self_exe_path, false) catch unreachable;
+                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }
 
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.name.len > 0) {
                 if (this_bundler.env.map.get(NpmArgs.package_name) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name, false) catch unreachable;
+                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
                 }
             }
 
-            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text, false) catch unreachable;
+            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
 
             if (package_json.version.len > 0) {
                 if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version, false) catch unreachable;
+                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
                 }
             }
         }
@@ -684,7 +683,7 @@ pub const RunCommand = struct {
             this_bundler.env.loadProcess();
 
             if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
-                if (strings.eqlComptime(node_env.value, "production")) {
+                if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
             }
@@ -693,7 +692,7 @@ pub const RunCommand = struct {
         const ResultList = bun.StringArrayHashMap(void);
 
         if (this_bundler.env.map.get("SHELL")) |shell| {
-            shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell.value), shell.value);
+            shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
         var results = ResultList.init(ctx.allocator);
@@ -773,7 +772,7 @@ pub const RunCommand = struct {
 
                     var max_description_len: usize = 20;
                     if (this_bundler.env.map.get("MAX_DESCRIPTION_LEN")) |max| {
-                        if (std.fmt.parseInt(usize, max.value, 10) catch null) |max_len| {
+                        if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
                     }
@@ -996,7 +995,7 @@ pub const RunCommand = struct {
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search, false) catch unreachable;
+        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {
@@ -1108,7 +1107,7 @@ pub const RunCommand = struct {
             return false;
         }
 
-        const PATH = if (this_bundler.env.map.get("PATH")) |entry| entry.value else "";
+        const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             path_for_which = "";

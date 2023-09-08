@@ -385,7 +385,7 @@ pub const GarbageCollectionController = struct {
 
         var gc_timer_interval: i32 = 1000;
         if (vm.bundler.env.map.get("BUN_GC_TIMER_INTERVAL")) |timer| {
-            if (std.fmt.parseInt(i32, timer.value, 10)) |parsed| {
+            if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
                 if (parsed > 0) {
                     gc_timer_interval = parsed;
                 }

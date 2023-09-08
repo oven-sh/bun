@@ -1686,13 +1686,13 @@ pub const AsyncHTTP = struct {
 
     pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
         if (env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
-            const max = std.fmt.parseInt(u16, max_http_requests.value, 10) catch {
+            const max = std.fmt.parseInt(u16, max_http_requests, 10) catch {
                 logger.addErrorFmt(
                     null,
                     Loc.Empty,
                     allocator,
                     "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
-                    .{max_http_requests.value},
+                    .{max_http_requests},
                 ) catch unreachable;
                 return;
             };

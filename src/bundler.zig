@@ -490,14 +490,14 @@ pub const Bundler = struct {
 
         if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
             // https://do-not-track.dev/
-            if (strings.eqlComptime(dnt.value, "1")) {
+            if (strings.eqlComptime(dnt, "1")) {
                 Analytics.disabled = true;
             }
         }
 
         Analytics.is_ci = Analytics.is_ci or this.env.isCI();
 
-        if (strings.eqlComptime(if (this.env.map.get("BUN_DISABLE_TRANSPILER")) |entry| entry.value else "0", "1")) {
+        if (strings.eqlComptime(this.env.map.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;
         }
 

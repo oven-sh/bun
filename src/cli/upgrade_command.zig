@@ -183,8 +183,8 @@ pub const UpgradeCommand = struct {
         // Incase they're using a GitHub proxy in e.g. China
         var github_api_domain: string = "api.github.com";
         if (env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-            if (api_domain.value.len > 0) {
-                github_api_domain = api_domain.value;
+            if (api_domain.len > 0) {
+                github_api_domain = api_domain;
             }
         }
 
@@ -199,8 +199,8 @@ pub const UpgradeCommand = struct {
         );
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
-            if (access_token.value.len > 0) {
-                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token.value});
+            if (access_token.len > 0) {
+                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
                     Headers.Kv{
@@ -210,7 +210,7 @@ pub const UpgradeCommand = struct {
                         },
                         .value = Api.StringPointer{
                             .offset = @as(u32, @intCast(accept.value.length + accept.value.offset + "Access-Token".len)),
-                            .length = @as(u32, @intCast(access_token.value.len)),
+                            .length = @as(u32, @intCast(access_token.len)),
                         },
                     },
                 );
@@ -411,7 +411,7 @@ pub const UpgradeCommand = struct {
             if (default_use_canary and strings.containsAny(bun.span(bun.argv()), "--stable"))
                 break :brk false;
 
-            break :brk strings.eqlComptime(if (env_loader.map.get("BUN_CANARY")) |entry| entry.value else "0", "1") or
+            break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
                 strings.containsAny(bun.span(bun.argv()), "--canary") or default_use_canary;
         };
 
@@ -557,12 +557,7 @@ pub const UpgradeCommand = struct {
                     save_dir.deleteFileZ(tmpname) catch {};
                 }
 
-                const unzip_exe = which(
-                    &unzip_path_buf,
-                    if (env_loader.map.get("PATH")) |entry| entry.value else "",
-                    filesystem.top_level_dir,
-                    "unzip",
-                ) orelse {
+                const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
                     save_dir.deleteFileZ(tmpname) catch {};
                     Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                     Global.exit(1);
@@ -715,7 +710,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true", false) catch unreachable;
+                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch unreachable;
                 var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
                 _ = std.ChildProcess.exec(.{
                     .allocator = ctx.allocator,

@@ -9,490 +9,8 @@ type TLSSocket = typeof tls.TLSSocket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const { H2FrameParser } = $lazy("internal/http2");
+const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 
-
-type NativeHttp2HeaderValue = {
-  name: string;
-  value: string;
-  neverIndex?: boolean;
-};
-
-type Settings = {
-  headerTableSize: number;
-  enablePush: number;
-  maxConcurrentStreams: number;
-  initialWindowSize: number;
-  maxFrameSize: number;
-  maxHeaderListSize: number;
-};
-
-
-class Http2Session extends EventEmitter {
-
-}
-
-const http2 = {
-  sensitiveHeaders: Symbol("bun.http2.sensitiveHeaders"),
-};
-
-class ClientStream extends EventEmitter {
-  
-}
-class Http2Stream extends EventEmitter {
-
-}
-
-const bunHTTP2Write = Symbol.for("::bunhttp2write::");
-const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
-const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
-
-function reduceToCompatibleHeaders(obj: any, currentValue: any) {
-  let { name, value } = currentValue;
-  if(name === ":status") {
-    value = parseInt(value, 10);
-  }
-  const lastValue = obj[name];
-  if(typeof lastValue === "string" || typeof lastValue === "number") {
-    obj[name] = [obj[name], value];
-  } else if(Array.isArray(lastValue)) {
-    obj[name].push(value);
-  } else {
-    obj[name] = value;
-  }
-  return obj;
-}
-
-class ClientHttp2Stream extends Duplex {
-  #id: number;
-  #session: ClientHttp2Session | null = null;
-  [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
-  [bunHTTP2StreamResponded]: boolean = false;
-  constructor(streamId, session) {
-    super();
-    this.#id = streamId;
-    this.#session = session;
-  }
-
-  get session() {
-    return this.#session;
-  }
-
-  respond() {
-    // not implemented yet
-  }
-  
-  _destroy(err, callback) {
-    
-    callback(err);
-  }
-
-  _final(callback) {
-    
-    callback();
-  }
-
-  _read(size) {
-    const queue = this[bunHTTP2StreamReadQueue];
-    let chunk;
-    while ((chunk = queue.peek())) {
-      if (!this.push(chunk)) return;
-      queue.shift();
-    }
-  }
-
-  _write(chunk, encoding, callback) {
-    if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
-    const session = this.#session;
-    if(session) {
-      session[bunHTTP2Write](this.#id, chunk);
-      if(typeof callback == "function") {
-        callback();
-      }
-    }
-  }
-}
-
-class ClientHttp2Session  extends Http2Session{
-  #closed: boolean = false;
-  #queue: Array<Buffer> = [];
-  #connecions: number = 0;
-  #socket: TLSSocket | Socket | null;
-  #parser: typeof H2FrameParser | null;
-  #url: URL;
-  #originSet = new Set<string>();
-  #streams = new Map<number, any>(); 
-  #isServer: boolean = false;
-  #localSettings: Settings | null = {
-    headerTableSize: 4096,
-    enablePush: 1,
-    maxConcurrentStreams: 100,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxHeaderListSize: 65535,
-  };
-  #pendingSettingsAck: boolean = true;
-  #remoteSettings: Settings | null = null;
-  
-  static #Handlers = {
-    binaryType: "buffer",
-    streamStart(self: ClientHttp2Session, streamId: number){
-      self.#connecions++;
-    },
-    streamError(self: ClientHttp2Session, streamId: number, error: number){
-      // var stream = self.#streams.get(streamId);
-      // if(stream) {
-      //   stream.state = 2;
-      //   stream.error = error;
-      // }
-    },
-    streamEnd(self: ClientHttp2Session, streamId: number){
-      self.#connecions--;
-      var stream = self.#streams.get(streamId);
-      if(stream) {
-        stream.emit("end");
-      }
-      if(self.#connecions === 0 && self.#closed) {
-        self.#socket?.end();
-        self.#parser?.detach();
-        self.#parser = null;
-        self.emit("close");
-      }
-    },
-    streamData(self: ClientHttp2Session, streamId: number, data: Buffer){
-      var stream = self.#streams.get(streamId);
-      if(stream) {
-        const queue = stream[bunHTTP2StreamReadQueue];
-
-        if (queue.isEmpty()) {
-          if (stream.push(data)) return;
-        }
-        queue.push(data);
-      }
-    },
-    streamHeaders(self: ClientHttp2Session, streamId: number, headers: Array<NativeHttp2HeaderValue>, flags: number){
-      var stream = self.#streams.get(streamId);
-      if(stream) {
-        if(stream[bunHTTP2StreamResponded]) {
-          stream.emit("trailers", headers.reduce(reduceToCompatibleHeaders), flags);
-        } else {
-          stream[bunHTTP2StreamResponded] = true;
-          stream.emit("response", headers.reduce(reduceToCompatibleHeaders), flags);
-        }
-      }
-    },
-    localSettings(self: ClientHttp2Session, settings: Settings){
-      self.emit("localSettings", settings);
-      self.#localSettings = settings;
-      self.#pendingSettingsAck = false;
-    },
-    remoteSettings(self: ClientHttp2Session, settings: Settings){
-      self.emit("remoteSettings", settings);
-      self.#remoteSettings = settings;
-    },
-    ping(self: ClientHttp2Session, ping: Buffer){
-      self.emit("ping", ping);
-    },
-    error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
-      self.emit("error", new Error("ERROR_HTTP2"));
-      self.#socket?.end();
-      self.#parser?.detach();
-      self.#parser = null;
-    },
-    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
-      self.emit("goaway", errorCode, lastStreamId, opaqueData);
-      self.#socket?.end();
-      self.#parser?.detach();
-      self.#parser = null;
-    },
-    end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
-      self.#socket?.end();
-      self.#parser.detach();
-      self.#parser = null;
-    },
-    write(self: ClientHttp2Session, buffer: Buffer){
-      const socket = self.#socket;
-      if(self.#closed) {
-        //queue 
-        self.#queue.push(buffer);
-      } else {
-        // redirect writes to socket
-        socket.write(buffer);
-      }
-    }
-  }
-
-  #onRead(data: Buffer){
-    this.#parser?.read(data);
-  }
-  get originSet() {
-    if(this.encrypted) {
-      return Array.from(this.#originSet);
-    }
-  }
-  get alpnProtocol() {
-    
-    const socket = this.#socket;
-    if(!socket) return;
-    return (socket as TLSSocket).alpnProtocol;
-  }
-  #onConnect(){
-    this.#closed = false;
-    const socket = this.#socket as TLSSocket;
-    if (socket.alpnProtocol !== "h2") {
-      socket.end();
-      this.emit("error", new Error("h2 is not supported"));
-    }
-    this.#originSet.add(socket.remoteAddress as string);
-    // TODO: make a native bindings on data and write and fallback to non-native
-    socket.on("data", this.#onRead.bind(this));   
-    // connected!
-    this.emit("connect", this, socket);
-
-    // redirect the queued buffers
-    const queue = this.#queue;
-    while(queue.length) {
-      socket.write(queue.shift());
-    }    
-  }
-
-  #onClose(){
-    this.#parser?.detach();
-    this.#parser = null;
-    this.emit("close");    
-    this.#socket = null;
-  }
-  #onError(error: Error){
-    this.#parser?.detach();
-    this.#parser = null;
-    this.emit("error", error);
-  }
-  #onTimeout(){
-    this.#parser?.detach();
-    this.#parser = null;
-    this.emit("timeout");
-  }
-
-  get connected() {
-    return this.#socket?.connecting === false;
-  }
-  get destroyed() {
-    return this.#socket === null;
-  }
-  get encrypted() {
-    if(!this.#socket) return;
-
-    return (this.#socket instanceof TLSSocket);
-  }
-  get closed() {
-    return this.#closed;
-  }
-
-  get remoteSettings() {
-    return this.#remoteSettings;
-  }
-
-  get localSettings() {
-    return this.#localSettings;
-  }
-
-  get pendingSettingsAck() {
-    return this.#pendingSettingsAck;
-  }
-
-  get type(){
-      if(this.#isServer) return 0;
-      return 1;
-  }
-  unref() {
-    return this.#socket?.unref();
-  }
-  ref() {
-    return this.#socket?.ref();
-  }
-  setTimeout(msecs, callback) {
-    return this.#socket?.setTimeout(msecs, callback);
-  }
-  ping(payload, callback) {
-    if(typeof callback === "function") {
-      this.once("ping", callback);
-    }
-    payload = payload || Buffer.alloc(8);
-    if(payload.byteLength !== 8) {
-      throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
-    }
-    this.#parser?.ping(payload);
-    return this.#parser && this.#socket ? true : false;
-  }
-  goaway(errorCode, lastStreamId, opaqueData) {
-    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
-  }
-  setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
-  }
-  get socket() {
-    // TODO: Proxy socket
-    return this.#socket;
-  }
-  get state() {
-    return this.#parser?.getCurrentState();
-  }
-
-  settings(settings: Settings, callback) {
-    this.#pendingSettingsAck = true;
-    this.#parser?.settings(settings);
-    if(callback) {
-      const start = Date.now();
-      this.once("localSettings", ()=> {
-        callback(null, this.#localSettings, Date.now() - start);
-      });
-    }
-  }
-
-  constructor(url: string | URL, options?: Settings) {
-    super();
-
-    if(typeof url === "string") {
-      url = new URL(url);
-    }
-    if(!(url instanceof URL)) {
-      throw new Error("ERR_HTTP2: Invalid URL");
-    }
-    this.#isServer = true;
-    this.#url = url;
-    this.#socket = tls.connect({
-        host: url.hostname,
-        port: url.port ? parseInt(url.port, 10) : (url.protocol === "https:" ? 443 : 80),
-        ALPNProtocols: ["h2", "http/1.1"],
-    }, this.#onConnect.bind(this));
-    this.#parser = new H2FrameParser({
-      context: this,
-      settings: options,
-      handlers: ClientHttp2Session.#Handlers
-    });
-    this.#socket.on("close", this.#onClose.bind(this));
-    this.#socket.on("error", this.#onError.bind(this));
-    this.#socket.on("timeout", this.#onTimeout.bind(this));
-  }
-
-  // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
-  // If specified, the callback function is registered as a handler for the 'close' event.
-  close(callback: Function) {
-    this.#closed = true;
-    if(typeof callback === "function") {
-      this.on("close", callback);
-    }
-  }
-
-  request(headers: any, options?: any) {
-    if(!(headers instanceof Object)) {
-      throw new Error("ERROR_HTTP2: Invalid headers");
-    }
-    const flat_headers: Array<NativeHttp2HeaderValue> = [];
-    let has_scheme = false;
-    let has_authority = false;
-    let method: string | null = null;
-
-    Object.keys(headers).forEach(key => {      
-      //@ts-ignore
-      if (key === http2.sensitiveHeaders) {
-        const name = headers[0];
-        const values = headers[key];
-        if(Array.isArray(values) === false) {
-          throw new Error("ERROR_HTTP2: Invalid sensitiveHeaders");
-        }
-        switch(name) {
-          case ":scheme":
-            has_scheme = true;
-            break;
-          case ":authority":
-            has_authority = true;
-            break;
-          case ":method":
-            method = values[1]?.toString();
-            break;
-        };
-        
-        if(name === ":scheme") {
-          has_scheme = true;
-        } else if(name === ":authority") {
-          has_authority = true;
-        }
-        for(let i = 1; i < values.length; i++){
-          flat_headers.push({ name: name, value: values[i]?.toString(), neverIndex: true });
-        }
-      } else {  
-        switch(key) {
-          case ":scheme":
-            has_scheme = true;
-            break;
-          case ":authority":
-            has_authority = true;
-            break;
-          case ":method":
-            method = headers[key]?.toString() || "GET";
-            break;
-        }  
-        
-        const value = headers[key];
-        if(Array.isArray(value)) {
-          for(let i = 0; i < value.length; i++){
-            flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: true });
-          } 
-        } else {
-          flat_headers.push({ name: key, value: value?.toString() });
-        }
-      }
-    });
-
-    const url = this.#url;
-    if(!has_scheme) {
-      let protocol: string  = options?.protocol || "https";
-      switch(url.protocol) {
-        case "https:":
-          protocol = "https";
-          break
-        case "http:":
-          protocol = "http";
-          break;
-      };
-
-      flat_headers.push({ name: ":scheme", value: protocol });
-    }
-    if(!has_authority) {
-      flat_headers.push({ name: ":authority", value: url.hostname });
-    }
-    if(!method) {
-      method = "GET";
-      flat_headers.push({ name: ":method", value: method });
-    }
-
-    let stream_id: number;
-    if(arguments.length === 1) {
-      stream_id = this.#parser.request(flat_headers);
-    } else {
-      stream_id = this.#parser.request(flat_headers, options);
-    }
-    const req = new ClientHttp2Stream(stream_id, this);
-    this.#streams.set(stream_id, req);
-    return req;
-  }
-  static connect(url: string | URL, options?: Settings) {
-    if(options) {
-      return new ClientHttp2Session(url, options);
-    }
-    return new ClientHttp2Session(url);
-  }
-  [bunHTTP2Write](streamId: number, chunk: Buffer) {
-    this.#parser?.writeStream(streamId, chunk);
-  }
-}
-
-function connect(url: string | URL, options?: Settings) {
-  if(options) {
-    return ClientHttp2Session.connect(url, options);
-  }
-  return ClientHttp2Session.connect(url);
-}
 const constants = {
   NGHTTP2_ERR_FRAME_SIZE_ERROR: -522,
   NGHTTP2_SESSION_SERVER: 0,
@@ -736,6 +254,617 @@ const constants = {
   HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED: 511,
 };
 
+
+const NoPayloadMethods = new Set([
+  constants.HTTP2_METHOD_DELETE,
+  constants.HTTP2_METHOD_DELETE,
+  constants.HTTP2_METHOD_HEAD,
+]);
+
+const ValidPseudoHeaders = new Set([
+  constants.HTTP2_HEADER_STATUS,
+  constants.HTTP2_HEADER_METHOD,
+  constants.HTTP2_HEADER_AUTHORITY,
+  constants.HTTP2_HEADER_SCHEME,
+  constants.HTTP2_HEADER_PATH,
+  constants.HTTP2_HEADER_PROTOCOL,
+]);
+
+const SingleValueHeaders = new Set([
+  constants.HTTP2_HEADER_STATUS,
+  constants.HTTP2_HEADER_METHOD,
+  constants.HTTP2_HEADER_AUTHORITY,
+  constants.HTTP2_HEADER_SCHEME,
+  constants.HTTP2_HEADER_PATH,
+  constants.HTTP2_HEADER_PROTOCOL,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
+  constants.HTTP2_HEADER_AGE,
+  constants.HTTP2_HEADER_AUTHORIZATION,
+  constants.HTTP2_HEADER_CONTENT_ENCODING,
+  constants.HTTP2_HEADER_CONTENT_LANGUAGE,
+  constants.HTTP2_HEADER_CONTENT_LENGTH,
+  constants.HTTP2_HEADER_CONTENT_LOCATION,
+  constants.HTTP2_HEADER_CONTENT_MD5,
+  constants.HTTP2_HEADER_CONTENT_RANGE,
+  constants.HTTP2_HEADER_CONTENT_TYPE,
+  constants.HTTP2_HEADER_DATE,
+  constants.HTTP2_HEADER_DNT,
+  constants.HTTP2_HEADER_ETAG,
+  constants.HTTP2_HEADER_EXPIRES,
+  constants.HTTP2_HEADER_FROM,
+  constants.HTTP2_HEADER_HOST,
+  constants.HTTP2_HEADER_IF_MATCH,
+  constants.HTTP2_HEADER_IF_MODIFIED_SINCE,
+  constants.HTTP2_HEADER_IF_NONE_MATCH,
+  constants.HTTP2_HEADER_IF_RANGE,
+  constants.HTTP2_HEADER_IF_UNMODIFIED_SINCE,
+  constants.HTTP2_HEADER_LAST_MODIFIED,
+  constants.HTTP2_HEADER_LOCATION,
+  constants.HTTP2_HEADER_MAX_FORWARDS,
+  constants.HTTP2_HEADER_PROXY_AUTHORIZATION,
+  constants.HTTP2_HEADER_RANGE,
+  constants.HTTP2_HEADER_REFERER,
+  constants.HTTP2_HEADER_RETRY_AFTER,
+  constants.HTTP2_HEADER_TK,
+  constants.HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
+  constants.HTTP2_HEADER_USER_AGENT,
+  constants.HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
+]);
+
+
+type NativeHttp2HeaderValue = {
+  name: string;
+  value: string;
+  neverIndex?: boolean;
+};
+
+type Settings = {
+  headerTableSize: number;
+  enablePush: number;
+  maxConcurrentStreams: number;
+  initialWindowSize: number;
+  maxFrameSize: number;
+  maxHeaderListSize: number;
+};
+
+
+class Http2Session extends EventEmitter {
+
+}
+
+class ClientStream extends EventEmitter {
+  
+}
+class Http2Stream extends EventEmitter {
+
+}
+
+
+function streamErrorFromCode(code: number) {
+  const error = new Error(`Stream closed with error code ${code}`);
+  error.code = "ERR_HTTP2_STREAM_ERROR";
+  error.errno = code;
+  return error;
+}
+
+function assertPseudoHeader(name: string) {
+  if(ValidPseudoHeaders.has(name)) return;
+
+  const error = new TypeError(`"${name}" is an invalid pseudoheader or is used incorrectly`);
+  error.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
+  throw error;;
+}
+
+function assertSingleValueHeader(name: string) {
+  if(SingleValueHeaders.has(name)) return;
+
+  const error = new TypeError(`"${name}" is an invalid single value header`);
+  error.code = "ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER";
+  throw error;
+}
+
+const bunHTTP2Write = Symbol.for("::bunhttp2write::");
+const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
+const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
+
+function reduceToCompatibleHeaders(obj: any, currentValue: any) {
+  let { name, value } = currentValue;
+  if(name === constants.HTTP2_HEADER_STATUS) {
+    value = parseInt(value, 10);
+  }
+  const lastValue = obj[name];
+  if(typeof lastValue === "string" || typeof lastValue === "number") {
+    obj[name] = [obj[name], value];
+  } else if(Array.isArray(lastValue)) {
+    obj[name].push(value);
+  } else {
+    obj[name] = value;
+  }
+  return obj;
+}
+
+class ClientHttp2Stream extends Duplex {
+  #id: number;
+  #session: ClientHttp2Session | null = null;
+  [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
+  [bunHTTP2StreamResponded]: boolean = false;
+  constructor(streamId, session) {
+    super();
+    this.#id = streamId;
+    this.#session = session;
+  }
+
+  get session() {
+    return this.#session;
+  }
+
+  respond() {
+    // not implemented yet
+  }
+  
+  _destroy(err, callback) {
+    //TODO: SEND RST_STREAM
+    callback(err);
+  }
+
+  _final(callback) {
+    //TODO: SEND RST_STREAM 
+    callback();
+  }
+
+  _read(size) {
+    const queue = this[bunHTTP2StreamReadQueue];
+    let chunk;
+    while ((chunk = queue.peek())) {
+      if (!this.push(chunk)) return;
+      queue.shift();
+    }
+  }
+
+  _write(chunk, encoding, callback) {
+    if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
+    const session = this.#session;
+    if(session) {
+      session[bunHTTP2Write](this.#id, chunk);
+      if(typeof callback == "function") {
+        callback();
+      }
+    }
+  }
+}
+
+class ClientHttp2Session  extends Http2Session{
+  #closed: boolean = false;
+  #queue: Array<Buffer> = [];
+  #connecions: number = 0;
+  #socket: TLSSocket | Socket | null;
+  #parser: typeof H2FrameParser | null;
+  #url: URL;
+  #originSet = new Set<string>();
+  #streams = new Map<number, any>(); 
+  #isServer: boolean = false;
+  #localSettings: Settings | null = {
+    headerTableSize: 4096,
+    enablePush: 1,
+    maxConcurrentStreams: 100,
+    initialWindowSize: 65535,
+    maxFrameSize: 16384,
+    maxHeaderListSize: 65535,
+  };
+  #pendingSettingsAck: boolean = true;
+  #remoteSettings: Settings | null = null;
+  
+  static #Handlers = {
+    binaryType: "buffer",
+    streamStart(self: ClientHttp2Session, streamId: number){
+      self.#connecions++;
+    },
+    streamError(self: ClientHttp2Session, streamId: number, error: number){
+      var stream = self.#streams.get(streamId);
+      const error_instance = streamErrorFromCode(error);
+      if(stream) {
+        stream.emit("error", error_instance);
+      }
+      self.emit("streamError", error_instance);
+    },
+    streamEnd(self: ClientHttp2Session, streamId: number){
+      self.#connecions--;
+      var stream = self.#streams.get(streamId);
+      if(stream) {
+        stream.emit("end");
+      }
+      if(self.#connecions === 0 && self.#closed) {
+        self.#socket?.end();
+        self.#parser?.detach();
+        self.#parser = null;
+        self.emit("close");
+      }
+    },
+    streamData(self: ClientHttp2Session, streamId: number, data: Buffer){
+      var stream = self.#streams.get(streamId);
+      if(stream) {
+        const queue = stream[bunHTTP2StreamReadQueue];
+
+        if (queue.isEmpty()) {
+          if (stream.push(data)) return;
+        }
+        queue.push(data);
+      }
+    },
+    streamHeaders(self: ClientHttp2Session, streamId: number, headers: Array<NativeHttp2HeaderValue>, flags: number){
+      var stream = self.#streams.get(streamId);
+      if(stream) {
+        if(stream[bunHTTP2StreamResponded]) {
+          stream.emit("trailers", headers.reduce(reduceToCompatibleHeaders), flags);
+        } else {
+          stream[bunHTTP2StreamResponded] = true;
+          stream.emit("response", headers.reduce(reduceToCompatibleHeaders), flags);
+        }
+      }
+    },
+    localSettings(self: ClientHttp2Session, settings: Settings){
+      self.emit("localSettings", settings);
+      self.#localSettings = settings;
+      self.#pendingSettingsAck = false;
+    },
+    remoteSettings(self: ClientHttp2Session, settings: Settings){
+      self.emit("remoteSettings", settings);
+      self.#remoteSettings = settings;
+    },
+    ping(self: ClientHttp2Session, ping: Buffer){
+      self.emit("ping", ping);
+    },
+    error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
+      self.emit("error", new Error("ERROR_HTTP2"));
+      self.#socket?.end();
+      self.#parser?.detach();
+      self.#parser = null;
+    },
+    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
+      self.emit("goaway", errorCode, lastStreamId, opaqueData);
+      self.#socket?.end();
+      self.#parser?.detach();
+      self.#parser = null;
+    },
+    end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer){
+      self.#socket?.end();
+      self.#parser.detach();
+      self.#parser = null;
+    },
+    write(self: ClientHttp2Session, buffer: Buffer){
+      const socket = self.#socket;
+      if(self.#closed) {
+        //queue 
+        self.#queue.push(buffer);
+      } else {
+        // redirect writes to socket
+        socket.write(buffer);
+      }
+    }
+  }
+
+  #onRead(data: Buffer){
+    this.#parser?.read(data);
+  }
+  get originSet() {
+    if(this.encrypted) {
+      return Array.from(this.#originSet);
+    }
+  }
+  get alpnProtocol() {
+    
+    const socket = this.#socket;
+    if(!socket) return;
+    return (socket as TLSSocket).alpnProtocol;
+  }
+  #onConnect(){
+    this.#closed = false;
+    const socket = this.#socket as TLSSocket;
+    if (socket.alpnProtocol !== "h2") {
+      socket.end();
+      this.emit("error", new Error("h2 is not supported"));
+    }
+    this.#originSet.add(socket.remoteAddress as string);
+    // TODO: make a native bindings on data and write and fallback to non-native
+    socket.on("data", this.#onRead.bind(this));   
+    // connected!
+    this.emit("connect", this, socket);
+
+    // redirect the queued buffers
+    const queue = this.#queue;
+    while(queue.length) {
+      socket.write(queue.shift());
+    }    
+  }
+
+  #onClose(){
+    this.#parser?.detach();
+    this.#parser = null;
+    this.emit("close");    
+    this.#socket = null;
+  }
+  #onError(error: Error){
+    this.#parser?.detach();
+    this.#parser = null;
+    this.emit("error", error);
+  }
+  #onTimeout(){
+    this.#parser?.detach();
+    this.#parser = null;
+    this.emit("timeout");
+  }
+
+  get connected() {
+    return this.#socket?.connecting === false;
+  }
+  get destroyed() {
+    return this.#socket === null;
+  }
+  get encrypted() {
+    if(!this.#socket) return;
+
+    return (this.#socket instanceof TLSSocket);
+  }
+  get closed() {
+    return this.#closed;
+  }
+
+  get remoteSettings() {
+    return this.#remoteSettings;
+  }
+
+  get localSettings() {
+    return this.#localSettings;
+  }
+
+  get pendingSettingsAck() {
+    return this.#pendingSettingsAck;
+  }
+
+  get type(){
+      if(this.#isServer) return 0;
+      return 1;
+  }
+  unref() {
+    return this.#socket?.unref();
+  }
+  ref() {
+    return this.#socket?.ref();
+  }
+  setTimeout(msecs, callback) {
+    return this.#socket?.setTimeout(msecs, callback);
+  }
+  ping(payload, callback) {
+    if(typeof callback === "function") {
+      this.once("ping", callback);
+    }
+    payload = payload || Buffer.alloc(8);
+    if(payload.byteLength !== 8) {
+      throw new Error("ERR_HTTP2_PING_PAYLOAD_SIZE");
+    }
+    this.#parser?.ping(payload);
+    return this.#parser && this.#socket ? true : false;
+  }
+  goaway(errorCode, lastStreamId, opaqueData) {
+    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
+  }
+  setLocalWindowSize(windowSize) {
+    return this.#parser?.setLocalWindowSize(windowSize);
+  }
+  get socket() {
+    // TODO: Proxy socket
+    return this.#socket;
+  }
+  get state() {
+    return this.#parser?.getCurrentState();
+  }
+
+  settings(settings: Settings, callback) {
+    this.#pendingSettingsAck = true;
+    this.#parser?.settings(settings);
+    if(callback) {
+      const start = Date.now();
+      this.once("localSettings", ()=> {
+        callback(null, this.#localSettings, Date.now() - start);
+      });
+    }
+  }
+
+  constructor(url: string | URL, options?: Settings) {
+    super();
+
+    if(typeof url === "string") {
+      url = new URL(url);
+    }
+    if(!(url instanceof URL)) {
+      throw new Error("ERR_HTTP2: Invalid URL");
+    }
+    this.#isServer = true;
+    this.#url = url;
+    this.#socket = tls.connect({
+        host: url.hostname,
+        port: url.port ? parseInt(url.port, 10) : (url.protocol === "https:" ? 443 : 80),
+        ALPNProtocols: ["h2", "http/1.1"],
+    }, this.#onConnect.bind(this));
+    this.#parser = new H2FrameParser({
+      context: this,
+      settings: options,
+      handlers: ClientHttp2Session.#Handlers
+    });
+    this.#socket.on("close", this.#onClose.bind(this));
+    this.#socket.on("error", this.#onError.bind(this));
+    this.#socket.on("timeout", this.#onTimeout.bind(this));
+  }
+
+  // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
+  // If specified, the callback function is registered as a handler for the 'close' event.
+  close(callback: Function) {
+    this.#closed = true;
+    if(typeof callback === "function") {
+      this.on("close", callback);
+    }
+  }
+
+  destroy(error: Error, code: number) {
+    if(!this.#socket) return;
+    // sent RST code ERR_HTTP2_STREAM_CANCEL to each stream here
+    // E('ERR_HTTP2_STREAM_CANCEL', function(error) {
+    //   let msg = 'The pending stream has been canceled';
+    //   if (error) {
+    //     this.cause = error;
+    //     if (typeof error.message === 'string')
+    //       msg += ` (caused by: ${error.message})`;
+    //   }
+    //   return msg;
+    // }, Error);
+    this.goaway(code || constants.NGHTTP2_INTERNAL_ERROR, 0, Buffer.alloc(0));
+    // TODO: we can force end here but i think the best would be to wait for the goaway to be sent
+    this.#parser?.detach();
+    this.#socket?.end();
+    this.#parser = null;
+    this.#socket = null;
+    // this should not be needed since RST + GOAWAY should be sent
+    for(let [_,stream] of this.#streams){
+      if(error) {
+        stream.emit("error", error);
+      }
+      stream.emit("close");
+    }
+
+    if(error){
+      this.emit("error", error);
+    }
+
+    this.emit("close");
+  }
+
+  request(headers: any, options?: any) {
+    if(!(headers instanceof Object)) {
+      throw new Error("ERROR_HTTP2: Invalid headers");
+    }
+    const flat_headers: Array<NativeHttp2HeaderValue> = [];
+    let has_scheme = false;
+    let has_authority = false;
+    let method: string | null = null;
+
+    Object.keys(headers).forEach(key => {      
+      //@ts-ignore
+      if (key === sensitiveHeaders) {
+        const name = headers[0];
+        const values = headers[key];
+        if(!Array.isArray(values)) {          
+          const error = new TypeError('headers[http2.neverIndex]'); 
+          error.code = 'ERR_INVALID_ARG_VALUE';
+          throw error;
+        }
+        if(name.startsWith(":")) {
+          assertPseudoHeader(name);
+        }
+        switch(name) {
+          case constants.HTTP2_HEADER_SCHEME:
+            has_scheme = true;
+            break;
+          case constants.HTTP2_HEADER_AUTHORITY:
+            has_authority = true;
+            break;
+          case constants.HTTP2_HEADER_METHOD:
+            method = values[1]?.toString();
+            break;
+        };
+        
+        if(name === constants.HTTP2_HEADER_SCHEME) {
+          has_scheme = true;
+        } else if(name === constants.HTTP2_HEADER_AUTHORITY) {
+          has_authority = true;
+        }
+        for(let i = 1; i < values.length; i++){
+          flat_headers.push({ name: name, value: values[i]?.toString(), neverIndex: true });
+        }
+      } else {  
+        if(key.startsWith(":")) {
+          assertPseudoHeader(key);
+        }
+        switch(key) {
+          case constants.HTTP2_HEADER_SCHEME:
+            has_scheme = true;
+            break;
+          case constants.HTTP2_HEADER_AUTHORITY:
+            has_authority = true;
+            break;
+          case constants.HTTP2_HEADER_METHOD:
+            method = headers[key]?.toString() || "GET";
+            break;
+        }  
+        
+        const value = headers[key];
+        if(Array.isArray(value)) {
+          for(let i = 0; i < value.length; i++){
+            flat_headers.push({ name: key, value: value[i]?.toString(), neverIndex: true });
+          } 
+        } else {
+          assertSingleValueHeader(key);
+          flat_headers.push({ name: key, value: value?.toString() });
+        }
+      }
+    });
+
+    const url = this.#url;
+    if(!has_scheme) {
+      let protocol: string  = options?.protocol || "https";
+      switch(url.protocol) {
+        case "https:":
+          protocol = "https";
+          break
+        case "http:":
+          protocol = "http";
+          break;
+      };
+
+      flat_headers.push({ name: ":scheme", value: protocol });
+    }
+    if(!has_authority) {
+      flat_headers.push({ name: ":authority", value: url.hostname });
+    }
+    if(!method) {
+      method = "GET";
+      flat_headers.push({ name: ":method", value: method });
+    }
+
+    if(NoPayloadMethods.has(method.toUpperCase())) {
+      options = options || {};
+      options.endStream = true;
+    }
+
+    let stream_id: number;
+    if(typeof options === undefined) {
+      stream_id = this.#parser.request(flat_headers);
+    } else {
+      stream_id = this.#parser.request(flat_headers, options);
+    }
+    const req = new ClientHttp2Stream(stream_id, this);
+    this.#streams.set(stream_id, req);
+    return req;
+  }
+  static connect(url: string | URL, options?: Settings) {
+    if(options) {
+      return new ClientHttp2Session(url, options);
+    }
+    return new ClientHttp2Session(url);
+  }
+  [bunHTTP2Write](streamId: number, chunk: Buffer) {
+    this.#parser?.writeStream(streamId, chunk);
+  }
+}
+
+function connect(url: string | URL, options?: Settings) {
+  if(options) {
+    return ClientHttp2Session.connect(url, options);
+  }
+  return ClientHttp2Session.connect(url);
+}
+
 function createServer() {
   throwNotImplemented("node:http2 createServer", 887);
 }
@@ -760,7 +889,6 @@ function getPackedSettings() {
 function getUnpackedSettings() {
   return Buffer.alloc(0);
 }
-const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 function Http2ServerRequest() {
   throwNotImplemented("node:http2 Http2ServerRequest", 887);
 }

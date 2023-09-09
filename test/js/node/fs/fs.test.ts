@@ -953,6 +953,23 @@ describe("stat", () => {
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
     }
+
+    try {
+      statSync("");
+      throw "statSync should throw";
+    } catch (e: any) {
+      expect(e.code).toBe("ENOENT");
+    }
+  });
+});
+
+describe("exist", () => {
+  it("should return false with invalid path", () => {
+    expect(existsSync("/pathNotExist")).toBe(false);
+  });
+
+  it("should return false with empty string", () => {
+    expect(existsSync("")).toBe(false);
   });
 });
 

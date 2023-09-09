@@ -801,11 +801,7 @@ pub const Valid = struct {
 
     pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         switch (zig_str.len) {
-            0 => {
-                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
-                return false;
-            },
-            1...bun.MAX_PATH_BYTES => return true,
+            0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
@@ -823,11 +819,7 @@ pub const Valid = struct {
 
     pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         switch (len) {
-            0 => {
-                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
-                return false;
-            },
-            1...bun.MAX_PATH_BYTES => return true,
+            0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(

@@ -201,6 +201,12 @@ const myStuff = require("./my-commonjs.cjs");
 const { stuff } = require("./my-esm.mjs");
 ```
 
+### Importing CommonJS from CommonJS
+
+```ts
+const { stuff } = require("./my-commonjs.cjs");
+```
+
 #### Top-level await
 
 If you are using top-level await, you must use `import()` to import ESM modules from CommonJS modules.
@@ -217,14 +223,6 @@ const { stuff } = require("./my-esm.js");
 {% details summary="Low-level details of CommonJS interop in Bun" %}
 
 Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
-
-### Importing CommonJS from CommonJS
-
-You can `require()` CommonJS modules from CommonJS modules.
-
-```ts
-const { stuff } = require("./my-commonjs.cjs");
-```
 
 ```js
 (function (module, exports, require) {

@@ -184,7 +184,7 @@ The following fields are supported. Each of these can correspond to a string or 
 
 {% /table %}
 
-After cloniing a template, `bun create` will automatically remove the `"bun-create"` section from `package.json` before writing it to the destination folder.
+After cloning a template, `bun create` will automatically remove the `"bun-create"` section from `package.json` before writing it to the destination folder.
 
 ## Reference
 

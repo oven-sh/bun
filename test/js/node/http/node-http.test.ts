@@ -869,4 +869,22 @@ describe("node:http", () => {
       }
     });
   });
+
+  test("should listen on port if string, issue#4582", () => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: "0" }, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(200);
+          done();
+        });
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
 });

@@ -13,10 +13,23 @@ Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
     }
 };
 
+function navigatorPlatform() {
+    const platform = os.platform();
+    switch (platform) {
+        case 'darwin':
+            return 'MacIntel';
+        case 'win32':
+            return 'Win32';
+        default:
+            return 'Linux';
+    }
+}
+
 //? navigator global object polyfill
 Reflect.set(globalThis, 'navigator', {
     userAgent: `Bun/${version}`,
     hardwareConcurrency: os.cpus().length,
+    platform: navigatorPlatform(),
 });
 
 //? method only available in Bun

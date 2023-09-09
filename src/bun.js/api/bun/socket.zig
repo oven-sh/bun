@@ -1677,6 +1677,17 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.init(text).toValueGC(globalThis);
         }
 
+        pub fn getRemotePort(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+        ) callconv(.C) JSValue {
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            return JSValue.jsNumber(this.socket.remotePort());
+        }
+
         fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
             if (this.detached or this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;

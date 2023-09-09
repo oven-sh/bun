@@ -138,6 +138,10 @@ function generate(ssl) {
         cache: true,
       },
 
+      remotePort: {
+        getter: "getRemotePort",
+      },
+
       reload: {
         fn: "reload",
         length: 1,

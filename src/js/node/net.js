@@ -218,7 +218,7 @@ const Socket = (function (InternalSocket) {
         _socket._requestCert = requestCert;
         _socket._rejectUnauthorized = rejectUnauthorized;
 
-        _socket.#attach(this.localPort, socket);
+        _socket.#attach(this.remotePort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
           const data = {
             localAddress: _socket.localAddress,
@@ -542,6 +542,10 @@ const Socket = (function (InternalSocket) {
 
     get localPort() {
       return this[bunSocketInternal]?.localPort;
+    }
+
+    get remotePort() {
+      return this[bunSocketInternal]?.remotePort;
     }
 
     get pending() {

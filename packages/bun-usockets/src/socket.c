@@ -48,6 +48,15 @@ void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *le
     }
 }
 
+int us_socket_remote_port(int ssl, struct us_socket_t *s) {
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return -1;
+    } else {
+        return bsd_addr_get_port(&addr);
+    }
+}
+
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s) {
     return s->context;
 }

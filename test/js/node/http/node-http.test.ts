@@ -926,4 +926,17 @@ describe("node:http", () => {
       }
     });
   });
+
+  test("error event not fired, issue#4651", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: 42069 }, () => {
+      const server2 = createServer((_, res) => {
+        res.end();
+      });
+      server2.on("error", () => done());
+      server2.listen({ port: 42069 }, () => {});
+    });
+  });
 });

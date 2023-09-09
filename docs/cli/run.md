@@ -26,7 +26,7 @@ $ bun run index.ts
 $ bun run index.tsx
 ```
 
-The "naked" `bun` command is equivalent to `bun run`.
+The "naked" `bun` command is equivalent to `bun run --bun`.
 
 ```bash
 $ bun index.tsx

@@ -1261,7 +1261,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn setSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
+    pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
 
         if(options.isEmptyOrUndefinedOrNull() or !options.isObject()) {
             globalObject.throw("Expected settings to be a object", .{});
@@ -1372,7 +1372,7 @@ pub const H2FrameParser = struct {
 
         const options = args_list.ptr[0];
 
-        if(this.setSettingsFromJSValue(globalObject, options)) {     
+        if(this.loadSettingsFromJSValue(globalObject, options)) {     
             this.setSettings(this.localSettings);
             return JSC.JSValue.jsUndefined();
         }
@@ -1384,29 +1384,23 @@ pub const H2FrameParser = struct {
 
     pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
-
-        // effectiveLocalWindowSize <number> The current local (receive) flow control window size for the Http2Session.
-        // effectiveRecvDataLength <number> The current number of bytes that have been received since the last flow control WINDOW_UPDATE.
-        // nextStreamID <number> The numeric identifier to be used the next time a new Http2Stream is created by this Http2Session.
-        // localWindowSize <number> The number of bytes that the remote peer can send without receiving a WINDOW_UPDATE.
-        // lastProcStreamID <number> The numeric id of the Http2Stream for which a HEADERS or DATA frame was most recently received.
-        // remoteWindowSize <number> The number of bytes that this Http2Session may send without receiving a WINDOW_UPDATE.
-        // outboundQueueSize <number> The number of frames currently within the outbound queue for this Http2Session.
-        // deflateDynamicTableSize <number> The current size in bytes of the outbound header compression state table.
-        // inflateDynamicTableSize <number> The current size in bytes of the inbound header compression state table.
-
         var result = JSValue.createEmptyObject(globalObject, 9);
-        result.put(globalObject, JSC.ZigString.static("effectiveLocalWindowSize"), JSC.JSValue.jsNumber(this.localSettings.localWindowSize));
-        result.put(globalObject, JSC.ZigString.static("effectiveRecvDataLength"), JSC.JSValue.jsNumber(this.localSettings.localWindowSize - this.localSettings.usedWindowSize));
+        result.put(globalObject, JSC.ZigString.static("effectiveLocalWindowSize"), JSC.JSValue.jsNumber(this.windowSize));
+        result.put(globalObject, JSC.ZigString.static("effectiveRecvDataLength"), JSC.JSValue.jsNumber(this.windowSize - this.usedWindowSize));
         result.put(globalObject, JSC.ZigString.static("nextStreamID"), JSC.JSValue.jsNumber(this.getNextStreamID()));
-        var settings = this.remoteSettings orelse this.localWindowSize;
-        result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.localWindowSize));
-        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.localWindowSize));
+        result.put(globalObject, JSC.ZigString.static("lastProcStreamID"), JSC.JSValue.jsNumber(this.lastStreamID));
+
+
+        var settings = this.remoteSettings orelse this.localSettings;
+        result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.initialWindowSize));
+        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
+        result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
+        result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
+
+
         // TODO: make this  real?
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(0));
-        result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(0));
-        result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(0));
-
+        return result;
     }
     pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());
@@ -1848,8 +1842,8 @@ pub const H2FrameParser = struct {
             .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
         };
         if(options.get(globalObject, "settings")) |settings_js| {
-            if(settings_js.isEmptyOrUndefinedOrNull()) {
-                if(!this.setSettingsFromJSValue(globalObject, settings_js)) {
+            if(!settings_js.isEmptyOrUndefinedOrNull()) {
+                if(!this.loadSettingsFromJSValue(globalObject, settings_js)) {
                     this.deinit();
                     return null;
                 }

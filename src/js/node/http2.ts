@@ -155,6 +155,7 @@ class ClientHttp2Session  extends Http2Session{
         self.#socket?.end();
         self.#parser?.detach();
         self.#parser = null;
+        self.emit("close");
       }
     },
     streamData(self: ClientHttp2Session, streamId: number, data: Buffer){
@@ -242,6 +243,7 @@ class ClientHttp2Session  extends Http2Session{
       this.emit("error", new Error("h2 is not supported"));
     }
     this.#originSet.add(socket.remoteAddress as string);
+    // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));   
     // connected!
     this.emit("connect", this, socket);
@@ -370,6 +372,15 @@ class ClientHttp2Session  extends Http2Session{
     this.#socket.on("close", this.#onClose.bind(this));
     this.#socket.on("error", this.#onError.bind(this));
     this.#socket.on("timeout", this.#onTimeout.bind(this));
+  }
+
+  // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
+  // If specified, the callback function is registered as a handler for the 'close' event.
+  close(callback: Function) {
+    this.#closed = true;
+    if(typeof callback === "function") {
+      this.on("close", callback);
+    }
   }
 
   request(headers: any, options?: any) {

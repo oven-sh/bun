@@ -3051,7 +3051,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyFile {
-            const src = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const src = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
@@ -3065,7 +3065,9 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const dest = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
+                src.deinit();
+
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",
@@ -3113,7 +3115,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Cp {
-            const src = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const src = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
@@ -3127,7 +3129,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const dest = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
+                defer src.deinit();
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",

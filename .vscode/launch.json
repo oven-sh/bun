@@ -11,7 +11,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "bun-debug",
-      "args": ["create", "--help"],
+      "args": ["test", "${file}"],
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {

@@ -188,7 +188,7 @@ describe("spawn()", () => {
     });
 
     const result = await promise;
-    expect(/Open bun's Discord server/.test(result)).toBe(true);
+    expect(/bun.sh\/docs/.test(result)).toBe(true);
   });
 
   it("should allow us to spawn in a shell", async () => {

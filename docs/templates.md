@@ -24,33 +24,56 @@ Press `enter` to accept the default answer for each prompt, or pass the `-y` fla
 
 ## `bun create`
 
-Template a new Bun project with `bun create`.
-
-```bash
-$ bun create <template> <destination>
-```
-
 {% callout %}
 **Note** — You don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make getting started a bit quicker and easier.
 {% /callout %}
 
-A template can take a number of forms:
+Template a new Bun project with `bun create`. This is a flexible command that can be used to create a new project with a `create-<template>` npm package, a GitHub repo, or a local template.
 
-```bash
-$ bun create <template>         # an official template (remote)
-$ bun create <username>/<repo>  # a GitHub repo (remote)
-$ bun create <local-template>   # a custom template (local)
+### From `npm`
+
+```sh
+$ bun create <template> [<destination>]
 ```
 
-Running `bun create` performs the following steps:
+Assuming you don't have a [local template](#local-templates) with the same name, this command will download and execute the `create-<template>` package from npm. The following two commands will behave identically:
 
-- Download the template (remote templates only)
-- Copy all template files into the destination folder. By default Bun will _not overwrite_ any existing files. Use the `--force` flag to overwrite existing files.
+```sh
+$ bun create remix
+$ bunx create-remix
+```
+
+Refer to the documentation of the associated `create-<template>` package for complete documentation and usage instructions.
+
+### From GitHub
+
+This will download the contents of the GitHub repo to disk.
+
+```bash
+$ bun create <user>/<repo>
+$ bun create github.com/<user>/<repo>
+```
+
+Optionally specify a name for the destination folder. If no destination is specified, the repo name will be used.
+
+```bash
+$ bun create <user>/<repo> mydir
+$ bun create github.com/<user>/<repo> mydir
+```
+
+Bun will perform the following steps:
+
+- Download the template
+- Copy all template files into the destination folder
 - Install dependencies with `bun install`.
 - Initialize a fresh Git repo. Opt out with the `--no-git` flag.
 - Run the template's configured `start` script, if defined.
 
-### Official templates
+{% callout %}
+By default Bun will _not overwrite_ any existing files. Use the `--force` flag to overwrite existing files.
+{% /callout %}
+
+<!-- ### Official templates
 
 The following official templates are available.
 
@@ -73,9 +96,9 @@ Welcome to bun! Create a new project by pasting any of the following:
 
 {% callout %}
 ⚡️ **Speed** — At the time of writing, `bun create react app` runs ~11x faster on a M1 Macbook Pro than `yarn create react-app app`.
-{% /callout %}
+{% /callout %} -->
 
-### GitHub repos
+<!-- ### GitHub repos
 
 A template of the form `<username>/<repo>` will be downloaded from GitHub.
 
@@ -90,9 +113,9 @@ $ bun create github.com/ahfarmer/calculator ./myapp
 $ bun create https://github.com/ahfarmer/calculator ./myapp
 ```
 
-Bun installs the files as they currently exist current default branch (usually `main` or `master`). Unlike `git clone` it doesn't download the commit history or configure a remote.
+Bun installs the files as they currently exist current default branch (usually `main` or `master`). Unlike `git clone` it doesn't download the commit history or configure a remote. -->
 
-### Local templates
+### From a local template
 
 {% callout %}
 **⚠️ Warning** — Unlike remote templates, running `bun create` with a local template will delete the entire destination folder if it already exists! Be careful.
@@ -124,26 +147,9 @@ Then, create a `package.json` file in that directory with the following contents
 
 You can run `bun create foo` elsewhere on your file system to verify that Bun is correctly finding your local template.
 
-{% table %}
+#### Setup logic
 
----
-
-- `postinstall`
-- runs after installing dependencies
-
----
-
-- `preinstall`
-- runs before installing dependencies
-
-<!-- ---
-
-- `start`
-- a command to auto-start the application -->
-
-{% /table %}
-
-Each of these can correspond to a string or array of strings. An array of commands will be executed in order. Here is an example:
+You can specify pre- and post-install setup scripts in the `"bun-create"` section of your local template's `package.json`.
 
 ```json
 {
@@ -162,11 +168,27 @@ Each of these can correspond to a string or array of strings. An array of comman
 }
 ```
 
-When cloning a template, `bun create` will automatically remove the `"bun-create"` section from `package.json` before writing it to the destination folder.
+The following fields are supported. Each of these can correspond to a string or array of strings. An array of commands will be executed in order.
 
-### Reference
+{% table %}
 
-#### CLI flags
+---
+
+- `postinstall`
+- runs after installing dependencies
+
+---
+
+- `preinstall`
+- runs before installing dependencies
+
+{% /table %}
+
+After cloning a template, `bun create` will automatically remove the `"bun-create"` section from `package.json` before writing it to the destination folder.
+
+## Reference
+
+### CLI flags
 
 {% table %}
 
@@ -195,7 +217,7 @@ When cloning a template, `bun create` will automatically remove the `"bun-create
 
 {% /table %}
 
-#### Environment variables
+### Environment variables
 
 {% table %}
 

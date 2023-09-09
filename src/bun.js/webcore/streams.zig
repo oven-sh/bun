@@ -109,7 +109,6 @@ pub const ReadableStream = struct {
                 blob.size = blobby.remain;
                 blob.store.?.ref();
                 stream.detachIfPossible(globalThis);
-                blobby.deinit();
 
                 return AnyBlob{ .Blob = blob };
             },
@@ -120,7 +119,6 @@ pub const ReadableStream = struct {
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
                     stream.detachIfPossible(globalThis);
-                    blobby.deinit();
                     return AnyBlob{ .Blob = blob };
                 }
             },
@@ -131,6 +129,8 @@ pub const ReadableStream = struct {
                 if (bytes.has_received_last_chunk) {
                     var blob: JSC.WebCore.AnyBlob = undefined;
                     blob.from(bytes.buffer);
+                    bytes.buffer.items = &.{};
+                    bytes.buffer.capacity = 0;
                     stream.detachIfPossible(globalThis);
                     return blob;
                 }

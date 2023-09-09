@@ -2025,11 +2025,7 @@ it("BigIntStats", () => {
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  if (process.platform == "darwin") {
-    expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
-  } else {
-    expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file number");
-  }
+  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
   expect(() => readlinkSync(path)).toThrow("No such file or directory");
   expect(() => realpathSync(path)).toThrow("No such file or directory");
   expect(() => readFileSync(path)).toThrow("No such file or directory");
@@ -2042,6 +2038,12 @@ it("test syscall errno, issue#4198", () => {
 
   mkdirSync(path);
   expect(() => mkdirSync(path)).toThrow("File or folder exists");
-  expect(() => unlinkSync(path)).toThrow("Operation not permitted");
+  expect(() => unlinkSync(path)).toThrow(
+    {
+      ["darwin"]: "Operation not permitted",
+      ["linux"]: "Is a directory",
+      // TODO: windows
+    }[process.platform] as const,
+  );
   rmdirSync(path);
 });

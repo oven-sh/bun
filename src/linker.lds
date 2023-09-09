@@ -1,4 +1,4 @@
-BUN_0.9 {
+BUN_1.0 {
     global:
 	napi*;
 	node_api_*;

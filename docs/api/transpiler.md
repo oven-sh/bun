@@ -160,7 +160,6 @@ export const name = "hello";
 `;
 
 const result = transpiler.scanImports(code);
-`);
 ```
 
 ```json#Results

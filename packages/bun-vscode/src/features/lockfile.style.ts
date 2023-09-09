@@ -33,5 +33,5 @@ function styleLine(line: string) {
         
         return `<span>${leftPart}<span class="mtk6">${parts[1]}</span></span>`
     }
-    return `<span class="mtk1">${line}</span>`
+    return `<span class="mtk1">${line}&nbsp;</span>`
 }

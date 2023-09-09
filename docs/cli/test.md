@@ -95,7 +95,7 @@ Bun supports the following lifecycle hooks:
 
 These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
 
-```ts
+```bash
 $ bun test --preload ./setup.ts
 ```
 

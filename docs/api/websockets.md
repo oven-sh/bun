@@ -236,7 +236,11 @@ This gives you better control over backpressure in your server.
 
 ## Connect to a `Websocket` server
 
-To connect to an external socket server, either from a browser or from Bun, create an instance of `WebSocket` with the constructor.
+{% callout %}
+**🚧** — The `WebSocket` client still does not pass the full [Autobahn test suite](https://github.com/crossbario/autobahn-testsuite) and should not be considered ready for production.
+{% /callout %}
+
+Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
 ```ts
 const socket = new WebSocket("ws://localhost:3000");

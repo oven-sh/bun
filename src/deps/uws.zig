@@ -165,7 +165,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @as(*NativeSocketHandleType(is_ssl), @ptrCast(us_socket_get_native_handle(comptime ssl_int, this.socket).?));
         }
 
-        pub fn fd(this: ThisSocket) i32 {
+        pub inline fn fd(this: ThisSocket) i32 {
             if (comptime is_ssl) {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
@@ -369,8 +369,17 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect({s}, {d})", .{ host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            var host_ = allocator.dupeZ(u8, host) catch return null;
-            defer allocator.free(host_);
+
+            var host_: ?[*:0]u8 = brk: {
+                // getaddrinfo expects `node` to be null if localhost
+                if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
+                    break :brk null;
+                }
+
+                break :brk allocator.dupeZ(u8, host) catch return null;
+            };
+
+            defer if (host_) |host__| allocator.free(host__[0..host.len]);
 
             var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
@@ -748,7 +757,14 @@ pub const Loop = extern struct {
     /// The list of ready polls
     ready_polls: [1024]EventType align(16),
 
-    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
+    const EventType = switch (Environment.os) {
+        .linux => std.os.linux.epoll_event,
+        .mac => std.os.system.kevent64_s,
+        // TODO:
+        .windows => *anyopaque,
+        else => @compileError("Unsupported OS"),
+    };
+
     const log = bun.Output.scoped(.Loop, false);
 
     pub const InternalLoopData = extern struct {
@@ -820,7 +836,11 @@ pub const Loop = extern struct {
     }
 
     pub fn tick(this: *Loop) void {
-        us_loop_run_bun_tick(this);
+        us_loop_run_bun_tick(this, 0);
+    }
+
+    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
+        us_loop_run_bun_tick(this, timeoutMs);
     }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -882,7 +902,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
@@ -2246,3 +2266,27 @@ extern fn uws_app_listen_domain_with_options(
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
+
+extern fn us_socket_pair(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+extern fn us_socket_from_fd(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
+    };
+}
+
+pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
+    };
+}

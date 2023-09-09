@@ -1,10 +1,23 @@
-import type { JSC } from "..";
+import type { EventEmitter } from "node:events";
+import type { JSC } from "../protocol";
+
+export type InspectorEventMap = {
+  [E in keyof JSC.EventMap]: [JSC.EventMap[E]];
+} & {
+  "Inspector.connecting": [string];
+  "Inspector.connected": [];
+  "Inspector.disconnected": [Error | undefined];
+  "Inspector.error": [Error];
+  "Inspector.pendingRequest": [JSC.Request];
+  "Inspector.request": [JSC.Request];
+  "Inspector.response": [JSC.Response];
+  "Inspector.event": [JSC.Event];
+};
 
 /**
  * A client that can send and receive messages to/from a debugger.
  */
-export abstract class Inspector {
-  constructor(listener?: InspectorListener);
+export interface Inspector extends EventEmitter<InspectorEventMap> {
   /**
    * Starts the inspector.
    */
@@ -17,11 +30,6 @@ export abstract class Inspector {
     params?: JSC.RequestMap[M],
   ): Promise<JSC.ResponseMap[M]>;
   /**
-   * Accepts a message from the debugger.
-   * @param message the unparsed message from the debugger
-   */
-  accept(message: string): void;
-  /**
    * If the inspector is closed.
    */
   get closed(): boolean;
@@ -30,20 +38,3 @@ export abstract class Inspector {
    */
   close(...args: unknown[]): void;
 }
-
-export type InspectorListener = {
-  /**
-   * Defines a handler when a debugger event is received.
-   */
-  [M in keyof JSC.EventMap]?: (event: JSC.EventMap[M]) => void;
-} & {
-  /**
-   * Defines a handler when the debugger is connected or reconnected.
-   */
-  ["Inspector.connected"]?: () => void;
-  /**
-   * Defines a handler when the debugger is disconnected.
-   * @param error the error that caused the disconnect, if any
-   */
-  ["Inspector.disconnected"]?: (error?: Error) => void;
-};

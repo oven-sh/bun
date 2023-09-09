@@ -1,5 +1,5 @@
 #include "root.h"
-#include <uws/src/App.h>
+#include <bun-uws/src/App.h>
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
@@ -36,12 +36,12 @@ public:
         this->globalObject = globalObject;
         this->globalObject->inspectorDebuggable().connect(*this);
 
-       Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
-       if (debugger) {
+        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
+        if (debugger) {
             debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isPaused) -> void {
                 Bun__tickWhilePaused(&isPaused);
             };
-       }
+        }
     }
 
     void onClose()
@@ -101,7 +101,6 @@ public:
 
 using BunInspectorConnectionNoSSL = BunInspectorConnection<false>;
 using SSLBunInspectorConnection = BunInspectorConnection<true>;
-
 
 template<bool isSSL>
 static void addInspector(void* app, JSC::JSGlobalObject* globalObject)

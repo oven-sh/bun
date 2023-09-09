@@ -90,7 +90,7 @@ const NODE_HTTP_WARNING =
 
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
-var kInternalSocketData = Symbol.for("::bunternal::");
+const kInternalSocketData = Symbol.for("::bunternal::");
 
 const kEmptyBuffer = Buffer.alloc(0);
 
@@ -135,6 +135,7 @@ function getHeader(headers, name) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
+  [kInternalSocketData]: any;
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -448,6 +449,10 @@ class Server extends EventEmitter {
 
   listen(port, host, backlog, onListen) {
     const server = this;
+    let socketPath;
+    if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
+      socketPath = port;
+    }
     if (typeof host === "function") {
       onListen = host;
       host = undefined;
@@ -487,6 +492,7 @@ class Server extends EventEmitter {
           tls,
           port,
           hostname: ip,
+          unix: socketPath,
           // Bindings to be used for WS Server
           websocket: {
             open(ws) {
@@ -526,7 +532,7 @@ class Server extends EventEmitter {
 
             const upgrade = req.headers.get("upgrade");
             if (upgrade) {
-              const socket = new FakeSocket();
+              const socket = http_req.socket;
               socket[kInternalSocketData] = [_server, http_res, req];
               server.emit("upgrade", http_req, socket, kEmptyBuffer);
             } else {
@@ -1287,6 +1293,7 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     try {
+      //@ts-ignore
       this.#fetchRequest = fetch(url, {
         method,
         headers: this.getHeaders(),
@@ -1298,6 +1305,8 @@ class ClientRequest extends OutgoingMessage {
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
       })
         .then(response => {
           var res = (this.#res = new IncomingMessage(response, {

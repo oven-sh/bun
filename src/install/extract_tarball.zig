@@ -354,8 +354,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             return error.InstallFailed;
         };
         defer json_file.close();
-        const json_stat = try json_file.stat();
-        json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
+        const json_stat_size = try json_file.getEndPos();
+        json_buf = try this.package_manager.allocator.alloc(u8, json_stat_size + 64);
         json_len = try json_file.preadAll(json_buf, 0);
 
         json_path = bun.getFdPath(

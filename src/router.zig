@@ -737,7 +737,7 @@ pub const Route = struct {
             var needs_close = false;
             defer if (needs_close) file.close();
             if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = entry.cache.fd };
+                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
@@ -750,7 +750,7 @@ pub const Route = struct {
                 FileSystem.setMaxFd(file.handle);
 
                 needs_close = FileSystem.instance.fs.needToCloseFiles();
-                if (!needs_close) entry.cache.fd = file.handle;
+                if (!needs_close) entry.cache.fd = bun.toFD(file.handle);
             }
 
             var _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {

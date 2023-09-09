@@ -990,7 +990,7 @@ pub const Bundler = struct {
                     null,
                 ) catch return null;
 
-                const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
 
@@ -1008,12 +1008,12 @@ pub const Bundler = struct {
                 output_file.size = css_writer.ctx.context.bytes_written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 
-                file_op.fd = file.handle;
+                file_op.fd = bun.toFD(file.handle);
 
                 file_op.is_tmpdir = false;
 
                 if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = bun.toFD(outstream.fd);
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1266,7 +1266,7 @@ pub const Bundler = struct {
             if (this_parse.file_fd_ptr) |file_fd_ptr| {
                 file_fd_ptr.* = entry.fd;
             }
-            break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
         if (comptime return_file_only) {
@@ -1563,9 +1563,9 @@ pub const Bundler = struct {
             else => {
                 var abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-                var stat = try file.stat();
+                const size = try file.getEndPos();
                 return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .file = options.OutputFile.initFile(file, abs_path, size),
                     .mime_type = MimeType.byLoader(
                         loader,
                         mime_type_ext[1..],

@@ -3,13 +3,16 @@ const Blob = JSC.WebCore.Blob;
 const default_allocator = @import("root").bun.default_allocator;
 const Output = @import("root").bun.Output;
 const RareData = @This();
-const Syscall = @import("./node/syscall.zig");
+const Syscall = bun.sys;
 const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const IPC = @import("./ipc.zig");
+const uws = @import("root").bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -26,11 +29,15 @@ hot_map: ?HotMap = null,
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
-file_polls_: ?*JSC.FilePoll.HiveArray = null,
+file_polls_: ?*JSC.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
+spawn_ipc_usockets_context: ?*uws.SocketContext = null,
+
 mime_types: ?bun.HTTP.MimeType.Map = null,
+
+node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     if (this.hot_map == null) {
@@ -102,10 +109,10 @@ pub const HotMap = struct {
     }
 };
 
-pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;
-        this.file_polls_.?.* = JSC.FilePoll.HiveArray.init(vm.allocator);
+        this.file_polls_ = vm.allocator.create(JSC.FilePoll.Store) catch unreachable;
+        this.file_polls_.?.* = JSC.FilePoll.Store.init(vm.allocator);
         return this.file_polls_.?;
     };
 }
@@ -224,8 +231,8 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
         var store = default_allocator.create(Blob.Store) catch unreachable;
-        var mode: JSC.Node.Mode = 0;
-        switch (Syscall.fstat(std.os.STDERR_FILENO)) {
+        var mode: bun.Mode = 0;
+        switch (Syscall.fstat(bun.STDERR_FD)) {
             .result => |stat| {
                 mode = stat.mode;
             },
@@ -238,7 +245,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = std.os.STDERR_FILENO,
+                        .fd = bun.STDERR_FD,
                     },
                     .is_atty = Output.stderr_descriptor_type == .terminal,
                     .mode = mode,
@@ -254,8 +261,8 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
         var store = default_allocator.create(Blob.Store) catch unreachable;
-        var mode: JSC.Node.Mode = 0;
-        switch (Syscall.fstat(std.os.STDOUT_FILENO)) {
+        var mode: bun.Mode = 0;
+        switch (Syscall.fstat(bun.STDOUT_FD)) {
             .result => |stat| {
                 mode = stat.mode;
             },
@@ -267,7 +274,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = std.os.STDOUT_FILENO,
+                        .fd = bun.STDOUT_FD,
                     },
                     .is_atty = Output.stdout_descriptor_type == .terminal,
                     .mode = mode,
@@ -282,8 +289,8 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
         var store = default_allocator.create(Blob.Store) catch unreachable;
-        var mode: JSC.Node.Mode = 0;
-        switch (Syscall.fstat(std.os.STDIN_FILENO)) {
+        var mode: bun.Mode = 0;
+        switch (Syscall.fstat(bun.STDIN_FD)) {
             .result => |stat| {
                 mode = stat.mode;
             },
@@ -295,9 +302,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = std.os.STDIN_FILENO,
+                        .fd = bun.STDIN_FD,
                     },
-                    .is_atty = std.os.isatty(std.os.STDIN_FILENO),
+                    .is_atty = std.os.isatty(bun.fdcast(bun.STDIN_FD)),
                     .mode = mode,
                 },
             },
@@ -307,10 +314,31 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     };
 }
 
+const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
+
+pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
+    if (rare.spawn_ipc_usockets_context) |ctx| {
+        return ctx;
+    }
+
+    var opts: uws.us_socket_context_options_t = .{};
+    const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
+    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    rare.spawn_ipc_usockets_context = ctx;
+    return ctx;
+}
+
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
         rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
     }
 
     return &rare.global_dns_data.?.resolver;
+}
+
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *StatWatcherScheduler {
+    return rare.node_fs_stat_watcher_scheduler orelse {
+        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
+        return rare.node_fs_stat_watcher_scheduler.?;
+    };
 }

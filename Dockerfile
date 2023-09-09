@@ -20,7 +20,7 @@ ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.8
+ARG BUN_BASE_VERSION=1.0
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -284,7 +284,8 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/uws ${BUN_DIR}/src/deps/uws
+COPY packages/bun-uws ${BUN_DIR}/packages/bun-uws
+COPY packages/bun-usockets ${BUN_DIR}/packages/bun-usockets
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
@@ -293,7 +294,7 @@ COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
-    make uws && rm -rf src/deps/uws Makefile
+    make uws && rm -rf packages/bun-uws Makefile
 
 FROM bun-base as base64
 

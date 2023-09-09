@@ -17,6 +17,11 @@ it("unhandled promise rejection reports exit code 1", () => {
   expect(exitCode).toBe(1);
 });
 
+it("handled promise rejection reports exit code 0", () => {
+  const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-handled-throw.js"]);
+  expect(exitCode).toBe(1);
+});
+
 it("process.exit(0) works", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-0.js"]);
   expect(exitCode).toBe(0);

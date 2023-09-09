@@ -42,6 +42,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

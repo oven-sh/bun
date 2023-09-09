@@ -31,6 +31,31 @@ export default [
     values: ["listener"],
   }),
   define({
+    name: "StatWatcher",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      close: {
+        fn: "doClose",
+        length: 0,
+      },
+    },
+    values: ["listener"],
+  }),
+  define({
     name: "Timeout",
     construct: false,
     noConstructor: true,
@@ -410,8 +435,8 @@ export default [
       copyFileSync: { fn: "copyFileSync", length: 3 },
 
       // TODO:
-      // cp: { fn: "cp", length: 4 },
-      // cpSync: { fn: "cpSync", length: 3 },
+      cp: { fn: "cp", length: 2 },
+      cpSync: { fn: "cpSync", length: 2 },
 
       exists: { fn: "exists", length: 2 },
       existsSync: { fn: "existsSync", length: 1 },
@@ -471,15 +496,13 @@ export default [
       symlinkSync: { fn: "symlinkSync", length: 3 },
       truncate: { fn: "truncate", length: 3 },
       truncateSync: { fn: "truncateSync", length: 2 },
-      // TODO:
-      // unwatchFile: { fn: "unwatchFile", length: 2 },
+      unwatchFile: { fn: "unwatchFile", length: 2 },
       unlink: { fn: "unlink", length: 2 },
       unlinkSync: { fn: "unlinkSync", length: 1 },
       utimes: { fn: "utimes", length: 4 },
       utimesSync: { fn: "utimesSync", length: 3 },
-      // TODO:
       watch: { fn: "watch", length: 3 },
-      // watchFile: { fn: "watchFile", length: 3 },
+      watchFile: { fn: "watchFile", length: 3 },
       writeFile: { fn: "writeFile", length: 4 },
       writeFileSync: { fn: "writeFileSync", length: 3 },
       write: { fn: "write", length: 6 },

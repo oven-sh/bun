@@ -24,7 +24,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -80,7 +80,7 @@ const Blob = JSC.WebCore.Blob;
 const BoringSSL = @import("root").bun.BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
-    fd: i32,
+    fd: bun.FileDescriptor,
     socket_fd: i32 = 0,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
@@ -1170,6 +1170,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
+        // reference to the readable stream / byte_stream alive
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
 
         /// Used in errors
         pathname: bun.String = bun.String.empty,
@@ -1182,7 +1184,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        // TODO: Use TransmitFile on Windows
+        const can_sendfile = !ssl_enabled and !bun.Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1665,6 +1668,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 stream.unpipe();
             }
 
+            this.readable_stream_ref.deinit();
+
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
                 this.pathname = bun.String.empty;
@@ -1744,7 +1749,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
-                _ = JSC.Node.Syscall.close(this.sendfile.fd);
+                _ = bun.sys.close(this.sendfile.fd);
             this.sendfile = undefined;
             this.finalize();
         }
@@ -1837,8 +1842,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
-        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
+            const write_offset: usize = write_offset_;
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
@@ -1851,7 +1857,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset_: c_ulong, resp: *App.Response) bool {
+            const write_offset: usize = write_offset_;
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
@@ -1882,7 +1889,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
                 file.pathlike.fd
-            else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
                     this.server.globalThis,
@@ -1890,27 +1897,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // stat only blocks if the target is a file descriptor
-            const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
                     this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
                     return;
                 },
             };
 
             if (Environment.isMac) {
-                if (!std.os.S.ISREG(stat.mode)) {
+                if (!bun.isRegularFile(stat.mode)) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1923,13 +1930,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (Environment.isLinux) {
-                if (!(std.os.S.ISREG(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
+                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
                     if (auto_close) {
-                        _ = JSC.Node.Syscall.close(fd);
+                        _ = bun.sys.close(fd);
                     }
 
-                    var err = JSC.Node.Syscall.Error{
-                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
+                    var err = bun.sys.Error{
+                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1943,7 +1950,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const original_size = this.blob.Blob.size;
             const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
+            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
                 stat_size
             else
                 @min(original_size, stat_size);
@@ -1961,12 +1968,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if we are sending only part of a file, include the content-range header
             // only include content-range automatically when using a file path instead of an fd
             // this is to better support manually controlling the behavior
-            if (std.os.S.ISREG(stat.mode) and auto_close) {
+            if (bun.isRegularFile(stat.mode) and auto_close) {
                 this.flags.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
             }
 
             // we know the bounds when we are sending a regular file
-            if (std.os.S.ISREG(stat.mode)) {
+            if (bun.isRegularFile(stat.mode)) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
@@ -2018,26 +2025,34 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const is_temporary = result.result.is_temporary;
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.blob == .Blob);
+            }
+
             if (!is_temporary) {
                 this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
                 const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
-                const original_size = this.blob.Blob.size;
 
-                this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
-                    stat_size
-                else
-                    @min(original_size, stat_size);
+                if (this.blob == .Blob) {
+                    const original_size = this.blob.Blob.size;
+
+                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                        stat_size
+                    else
+                        @min(original_size, stat_size);
+                }
 
                 if (!this.flags.has_written_status)
                     this.flags.needs_content_range = true;
 
                 // this is used by content-range
                 this.sendfile = .{
-                    .fd = @as(i32, @truncate(bun.invalid_fd)),
+                    .fd = bun.invalid_fd,
                     .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                    .offset = this.blob.Blob.offset,
+                    .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
                     .auto_close = false,
                     .socket_fd = -999,
                 };
@@ -2583,24 +2598,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(byte_stream.pipe.ctx == null);
                                 std.debug.assert(this.byte_stream == null);
 
-                                stream.detach(this.server.globalThis);
-
                                 if (this.resp == null) {
-                                    byte_stream.parent().deinit();
+                                    // we don't have a response, so we can discard the stream
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
                                 const resp = this.resp.?;
-
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
-                                    byte_stream.parent().deinit();
                                     this.doRenderBlob();
+                                    // is safe to detach here because we're not going to receive any more data
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
+                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis) catch {
+                                    // Invalid Stream
+                                    this.renderMissing();
+                                    return;
+                                };
+                                // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                                stream.detachIfPossible(this.server.globalThis);
+
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 
@@ -2619,6 +2641,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 return;
                             },
                         }
+                    }
+
+                    if (lock.onReceiveValue != null or lock.task != null) {
+                        // someone else is waiting for the stream or waiting for `onStartStreaming`
+                        const readable = value.toReadableStream(this.server.globalThis);
+                        readable.ensureStillAlive();
+                        readable.protect();
+                        this.doRenderWithBody(value);
+                        return;
                     }
 
                     // when there's no stream, we need to
@@ -5396,7 +5427,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.listener = socket;
-            this.vm.uws_event_loop = uws.Loop.get();
+            this.vm.event_loop_handle = uws.Loop.get();
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -5582,7 +5613,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }
@@ -5652,7 +5683,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body) {
+            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.pending_promises_for_abort == 0 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
                 ctx.renderMissing();
                 return;
             }

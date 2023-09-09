@@ -43,10 +43,6 @@ coverageSkipTestFiles = true       # default false
 
 ### Coverage thresholds
 
-{% callout %}
-**Note** — Support for coverage reporting was added in Bun v0.7.3.
-{% /callout %}
-
 It is possible to specify a coverage threshold in `bunfig.toml`. If your test suite does not meet or exceed this threshold, `bun test` will exit with a non-zero exit code to indicate the failure.
 
 ```toml

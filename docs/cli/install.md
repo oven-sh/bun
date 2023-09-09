@@ -197,7 +197,7 @@ $ cat package.json
   "version": "1.0.0"
 }
 $ bun link
-bun link v0.5.7 (7416672e)
+bun link v1.x (7416672e)
 Success! Registered "cool-pkg"
 
 To use cool-pkg in a project, run:

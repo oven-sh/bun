@@ -15,6 +15,28 @@ const Run = @import("./run_command.zig").RunCommand;
 pub const BunxCommand = struct {
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
+    /// clones the string
+    pub fn addCreatePrefix(allocator: std.mem.Allocator, input: []const u8) ![:0]const u8 {
+        const prefixLength = "create-".len;
+
+        if (input.len == 0) return try allocator.dupeZ(u8, input);
+
+        var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
+        if (input[0] == '@') {
+            if (strings.indexAnyComptime(input, "/")) |index| {
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "create-");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+        }
+
+        @memcpy(new_str[0..prefixLength], "create-");
+        @memcpy(new_str[prefixLength..], input);
+
+        return new_str;
+    }
+
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: std.os.fd_t, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try std.os.openatZ(dir_fd, subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
@@ -97,7 +119,7 @@ pub const BunxCommand = struct {
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.os.AT.FDCWD, subpath_z);
+        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -137,15 +159,13 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context) !void {
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
-        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, std.os.argv.len -| 1);
+        var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = std.os.argv[1..];
-
             var found_subcommand_name = false;
 
             for (argv) |positional_| {
@@ -286,7 +306,7 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+        if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;

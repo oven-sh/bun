@@ -179,7 +179,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
@@ -2738,6 +2738,11 @@ pub fn mmapFile(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
+    if (comptime Environment.isWindows) {
+        globalThis.throwTODO("mmapFile is not supported on Windows");
+        return JSC.JSValue.zero;
+    }
+
     const arguments_ = callframe.arguments(2);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
@@ -2789,7 +2794,7 @@ pub fn mmapFile(
         flags |= std.os.MAP.SHARED;
     }
 
-    const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags, map_size, offset)) {
+    const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {
         .result => |map| map,
 
         .err => |err| {
@@ -2800,7 +2805,7 @@ pub fn mmapFile(
 
     return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = JSC.Node.Syscall.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
 }
@@ -3320,7 +3325,7 @@ pub const Timer = struct {
 
                             if (val.did_unref_timer) {
                                 val.did_unref_timer = false;
-                                vm.uws_event_loop.?.num_polls += 1;
+                                vm.event_loop_handle.?.num_polls += 1;
                             }
                         }
                     }
@@ -3393,7 +3398,7 @@ pub const Timer = struct {
                     .callback = JSC.Strong.create(callback, globalThis),
                     .globalThis = globalThis,
                     .timer = uws.Timer.create(
-                        vm.uws_event_loop.?,
+                        vm.event_loop_handle.?,
                         id,
                     ),
                 };
@@ -3439,7 +3444,7 @@ pub const Timer = struct {
 
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.uws_event_loop.?.num_polls -= 1;
+                                vm.event_loop_handle.?.num_polls -= 1;
                             }
                         }
                     }
@@ -3592,7 +3597,7 @@ pub const Timer = struct {
             this.timer.deinit();
 
             // balance double unreffing in doUnref
-            vm.uws_event_loop.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+            vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -3648,7 +3653,7 @@ pub const Timer = struct {
             .callback = JSC.Strong.create(callback, globalThis),
             .globalThis = globalThis,
             .timer = uws.Timer.create(
-                vm.uws_event_loop.?,
+                vm.event_loop_handle.?,
                 Timeout.ID{
                     .id = id,
                     .kind = kind,
@@ -4421,6 +4426,7 @@ pub const EnvironmentVariables = struct {
         }
         return len;
     }
+
     pub fn getEnvValue(globalObject: *JSC.JSGlobalObject, name: ZigString) ?ZigString {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);

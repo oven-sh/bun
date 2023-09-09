@@ -79,7 +79,8 @@
     "src/deps/tinycc": true,
     "src/deps/zstd": true,
     "test/snippets/package-json-exports/_node_modules_copy": true,
-    "src/js/out": true
+    "src/js/out": true,
+    "src/packages/bun-uws/fuzzing/seed-corpus/": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -176,6 +176,7 @@ pub const Request = struct {
     }
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
+        if (comptime Environment.isWindows) unreachable;
         var req = Request{
             .url = bun.String.create(ctx.full_url),
             .body = try InitRequestBodyValue(.{ .Null = {} }),

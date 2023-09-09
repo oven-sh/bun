@@ -62,7 +62,7 @@ await cow.save(); // saves to the database
 const animals = await Animal.find();
 animals[0].speak(); // logs "Moo!"
 
-// disconect
+// disconnect
 await mongoose.disconnect();
 ```
 

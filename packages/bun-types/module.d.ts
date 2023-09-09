@@ -4,7 +4,7 @@ declare module "node:module" {
 
 declare module "module" {
   export function createRequire(filename: string): NodeJS.Require;
-  export function _resolveFileName(
+  export function _resolveFilename(
     path: string,
     parent: string,
     isMain: boolean,

@@ -1,5 +1,5 @@
 const std = @import("std");
-const system = std.system;
+const system = if (bun.Environment.isWindows) std.os.windows else std.os.system;
 const bun = @import("root").bun;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc

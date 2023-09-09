@@ -62,4 +62,4 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);
-}, 10_000);
+}, 20_000);

@@ -149,13 +149,24 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set env", async () => {
-    const child = spawn("env", { env: { TEST: "test" } });
-    const result: string = await new Promise(resolve => {
-      child.stdout.on("data", data => {
-        resolve(data.toString());
+    async function getChildEnv(env: any): Promise<string> {
+      const child = spawn("env", { env: env });
+      const result: string = await new Promise(resolve => {
+        let output = "";
+        child.stdout.on("data", data => {
+          output += data;
+        });
+        child.stdout.on("end", () => {
+          resolve(output);
+        });
       });
-    });
-    expect(/TEST\=test/.test(result)).toBe(true);
+      return result;
+    }
+
+    expect(/TEST\=test/.test(await getChildEnv({ TEST: "test" }))).toBe(true);
+    expect(await getChildEnv({})).toStrictEqual("");
+    expect(await getChildEnv(undefined)).not.toStrictEqual("");
+    expect(await getChildEnv(null)).not.toStrictEqual("");
   });
 
   it("should allow explicit setting of argv0", async () => {
@@ -177,7 +188,7 @@ describe("spawn()", () => {
     });
 
     const result = await promise;
-    expect(/Open bun's Discord server/.test(result)).toBe(true);
+    expect(/bun.sh\/docs/.test(result)).toBe(true);
   });
 
   it("should allow us to spawn in a shell", async () => {

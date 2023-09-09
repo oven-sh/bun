@@ -1027,6 +1027,20 @@ pub const Log = struct {
         });
     }
 
+    pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) !void {
+        @setCold(true);
+        log.errors += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(null, Range.None, allocPrint(allocator, noteFmt, args) catch unreachable);
+
+        try log.addMsg(.{
+            .kind = .err,
+            .data = rangeData(null, Range.None, @errorName(err)),
+            .notes = notes,
+        });
+    }
+
     pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
@@ -1089,6 +1103,21 @@ pub const Log = struct {
         try log.addMsg(.{
             .kind = .warn,
             .data = rangeData(source, Range{ .loc = l }, text),
+        });
+    }
+
+    pub fn addWarningWithNote(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, warn: string, comptime note_fmt: string, note_args: anytype) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.warn, log.level)) return;
+        log.warnings += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(source, Range{ .loc = l }, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = rangeData(null, Range.None, warn),
+            .notes = notes,
         });
     }
 
@@ -1283,7 +1312,7 @@ pub const Source = struct {
         return Source{ .path = path, .key_path = path, .contents = "" };
     }
 
-    pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {
+    pub fn initFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),
@@ -1293,7 +1322,7 @@ pub const Source = struct {
         return source;
     }
 
-    pub fn initRecycledFile(file: fs.File, _: std.mem.Allocator) !Source {
+    pub fn initRecycledFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
             .key_path = fs.Path.init(file.path.text),

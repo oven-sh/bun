@@ -235,6 +235,9 @@ zsh)
     fi
     ;;
 bash)
+    # Install completions, but we don't care if it fails
+    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions &>/dev/null || :
+
     commands=(
         "export $install_env=$quoted_install_dir"
         "export PATH=$bin_env:\$PATH"

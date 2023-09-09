@@ -888,9 +888,13 @@ function normalizeSpawnArguments(file, args, options) {
     cwd = getValidatedPath(cwd, "options.cwd");
   }
 
-  // TODO: Detached check
   // TODO: Gid check
   // TODO: Uid check
+  var detached = false;
+  const { detached: detachedOption } = options;
+  if (detachedOption != null) {
+    detached = !!detachedOption;
+  }
 
   // Validate the shell, if present.
   if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
@@ -945,7 +949,7 @@ function normalizeSpawnArguments(file, args, options) {
 
   // TODO: Windows env support here...
 
-  return { ...options, file, args, cwd, envPairs };
+  return { ...options, detached, file, args, cwd, envPairs };
 }
 
 function checkExecSyncError(ret, args, cmd) {
@@ -1154,8 +1158,11 @@ class ChildProcess extends EventEmitter {
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
 
-    var env = options.envPairs || undefined;
+    // TODO: better ipc support
+    const ipc = $isArray(stdio) && stdio[3] === "ipc";
 
+    var env = options.envPairs || undefined;
+    const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     this.#handle = Bun.spawn({
@@ -1165,6 +1172,7 @@ class ChildProcess extends EventEmitter {
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
       env: env || process.env,
+      detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         this.#handle = handle;
         this.pid = this.#handle.pid;
@@ -1177,53 +1185,67 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
+      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
     });
     this.pid = this.#handle.pid;
 
     onSpawnNT(this);
 
-    // const ipc = stdio.ipc;
-    // const ipcFd = stdio.ipcFd;
-    // stdio = options.stdio = stdio.stdio;
-
-    // for (i = 0; i < stdio.length; i++) {
-    //   const stream = stdio[i];
-    //   if (stream.type === "ignore") continue;
-
-    //   if (stream.ipc) {
-    //     this._closesNeeded++;
-    //     continue;
-    //   }
-
-    //   // The stream is already cloned and piped, thus stop its readable side,
-    //   // otherwise we might attempt to read from the stream when at the same time
-    //   // the child process does.
-    //   if (stream.type === "wrap") {
-    //     stream.handle.reading = false;
-    //     stream.handle.readStop();
-    //     stream._stdio.pause();
-    //     stream._stdio.readableFlowing = false;
-    //     stream._stdio._readableState.reading = false;
-    //     stream._stdio[kIsUsedAsStdio] = true;
-    //     continue;
-    //   }
-
-    //   if (stream.handle) {
-    //     stream.socket = createSocket(
-    //       this.pid !== 0 ? stream.handle : null,
-    //       i > 0
-    //     );
-
-    // // Add .send() method and start listening for IPC data
-    // if (ipc !== undefined) setupChannel(this, ipc, serialization);
+    if (ipc) {
+      this.send = this.#send;
+      this.disconnect = this.#disconnect;
+    }
   }
 
-  send() {
-    console.log("ChildProcess.prototype.send() - Sorry! Not implemented yet");
+  #emitIpcMessage(message) {
+    this.emit("message", message);
   }
 
-  disconnect() {
-    console.log("ChildProcess.prototype.disconnect() - Sorry! Not implemented yet");
+  #send(message, handle, options, callback) {
+    if (typeof handle === "function") {
+      callback = handle;
+      handle = undefined;
+      options = undefined;
+    } else if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    } else if (options !== undefined) {
+      if (typeof options !== "object" || options === null) {
+        throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+      }
+    }
+
+    if (!this.#handle) {
+      if (callback) {
+        process.nextTick(callback, new TypeError("Process was closed while trying to send message"));
+      } else {
+        this.emit("error", new TypeError("Process was closed while trying to send message"));
+      }
+      return false;
+    }
+
+    // Bun does not handle handles yet
+    try {
+      this.#handle.send(message);
+      if (callback) process.nextTick(callback);
+      return true;
+    } catch (error) {
+      if (callback) {
+        process.nextTick(callback, error);
+      } else {
+        this.emit("error", error);
+      }
+      return false;
+    }
+  }
+
+  #disconnect() {
+    if (!this.connected) {
+      this.emit("error", new TypeError("Process was closed while trying to send message"));
+      return;
+    }
+    this.connected = false;
+    this.#handle.disconnect();
   }
 
   kill(sig) {

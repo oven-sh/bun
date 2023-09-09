@@ -1,7 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -593,14 +592,22 @@ pub const TextDecoder = struct {
             return JSValue.zero;
         };
 
-        return this.decodeSlice(globalThis, array_buffer.slice());
+        if (arguments.len > 1 and arguments[1].isObject()) {
+            if (arguments[1].get(globalThis, "stream")) |stream| {
+                if (stream.toBoolean()) {
+                    return this.decodeSlice(globalThis, array_buffer.slice(), true);
+                }
+            }
+        }
+
+        return this.decodeSlice(globalThis, array_buffer.slice(), false);
     }
 
     pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
-        return this.decodeSlice(globalThis, uint8array.slice());
+        return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 
-    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8) JSValue {
+    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime stream: bool) JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
                 if (strings.isAllASCII(buffer_slice)) {
@@ -621,8 +628,9 @@ pub const TextDecoder = struct {
                 return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
             },
             EncodingLabel.@"UTF-8" => {
+                const toUTF16 = if (stream) strings.toUTF16Alloc else strings.toUTF16AllocNoTrim;
                 if (this.fatal) {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {
+                    if (toUTF16(default_allocator, buffer_slice, true)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -641,7 +649,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 } else {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, false)) |result_| {
+                    if (toUTF16(default_allocator, buffer_slice, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }

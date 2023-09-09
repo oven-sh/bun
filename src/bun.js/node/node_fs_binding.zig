@@ -108,9 +108,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile and FunctionEnum != .realpath) {
-                globalObject.throw("Not implemented yet", .{});
-                return .zero;
+            switch (comptime FunctionEnum) {
+                .readdir, .lstat, .stat, .readFile, .realpath, .copyFile, .cp => {},
+                else => {
+                    globalObject.throw("Not implemented yet", .{});
+                    return .zero;
+                },
             }
 
             var arguments = callframe.arguments(8);
@@ -153,6 +156,14 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {
                 return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat, slice.arena);
+            }
+
+            if (comptime FunctionEnum == .copyFile) {
+                return JSC.Node.AsyncCopyFileTask.create(globalObject, args, slice.vm, slice.arena);
+            }
+
+            if (comptime FunctionEnum == .cp) {
+                return JSC.Node.AsyncCpTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
             // defer {
@@ -201,6 +212,7 @@ pub const NodeJSFS = struct {
     pub const appendFile = call(.appendFile);
     pub const close = call(.close);
     pub const copyFile = call(.copyFile);
+    pub const cp = call(.cp);
     pub const exists = call(.exists);
     pub const chown = call(.chown);
     pub const chmod = call(.chmod);
@@ -236,6 +248,7 @@ pub const NodeJSFS = struct {
     pub const accessSync = callSync(.access);
     pub const appendFileSync = callSync(.appendFile);
     pub const closeSync = callSync(.close);
+    pub const cpSync = callSync(.cp);
     pub const copyFileSync = callSync(.copyFile);
     pub const existsSync = callSync(.exists);
     pub const chownSync = callSync(.chown);
@@ -286,6 +299,8 @@ pub const NodeJSFS = struct {
     }
 
     pub const watch = callSync(.watch);
+    pub const watchFile = callSync(.watchFile);
+    pub const unwatchFile = callSync(.unwatchFile);
 
     // Not implemented yet:
     const notimpl = fdatasync;

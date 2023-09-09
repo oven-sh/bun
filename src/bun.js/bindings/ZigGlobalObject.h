@@ -296,6 +296,8 @@ public:
         return m_processEnvObject.getInitializedOnMainThread(this);
     }
 
+    void drainMicrotasks();
+
     void handleRejectedPromises();
     void initGeneratedLazyClasses();
 
@@ -341,8 +343,11 @@ public:
 
         CallbackJob__onResolve,
         CallbackJob__onReject,
+
+        Bun__BodyValueBufferer__onRejectStream,
+        Bun__BodyValueBufferer__onResolveStream,
     };
-    static constexpr size_t promiseFunctionsSize = 22;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -359,6 +364,8 @@ public:
         barrier.set(vm(), this, func);
         return func;
     }
+
+    bool asyncHooksNeedsCleanup = false;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -378,6 +385,11 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
+    // This is set when doing `require('module')._resolveFilename = ...`
+    // a hack used by Next.js to inject their versions of webpack and react
+    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+
+    mutable WriteBarrier<Unknown> m_nextTickQueue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
     mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;

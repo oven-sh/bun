@@ -18,6 +18,7 @@ import fs, {
   rmSync,
   rmdir,
   rmdirSync,
+  renameSync,
   createReadStream,
   createWriteStream,
   promises,
@@ -1205,6 +1206,23 @@ describe("createReadStream", () => {
       });
     });
   });
+
+  it("should emit open", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.close(err => {
+      expect(err).toBeDefined();
+      expect(err?.message).toContain("Premature close");
+      done();
+    });
+  });
 });
 
 describe("fs.WriteStream", () => {
@@ -1287,6 +1305,18 @@ describe("fs.WriteStream", () => {
       expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
+    // @ts-ignore-next-line
+    const ws = new WriteStream_(path, {
+      fd: 2,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(2);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -1388,6 +1418,18 @@ describe("fs.ReadStream", () => {
       expect(data).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
+    // @ts-ignore-next-line
+    const ws = new ReadStream_(path, {
+      fd: 0,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(0);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -1495,6 +1537,44 @@ describe("createWriteStream", () => {
         expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
         resolve(true);
       });
+    });
+  });
+
+  it("should emit open and call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.close(err => {
+      expect(err).toBeUndefined();
+      done();
+    });
+  });
+
+  it("should call callbacks in the correct order", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    let counter = 0;
+    ws.on("open", () => {
+      expect(counter++).toBe(1);
+    });
+
+    ws.close(() => {
+      expect(counter++).toBe(3);
+      done();
+    });
+
+    const rs = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    rs.on("open", () => {
+      expect(counter++).toBe(0);
+    });
+
+    rs.close(() => {
+      expect(counter++).toBe(2);
     });
   });
 });
@@ -1940,4 +2020,30 @@ it("BigIntStats", () => {
   expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
   expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
   expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+});
+
+it("test syscall errno, issue#4198", () => {
+  const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
+  expect(() => openSync(path, "r")).toThrow("No such file or directory");
+  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readlinkSync(path)).toThrow("No such file or directory");
+  expect(() => realpathSync(path)).toThrow("No such file or directory");
+  expect(() => readFileSync(path)).toThrow("No such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => unlinkSync(path)).toThrow("No such file or directory");
+  expect(() => rmSync(path)).toThrow("No such file or directory");
+  expect(() => rmdirSync(path)).toThrow("No such file or directory");
+  expect(() => closeSync(2147483640)).toThrow("Bad file descriptor");
+
+  mkdirSync(path);
+  expect(() => mkdirSync(path)).toThrow("File or folder exists");
+  expect(() => unlinkSync(path)).toThrow(
+    {
+      ["darwin"]: "Operation not permitted",
+      ["linux"]: "Is a directory",
+      // TODO: windows
+    }[process.platform] as const,
+  );
+  rmdirSync(path);
 });

@@ -1679,153 +1679,157 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        if (transform.serve orelse false) {
-            opts.preserve_extensions = true;
-            opts.append_package_version_in_query_string = true;
-            if (opts.framework == null)
-                opts.env.behavior = .load_all;
+        if (comptime !bun.Environment.isWindows) {
+            if (transform.serve orelse false) {
+                opts.preserve_extensions = true;
+                opts.append_package_version_in_query_string = true;
+                if (opts.framework == null)
+                    opts.env.behavior = .load_all;
 
-            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 
-            opts.resolve_mode = .lazy;
+                opts.resolve_mode = .lazy;
 
-            var dir_to_use: string = opts.routes.static_dir;
-            const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
-            var disabled_static = false;
+                var dir_to_use: string = opts.routes.static_dir;
+                const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
+                var disabled_static = false;
 
-            var chosen_dir = dir_to_use;
+                var chosen_dir = dir_to_use;
 
-            if (!static_dir_set) {
-                chosen_dir = choice: {
-                    if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
-                        const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
-                        switch (dir.*) {
-                            .entries => {
-                                if (dir.entries.getComptimeQuery("public")) |q| {
-                                    if (q.entry.kind(&fs.fs, true) == .dir) {
-                                        break :choice "public";
+                if (!static_dir_set) {
+                    chosen_dir = choice: {
+                        if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
+                            const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
+                            switch (dir.*) {
+                                .entries => {
+                                    if (dir.entries.getComptimeQuery("public")) |q| {
+                                        if (q.entry.kind(&fs.fs, true) == .dir) {
+                                            break :choice "public";
+                                        }
                                     }
-                                }
 
-                                if (dir.entries.getComptimeQuery("static")) |q| {
-                                    if (q.entry.kind(&fs.fs, true) == .dir) {
-                                        break :choice "static";
+                                    if (dir.entries.getComptimeQuery("static")) |q| {
+                                        if (q.entry.kind(&fs.fs, true) == .dir) {
+                                            break :choice "static";
+                                        }
                                     }
-                                }
 
-                                break :choice ".";
+                                    break :choice ".";
+                                },
+                                else => {
+                                    break :choice "";
+                                },
+                            }
+                        } else |_| {
+                            break :choice "";
+                        }
+                    };
+
+                    if (chosen_dir.len == 0) {
+                        disabled_static = true;
+                        opts.routes.static_dir_enabled = false;
+                    }
+                }
+
+                if (!disabled_static) {
+                    var _dirs = [_]string{chosen_dir};
+                    opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
+                    const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
+                        switch (err) {
+                            error.FileNotFound => {
+                                opts.routes.static_dir_enabled = false;
+                            },
+                            error.AccessDenied => {
+                                Output.prettyErrorln(
+                                    "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                                    .{opts.routes.static_dir},
+                                );
+                                std.process.exit(1);
                             },
                             else => {
-                                break :choice "";
+                                Output.prettyErrorln(
+                                    "error: \"{s}\" when accessing public folder: \"{s}\"",
+                                    .{ @errorName(err), opts.routes.static_dir },
+                                );
+                                std.process.exit(1);
                             },
                         }
-                    } else |_| {
-                        break :choice "";
+
+                        break :brk null;
+                    };
+                    if (static_dir) |handle| {
+                        opts.routes.static_dir_handle = handle.dir;
                     }
-                };
-
-                if (chosen_dir.len == 0) {
-                    disabled_static = true;
-                    opts.routes.static_dir_enabled = false;
+                    opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
                 }
-            }
 
-            if (!disabled_static) {
-                var _dirs = [_]string{chosen_dir};
-                opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
-                    switch (err) {
-                        error.FileNotFound => {
-                            opts.routes.static_dir_enabled = false;
-                        },
-                        error.AccessDenied => {
-                            Output.prettyErrorln(
-                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                                .{opts.routes.static_dir},
-                            );
-                            std.process.exit(1);
-                        },
-                        else => {
-                            Output.prettyErrorln(
-                                "error: \"{s}\" when accessing public folder: \"{s}\"",
-                                .{ @errorName(err), opts.routes.static_dir },
-                            );
-                            std.process.exit(1);
-                        },
-                    }
+                const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
+                    !opts.routes.routes_enabled;
 
-                    break :brk null;
-                };
-                if (static_dir) |handle| {
-                    opts.routes.static_dir_handle = handle.dir;
-                }
-                opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
-            }
-
-            const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
-                !opts.routes.routes_enabled;
-
-            if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
-                const dir = opts.routes.static_dir_handle.?;
-                var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
-                    switch (err) {
-                        error.FileNotFound => {},
-                        else => {
-                            Output.prettyErrorln(
-                                "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                .{ @errorName(err), opts.routes.static_dir },
-                            );
-                        },
-                    }
-
-                    opts.routes.single_page_app_routing = false;
-                    break :brk null;
-                };
-
-                if (index_html_file) |index_dot_html| {
-                    opts.routes.single_page_app_routing = true;
-                    opts.routes.single_page_app_fd = index_dot_html.handle;
-                }
-            }
-
-            if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
-                attempt: {
-                    var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    // If it's not in static-dir/index.html, check if it's in top level dir/index.html
-                    var parts = [_]string{"index.html"};
-                    var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
-                    abs_buf[full_path.len] = 0;
-                    var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
-
-                    const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
+                if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
+                    const dir = opts.routes.static_dir_handle.?;
+                    var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
                         switch (err) {
                             error.FileNotFound => {},
                             else => {
                                 Output.prettyErrorln(
                                     "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                    .{ @errorName(err), fs.top_level_dir },
+                                    .{ @errorName(err), opts.routes.static_dir },
                                 );
                             },
                         }
-                        break :attempt;
+
+                        opts.routes.single_page_app_routing = false;
+                        break :brk null;
                     };
 
-                    opts.routes.single_page_app_routing = true;
-                    opts.routes.single_page_app_fd = file.handle;
+                    if (index_html_file) |index_dot_html| {
+                        opts.routes.single_page_app_routing = true;
+                        opts.routes.single_page_app_fd = index_dot_html.handle;
+                    }
                 }
+
+                if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
+                    attempt: {
+                        var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        // If it's not in static-dir/index.html, check if it's in top level dir/index.html
+                        var parts = [_]string{"index.html"};
+                        var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
+                        abs_buf[full_path.len] = 0;
+                        var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
+
+                        const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
+                            switch (err) {
+                                error.FileNotFound => {},
+                                else => {
+                                    Output.prettyErrorln(
+                                        "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                        .{ @errorName(err), fs.top_level_dir },
+                                    );
+                                },
+                            }
+                            break :attempt;
+                        };
+
+                        opts.routes.single_page_app_routing = true;
+                        opts.routes.single_page_app_fd = file.handle;
+                    }
+                }
+
+                // Windows has weird locking rules for file access.
+                // so it's a bad idea to keep a file handle open for a long time on Windows.
+                if (Environment.isWindows and opts.routes.static_dir_handle != null) {
+                    opts.routes.static_dir_handle.?.close();
+                }
+                opts.hot_module_reloading = opts.target.isWebLike();
+
+                if (transform.disable_hmr orelse false)
+                    opts.hot_module_reloading = false;
+
+                opts.serve = true;
+            } else {
+                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
             }
-
-            // Windows has weird locking rules for file access.
-            // so it's a bad idea to keep a file handle open for a long time on Windows.
-            if (Environment.isWindows and opts.routes.static_dir_handle != null) {
-                opts.routes.static_dir_handle.?.close();
-            }
-            opts.hot_module_reloading = opts.target.isWebLike();
-
-            if (transform.disable_hmr orelse false)
-                opts.hot_module_reloading = false;
-
-            opts.serve = true;
         } else {
             opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
@@ -1841,7 +1845,7 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
+            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
@@ -1950,17 +1954,17 @@ pub const OutputFile = struct {
     // We may use a different system call
     pub const FileOperation = struct {
         pathname: string,
-        fd: FileDescriptorType = 0,
-        dir: FileDescriptorType = 0,
+        fd: FileDescriptorType = bun.invalid_fd,
+        dir: FileDescriptorType = bun.invalid_fd,
         is_tmpdir: bool = false,
         is_outdir: bool = false,
         close_handle_on_complete: bool = false,
         autowatch: bool = true,
 
-        pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
+        pub fn fromFile(fd: anytype, pathname: string) FileOperation {
             return .{
                 .pathname = pathname,
-                .fd = fd,
+                .fd = bun.toFD(fd),
             };
         }
 
@@ -2035,7 +2039,7 @@ pub const OutputFile = struct {
 
     pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
         var res = initFile(file, pathname, size);
-        res.value.copy.dir_handle = dir.fd;
+        res.value.copy.dir_handle = bun.toFD(dir.fd);
         return res;
     }
 
@@ -2085,7 +2089,7 @@ pub const OutputFile = struct {
                 .file => |file| Value{
                     .copy = brk: {
                         var op = FileOperation.fromFile(file.file.handle, options.output_path);
-                        op.dir = file.dir.fd;
+                        op.dir = bun.toFD(file.dir.fd);
                         break :brk op;
                     },
                 },
@@ -2111,11 +2115,11 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(file.value.move.dir, &(try std.os.toPosixPath(file.value.move.getPathname())), dir, &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var dir_obj = std.fs.Dir{ .fd = dir };
+        var dir_obj = std.fs.Dir{ .fd = bun.fdcast(dir) };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;

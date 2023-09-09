@@ -214,6 +214,7 @@ extern "C" EncodedJSValue Bun__DNSResolver__resolveNs(JSGlobalObject*, JSC::Call
 extern "C" EncodedJSValue Bun__DNSResolver__resolvePtr(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__resolveCname(JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue Bun__DNSResolver__getServers(JSGlobalObject*, JSC::CallFrame*);
+extern "C" EncodedJSValue Bun__DNSResolver__reverse(JSGlobalObject*, JSC::CallFrame*);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
@@ -242,6 +243,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNSResolver__getServers, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
     return dnsObject;
 }

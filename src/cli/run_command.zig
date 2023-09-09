@@ -50,6 +50,10 @@ pub const RunCommand = struct {
     };
 
     pub fn findShell(PATH: string, cwd: string) ?string {
+        if (comptime Environment.isWindows) {
+            return "C:\\Windows\\System32\\cmd.exe";
+        }
+
         inline for (shells_to_search) |shell| {
             if (which(&path_buf, PATH, cwd, shell)) |shell_| {
                 return shell_;
@@ -58,8 +62,7 @@ pub const RunCommand = struct {
 
         const Try = struct {
             pub fn shell(str: stringZ) bool {
-                std.os.accessZ(str, std.os.X_OK) catch return false;
-                return true;
+                return bun.sys.isExecutableFilePath(str);
             }
         };
 
@@ -341,7 +344,7 @@ pub const RunCommand = struct {
 
         const result = child_process.spawnAndWait() catch |err| {
             if (err == error.AccessDenied) {
-                {
+                if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);
                     const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
@@ -408,16 +411,21 @@ pub const RunCommand = struct {
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var retried = false;
 
-        if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
+        if (!strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
             var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (std.os.argv[0][0] == '/') {
-                optional_bun_path.* = bun.span(std.os.argv[0]);
-                argv0 = std.os.argv[0];
+            if (bun.argv()[0][0] == '/') {
+                optional_bun_path.* = bun.span(bun.argv()[0]);
+                argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
@@ -429,7 +437,7 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = std.os.argv[0];
+                argv0 = bun.argv()[0];
             }
 
             while (true) {
@@ -445,7 +453,6 @@ pub const RunCommand = struct {
                         continue;
                     };
                 }
-                _ = bun.C.chmod(bun_node_dir ++ "/node", 0o777);
                 break;
             }
         }
@@ -723,7 +730,7 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                std.os.accessZ(slice, std.os.X_OK) catch continue;
+                                if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
                             }
@@ -953,7 +960,7 @@ pub const RunCommand = struct {
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
+                            const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {

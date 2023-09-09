@@ -307,11 +307,9 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${fileDirname}",
+      "cwd": "/Users/jarred/Build/worky",
       "console": "internalConsole",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1"
-      }
+      "env": {}
     },
 
     {

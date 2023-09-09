@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import { unsafe, spawn, readableStreamToText } from "bun";
 import { bunExe, bunEnv, gc } from "harness";
+import { join } from "path";
+import { tmpdir } from "os";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 
@@ -89,6 +91,37 @@ describe("WebSocket", () => {
     });
     new WebSocket(`http://${server.hostname}:${server.port}`, {});
   });
+
+  it("should connect over unix sock", async () => {
+    const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
+    const server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          server.stop();
+          return;
+        }
+        return new Response();
+      },
+      websocket: {
+        open(ws) {},
+        message(ws) {
+          ws.close();
+        },
+      },
+    });
+    const ws = new WebSocket(`ws+unix://${unix}:/`, {});
+    await new Promise(resolve => {
+      ws.onopen = resolve;
+    });
+    var closed = new Promise(resolve => {
+      ws.onclose = resolve;
+    })
+    ws.close();
+    await closed;
+    server.stop(true);
+  })
+
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {
       const server = Bun.serve({

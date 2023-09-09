@@ -449,7 +449,7 @@ class Server extends EventEmitter {
   listen(port, host, backlog, onListen) {
     const server = this;
     let socketPath;
-    if (typeof port == "string") {
+    if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
       socketPath = port;
     }
     if (typeof host === "function") {

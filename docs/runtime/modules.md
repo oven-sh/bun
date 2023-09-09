@@ -260,6 +260,8 @@ If you aren't a TypeScript user, you can create a [`jsconfig.json`](https://code
 
 {% details summary="Low-level details of CommonJS interop in Bun" %}
 
+Bun has patched JavaScriptCore to `require()` ES Modules synchronously, but only when they don't use top-level await. To support `require()` inside ES Modules, we add `import.meta.require` and have a transpiler integration to convert calls to `module.require()` or `require()` into `import.meta.require()`.
+
 Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript transpiler detects usages of `module.exports`, it treats the file as CommonJS. The module loader will then wrap the transpiled module in a function shaped like this:
 
 ```js

@@ -385,7 +385,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         StringView urlPath = m_url.path();
         // https://github.com/websockets/ws/blob/master/doc/ws.md#ipc-connections
         size_t colonPos = urlPath.find(':');
-        if (colonPos == 0) {
+        if (colonPos == notFound) {
             host = Zig::toZigString(urlPath);
             path = Zig::toZigString(makeString("/"));
         } else {

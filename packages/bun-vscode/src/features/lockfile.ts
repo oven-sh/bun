@@ -37,6 +37,12 @@ export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorPro
 
 function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, extensionUri: vscode.Uri): void {
   const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "vscode.css"));
+  const lockfileContent = styleLockfile(preview);
+  
+  const lineNumbers: string[] = []
+  for(let i = 0; i < lockfileContent.split('\n').length; i++){
+    lineNumbers.push(`<span class="line-number">${i + 1}</span>`)
+  }
 
   webview.html = `
 <!DOCTYPE html>
@@ -47,11 +53,16 @@ function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, exten
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource};">
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+    
     <link href="${styleVSCodeUri}" rel="stylesheet" />
   </head>
   <body>
-    <pre><code>${styleLockfile(preview)}</code></pre>
+    <div class="bunlock">
+      <div class="lines">
+        ${lineNumbers.join('\n')}
+      </div>
+      <code>${lockfileContent}</code>
+    </div>
   </body>
 </html>`;
 }

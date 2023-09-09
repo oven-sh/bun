@@ -27,3 +27,34 @@
 .mtku { text-decoration: underline; text-underline-position: under; }
 .mtks { text-decoration: line-through; }
 .mtks.mtku { text-decoration: underline line-through; text-underline-position: under; }
+
+
+
+.bunlock {
+    display: flex;
+    flex-direction: row;
+    gap: 1px;
+}
+
+.lines {
+    display: flex;
+    flex-direction: column;
+    width: 15px;
+    margin-right: 15px;
+    text-align: right;
+    opacity: 0.5;
+
+	font-size: var(--vscode-editor-font-size);
+	font-weight: var(--vscode-editor-font-weight);
+	font-family: var(--vscode-editor-font-family);
+	background-color: var(--vscode-editor-background);
+}
+
+code {
+    white-space: pre;
+
+	font-size: var(--vscode-editor-font-size);
+	font-weight: var(--vscode-editor-font-weight);
+	font-family: var(--vscode-editor-font-family);
+	background-color: var(--vscode-editor-background);
+}

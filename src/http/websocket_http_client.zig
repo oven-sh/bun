@@ -235,6 +235,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const JSC.ZigString,
             header_values: ?[*]const JSC.ZigString,
             header_count: usize,
+            is_unix: bool,
         ) callconv(.C) ?*HTTPClient {
             std.debug.assert(global.bunVM().event_loop_handle != null);
 
@@ -265,22 +266,29 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             else
                 display_host_;
 
-            if (Socket.connect(
-                display_host,
-                port,
-                @as(*uws.SocketContext, @ptrCast(socket_ctx)),
-                HTTPClient,
-                client,
-                "tcp",
-            )) |out| {
-                if (comptime ssl) {
-                    if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+            if (!is_unix) {
+                if (Socket.connect(
+                    display_host,
+                    port,
+                    @as(*uws.SocketContext, @ptrCast(socket_ctx)),
+                    HTTPClient,
+                    client,
+                    "tcp",
+                )) |out| {
+                    if (comptime ssl) {
+                        if (!strings.isIPAddress(host_.slice())) {
+                            out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                        }
                     }
-                }
 
-                out.tcp.timeout(120);
-                return out;
+                    out.tcp.timeout(120);
+                    return out;
+                }
+            } else {
+                if (Socket.connectUnix(display_host, @as(*uws.SocketContext, @ptrCast(socket_ctx)), HTTPClient, client, "tcp")) |out| {
+                    out.tcp.timeout(120);
+                    return out;
+                }
             }
             vm.eventLoop().start_server_on_next_tick = prev_start_server_on_next_tick;
 

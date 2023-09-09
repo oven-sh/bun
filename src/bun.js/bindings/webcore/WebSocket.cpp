@@ -294,8 +294,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -375,13 +376,32 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
-    auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
     ZigString clientProtocolString = Zig::toZigString(protocolString);
-    uint16_t port = is_secure ? 443 : 80;
-    if (auto userPort = m_url.port()) {
-        port = userPort.value();
+    ZigString host;
+    ZigString path;
+    uint16_t port;
+
+    if (is_unix) {
+        StringView urlPath = m_url.path();
+        // https://github.com/websockets/ws/blob/master/doc/ws.md#ipc-connections
+        size_t colonPos = urlPath.find(':');
+        if (colonPos == 0) {
+            host = Zig::toZigString(urlPath);
+            path = Zig::toZigString(makeString("/"));
+        } else {
+            host = Zig::toZigString(urlPath.substring(0, colonPos));
+            path = Zig::toZigString(urlPath.substring(colonPos + 1));
+        }
+
+        port = 0;
+    } else {
+        host = Zig::toZigString(m_url.host());
+        auto resource = resourceName(m_url);
+        path = Zig::toZigString(resource);
+        port = is_secure ? 443 : 80;
+        if (auto userPort = m_url.port()) {
+            port = userPort.value();
+        }
     }
 
     Vector<ZigString, 8> headerNames;
@@ -409,11 +429,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size(), is_unix);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size(), is_unix);
     }
 
     headerValues.clear();

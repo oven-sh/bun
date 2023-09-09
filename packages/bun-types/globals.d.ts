@@ -1290,7 +1290,6 @@ interface RequestInit {
 }
 
 interface FetchRequestInit extends RequestInit {
-  
   /**
    * Log the raw HTTP request & response to stdout. This API may be
    * removed in a future version of Bun without notice.

@@ -870,7 +870,7 @@ describe("node:http", () => {
     });
   });
 
-  test("should listen on port if string, issue#4582", () => {
+  test("should listen on port if string, issue#4582", done => {
     const server = createServer((req, res) => {
       res.end();
     });
@@ -885,6 +885,19 @@ describe("node:http", () => {
       } finally {
         server.close();
       }
+    });
+  });
+
+  test("error event not fired, issue#4651", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: 42069 }, () => {
+      const server2 = createServer((_, res) => {
+        res.end();
+      });
+      server2.on("error", () => done());
+      server2.listen({ port: 42069 }, () => {});
     });
   });
 });

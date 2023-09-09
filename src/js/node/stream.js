@@ -5472,123 +5472,121 @@ function getNativeReadableStream(Readable, stream, options) {
 /** --- Bun native stream wrapper ---  */
 
 var Writable = require_writable();
-var NativeWritable = class NativeWritable extends Writable {
-  #pathOrFdOrSink;
-  #fileSink;
-  #native = true;
 
-  _construct;
-  _destroy;
-  _final;
+const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
+const _fileSink = Symbol("fileSink");
+const _native = Symbol("native");
 
-  constructor(pathOrFdOrSink, options = {}) {
-    super(options);
+function NativeWritable(pathOrFdOrSink, options = {}) {
+  Writable.call(this, options);
 
-    this._construct = this.#internalConstruct;
-    this._destroy = this.#internalDestroy;
-    this._final = this.#internalFinal;
+  this[_native] = true;
 
-    this.#pathOrFdOrSink = pathOrFdOrSink;
-  }
+  this._construct = NativeWritable_internalConstruct;
+  this._destroy = NativeWritable_internalDestroy;
+  this._final = NativeWritable_internalFinal;
 
-  // These are confusingly two different fns for construct which initially were the same thing because
-  // `_construct` is part of the lifecycle of Writable and is not called lazily,
-  // so we need to separate our _construct for Writable state and actual construction of the write stream
-  #internalConstruct(cb) {
-    this._writableState.constructed = true;
-    this.constructed = true;
-    if (typeof cb === "function") cb();
-    process.nextTick(() => {
-      this.emit("open", this.fd);
-      this.emit("ready");
-    });
-  }
+  this[_pathOrFdOrSink] = pathOrFdOrSink;
+}
+NativeWritable.prototype = Object.create(Writable.prototype);
 
-  #lazyConstruct() {
-    // TODO: Turn this check into check for instanceof FileSink
-    if (typeof this.#pathOrFdOrSink === "object") {
-      if (typeof this.#pathOrFdOrSink.write === "function") {
-        this.#fileSink = this.#pathOrFdOrSink;
-      } else {
-        throw new Error("Invalid FileSink");
-      }
+// These are confusingly two different fns for construct which initially were the same thing because
+// `_construct` is part of the lifecycle of Writable and is not called lazily,
+// so we need to separate our _construct for Writable state and actual construction of the write stream
+function NativeWritable_internalConstruct(cb) {
+  this._writableState.constructed = true;
+  this.constructed = true;
+  if (typeof cb === "function") cb();
+  process.nextTick(() => {
+    this.emit("open", this.fd);
+    this.emit("ready");
+  });
+}
+
+function NativeWritable_lazyConstruct(stream) {
+  // TODO: Turn this check into check for instanceof FileSink
+  var sink = stream[_pathOrFdOrSink];
+  if (typeof sink === "object") {
+    if (typeof sink.write === "function") {
+      return (stream[_fileSink] = sink);
     } else {
-      this.#fileSink = Bun.file(this.#pathOrFdOrSink).writer();
+      throw new Error("Invalid FileSink");
     }
+  } else {
+    return (stream[_fileSink] = Bun.file(sink).writer());
+  }
+}
+
+const WritablePrototypeWrite = Writable.prototype.write;
+NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, encoding, cb, native) {
+  if (!(native ?? this[_native])) {
+    this[_native] = false;
+    return WritablePrototypeWrite.call(this, chunk, encoding, cb);
   }
 
-  write(chunk, encoding, cb, native = this.#native) {
-    if (!native) {
-      this.#native = false;
-      return super.write(chunk, encoding, cb);
-    }
+  var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
+  var result = fileSink.write(chunk);
 
-    if (!this.#fileSink) {
-      this.#lazyConstruct();
-    }
-    var fileSink = this.#fileSink;
-    var result = fileSink.write(chunk);
+  if ($isPromise(result)) {
+    // var writePromises = this.#writePromises;
+    // var i = writePromises.length;
+    // writePromises[i] = result;
+    result.then(() => {
+      this.emit("drain");
+      fileSink.flush(true);
+      // // We can't naively use i here because we don't know when writes will resolve necessarily
+      // writePromises.splice(writePromises.indexOf(result), 1);
+    });
+    return false;
+  }
+  fileSink.flush(true);
+  // TODO: Should we just have a calculation based on encoding and length of chunk?
+  if (cb) cb(null, chunk.byteLength);
+  return true;
+};
+const WritablePrototypeEnd = Writable.prototype.end;
+NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
+  return WritablePrototypeEnd.call(this, chunk, encoding, cb, native ?? this[_native]);
+};
 
-    if ($isPromise(result)) {
-      // var writePromises = this.#writePromises;
-      // var i = writePromises.length;
-      // writePromises[i] = result;
-      result.then(() => {
-        this.emit("drain");
-        fileSink.flush(true);
-        // // We can't naively use i here because we don't know when writes will resolve necessarily
-        // writePromises.splice(writePromises.indexOf(result), 1);
-      });
-      return false;
-    }
-    fileSink.flush(true);
-    // TODO: Should we just have a calculation based on encoding and length of chunk?
-    if (cb) cb(null, chunk.byteLength);
-    return true;
+function NativeWritable_internalDestroy(error, cb) {
+  const w = this._writableState;
+  const r = this._readableState;
+
+  if (w) {
+    w.destroyed = true;
+    w.closeEmitted = true;
+  }
+  if (r) {
+    r.destroyed = true;
+    r.closeEmitted = true;
   }
 
-  end(chunk, encoding, cb, native = this.#native) {
-    return super.end(chunk, encoding, cb, native);
+  if (typeof cb === "function") cb(error);
+
+  if (w?.closeEmitted || r?.closeEmitted) {
+    this.emit("close");
   }
+}
 
-  #internalDestroy(error, cb) {
-    const w = this._writableState;
-    const r = this._readableState;
-
-    if (w) {
-      w.destroyed = true;
-      w.closeEmitted = true;
-    }
-    if (r) {
-      r.destroyed = true;
-      r.closeEmitted = true;
-    }
-
-    if (typeof cb === "function") cb(error);
-
-    if (w?.closeEmitted || r?.closeEmitted) {
-      this.emit("close");
-    }
+function NativeWritable_internalFinal(cb) {
+  var sink = this[_fileSink];
+  if (sink) {
+    sink.end();
   }
+  if (cb) cb();
+}
 
-  #internalFinal(cb) {
-    if (this.#fileSink) {
-      this.#fileSink.end();
-    }
-    if (cb) cb();
+NativeWritable.prototype.ref = function ref() {
+  var sink = this[_fileSink];
+  if (!sink) {
+    this.NativeWritable_lazyConstruct();
   }
+  sink.ref();
+};
 
-  ref() {
-    if (!this.#fileSink) {
-      this.#lazyConstruct();
-    }
-    this.#fileSink.ref();
-  }
-
-  unref() {
-    if (!this.#fileSink) return;
-    this.#fileSink.unref();
-  }
+NativeWritable.prototype.unref = function unref() {
+  this[_fileSink]?.unref();
 };
 
 const exports = require_stream();

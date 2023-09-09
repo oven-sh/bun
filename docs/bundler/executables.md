@@ -28,7 +28,7 @@ All imported files and packages are bundled into the executable, along with a co
 - `--outdir` — use `outfile` instead.
 - `--external`
 - `--splitting`
-- `--publicPath`
+- `--public-path`
 
 {% /callout %}
 

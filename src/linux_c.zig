@@ -167,7 +167,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENXIO, "No such device or address");
         map.put(.E2BIG, "Argument list too long");
         map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file number");
+        map.put(.EBADF, "Bad file descriptor");
         map.put(.ECHILD, "No child processes");
         map.put(.EAGAIN, "Try again");
         map.put(.ENOMEM, "Out of memory");

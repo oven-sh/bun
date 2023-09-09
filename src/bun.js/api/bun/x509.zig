@@ -72,7 +72,7 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
     return result;
 }
 
-inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
+pub inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
     for (name) |c| {
         switch (c) {
             '"',
@@ -417,7 +417,7 @@ fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue
 fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const size = BoringSSL.i2d_X509(cert, null);
     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
-    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
+    var buffer_ptr = buffer.asArrayBuffer(globalObject).?.ptr;
     const result_size = BoringSSL.i2d_X509(cert, &buffer_ptr);
     std.debug.assert(result_size == size);
     return buffer;

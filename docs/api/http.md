@@ -140,12 +140,6 @@ Bun.serve({
 });
 ```
 
-{% callout %}
-
-**Note** — Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
-
-{% /callout %}
-
 If your private key is encrypted with a passphrase, provide a value for `passphrase` to decrypt it.
 
 ```ts-diff
@@ -231,7 +225,7 @@ serve({
 ⚡️ **Speed** — Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 {% /callout %}
 
-**[v0.3.0+]** You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
+You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
 
 ```ts
 Bun.serve({

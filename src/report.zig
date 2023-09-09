@@ -550,7 +550,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         error.FileNotFound => {
             Output.prettyError(
-                "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nbun could not find a file, and the code that produces this error is missing a better error.\n",
+                "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},
             );
             Output.flush();
@@ -571,7 +571,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         error.MissingPackageJSON => {
             Output.prettyError(
-                "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
+                "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nBun could not find a package.json file.\n",
                 .{},
             );
 

@@ -24,10 +24,12 @@
 const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
 
 function get(): ReadonlyArray<any> | undefined {
+  $debug("get", $getInternalField($asyncContext, 0));
   return $getInternalField($asyncContext, 0);
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
+  $debug("set", contextValue);
   return $putInternalField($asyncContext, 0, contextValue);
 }
 

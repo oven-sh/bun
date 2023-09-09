@@ -1,7 +1,3 @@
-{% callout %}
-**Note** — Introduced in Bun v0.1.11.
-{% /callout %}
-
 Bun provides a universal plugin API that can be used to extend both the _runtime_ and [_bundler_](/docs/bundler).
 
 Plugins intercept imports and perform custom loading logic: reading files, transpiling code, etc. They can be used to add support for additional file types, like `.scss` or `.yaml`. In the context of Bun's bundler, plugins can be used to implement framework-level features like CSS extraction, macros, and client-server code co-location.
@@ -177,7 +173,7 @@ Loading a YAML file is useful, but plugins support more than just data loading. 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
 
-await plugin({
+plugin({
   name: "svelte loader",
   async setup(build) {
     const { compile } = await import("svelte/compiler");

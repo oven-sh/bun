@@ -19,6 +19,7 @@
 #include <termios.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include "JSNextTickQueue.h"
 
 #pragma mark - Node.js Process
 
@@ -75,7 +76,10 @@ extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
@@ -160,63 +164,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     return JSC::JSValue::encode(jsBoolean(true));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto argCount = callFrame->argumentCount();
-    if (argCount == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "nextTick requires 1 argument (a function)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    JSC::JSValue job = callFrame->uncheckedArgument(0);
-
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "nextTick expects a function"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
-    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
-    JSC::JSValue asyncContextValue = globalObject->m_asyncContextData.get()->getInternalField(0);
-
-    switch (callFrame->argumentCount()) {
-    case 1: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, JSC::JSValue {}, JSC::JSValue {});
-        break;
-    }
-    case 2: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), JSC::JSValue {});
-        break;
-    }
-    case 3: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2));
-        break;
-    }
-    default: {
-        JSC::JSArray* args = JSC::constructEmptyArray(globalObject, nullptr, argCount - 1);
-        if (UNLIKELY(!args)) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        for (unsigned i = 1; i < argCount; i++) {
-            args->putDirectIndex(globalObject, i - 1, callFrame->uncheckedArgument(i));
-        }
-
-        global->queueMicrotask(
-            global->performMicrotaskVariadicFunction(), job, args, asyncContextValue, JSC::JSValue {});
-
-        break;
-    }
-    }
-
-    return JSC::JSValue::encode(jsUndefined());
-}
-
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -279,7 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -581,6 +528,21 @@ static void loadSignalNumberMap()
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    if (eventName.string() == "message"_s) {
+        if (isAdded) {
+            if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                && eventEmitter.listenerCount(eventName) == 1) {
+                eventEmitter.scriptExecutionContext()->refEventLoop();
+                eventEmitter.m_hasIPCRef = true;
+            }
+        } else {
+            if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
+                eventEmitter.scriptExecutionContext()->unrefEventLoop();
+            }
+        }
+        return;
+    }
+
     loadSignalNumberMap();
 
     static std::once_flag signalNumberToNameMapOnceFlag;
@@ -795,6 +757,20 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsBoolean(Bun__GlobalObject__hasIPC(process->globalObject())));
+}
+JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    return false;
+}
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -966,6 +942,26 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
+}
+
+static JSValue constructProcessSend(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), Bun__Process__send, ImplementationVisibility::Public);
+    } else {
+        return jsNumber(4);
+    }
+}
+
+static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process__disconnect, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
 }
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
@@ -1533,6 +1529,42 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
     return memoryUsage;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSValue arg0 = callFrame->argument(0);
+    Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    globalObject->vm().drainMicrotasks();
+    return JSValue::encode(jsUndefined());
+}
+
+static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+{
+    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue nextTickQueueObject;
+    if (!globalObject->m_nextTickQueue) {
+        Bun::JSNextTickQueue* queue = Bun::JSNextTickQueue::create(globalObject);
+        globalObject->m_nextTickQueue.set(vm, globalObject, queue);
+        nextTickQueueObject = queue;
+    } else {
+        nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+    }
+
+    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
+    args.append(nextTickQueueObject);
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
+
+    return JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+}
+
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
     // {
@@ -1707,6 +1739,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    auto ident = Identifier::fromString(vm, "message"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(ident, args);
+    }
+}
+
+extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    auto ident = Identifier::fromString(vm, "disconnect"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        process->wrapped().emit(ident, args);
+    }
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                    Function 1
@@ -1719,9 +1774,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
+  connected                        processConnected                         CustomAccessor
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor
+  disconnect                       constructProcessDisconnect               PropertyCallback
   dlopen                           Process_functionDlopen                   Function 1
   emitWarning                      Process_emitWarning                      Function 1
   env                              constructEnv                             PropertyCallback
@@ -1742,7 +1799,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
-  nextTick                         Process_functionNextTick                 Function 1
+  nextTick                         constructProcessNextTickFn               PropertyCallback
   openStdin                        Process_functionOpenStdin                Function 0
   pid                              constructPid                             PropertyCallback
   platform                         constructPlatform                        PropertyCallback
@@ -1751,6 +1808,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   release                          constructProcessReleaseObject            PropertyCallback
   revision                         constructRevision                        PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                Function 1
+  send                             constructProcessSend                     PropertyCallback
   stderr                           constructStderr                          PropertyCallback
   stdin                            constructStdin                           PropertyCallback
   stdout                           constructStdout                          PropertyCallback

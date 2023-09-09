@@ -182,6 +182,14 @@ extern "C" const size_t Zig__ConsoleClient_object_align_ = alignof(Zig::ConsoleC
 extern "C" const size_t Bun__Timer_object_size_ = sizeof(Bun__Timer);
 extern "C" const size_t Bun__Timer_object_align_ = alignof(Bun__Timer);
 
+#ifndef INCLUDED_
+#define INCLUDED_
+#include ""
+#endif
+
+extern "C" const size_t Bun__BodyValueBufferer_object_size_ = sizeof(Bun__BodyValueBufferer);
+extern "C" const size_t Bun__BodyValueBufferer_object_align_ = alignof(Bun__BodyValueBufferer);
+
 const size_t sizes[38] = {sizeof(JSC::JSObject), sizeof(WebCore::DOMURL), sizeof(WebCore::DOMFormData), sizeof(WebCore::FetchHeaders), sizeof(SystemError), sizeof(JSC::JSCell), sizeof(JSC::JSString), sizeof(JSC::JSModuleLoader), sizeof(WebCore::AbortSignal), sizeof(JSC::JSPromise), sizeof(JSC::JSInternalPromise), sizeof(JSC::JSFunction), sizeof(JSC::JSGlobalObject), sizeof(JSC::JSMap), sizeof(JSC::JSValue), sizeof(JSC::Exception), sizeof(JSC::VM), sizeof(JSC::ThrowScope), sizeof(JSC::CatchScope), sizeof(FFI__ptr), sizeof(Reader__u8), sizeof(Reader__u16), sizeof(Reader__u32), sizeof(Reader__ptr), sizeof(Reader__i8), sizeof(Reader__i16), sizeof(Reader__i32), sizeof(Reader__f32), sizeof(Reader__f64), sizeof(Reader__i64), sizeof(Reader__u64), sizeof(Reader__intptr), sizeof(Zig::GlobalObject), sizeof(Bun__Path), sizeof(ArrayBufferSink), sizeof(HTTPSResponseSink), sizeof(HTTPResponseSink), sizeof(FileSink)};
 
 const char* names[38] = {"JSC__JSObject", "WebCore__DOMURL", "WebCore__DOMFormData", "WebCore__FetchHeaders", "SystemError", "JSC__JSCell", "JSC__JSString", "JSC__JSModuleLoader", "WebCore__AbortSignal", "JSC__JSPromise", "JSC__JSInternalPromise", "JSC__JSFunction", "JSC__JSGlobalObject", "JSC__JSMap", "JSC__JSValue", "JSC__Exception", "JSC__VM", "JSC__ThrowScope", "JSC__CatchScope", "FFI__ptr", "Reader__u8", "Reader__u16", "Reader__u32", "Reader__ptr", "Reader__i8", "Reader__i16", "Reader__i32", "Reader__f32", "Reader__f64", "Reader__i64", "Reader__u64", "Reader__intptr", "Zig__GlobalObject", "Bun__Path", "ArrayBufferSink", "HTTPSResponseSink", "HTTPResponseSink", "FileSink"};

@@ -88,6 +88,8 @@ const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext,
 const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
 const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
 
+const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
+
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = .v1,
@@ -3632,8 +3634,12 @@ pub const Package = extern struct {
 
     pub const Meta = extern struct {
         origin: Origin = Origin.npm,
+        _padding_origin: u8 = 0,
+
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
+
+        _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
 
@@ -3731,7 +3737,10 @@ pub const Package = extern struct {
             var sliced = list.slice();
 
             inline for (FieldsEnum.fields) |field| {
-                try writer.writeAll(std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name))));
+                const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+
+                comptime assertNoUninitializedPadding(@TypeOf(value));
+                try writer.writeAll(std.mem.sliceAsBytes(value));
             }
 
             const really_end_at = try stream.getPos();
@@ -3782,7 +3791,10 @@ pub const Package = extern struct {
             var sliced = list.slice();
 
             inline for (FieldsEnum.fields) |field| {
-                var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
+                const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+
+                comptime assertNoUninitializedPadding(@TypeOf(value));
+                var bytes = std.mem.sliceAsBytes(value);
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
@@ -3913,7 +3925,9 @@ const Buffers = struct {
     }
 
     pub fn writeArray(comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer, comptime ArrayList: type, array: ArrayList) !void {
+        comptime assertNoUninitializedPadding(@TypeOf(array));
         const bytes = std.mem.sliceAsBytes(array);
+
         const start_pos = try stream.getPos();
         try writer.writeIntLittle(u64, 0xDEADBEEF);
         try writer.writeIntLittle(u64, 0xDEADBEEF);

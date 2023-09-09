@@ -1700,6 +1700,9 @@ pub const posix = struct {
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
     }
+    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
+        std.os.argv = new_ptr;
+    }
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1720,6 +1723,10 @@ pub const win32 = struct {
 
     pub inline fn argv() [][*:0]u8 {
         return argv_;
+    }
+
+    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
+        argv_ = new_ptr;
     }
 
     pub fn stdio(i: anytype) FileDescriptor {

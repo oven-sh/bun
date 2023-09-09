@@ -2480,7 +2480,7 @@ pub const Process = struct {
         }
 
         vm.onExit();
-        std.os.exit(code);
+        bun.Global.exit(code);
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
@@ -2488,14 +2488,14 @@ pub const Process = struct {
     pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
     pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
     pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
-    pub export const Bun__versions_uws: [*:0]const u8 = bun.Global.versions.uws;
+    pub export const Bun__versions_uws: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
     pub export const Bun__versions_zig: [*:0]const u8 = bun.Global.versions.zig;
     pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
     pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
     pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
-    pub export const Bun__versions_usockets: [*:0]const u8 = bun.Global.versions.usockets;
+    pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
 };
 

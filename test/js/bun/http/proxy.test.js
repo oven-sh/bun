@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { gc } from "harness";
+import fs from "fs";
+import path from "path";
 
 let proxy, auth_proxy, server;
-
-// TODO: Proxy with TLS requests
 
 beforeAll(() => {
   proxy = Bun.serve({
@@ -74,6 +74,40 @@ afterAll(() => {
   server.stop();
   proxy.stop();
   auth_proxy.stop();
+});
+
+const test = process.env.PROXY_URL ? it : it.skip;
+
+test("should be able to post on TLS", async () => {
+  const data = JSON.stringify({
+    "name": "bun",
+  });
+
+  const result = await fetch("https://httpbin.org/post", {
+    method: "POST",
+    proxy: process.env.PROXY_URL,
+    verbose: true,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: data,
+  }).then(res => res.json());
+
+  expect(result.data).toBe(data);
+});
+
+test("should be able to post bigger on TLS", async () => {
+  const data = fs.readFileSync(path.join(import.meta.dir, "fetch.json")).toString("utf8");
+  const result = await fetch("https://httpbin.org/post", {
+    method: "POST",
+    proxy: process.env.PROXY_URL,
+    verbose: true,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: data,
+  }).then(res => res.json());
+  expect(result.data).toBe(data);
 });
 
 it("proxy non-TLS", async () => {

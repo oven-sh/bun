@@ -3,6 +3,17 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
+import zlib from "zlib";
+import http from "http";
+import { createReadStream } from "fs";
+import { pipeline } from "stream";
+import type { AddressInfo } from "net";
+
+const files = [
+  join(import.meta.dir, "fixture.html"),
+  join(import.meta.dir, "fixture.png"),
+  join(import.meta.dir, "fixture.png.gz"),
+];
 
 const fixtures = {
   "fixture": readFileSync(join(import.meta.dir, "fixture.html")),
@@ -17,6 +28,81 @@ const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
+  it("can deflate with and without headers #4478", async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (req.url.endsWith("/with_headers")) {
+            const content = zlib.deflateSync(Buffer.from("Hello, World"));
+            return new Response(content, {
+              headers: {
+                "Content-Type": "text/plain",
+                "Content-Encoding": "deflate",
+                "Access-Control-Allow-Origin": "*",
+              },
+            });
+          }
+          const content = zlib.deflateRawSync(Buffer.from("Hello, World"));
+          return new Response(content, {
+            headers: {
+              "Content-Type": "text/plain",
+              "Content-Encoding": "deflate",
+              "Access-Control-Allow-Origin": "*",
+            },
+          });
+        },
+      });
+      const url = `http://${server.hostname}:${server.port}/`;
+      expect(await fetch(`${url}with_headers`).then(res => res.text())).toBe("Hello, World");
+      expect(await fetch(url).then(res => res.text())).toBe("Hello, World");
+    } finally {
+      server?.stop();
+    }
+  });
+
+  for (let file of files) {
+    it("stream can handle response.body + await response.something() #4500", async () => {
+      let server: ReturnType<typeof http.createServer> | null = null;
+      try {
+        const errorHandler = (err: any) => expect(err).toBeUndefined();
+
+        server = http
+          .createServer(function (req, res) {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+
+            pipeline(createReadStream(file), res, errorHandler);
+          })
+          .listen(0);
+
+        const address = server.address() as AddressInfo;
+        const url = `http://${address.address}:${address.port}`;
+        async function getRequestLen(url: string) {
+          const response = await fetch(url);
+          const hasBody = response.body;
+          if (hasBody) {
+            const res = await response.blob();
+            return res.size;
+          }
+          return 0;
+        }
+
+        for (let i = 0; i < 10; i++) {
+          let len = await getRequestLen(url);
+          if (len <= 0) {
+            throw new Error("Request length is 0");
+          }
+          await Bun.sleep(50);
+        }
+
+        expect(true).toBe(true);
+      } finally {
+        server?.close();
+      }
+    });
+  }
+
   it("stream still works after response get out of scope", async () => {
     let server: Server | null = null;
     try {
@@ -467,12 +553,13 @@ describe("fetch() with streaming", () => {
     }
   }
 
-  type CompressionType = "no" | "gzip" | "deflate" | "br";
+  type CompressionType = "no" | "gzip" | "deflate" | "br" | "deflate_with_headers";
   type TestType = { headers: Record<string, string>; compression: CompressionType; skip?: boolean };
   const types: Array<TestType> = [
     { headers: {}, compression: "no" },
     { headers: { "Content-Encoding": "gzip" }, compression: "gzip" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
     // { headers: { "Content-Encoding": "br" }, compression: "br", skip: true }, // not implemented yet
   ];
 
@@ -482,6 +569,8 @@ describe("fetch() with streaming", () => {
         return Bun.gzipSync(data);
       case "deflate":
         return Bun.deflateSync(data);
+      case "deflate_with_headers":
+        return zlib.deflateSync(data);
       default:
         return data;
     }

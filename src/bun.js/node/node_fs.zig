@@ -93,6 +93,10 @@ pub const AsyncReaddirTask = struct {
         var node_fs = NodeFS{};
         this.result = node_fs.readdir(this.args, .promise);
 
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
@@ -370,6 +374,10 @@ pub const AsyncReadFileTask = struct {
         var node_fs = NodeFS{};
         this.result = node_fs.readFile(this.args, .promise);
 
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
@@ -459,6 +467,10 @@ pub const AsyncCopyFileTask = struct {
 
         var node_fs = NodeFS{};
         this.result = node_fs.copyFile(this.args, .promise);
+
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
 
         this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
@@ -3033,7 +3045,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyFile {
-            const src = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const src = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
@@ -3047,7 +3059,9 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const dest = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
+                src.deinit();
+
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",
@@ -3095,7 +3109,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Cp {
-            const src = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const src = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
@@ -3109,7 +3123,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const dest = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
+                defer src.deinit();
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",
@@ -3177,7 +3192,7 @@ pub const Arguments = struct {
 
     pub const UnwatchFile = void;
     pub const Watch = JSC.Node.FSWatcher.Arguments;
-    pub const WatchFile = void;
+    pub const WatchFile = JSC.Node.StatWatcher.Arguments;
     pub const Fsync = struct {
         fd: FileDescriptor,
 
@@ -3362,7 +3377,7 @@ const Return = struct {
     pub const Unlink = void;
     pub const UnwatchFile = void;
     pub const Watch = JSC.JSValue;
-    pub const WatchFile = void;
+    pub const WatchFile = JSC.JSValue;
     pub const Utimes = void;
 
     pub const Chown = void;
@@ -5244,6 +5259,25 @@ pub const NodeFS = struct {
         }
 
         return Maybe(Return.Unlink).todo;
+    }
+    pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
+        std.debug.assert(flavor == .sync);
+
+        if (comptime Environment.isWindows) {
+            args.global_this.throwTODO("watch is not supported on Windows yet");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        }
+
+        const watcher = args.createStatWatcher() catch |err| {
+            var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            defer bun.default_allocator.free(buf);
+            args.global_this.throwValue((JSC.SystemError{
+                .message = bun.String.init(buf),
+                .path = bun.String.init(args.path.slice()),
+            }).toErrorInstance(args.global_this));
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
+        };
+        return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
         return Maybe(Return.UnwatchFile).todo;

@@ -171,13 +171,11 @@ const versions = existsSync(generated_versions_list);
   // pub const libarchive = "dc321febde83dd0f31158e1be61a7aedda65e7a2";
   // pub const mimalloc = "3c7079967a269027e438a2aac83197076d9fe09d";
   // pub const picohttpparser = "066d2b1e9ab820703db0837a7255d92d30f0c9f5";
-  // pub const uws = "70b1b9fc1341e8b791b42c5447f90505c2abe156";
   // pub const webkit = "60d11703a533fd694cd1d6ddda04813eecb5d69f";
   // pub const zlib = "885674026394870b7e7a05b7bf1ec5eb7bd8a9c0";
   // pub const tinycc = "2d3ad9e0d32194ad7fd867b66ebe218dcc8cb5cd";
   // pub const lolhtml = "2eed349dcdfa4ff5c19fe7c6e501cfd687601033";
   // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
-  // pub const usockets = "fafc241e8664243fc0c51d69684d5d02b9805134";
   const versions = Object.fromEntries(
     readFileSync(generated_versions_list, "utf8")
       .split("\n")
@@ -185,15 +183,17 @@ const versions = existsSync(generated_versions_list);
       .map(line => line.split(" = "))
       .map(([name, hash]) => [name.slice(9).trim(), hash.slice(1, -2)]),
   );
-  versions.uwebsockets = versions.uws;
-  delete versions.uws;
-  versions["ares"] = versions.c_ares;
+  versions.ares = versions.c_ares;
   delete versions.c_ares;
 
   for (const name in versions) {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(versions[name]);
   }
+
+  expect(process.versions).toHaveProperty("usockets");
+  expect(process.versions).toHaveProperty("uwebsockets");
+  expect(process.versions.usockets).toBe(process.versions.uwebsockets);
 });
 
 it("process.config", () => {

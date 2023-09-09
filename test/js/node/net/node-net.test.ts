@@ -357,14 +357,29 @@ describe("net.Socket write", () => {
 });
 
 it("should handle connection error", done => {
-  var data = {};
+  let errored = false;
+
   // @ts-ignore
-  connect(55555, () => {
+  const socket = connect(55555, () => {
     done(new Error("Should not have connected"));
-  }).on("error", error => {
+  });
+
+  socket.on("error", error => {
+    if (errored) {
+      return done(new Error("Should not have errored twice"));
+    }
+    errored = true;
     expect(error).toBeDefined();
     expect(error.name).toBe("SystemError");
     expect(error.message).toBe("Failed to connect");
+  });
+
+  socket.on("connect", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("close", () => {
+    expect(errored).toBe(true);
     done();
   });
 });

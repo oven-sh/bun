@@ -1439,7 +1439,6 @@ pub export fn Bun__canonicalizeIP(
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
         const addr_slice = addr.toSlice(bun.default_allocator);
-        defer addr_slice.deinit();
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
             return JSC.JSValue.jsUndefined();

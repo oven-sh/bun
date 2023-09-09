@@ -6,10 +6,6 @@ Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](
 
 ## `Bun.password`
 
-{% callout %}
-**Note** — Added in Bun 0.6.8.
-{% /callout %}
-
 `Bun.password` is a collection of utility functions for hashing and verifying passwords with various cryptographically secure algorithms.
 
 ```ts
@@ -136,7 +132,7 @@ hasher.digest();
 Once initialized, data can be incrementally fed to to the hasher using `.update()`. This method accepts `string`, `TypedArray`, and `ArrayBuffer`.
 
 ```ts
-const hasher = new Bun.CryptoHasher();
+const hasher = new Bun.CryptoHasher("sha256");
 
 hasher.update("hello world");
 hasher.update(new Uint8Array([1, 2, 3]));
@@ -174,7 +170,7 @@ hasher.update("hello world", "latin1");
 After the data has been feed into the hasher, a final hash can be computed using `.digest()`. By default, this method returns a `Uint8Array` containing the hash.
 
 ```ts
-const hasher = new Bun.CryptoHasher();
+const hasher = new Bun.CryptoHasher("sha256");
 hasher.update("hello world");
 
 hasher.digest();

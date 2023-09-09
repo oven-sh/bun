@@ -229,7 +229,11 @@ const lib = linkSymbols({
   },
 });
 
-const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
+const [major, minor, patch] = [
+  lib.symbols.getMajor(),
+  lib.symbols.getMinor(),
+  lib.symbols.getPatch(),
+];
 ```
 
 ## Callbacks
@@ -249,10 +253,13 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-});
+const searchIterator = new JSCallback(
+  (ptr, length) => /hello/.test(new CString(ptr, length)),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+  },
+);
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
@@ -375,10 +382,6 @@ The `read` function behaves similarly to `DataView`, but it's usually faster bec
 If you want to track when a `TypedArray` is no longer in use from JavaScript, you can use a [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry).
 
 #### From C, Rust, Zig, etc
-
-{% callout %}
-**Note** — Available in Bun v0.1.8 and later.
-{% /callout %}
 
 If you want to track when a `TypedArray` is no longer in use from C or FFI, you can pass a callback and an optional context pointer to `toArrayBuffer` or `toBuffer`. This function is called at some point later, once the garbage collector frees the underlying `ArrayBuffer` JavaScript object.
 

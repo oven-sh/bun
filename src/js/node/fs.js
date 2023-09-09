@@ -6,8 +6,10 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const { isArrayBufferView } = require("node:util/types");
 
+var _writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
+var _fs = Symbol.for("#fs");
+
 const constants = $processBindingConstants.fs;
-const { COPYFILE_EXCL } = constants;
 
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
@@ -64,6 +66,45 @@ class FSWatcher extends EventEmitter {
 
   unref() {
     this.#watcher?.unref();
+  }
+
+  // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
+  start() {}
+}
+
+/** Implemented in `node_fs_stat_watcher.zig` */
+// interface StatWatcherHandle {
+//   ref();
+//   unref();
+//   close();
+// }
+
+class StatWatcher extends EventEmitter {
+  // _handle: StatWatcherHandle;
+
+  constructor(path, options) {
+    super();
+    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
+  }
+
+  #onChange(curr, prev) {
+    this.emit("change", curr, prev);
+  }
+
+  // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
+  start() {}
+
+  stop() {
+    this._handle?.close();
+    this._handle = null;
+  }
+
+  ref() {
+    this._handle?.ref();
+  }
+
+  unref() {
+    this._handle?.unref();
   }
 }
 
@@ -315,6 +356,54 @@ var access = function access(...args) {
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
   };
+
+// TODO: move this entire thing into native code.
+// the reason it's not done right now is because there isnt a great way to have multiple
+// listeners per StatWatcher with the current implementation in native code. the downside
+// of this means we need to do path validation in the js side of things
+const statWatchers = new Map();
+let _pathModule;
+function getValidatedPath(p) {
+  if (p instanceof URL) return Bun.fileURLToPath(p);
+  if (typeof p !== "string") throw new TypeError("Path must be a string or URL.");
+  return (_pathModule ??= require("node:path")).resolve(p);
+}
+function watchFile(filename, options, listener) {
+  filename = getValidatedPath(filename);
+
+  if (typeof options === "function") {
+    listener = options;
+    options = {};
+  }
+
+  if (typeof listener !== "function") {
+    throw new TypeError("listener must be a function");
+  }
+
+  var stat = statWatchers.get(filename);
+  if (!stat) {
+    stat = new StatWatcher(filename, options);
+    statWatchers.set(filename, stat);
+  }
+  stat.addListener("change", listener);
+  return stat;
+}
+function unwatchFile(filename, listener) {
+  filename = getValidatedPath(filename);
+
+  var stat = statWatchers.get(filename);
+  if (!stat) return;
+  if (listener) {
+    stat.removeListener("change", listener);
+    if (stat.listenerCount("change") !== 0) {
+      return;
+    }
+  } else {
+    stat.removeAllListeners("change");
+  }
+  stat.stop();
+  statWatchers.delete(filename);
+}
 
 function callbackify(fsFunction, args) {
   try {
@@ -734,302 +823,290 @@ var defaultWriteStreamOptions = {
   },
 };
 
-var WriteStreamClass;
-WriteStream = (function (InternalWriteStream) {
-  WriteStreamClass = InternalWriteStream;
-  Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
-    value: "WritesStream",
-    enumerable: false,
-  });
-
-  function WriteStream(path, options) {
-    return new InternalWriteStream(path, options);
+var WriteStreamClass = (WriteStream = function WriteStream(path, options = defaultWriteStreamOptions) {
+  if (!(this instanceof WriteStream)) {
+    return new WriteStream(path, options);
   }
-  WriteStream.prototype = InternalWriteStream.prototype;
-  return Object.defineProperty(WriteStream, Symbol.hasInstance, {
-    value(instance) {
-      return instance instanceof InternalWriteStream;
-    },
+
+  if (!options) {
+    throw new TypeError("Expected options to be an object");
+  }
+
+  var {
+    fs = defaultWriteStreamOptions.fs,
+    start = defaultWriteStreamOptions.start,
+    flags = defaultWriteStreamOptions.flags,
+    mode = defaultWriteStreamOptions.mode,
+    autoClose = true,
+    emitClose = false,
+    autoDestroy = autoClose,
+    encoding = defaultWriteStreamOptions.encoding,
+    fd = defaultWriteStreamOptions.fd,
+    pos = defaultWriteStreamOptions.pos,
+  } = options;
+
+  var tempThis = {};
+  if (fd != null) {
+    if (typeof fd !== "number") {
+      throw new Error("Expected options.fd to be a number");
+    }
+    tempThis.fd = fd;
+    tempThis[_writeStreamPathFastPathSymbol] = false;
+  } else if (typeof path === "string") {
+    if (path.length === 0) {
+      throw new TypeError("Expected a non-empty path");
+    }
+
+    if (path.startsWith("file:")) {
+      path = Bun.fileURLToPath(path);
+    }
+
+    tempThis.path = path;
+    tempThis.fd = null;
+    tempThis[_writeStreamPathFastPathSymbol] =
+      autoClose &&
+      (start === undefined || start === 0) &&
+      fs.write === defaultWriteStreamOptions.fs.write &&
+      fs.close === defaultWriteStreamOptions.fs.close;
+  }
+
+  if (tempThis.fd == null) {
+    tempThis.fd = fs.openSync(path, flags, mode);
+  }
+
+  NativeWritable.call(this, tempThis.fd, {
+    ...options,
+    decodeStrings: false,
+    autoDestroy,
+    emitClose,
+    fd: tempThis,
   });
-})(
-  class WriteStream extends Stream.NativeWritable {
-    constructor(path, options = defaultWriteStreamOptions) {
-      if (!options) {
-        throw new TypeError("Expected options to be an object");
-      }
+  Object.assign(this, tempThis);
 
-      var {
-        fs = defaultWriteStreamOptions.fs,
-        start = defaultWriteStreamOptions.start,
-        flags = defaultWriteStreamOptions.flags,
-        mode = defaultWriteStreamOptions.mode,
-        autoClose = true,
-        emitClose = false,
-        autoDestroy = autoClose,
-        encoding = defaultWriteStreamOptions.encoding,
-        fd = defaultWriteStreamOptions.fd,
-        pos = defaultWriteStreamOptions.pos,
-      } = options;
+  if (typeof fs?.write !== "function") {
+    throw new TypeError("Expected fs.write to be a function");
+  }
 
-      var tempThis = {};
-      if (fd != null) {
-        if (typeof fd !== "number") {
-          throw new Error("Expected options.fd to be a number");
-        }
-        tempThis.fd = fd;
-        tempThis[writeStreamPathFastPathSymbol] = false;
-      } else if (typeof path === "string") {
-        if (path.length === 0) {
-          throw new TypeError("Expected a non-empty path");
-        }
+  if (typeof fs?.close !== "function") {
+    throw new TypeError("Expected fs.close to be a function");
+  }
 
-        if (path.startsWith("file:")) {
-          path = Bun.fileURLToPath(path);
-        }
+  if (typeof fs?.open !== "function") {
+    throw new TypeError("Expected fs.open to be a function");
+  }
 
-        tempThis.path = path;
-        tempThis.fd = null;
-        tempThis[writeStreamPathFastPathSymbol] =
-          autoClose &&
-          (start === undefined || start === 0) &&
-          fs.write === defaultWriteStreamOptions.fs.write &&
-          fs.close === defaultWriteStreamOptions.fs.close;
-      }
-
-      if (tempThis.fd == null) {
-        tempThis.fd = fs.openSync(path, flags, mode);
-      }
-
-      super(tempThis.fd, {
-        ...options,
-        decodeStrings: false,
-        autoDestroy,
-        emitClose,
-        fd: tempThis,
-      });
-      Object.assign(this, tempThis);
-
-      if (typeof fs?.write !== "function") {
-        throw new TypeError("Expected fs.write to be a function");
-      }
-
-      if (typeof fs?.close !== "function") {
-        throw new TypeError("Expected fs.close to be a function");
-      }
-
-      if (typeof fs?.open !== "function") {
-        throw new TypeError("Expected fs.open to be a function");
-      }
-
-      if (typeof path === "object" && path) {
-        if (path instanceof URL) {
-          path = Bun.fileURLToPath(path);
-        }
-      }
-
-      if (typeof path !== "string" && typeof fd !== "number") {
-        throw new TypeError("Expected a path or file descriptor");
-      }
-
-      this.start = start;
-      this.#fs = fs;
-      this.flags = flags;
-      this.mode = mode;
-
-      if (this.start !== undefined) {
-        this.pos = this.start;
-      }
-
-      if (encoding !== defaultWriteStreamOptions.encoding) {
-        this.setDefaultEncoding(encoding);
-        if (encoding !== "buffer" && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "binary") {
-          this[writeStreamPathFastPathSymbol] = false;
-        }
-      }
+  if (typeof path === "object" && path) {
+    if (path instanceof URL) {
+      path = Bun.fileURLToPath(path);
     }
+  }
 
-    get autoClose() {
+  if (typeof path !== "string" && typeof fd !== "number") {
+    throw new TypeError("Expected a path or file descriptor");
+  }
+
+  this.start = start;
+  this[_fs] = fs;
+  this.flags = flags;
+  this.mode = mode;
+  this.bytesWritten = 0;
+  this[writeStreamSymbol] = true;
+  this[kIoDone] = false;
+  // _write = undefined;
+  // _writev = undefined;
+
+  if (this.start !== undefined) {
+    this.pos = this.start;
+  }
+
+  if (encoding !== defaultWriteStreamOptions.encoding) {
+    this.setDefaultEncoding(encoding);
+    if (encoding !== "buffer" && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "binary") {
+      this[_writeStreamPathFastPathSymbol] = false;
+    }
+  }
+
+  return this;
+});
+const NativeWritable = Stream.NativeWritable;
+const WriteStreamPrototype = (WriteStream.prototype = Object.create(NativeWritable.prototype));
+
+Object.defineProperties(WriteStreamPrototype, {
+  autoClose: {
+    get() {
       return this._writableState.autoDestroy;
-    }
-
-    set autoClose(val) {
+    },
+    set(val) {
       this._writableState.autoDestroy = val;
-    }
-
-    destroySoon = this.end; // TODO: what is this for?
-
-    // noop, node has deprecated this
-    open() {}
-
-    path;
-    fd;
-    flags;
-    mode;
-    #fs;
-    bytesWritten = 0;
-    pos;
-    [writeStreamPathFastPathSymbol];
-    [writeStreamSymbol] = true;
-    start;
-
-    [writeStreamPathFastPathCallSymbol](readStream, pipeOpts) {
-      if (!this[writeStreamPathFastPathSymbol]) {
-        return false;
-      }
-
-      if (this.fd !== null) {
-        this[writeStreamPathFastPathSymbol] = false;
-        return false;
-      }
-
-      this[kIoDone] = false;
-      readStream[kIoDone] = false;
-      return Bun.write(this[writeStreamPathFastPathSymbol], readStream[readStreamPathOrFdSymbol]).then(
-        bytesWritten => {
-          readStream[kIoDone] = this[kIoDone] = true;
-          this.bytesWritten += bytesWritten;
-          readStream.bytesRead += bytesWritten;
-          this.end();
-          readStream.close();
-        },
-        err => {
-          readStream[kIoDone] = this[kIoDone] = true;
-          this.#errorOrDestroy(err);
-          readStream.emit("error", err);
-        },
-      );
-    }
-
-    isBunFastPathEnabled() {
-      return this[writeStreamPathFastPathSymbol];
-    }
-
-    disableBunFastPath() {
-      this[writeStreamPathFastPathSymbol] = false;
-    }
-
-    #handleWrite(er, bytes) {
-      if (er) {
-        return this.#errorOrDestroy(er);
-      }
-
-      this.bytesWritten += bytes;
-    }
-
-    #internalClose(err, cb) {
-      this[writeStreamPathFastPathSymbol] = false;
-      var fd = this.fd;
-      this.#fs.close(fd, er => {
-        this.fd = null;
-        cb(err || er);
-      });
-    }
-
-    _construct(callback) {
-      if (typeof this.fd === "number") {
-        callback();
-        return;
-      }
-
-      callback();
-      this.emit("open", this.fd);
-      this.emit("ready");
-    }
-
-    _destroy(err, cb) {
-      if (this.fd === null) {
-        return cb(err);
-      }
-
-      if (this[kIoDone]) {
-        this.once(kIoDone, () => this.#internalClose(err, cb));
-        return;
-      }
-
-      this.#internalClose(err, cb);
-    }
-
-    [kIoDone] = false;
-
-    close(cb) {
-      if (cb) {
-        if (this.closed) {
-          process.nextTick(cb);
-          return;
-        }
-        this.on("close", cb);
-      }
-
-      // If we are not autoClosing, we should call
-      // destroy on 'finish'.
-      if (!this.autoClose) {
-        this.on("finish", this.destroy);
-      }
-
-      // We use end() instead of destroy() because of
-      // https://github.com/nodejs/node/issues/2006
-      this.end();
-    }
-
-    write(chunk, encoding = this._writableState.defaultEncoding, cb) {
-      this[writeStreamPathFastPathSymbol] = false;
-      if (typeof chunk === "string") {
-        chunk = Buffer.from(chunk, encoding);
-      }
-
-      // TODO: Replace this when something like lseek is available
-      var native = this.pos === undefined;
-      const callback = native
-        ? (err, bytes) => {
-            this[kIoDone] = false;
-            this.#handleWrite(err, bytes);
-            this.emit(kIoDone);
-            if (cb) !err ? cb() : cb(err);
-          }
-        : () => {};
-      this[kIoDone] = true;
-      if (this._write) {
-        return this._write(chunk, encoding, callback);
-      } else {
-        return super.write(chunk, encoding, callback, native);
-      }
-    }
-
-    end(chunk, encoding, cb) {
-      var native = this.pos === undefined;
-      return super.end(chunk, encoding, cb, native);
-    }
-
-    _write = undefined;
-    _writev = undefined;
-
-    get pending() {
-      return this.fd === null;
-    }
-
-    _destroy(err, cb) {
-      this.close(err, cb);
-    }
-
-    #errorOrDestroy(err) {
-      var {
-        _readableState: r = { destroyed: false, autoDestroy: false },
-        _writableState: w = { destroyed: false, autoDestroy: false },
-      } = this;
-
-      if (w?.destroyed || r?.destroyed) {
-        return this;
-      }
-      if (r?.autoDestroy || w?.autoDestroy) this.destroy(err);
-      else if (err) {
-        this.emit("error", err);
-      }
-    }
+    },
   },
-);
+  pending: {
+    get() {
+      return this.fd === null;
+    },
+  },
+});
+
+// TODO: what is this for?
+WriteStreamPrototype.destroySoon = WriteStreamPrototype.end;
+
+// noop, node has deprecated this
+WriteStreamPrototype.open = function open() {};
+
+WriteStreamPrototype[writeStreamPathFastPathCallSymbol] = function WriteStreamPathFastPathCallSymbol(
+  readStream,
+  pipeOpts,
+) {
+  if (!this[_writeStreamPathFastPathSymbol]) {
+    return false;
+  }
+
+  if (this.fd !== null) {
+    this[_writeStreamPathFastPathSymbol] = false;
+    return false;
+  }
+
+  this[kIoDone] = false;
+  readStream[kIoDone] = false;
+  return Bun.write(this[_writeStreamPathFastPathSymbol], readStream[readStreamPathOrFdSymbol]).then(
+    bytesWritten => {
+      readStream[kIoDone] = this[kIoDone] = true;
+      this.bytesWritten += bytesWritten;
+      readStream.bytesRead += bytesWritten;
+      this.end();
+      readStream.close();
+    },
+    err => {
+      readStream[kIoDone] = this[kIoDone] = true;
+      WriteStream_errorOrDestroy.call(this, err);
+      readStream.emit("error", err);
+    },
+  );
+};
+
+WriteStreamPrototype.isBunFastPathEnabled = function isBunFastPathEnabled() {
+  return this[_writeStreamPathFastPathSymbol];
+};
+
+WriteStreamPrototype.disableBunFastPath = function disableBunFastPath() {
+  this[_writeStreamPathFastPathSymbol] = false;
+};
+
+function WriteStream_handleWrite(er, bytes) {
+  if (er) {
+    return WriteStream_errorOrDestroy.call(this, er);
+  }
+
+  this.bytesWritten += bytes;
+}
+
+function WriteStream_internalClose(err, cb) {
+  this[_writeStreamPathFastPathSymbol] = false;
+  var fd = this.fd;
+  this[_fs].close(fd, er => {
+    this.fd = null;
+    cb(err || er);
+  });
+}
+
+WriteStreamPrototype._construct = function _construct(callback) {
+  if (typeof this.fd === "number") {
+    callback();
+    return;
+  }
+
+  callback();
+  this.emit("open", this.fd);
+  this.emit("ready");
+};
+
+WriteStreamPrototype._destroy = function _destroy(err, cb) {
+  if (this.fd === null) {
+    return cb(err);
+  }
+
+  if (this[kIoDone]) {
+    this.once(kIoDone, () => WriteStream_internalClose.call(this, err, cb));
+    return;
+  }
+
+  WriteStream_internalClose.call(this, err, cb);
+};
+
+WriteStreamPrototype.close = function close(cb) {
+  if (cb) {
+    if (this.closed) {
+      process.nextTick(cb);
+      return;
+    }
+    this.on("close", cb);
+  }
+
+  // If we are not autoClosing, we should call
+  // destroy on 'finish'.
+  if (!this.autoClose) {
+    this.on("finish", this.destroy);
+  }
+
+  // We use end() instead of destroy() because of
+  // https://github.com/nodejs/node/issues/2006
+  this.end();
+};
+
+WriteStreamPrototype.write = function write(chunk, encoding, cb) {
+  encoding ??= this._writableState?.defaultEncoding;
+  this[_writeStreamPathFastPathSymbol] = false;
+  if (typeof chunk === "string") {
+    chunk = Buffer.from(chunk, encoding);
+  }
+
+  // TODO: Replace this when something like lseek is available
+  var native = this.pos === undefined;
+  const callback = native
+    ? (err, bytes) => {
+        this[kIoDone] = false;
+        WriteStream_handleWrite.call(this, err, bytes);
+        this.emit(kIoDone);
+        if (cb) !err ? cb() : cb(err);
+      }
+    : () => {};
+  this[kIoDone] = true;
+  if (this._write) {
+    return this._write(chunk, encoding, callback);
+  } else {
+    return NativeWritable.prototype.write.call(this, chunk, encoding, callback, native);
+  }
+};
+
+// Do not inherit
+WriteStreamPrototype._write = undefined;
+WriteStreamPrototype._writev = undefined;
+
+WriteStreamPrototype.end = function end(chunk, encoding, cb) {
+  var native = this.pos === undefined;
+  return NativeWritable.prototype.end.call(this, chunk, encoding, cb, native);
+};
+
+WriteStreamPrototype._destroy = function _destroy(err, cb) {
+  this.close(err, cb);
+};
+
+function WriteStream_errorOrDestroy(err) {
+  var {
+    _readableState: r = { destroyed: false, autoDestroy: false },
+    _writableState: w = { destroyed: false, autoDestroy: false },
+  } = this;
+
+  if (w?.destroyed || r?.destroyed) {
+    return this;
+  }
+  if (r?.autoDestroy || w?.autoDestroy) this.destroy(err);
+  else if (err) {
+    this.emit("error", err);
+  }
+}
 
 function createWriteStream(path, options) {
-  // const WriteStream = getLazyWriteStream();
   return new WriteStream(path, options);
 }
 
@@ -1200,9 +1277,11 @@ export default {
   truncateSync,
   unlink,
   unlinkSync,
+  unwatchFile,
   utimes,
   utimesSync,
   watch,
+  watchFile,
   write,
   writeFile,
   writeFileSync,

@@ -325,6 +325,32 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ctx;
         }
 
+        pub fn connectUnix(
+            path: []const u8,
+            socket_ctx: *SocketContext,
+            comptime Context: type,
+            ctx: Context,
+            comptime socket_field_name: []const u8,
+        ) ?*Context {
+            debug("connect(unix:{s})", .{path});
+
+            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var allocator = stack_fallback.get();
+            var path_ = allocator.dupeZ(u8, path) catch return null;
+            defer allocator.free(path_);
+
+            var socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+            const socket_ = ThisSocket{ .socket = socket };
+            var holder = socket_.ext(Context) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close_connecting(comptime ssl_int, socket);
+                return null;
+            };
+            holder.* = ctx;
+            @field(holder, socket_field_name) = socket_;
+            return holder;
+        }
+
         pub fn connectUnixPtr(
             path: []const u8,
             socket_ctx: *SocketContext,

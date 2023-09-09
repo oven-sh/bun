@@ -1,0 +1,29 @@
+.mtk1 { color: #cccccc; }
+.mtk2 { color: #1f1f1f; }
+.mtk3 { color: #d4d4d4; }
+.mtk4 { color: #000080; }
+.mtk5 { color: #6a9955; }
+.mtk6 { color: #569cd6; }
+.mtk7 { color: #b5cea8; }
+.mtk8 { color: #646695; }
+.mtk9 { color: #d7ba7d; }
+.mtk10 { color: #9cdcfe; }
+.mtk11 { color: #f44747; }
+.mtk12 { color: #ce9178; }
+.mtk13 { color: #6796e6; }
+.mtk14 { color: #808080; }
+.mtk15 { color: #d16969; }
+.mtk16 { color: #dcdcaa; }
+.mtk17 { color: #4ec9b0; }
+.mtk18 { color: #c586c0; }
+.mtk19 { color: #4fc1ff; }
+.mtk20 { color: #c8c8c8; }
+.mtk21 { color: #606060; }
+.mtk22 { color: #ffffff; }
+.mtk23 { color: #cd9731; }
+.mtk24 { color: #b267e6; }
+.mtki { font-style: italic; }
+.mtkb { font-weight: bold; }
+.mtku { text-decoration: underline; text-underline-position: under; }
+.mtks { text-decoration: line-through; }
+.mtks.mtku { text-decoration: underline line-through; text-underline-position: under; }

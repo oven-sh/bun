@@ -5,9 +5,9 @@ name: Get started using Prisma
 Prisma works out of the box with Bun. First, create a directory and initialize it with `bun init`.
 
 ```bash
-mkdir prisma-app
-cd prisma-app
-bun init
+$ mkdir prisma-app
+$ cd prisma-app
+$ bun init
 ```
 
 ---
@@ -15,7 +15,7 @@ bun init
 Then add Prisma as a dependency.
 
 ```bash
-bun add prisma
+$ bun add prisma
 ```
 
 ---
@@ -23,7 +23,7 @@ bun add prisma
 We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
 
 ```bash
-bunx prisma init --datasource-provider sqlite
+$ bunx prisma init --datasource-provider sqlite
 ```
 
 ---

@@ -5,9 +5,9 @@ name: Create a Discord bot
 Discord.js works out of the box with Bun. Let's write a simple bot. First create a directory and initialize it with `bun init`.
 
 ```bash
-mkdir my-bot
-cd my-bot
-bun init
+$ mkdir my-bot
+$ cd my-bot
+$ bun init
 ```
 
 ---
@@ -15,7 +15,7 @@ bun init
 Now install Discord.js.
 
 ```bash
-bun add discord.js
+$ bun add discord.js
 ```
 
 ---

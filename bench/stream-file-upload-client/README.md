@@ -13,23 +13,23 @@ bun generate-file.js
 Run the server:
 
 ```bash
-node server-node.mjs
+$ node server-node.mjs
 ```
 
 Run the benchmark in bun:
 
 ```bash
-bun stream-file-bun.js
+$ bun stream-file-bun.js
 ```
 
 Run the benchmark in node:
 
 ```bash
-node stream-file-node.mjs
+$ node stream-file-node.mjs
 ```
 
 Run the benchmark in deno:
 
 ```bash
-deno run -A stream-file-deno.js
+$ deno run -A stream-file-deno.js
 ```

@@ -3,14 +3,14 @@
 To install dependencies:
 
 ```bash
-bun install
+$ bun install
 ```
 
 To run in Bun:
 
 ```bash
 # so it doesn't run the vitest one
-bun test expect-to-equal.test.js
+$ bun test expect-to-equal.test.js
 ```
 
 To run in Jest:
@@ -23,7 +23,7 @@ NODE_OPTIONS="--experimental-vm-modules" ./node_modules/.bin/jest expect-to-equa
 To run in Vitest:
 
 ```bash
-./node_modules/.bin/vitest --run expect-to-equal.vitest.test.js
+$ ./node_modules/.bin/vitest --run expect-to-equal.vitest.test.js
 ```
 
 Output on my machine (M1):

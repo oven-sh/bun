@@ -1403,6 +1403,10 @@ pub const Bundler = struct {
                             var count: usize = 0;
                             for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
                                 const name = prop.key.?.data.e_string.slice(allocator);
+                                // Do not make named exports for "default" exports
+                                if (strings.eqlComptime(name, "default"))
+                                    continue;
+
                                 var visited = duplicate_key_checker.getOrPut(name) catch continue;
                                 if (visited.found_existing) {
                                     decls[visited.value_ptr.*].value = prop.value.?;

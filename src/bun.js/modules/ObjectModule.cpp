@@ -21,14 +21,12 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                              DontEnumPropertiesMode::Exclude);
     gcUnprotectNullTolerant(object);
 
-    bool needsDefaultExport = true;
-
     for (auto &entry : properties) {
-      exportNames.append(entry);
-
-      if (needsDefaultExport && entry == vm.propertyNames->defaultKeyword) {
-        needsDefaultExport = false;
+      if (entry == vm.propertyNames->defaultKeyword) {
+        continue;
       }
+
+      exportNames.append(entry);
 
       auto scope = DECLARE_CATCH_SCOPE(vm);
       JSValue value = object->get(globalObject, entry);
@@ -39,10 +37,8 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
       exportValues.append(value);
     }
 
-    if (needsDefaultExport) {
-      exportNames.append(vm.propertyNames->defaultKeyword);
-      exportValues.append(object);
-    }
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(object);
   };
 }
 

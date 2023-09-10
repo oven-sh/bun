@@ -39,6 +39,7 @@ describe("json imports", () => {
       players,
       version,
       creator,
+      default: defaultExport,
       ...other
     } = require("./runtime-transpiler-json-fixture.json");
     delete require.cache[require.resolve("./runtime-transpiler-json-fixture.json")];
@@ -48,6 +49,7 @@ describe("json imports", () => {
       "version": "1.0",
       "creator": "Grand Homie",
       "players": [8, 8],
+      default: { a: 1 },
     };
     expect({
       name,
@@ -55,6 +57,7 @@ describe("json imports", () => {
       players,
       version,
       creator,
+      default: { a: 1 },
     }).toEqual(obj);
     expect(other).toEqual({});
   });
@@ -76,6 +79,7 @@ describe("json imports", () => {
       "version": "1.0",
       "creator": "Grand Homie",
       "players": [8, 8],
+      default: { a: 1 },
     };
     expect({
       name,
@@ -83,6 +87,7 @@ describe("json imports", () => {
       players,
       version,
       creator,
+      default: { a: 1 },
     }).toEqual(obj);
     // They should be strictly equal
     expect(defaultExport.players).toBe(players);

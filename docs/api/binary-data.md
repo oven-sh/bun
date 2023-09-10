@@ -90,7 +90,7 @@ console.log(dv.getUint8(1)); // => 2
 console.log(dv.getUint8(2)); // => 1
 ```
 
-Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cuase an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
+Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cause an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
 
 ```ts
 dv.setFloat64(0, 3.1415);

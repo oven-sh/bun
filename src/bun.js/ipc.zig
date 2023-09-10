@@ -43,6 +43,7 @@ pub fn decodeIPCMessage(
     data: []const u8,
     globalThis: *JSC.JSGlobalObject,
 ) IPCDecodeError!DecodeIPCMessageResult {
+    JSC.markBinding(@src());
     if (data.len < ipcHeaderLength) {
         return IPCDecodeError.NotEnoughBytes;
     }

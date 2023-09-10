@@ -87,6 +87,15 @@ pub const Loader = struct {
         }
     }
 
+    pub fn getTLSRejectUnauthorized(this: *Loader) bool {
+        if (this.map.get("NODE_TLS_REJECT_UNAUTHORIZED")) |reject| {
+            if (strings.eql(reject, "0")) return false;
+            if (strings.eql(reject, "false")) return false;
+        }
+        // default: true
+        return true;
+    }
+
     pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;

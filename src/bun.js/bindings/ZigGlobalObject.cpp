@@ -3086,7 +3086,7 @@ void GlobalObject::finishCreation(VM& vm)
             obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "MacIntel"_s));
 #elif OS(WINDOWS)
             obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "Win32"_s));
-#else if OS(LINUX)
+#elif OS(LINUX)
             obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "Linux x86_64"_s));
 #endif
 

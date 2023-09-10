@@ -5393,6 +5393,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         ).toErrorInstance(
                             this.globalThis,
                         );
+                        error_instance.put(this.globalThis, ZigString.static("code"), ZigString.static("EADDRINUSE").toValueAuto(this.globalThis));
                     },
                     .unix => |unix| {
                         error_instance = ZigString.init(

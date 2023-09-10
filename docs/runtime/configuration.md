@@ -73,6 +73,9 @@ dev = true
 # whether to install peerDependencies
 peer = false
 
+# equivalent to `--backend` flag (default: null (uses the fastest syscalls for specific system), can be one of: hardlink, symlink, copyfile, and only on macOS: clonefile and clonefile_each_dir)
+backend = ""
+
 # equivalent to `--production` flag
 production = false
 

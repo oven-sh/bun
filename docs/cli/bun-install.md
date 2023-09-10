@@ -62,6 +62,9 @@ dev = true
 # Install peerDependencies (default: false)
 peer = false
 
+# Which installation strategy to use (default: null (uses the fastest syscalls for specific system), can be one of: hardlink, symlink, copyfile, and only on macOS: clonefile and clonefile_each_dir)
+backend = ""
+
 # When using `bun install -g`, install packages here
 globalDir = "~/.bun/install/global"
 
@@ -163,7 +166,7 @@ Environment variables have a higher priority than `bunfig.toml`.
 | BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don’t load a lockfile                                         |
 | BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don’t install any packages                                    |
 
-Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
+Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag or in [`bunfig.toml`](/docs/runtime/configuration) file. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
 Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
 

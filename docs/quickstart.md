@@ -46,7 +46,7 @@ Run the file from your shell.
 
 ```bash
 $ bun index.ts
-Listening at http://localhost:3000 ...
+Listening on http://localhost:3000 ...
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to test the server. You should see a simple page that says "Bun!".
@@ -74,7 +74,7 @@ Then run it with `bun run start`.
 ```bash
 $ bun run start
   $ bun run index.ts
-  Listening on http://localhost:4000...
+  Listening on http://localhost:3000 ...
 ```
 
 {% callout %}

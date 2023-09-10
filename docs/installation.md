@@ -36,6 +36,8 @@ $ proto install bun
 
 ## Windows
 
+Bun binaries for windows are not yet available, but coming soon. Join the [#windows](https://discord.com/channels/876711213126520882/1149339379446325248) discord channel in discord to stay up to date.
+
 Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
 
 - `bun <file>`

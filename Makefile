@@ -1291,7 +1291,7 @@ jsc-build-linux-compile-config:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 

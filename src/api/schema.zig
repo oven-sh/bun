@@ -2954,6 +2954,9 @@ pub const Api = struct {
                     20 => {
                         this.exact = try reader.readValue(bool);
                     },
+                    21 => {
+                        this.backend = try reader.readValue([]const u8);
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -3042,6 +3045,10 @@ pub const Api = struct {
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
+            if (this.backend) |backend| {
+                try writer.writeFieldID(21);
+                try writer.writeValue(@TypeOf(backend), backend);
             }
             try writer.endMessage();
         }

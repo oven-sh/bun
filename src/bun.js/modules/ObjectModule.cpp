@@ -5,7 +5,7 @@ JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                JSC::JSObject *object) {
   JSC::VM &vm = globalObject->vm();
-
+  gcProtectNullTolerant(object);
   return [object](JSC::JSGlobalObject *lexicalGlobalObject,
                   JSC::Identifier moduleKey,
                   Vector<JSC::Identifier, 4> &exportNames,
@@ -19,11 +19,55 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                  PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, properties,
                              DontEnumPropertiesMode::Exclude);
+    gcUnprotectNullTolerant(object);
+
+    bool needsDefaultExport = true;
 
     for (auto &entry : properties) {
       exportNames.append(entry);
-      exportValues.append(object->get(globalObject, entry));
+
+      if (needsDefaultExport && entry == vm.propertyNames->defaultKeyword) {
+        needsDefaultExport = false;
+      }
+
+      auto scope = DECLARE_CATCH_SCOPE(vm);
+      JSValue value = object->get(globalObject, entry);
+      if (scope.exception()) {
+        scope.clearException();
+        value = jsUndefined();
+      }
+      exportValues.append(value);
     }
+
+    if (needsDefaultExport) {
+      exportNames.append(vm.propertyNames->defaultKeyword);
+      exportValues.append(object);
+    }
+  };
+}
+
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateJSValueModuleSourceCode(JSC::JSGlobalObject *globalObject,
+                                JSC::JSValue value) {
+
+  if (value.isObject()) {
+    return generateObjectModuleSourceCode(globalObject, value.getObject());
+  }
+
+  if (value.isCell())
+    gcProtectNullTolerant(value.asCell());
+  return [value](JSC::JSGlobalObject *lexicalGlobalObject,
+                 JSC::Identifier moduleKey,
+                 Vector<JSC::Identifier, 4> &exportNames,
+                 JSC::MarkedArgumentBuffer &exportValues) -> void {
+    JSC::VM &vm = lexicalGlobalObject->vm();
+    GlobalObject *globalObject =
+        reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(value);
+
+    if (value.isCell())
+      gcUnprotectNullTolerant(value.asCell());
   };
 }
 } // namespace Zig

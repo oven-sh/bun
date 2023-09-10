@@ -516,6 +516,37 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, {});
     }
 
+    // The JSONForObjectLoader tag is source code returned from Bun that needs
+    // to go through the JSON parser in JSC.
+    //
+    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+    // object to be accessible as named imports.
+    //
+    // We don't use Bun's JSON parser because JSON.parse is faster and
+    // handles stack overflow better.
+    //
+    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+    // parser instead to support comments and trailing commas.
+    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        if (!value) {
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+
+        globalObject->moduleLoader()->provideFetch(
+            globalObject,
+            specifierValue,
+            JSC::SourceCode(JSC::SyntheticSourceProvider::create(WTFMove(function), JSC::SourceOrigin(), Bun::toWTFString(*specifier))));
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
+    }
+
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
     RETURN_IF_EXCEPTION(scope, {});
@@ -645,6 +676,34 @@ static JSValue fetchESMSourceCode(
         auto* exception = scope.exception();
         scope.clearException();
         return reject(exception);
+    }
+
+    // The JSONForObjectLoader tag is source code returned from Bun that needs
+    // to go through the JSON parser in JSC.
+    //
+    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+    // object to be accessible as named imports.
+    //
+    // We don't use Bun's JSON parser because JSON.parse is faster and
+    // handles stack overflow better.
+    //
+    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+    // parser instead to support comments and trailing commas.
+    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        if (!value) {
+            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s)));
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), Bun::toWTFString(*specifier)));
+        JSC::ensureStillAliveHere(value);
+        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);

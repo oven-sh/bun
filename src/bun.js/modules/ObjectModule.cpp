@@ -50,7 +50,7 @@ JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateJSValueModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                 JSC::JSValue value) {
 
-  if (value.isObject()) {
+  if (value.isObject() && !JSC::isJSArray(value)) {
     return generateObjectModuleSourceCode(globalObject, value.getObject());
   }
 

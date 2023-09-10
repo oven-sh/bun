@@ -424,6 +424,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (_bun.get("backend")) |backend| {
+                        if (backend.asString(allocator)) |value| {
+                            install.backend = value;
+                        }
+                    }
+
                     if (_bun.get("globalDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
                             install.global_dir = value;

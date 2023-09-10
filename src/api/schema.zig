@@ -2882,6 +2882,9 @@ pub const Api = struct {
         /// exact
         exact: ?bool = null,
 
+        /// backend
+        backend: ?[]const u8 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 

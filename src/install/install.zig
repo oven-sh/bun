@@ -4534,6 +4534,15 @@ pub const PackageManager = struct {
                     this.enable.exact_versions = exact;
                 }
 
+                if (bun_install.backend) |backend| {
+                    const specified_backend = PackageInstall.Method.map.get(backend);
+                    if (specified_backend) |method| {
+                        if (method.isSupported()) {
+                            PackageInstall.supported_method = method;
+                        }
+                    }
+                }
+
                 if (bun_install.production) |production| {
                     if (production) {
                         this.local_package_features.dev_dependencies = false;

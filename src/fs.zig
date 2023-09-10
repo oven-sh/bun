@@ -1504,6 +1504,15 @@ pub const Path = struct {
         return strings.eqlComptime(this.namespace, "macro");
     }
 
+    pub fn isJSONCFile(this: *const Path) bool {
+        const str = this.name.filename;
+        if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
+            return false;
+        }
+
+        return strings.hasSuffixComptime(str, ".json");
+    }
+
     pub const PackageRelative = struct {
         path: string,
         name: string,

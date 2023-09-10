@@ -200,6 +200,30 @@ class AsyncResource {
       set(prev);
     }
   }
+
+  bind(fn, thisArg) {
+    if (typeof fn !== "function") {
+      const invalidArgType = new TypeError('The "fn" argument must be of type function. Received type ' + typeof fn);
+      invalidArgType.code = "ERR_INVALID_ARG_TYPE";
+      throw invalidArgType;
+    }
+
+    let bound;
+    if (thisArg === undefined) {
+      const resource = this;
+      bound = function (...args) {
+        return resource.runInAsyncScope(resource, undefined, args as any);
+      };
+    } else {
+      bound = this.runInAsyncScope.bind(this, fn, thisArg);
+    }
+  }
+
+  static bind(fn, type, thisArg) {
+    type = type || fn.name;
+    const boundFn = AsyncResource.prototype["bind"];
+    return boundFn.call(new AsyncResource(type || "bound-anonymous-fn", undefined), fn, thisArg);
+  }
 }
 
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.

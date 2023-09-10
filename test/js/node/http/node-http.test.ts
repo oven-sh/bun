@@ -935,7 +935,10 @@ describe("node:http", () => {
       const server2 = createServer((_, res) => {
         res.end();
       });
-      server2.on("error", () => done());
+      server2.on("error", err => {
+        expect(err.code).toBe("EADDRINUSE");
+        done();
+      });
       server2.listen({ port: 42069 }, () => {});
     });
   });

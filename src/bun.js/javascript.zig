@@ -288,6 +288,7 @@ pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
         return .zero;
@@ -2749,6 +2750,7 @@ pub const VirtualMachine = struct {
             this: *IPCInstance,
             message: IPC.DecodedIPCMessage,
         ) void {
+            JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -2765,6 +2767,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+            JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;

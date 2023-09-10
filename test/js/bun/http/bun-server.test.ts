@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 describe("Server", () => {
-  test.only("normlizes incoming request URLs", async () => {
+  test("normlizes incoming request URLs", async () => {
     const server = Bun.serve({
       fetch(request) {
         return new Response(request.url, {

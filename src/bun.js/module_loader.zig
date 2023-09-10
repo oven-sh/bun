@@ -482,10 +482,6 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = String.create(specifier),
                     .source_url = ZigString.init(path.text),
-                    // // TODO: change hash to a bitfield
-                    // .hash = 1,
-
-                    // having JSC own the memory causes crashes
                     .hash = 0,
                 };
                 return;
@@ -1290,10 +1286,7 @@ pub const ModuleLoader = struct {
                     std.math.maxInt(u32)
                 else
                     0,
-                // // TODO: change hash to a bitfield
-                // .hash = 1,
 
-                // having JSC own the memory causes crashes
                 .hash = 0,
             };
         }
@@ -1546,10 +1539,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.create(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
-                        // // TODO: change hash to a bitfield
-                        // .hash = 1,
 
-                        // having JSC own the memory causes crashes
                         .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
                     };
@@ -1575,10 +1565,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
-                        // // TODO: change hash to a bitfield
-                        // .hash = 1,
 
-                        // having JSC own the memory causes crashes
                         .hash = 0,
                     };
                 }
@@ -1712,10 +1699,6 @@ pub const ModuleLoader = struct {
                         std.math.maxInt(u32)
                     else
                         0,
-                    // // TODO: change hash to a bitfield
-                    // .hash = 1,
-
-                    // having JSC own the memory causes crashes
                     .hash = 0,
 
                     .tag = tag,

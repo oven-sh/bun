@@ -226,7 +226,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = bunFetch.@bind(Bun);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = (...args) => bunFetch(...args);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
 //
 
 //
@@ -467,7 +467,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = bunFetch.@bind(Bun);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = (...args) => bunFetch(...args);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
 //
 
 //
@@ -709,7 +709,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = bunFetch.@bind(Bun);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";// src/js/out/tmp/thirdparty/isomorphic-fetch.ts\nvar bunFetch = Bun.fetch, fetch = (...args) => bunFetch(...args);\nfetch.default = fetch;\nfetch.fetch = fetch;\nreturn fetch})\n"_s;
 //
 
 //

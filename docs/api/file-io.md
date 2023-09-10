@@ -195,7 +195,7 @@ const input = Bun.file("input.txt");
 await Bun.write(Bun.stdout, input);
 ```
 
-To write an HTTP response to disk:
+To write the body of an HTTP response to disk:
 
 ```ts
 const response = await fetch("https://bun.sh");

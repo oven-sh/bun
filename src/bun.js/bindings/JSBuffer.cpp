@@ -951,22 +951,38 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
 
+    JSValue targetStartValue = jsUndefined();
+    JSValue sourceStartValue = jsUndefined();
+    JSValue sourceEndValue = jsUndefined();
+
     switch (callFrame->argumentCount()) {
     default:
-        sourceEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(3));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        sourceEndValue = callFrame->uncheckedArgument(3);
         FALLTHROUGH;
     case 3:
-        sourceStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(2));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        sourceStartValue = callFrame->uncheckedArgument(2);
         FALLTHROUGH;
     case 2:
-        targetStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(1));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+        targetStartValue = callFrame->uncheckedArgument(1);
         break;
     case 1:
     case 0:
         break;
+    }
+
+    if (!targetStartValue.isUndefined()) {
+        targetStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(1));
+        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    }
+
+    if (!sourceStartValue.isUndefined()) {
+        sourceStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(2));
+        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    }
+
+    if (!sourceEndValue.isUndefined()) {
+        sourceEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(3));
+        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
     }
 
     targetStart = std::min(targetStart, targetEnd);

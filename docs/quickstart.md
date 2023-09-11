@@ -35,7 +35,7 @@ Open `index.ts` and paste the following code snippet, which implements a simple 
 const server = Bun.serve({
   port: 3000,
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 
@@ -97,9 +97,9 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 
   const server = Bun.serve({
     fetch() {
-+     const body = figlet.textSync('Bun!');
++     const body = figlet.textSync("Bun!");
 +     return new Response(body);
--     return new Response(`Bun!`);
+-     return new Response("Bun!");
     },
     port: 3000,
   });

@@ -3994,11 +3994,12 @@ pub const FIFO = struct {
             if (this.to_read) |*to_read| {
                 to_read.* = to_read.* -| @as(u32, @truncate(read_result.read.len));
             }
-        }
-
-        if (read_result == .read and (this.poll_ref != null and this.poll_ref.?.flags.contains(.eof))) {
-            this.close();
-            return;
+            if (this.poll_ref) |poll_ref| {
+                if (poll_ref.flags.contains(.eof)) {
+                    this.close();
+                    return;
+                }
+            }
         }
 
         this.pending.result = read_result.toStream(
@@ -4128,14 +4129,12 @@ pub const FIFO = struct {
                         // otherwise we might block the process
                         poll.flags.remove(.readable);
                     }
-                }
 
-                if (result == 0) {
-                    if (this.poll_ref) |poll| {
+                    if (result == 0) {
                         poll.flags.insert(.eof);
                     }
-                    return .{ .read = buf[0..0] };
                 }
+
                 return .{ .read = buf[0..result] };
             },
         }

@@ -2310,13 +2310,15 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
-        if (this.flags.contains(.needs_rearm)) {
-            log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
-            this.flags.remove(.poll_process);
-            this.flags.remove(.poll_readable);
-            this.flags.remove(.poll_process);
-            this.flags.remove(.poll_machport);
-            return JSC.Maybe(void).success;
+        if (comptime Environment.isMac) {
+            if (this.flags.contains(.needs_rearm)) {
+                log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+                this.flags.remove(.poll_process);
+                this.flags.remove(.poll_readable);
+                this.flags.remove(.poll_process);
+                this.flags.remove(.poll_machport);
+                return JSC.Maybe(void).success;
+            }
         }
 
         log("unregister: {s} ({d})", .{ @tagName(flag), fd });

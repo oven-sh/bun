@@ -84,6 +84,7 @@ const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
+const IPC = @import("ipc.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -259,7 +260,6 @@ pub const SavedSourceMap = struct {
 const uws = @import("root").bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    _ = @sizeOf(JSC.VirtualMachine) + 1;
     return JSC.VirtualMachine.get().global;
 }
 
@@ -280,20 +280,42 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
-// comptime {
-//     if (!JSC.is_bindgen) {
-//         _ = Bun__getDefaultGlobal;
-//         _ = Bun__getVM;
-//         _ = Bun__drainMicrotasks;
-//         _ = Bun__queueTask;
-//         _ = Bun__queueTaskConcurrently;
-//         _ = Bun__handleRejectedPromise;
-//         _ = Bun__readOriginTimer;
-//         _ = Bun__onDidAppendPlugin;
-//         _ = Bun__readOriginTimerStart;
-//         _ = Bun__reportUnhandledError;
-//     }
-// }
+pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
+    return global.bunVM().ipc != null;
+}
+
+pub export fn Bun__Process__send(
+    globalObject: *JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) JSValue {
+    JSC.markBinding(@src());
+    if (callFrame.argumentsCount() < 1) {
+        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
+        return .zero;
+    }
+    var vm = globalObject.bunVM();
+    if (vm.ipc) |ipc| {
+        const fd = ipc.socket.fd();
+        const success = IPC.serializeJSValueForSubprocess(
+            globalObject,
+            callFrame.argument(0),
+            fd,
+        );
+        return if (success) .undefined else .zero;
+    } else {
+        globalObject.throw("IPC Socket is no longer open.", .{});
+        return .zero;
+    }
+}
+
+pub export fn Bun__Process__disconnect(
+    globalObject: *JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) JSValue {
+    _ = callFrame;
+    _ = globalObject;
+    return .undefined;
+}
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
@@ -485,7 +507,6 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
     auto_install_dependencies: bool = false,
-    load_builtins_from_path: []const u8 = "",
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
@@ -500,6 +521,7 @@ pub const VirtualMachine = struct {
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
+    ipc: ?*IPCInstance = null,
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
@@ -643,12 +665,15 @@ pub const VirtualMachine = struct {
     pub fn loadExtraEnv(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
 
-        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null)
+        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
+        }
 
-        if (map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
-            if (override_path.len > 0) {
-                this.load_builtins_from_path = override_path;
+        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
+            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+                this.initIPCInstance(fd);
+            } else {
+                Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
             }
         }
 
@@ -2712,6 +2737,71 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+    extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+
+    pub const IPCInstance = struct {
+        globalThis: ?*JSGlobalObject,
+        socket: IPC.Socket,
+        uws_context: *uws.SocketContext,
+        ipc_buffer: bun.ByteList,
+
+        pub fn handleIPCMessage(
+            this: *IPCInstance,
+            message: IPC.DecodedIPCMessage,
+        ) void {
+            JSC.markBinding(@src());
+            switch (message) {
+                // In future versions we can read this in order to detect version mismatches,
+                // or disable future optimizations if the subprocess is old.
+                .version => |v| {
+                    IPC.log("Parent IPC version is {d}", .{v});
+                },
+                .data => |data| {
+                    IPC.log("Received IPC message from parent", .{});
+                    if (this.globalThis) |global| {
+                        Process__emitMessageEvent(global, data);
+                    }
+                },
+            }
+        }
+
+        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+            JSC.markBinding(@src());
+            if (this.globalThis) |global| {
+                var vm = global.bunVM();
+                vm.ipc = null;
+                Process__emitDisconnectEvent(global);
+            }
+            uws.us_socket_context_free(0, this.uws_context);
+            bun.default_allocator.destroy(this);
+        }
+
+        pub const Handlers = IPC.NewIPCHandler(IPCInstance);
+    };
+
+    pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+        this.event_loop.ensureWaker();
+        const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
+        IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
+
+        const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
+            uws.us_socket_context_free(0, context);
+            Output.prettyWarnln("Failed to initialize IPC connection to parent", .{});
+            return;
+        };
+
+        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
+        instance.* = .{
+            .globalThis = this.global,
+            .socket = socket,
+            .uws_context = context,
+            .ipc_buffer = bun.ByteList{},
+        };
+        var ptr = socket.ext(*IPCInstance);
+        ptr.?.* = instance;
+        this.ipc = instance;
+    }
     comptime {
         if (!JSC.is_bindgen)
             _ = Bun__remapStackFramePositions;

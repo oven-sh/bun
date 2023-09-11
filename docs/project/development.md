@@ -127,11 +127,11 @@ After cloning the repository, run the following command to run the first build. 
 $ make setup
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, lets print the version number on the development build of Bun.
+The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
 $ packages/debug-bun-*/bun-debug --version
-bun 0.x.y__dev
+bun 1.x.y__dev
 ```
 
 Note: `make setup` is just an alias for the following:
@@ -192,7 +192,7 @@ Bun uses a series of make commands to rebuild parts of the codebase. The general
 ---
 
 - Code using `cppFn`/`JSC.markBinding`
-- `make headers` (TODO: explain explain what this is used for and why it's useful)
+- `make headers` (TODO: explain what this is used for and why it's useful)
 
 {% /table %}
 
@@ -354,7 +354,7 @@ When these are changed, run:
 $ make js
 ```
 
-In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
+In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
 
 ## Release build
 

@@ -43,7 +43,7 @@ This is analogous to the [`require.main = module` trick](https://stackoverflow.c
 
 ## `Bun.sleep()`
 
-`Bun.sleep(ms: number)` (added in Bun v0.5.6)
+`Bun.sleep(ms: number)`
 
 Returns a `Promise` that resolves after the given number of milliseconds.
 
@@ -65,7 +65,7 @@ console.log("hello one second later!");
 
 ## `Bun.sleepSync()`
 
-`Bun.sleepSync(ms: number)` (added in Bun v0.5.6)
+`Bun.sleepSync(ms: number)`
 
 A blocking synchronous version of `Bun.sleep`.
 
@@ -108,7 +108,7 @@ console.log(ls); // null
 
 ## `Bun.peek()`
 
-`Bun.peek(prom: Promise)` (added in Bun v0.2.2)
+`Bun.peek(prom: Promise)`
 
 Reads a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
 

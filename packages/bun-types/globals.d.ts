@@ -1,3 +1,5 @@
+// import * as tls from 'node:tls';
+
 /**
  * "blob" is not supported yet
  */
@@ -1288,6 +1290,7 @@ interface RequestInit {
 }
 
 interface FetchRequestInit extends RequestInit {
+  
   /**
    * Log the raw HTTP request & response to stdout. This API may be
    * removed in a future version of Bun without notice.
@@ -1300,6 +1303,14 @@ interface FetchRequestInit extends RequestInit {
    * This is a custom property that is not part of the Fetch API specification.
    */
   proxy?: string;
+
+  /**
+   * Override the default TLS options
+   */
+  tls?: {
+    rejectUnauthorized?: boolean | undefined; // Defaults to true
+    checkServerIdentity?: any | undefined; // TODO: change `any` to `checkServerIdentity`
+  };
 }
 
 /**

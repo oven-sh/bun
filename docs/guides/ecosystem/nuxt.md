@@ -9,7 +9,7 @@ $ bunx nuxi init my-nuxt-app
 ✔ Which package manager would you like to use?
 bun
 ◐ Installing dependencies...
-bun install v0.8.1 (16b4bf34)
+bun install v1.x (16b4bf34)
  + @nuxt/devtools@0.8.2
  + nuxt@3.7.0
  785 packages installed [2.67s]
@@ -45,9 +45,9 @@ Nuxt 3.6.5 with Nitro 2.5.2
 
 ---
 
-Once the dev server spins up, open [http://localhost:3000](http://localhost:3000) to see the app. The app will render Nuxt's built-in `WelcomePage` template component.
+Once the dev server spins up, open [http://localhost:3000](http://localhost:3000) to see the app. The app will render Nuxt's built-in `NuxtWelcome` template component.
 
-To start developing your app, replace `<WelcomePage />` in `app.vue` with your own UI.
+To start developing your app, replace `<NuxtWelcome />` in `app.vue` with your own UI.
 
 {% image src="https://github.com/oven-sh/bun/assets/3084745/2c683ecc-3298-4bb0-b8c0-cf4cfaea1daa" caption="Demo Nuxt app running on localhost" /%}
 

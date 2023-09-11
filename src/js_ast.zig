@@ -425,7 +425,7 @@ pub const Binding = struct {
                 );
             },
             else => {
-                Global.panic("Interanl error", .{});
+                Global.panic("Internal error", .{});
             },
         }
     }
@@ -5997,6 +5997,14 @@ pub const Ast = struct {
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
+
+    pub fn fromParts(parts: []Part) Ast {
+        return Ast{
+            .parts = Part.List.init(parts),
+            .allocator = bun.default_allocator,
+            .runtime_imports = .{},
+        };
+    }
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{

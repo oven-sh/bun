@@ -13,8 +13,6 @@ If you pass `-y` or `--yes`, it will assume you want to continue without asking 
 
 At the end, it runs `bun install` to install `bun-types`.
 
-Added in Bun v0.1.7.
-
 #### How is `bun init` different than `bun create`?
 
 `bun init` is for blank projects. `bun create` applies templates.

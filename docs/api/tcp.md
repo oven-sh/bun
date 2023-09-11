@@ -76,12 +76,6 @@ Bun.listen({
 });
 ```
 
-{% callout %}
-
-**Note** — Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
-
-{% /callout %}
-
 The `key` and `cert` fields expect the _contents_ of your TLS key and certificate. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
 
 ```ts
@@ -95,7 +89,7 @@ Bun.listen({
     // string
     key: fs.readFileSync("./key.pem", "utf8"),
     // array of above
-    key: [Bun.file('./key1.pem'), Bun.file('./key2.pem')]
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")],
   },
 });
 ```

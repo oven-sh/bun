@@ -1179,20 +1179,31 @@ extern const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeCon
 extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
 
+// initializeNextTickQueue
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_INITIALIZENEXTTICKQUEUE 1
+extern const char* const s_processObjectInternalsInitializeNextTickQueueCode;
+extern const int s_processObjectInternalsInitializeNextTickQueueCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
+
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
     macro(binding, processObjectInternalsBinding, 1) \
     macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
+    macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
     macro(processObjectInternalsBindingCode, binding, ASCIILiteral(), s_processObjectInternalsBindingCodeLength) \
     macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
     macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
+    macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
     macro(binding) \
     macro(getStdioWriteStream) \
     macro(getStdinStream) \
+    macro(initializeNextTickQueue) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

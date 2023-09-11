@@ -36,10 +36,6 @@ $ bun run react.tsx
 
 ## Text files
 
-{% callout %}
-Supported in Bun v0.6.0 canary.
-{% /callout %}
-
 Text files can be imported as strings.
 
 {% codetabs %}
@@ -67,7 +63,11 @@ import data from "./data.toml";
 
 ## WASM
 
-As of v0.5.2, experimental support exists for WASI, the [WebAssembly System Interface](https://github.com/WebAssembly/WASI). To run a `.wasm` binary with Bun:
+{% callout %}
+🚧 **Experimental**
+{% /callout %}
+
+Bun has experimental support for WASI, the [WebAssembly System Interface](https://github.com/WebAssembly/WASI). To run a `.wasm` binary with Bun:
 
 ```bash
 $ bun ./my-wasm-app.wasm
@@ -77,7 +77,7 @@ $ bun run ./my-wasm-app.whatever
 
 {% callout %}
 
-**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
+**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
 {% /callout %}
 
 ## Custom loaders

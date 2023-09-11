@@ -39,7 +39,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA256Constructor;std:
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA384Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocket;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocketConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStats;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocketConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStatWatcher;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStats;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStatsConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocess;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTCPSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTLSSocket;

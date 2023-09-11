@@ -54,6 +54,9 @@ const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
 
+const BoringSSL = bun.BoringSSL;
+const X509 = @import("../api/bun/x509.zig");
+
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;
@@ -630,6 +633,8 @@ pub const Fetch = struct {
         scheduled_response_buffer: MutableString = undefined,
         /// response strong ref
         response: JSC.Strong = .{},
+        /// stream strong ref if any is available
+        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
@@ -652,9 +657,14 @@ pub const Fetch = struct {
 
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
+
+        // custom checkServerIdentity
+        check_server_identity: JSC.Strong = .{},
+        reject_unauthorized: bool = true,
         // Custom Hostname
         hostname: ?[]u8 = null,
         is_waiting_body: bool = false,
+        is_waiting_abort: bool = false,
         mutex: Mutex,
 
         tracker: JSC.AsyncTaskTracker,
@@ -722,12 +732,15 @@ pub const Fetch = struct {
 
             this.response_buffer.deinit();
             this.response.deinit();
+            this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
             if (this.abort_reason != .zero)
                 this.abort_reason.unprotect();
+
+            this.check_server_identity.deinit();
 
             if (this.signal) |signal| {
                 this.signal = null;
@@ -787,6 +800,36 @@ pub const Fetch = struct {
 
                 globalThis.throwValue(err);
                 return;
+            }
+
+            if (this.readable_stream_ref.get()) |readable| {
+                if (readable.ptr == .Bytes) {
+                    readable.ptr.Bytes.size_hint = this.getSizeHint();
+                    // body can be marked as used but we still need to pipe the data
+                    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                    const chunk = scheduled_response_buffer.items;
+
+                    if (this.result.has_more) {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.initConst(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+
+                        // clean for reuse later
+                        this.scheduled_response_buffer.reset();
+                    } else {
+                        readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                    return;
+                }
             }
 
             if (this.response.get()) |response_js| {
@@ -862,11 +905,30 @@ pub const Fetch = struct {
             if (this.is_waiting_body) {
                 return this.onBodyReceived();
             }
-            this.mutex.lock();
+            // if we abort because of cert error
+            // we wait the Http Client because we already have the response
+            // we just need to deinit
             const globalThis = this.global_this;
+            this.mutex.lock();
+
+            if (this.is_waiting_abort) {
+                // has_more will be false when the request is aborted/finished
+                if (this.result.has_more) {
+                    this.mutex.unlock();
+                    return;
+                }
+                this.mutex.unlock();
+                var poll_ref = this.poll_ref;
+                var vm = globalThis.bunVM();
+
+                poll_ref.unref(vm);
+                this.clearData();
+                this.deinit();
+                return;
+            }
 
             var ref = this.promise;
-            const promise_value = ref.value();
+            const promise_value = ref.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
@@ -882,7 +944,48 @@ pub const Fetch = struct {
                 return;
             }
 
+            if (this.result.certificate_info) |certificate_info| {
+                this.result.certificate_info = null;
+                defer certificate_info.deinit(bun.default_allocator);
+
+                // we receive some error
+                if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+                    log("onProgressUpdate: aborted due certError", .{});
+                    // we need to abort the request
+                    const promise = promise_value.asAnyPromise().?;
+                    const tracker = this.tracker;
+                    const result = this.onReject();
+
+                    result.ensureStillAlive();
+                    promise_value.ensureStillAlive();
+
+                    promise.reject(globalThis, result);
+
+                    tracker.didDispatch(globalThis);
+                    ref.strong.deinit();
+                    this.has_schedule_callback.store(false, .Monotonic);
+                    this.mutex.unlock();
+                    if (this.is_waiting_abort) {
+                        return;
+                    }
+                    // we are already done we can deinit
+                    poll_ref.unref(vm);
+                    this.clearData();
+                    this.deinit();
+                    return;
+                }
+                // everything ok
+                if (this.metadata == null) {
+                    log("onProgressUpdate: metadata is null", .{});
+                    this.has_schedule_callback.store(false, .Monotonic);
+                    // cannot continue without metadata
+                    this.mutex.unlock();
+                    return;
+                }
+            }
+
             const promise = promise_value.asAnyPromise().?;
+            _ = promise;
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
@@ -905,17 +1008,93 @@ pub const Fetch = struct {
             result.ensureStillAlive();
 
             promise_value.ensureStillAlive();
+            const Holder = struct {
+                held: JSC.Strong,
+                promise: JSC.Strong,
+                globalObject: *JSC.JSGlobalObject,
+                task: JSC.AnyTask,
 
-            switch (success) {
-                true => {
-                    promise.resolve(globalThis, result);
-                },
-                false => {
-                    promise.reject(globalThis, result);
-                },
-            }
+                pub fn resolve(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    var globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
+                    res.ensureStillAlive();
+
+                    bun.default_allocator.destroy(held);
+                    prom.resolve(globalObject, res);
+                }
+
+                pub fn reject(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    var globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
+                    res.ensureStillAlive();
+
+                    bun.default_allocator.destroy(held);
+                    prom.reject(globalObject, res);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch unreachable;
+            holder.* = .{
+                .held = JSC.Strong.create(result, globalThis),
+                .promise = ref.strong,
+                .globalObject = globalThis,
+                .task = undefined,
+            };
+            ref.strong = .{};
+            holder.task = switch (success) {
+                true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
+                false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
+            };
+
+            globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
         }
 
+        pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo) bool {
+            if (this.check_server_identity.get()) |check_server_identity| {
+                check_server_identity.ensureStillAlive();
+                if (certificate_info.cert.len > 0) {
+                    var cert = certificate_info.cert;
+                    var cert_ptr = cert.ptr;
+                    if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
+                        defer BoringSSL.X509_free(x509);
+                        const globalObject = this.global_this;
+                        const js_cert = X509.toJS(x509, globalObject);
+                        var hostname: bun.String = bun.String.create(certificate_info.hostname);
+                        const js_hostname = hostname.toJS(globalObject);
+                        js_hostname.ensureStillAlive();
+                        js_cert.ensureStillAlive();
+                        const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        // if check failed abort the request
+                        if (check_result.isAnyError()) {
+                            // mark to wait until deinit
+                            this.is_waiting_abort = this.result.has_more;
+
+                            check_result.ensureStillAlive();
+                            check_result.protect();
+                            this.abort_reason = check_result;
+                            this.signal_store.aborted.store(true, .Monotonic);
+                            this.tracker.didCancel(this.global_this);
+
+                            // we need to abort the request
+                            if (this.http != null) {
+                                HTTPClient.http_thread.scheduleShutdown(this.http.?);
+                            }
+                            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+            }
+            this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+            return false;
+        }
         pub fn onReject(this: *FetchTasklet) JSValue {
             log("onReject", .{});
 
@@ -962,6 +1141,11 @@ pub const Fetch = struct {
             };
 
             return fetch_error.toErrorInstance(this.global_this);
+        }
+
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+            const this = bun.cast(*FetchTasklet, ctx);
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this) catch .{};
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1020,6 +1204,7 @@ pub const Fetch = struct {
                         .task = this,
                         .global = this.global_this,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
+                        .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     },
                 };
                 return response;
@@ -1112,6 +1297,8 @@ pub const Fetch = struct {
                 .hostname = fetch_options.hostname,
                 .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
                 .memory_reporter = fetch_options.memory_reporter,
+                .check_server_identity = fetch_options.check_server_identity,
+                .reject_unauthorized = fetch_options.reject_unauthorized,
             };
             fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
@@ -1130,8 +1317,14 @@ pub const Fetch = struct {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
             }
 
-            if (fetch_tasklet.signal == null) {
-                fetch_tasklet.signals.aborted = null;
+            if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
+                fetch_tasklet.signal_store.cert_errors.store(true, .Monotonic);
+            } else {
+                fetch_tasklet.signals.cert_errors = null;
+                // we use aborted to signal that we should abort reject_unauthorized after check with check_server_identity
+                if (fetch_tasklet.signal == null) {
+                    fetch_tasklet.signals.aborted = null;
+                }
             }
 
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
@@ -1164,6 +1357,8 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
             fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
+            fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
+
             // we wanna to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
@@ -1200,6 +1395,7 @@ pub const Fetch = struct {
             disable_timeout: bool,
             disable_keepalive: bool,
             disable_decompression: bool,
+            reject_unauthorized: bool,
             url: ZigURL,
             verbose: bool = false,
             redirect_type: FetchRedirect = FetchRedirect.follow,
@@ -1209,8 +1405,8 @@ pub const Fetch = struct {
             globalThis: ?*JSGlobalObject,
             // Custom Hostname
             hostname: ?[]u8 = null,
-
             memory_reporter: *JSC.MemoryReportingAllocator,
+            check_server_identity: JSC.Strong = .{},
         };
 
         pub fn queue(
@@ -1239,10 +1435,12 @@ pub const Fetch = struct {
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.mutex.lock();
             defer task.mutex.unlock();
+            log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
             task.result = result;
 
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
+                log("added callback metadata", .{});
                 std.debug.assert(task.metadata == null);
                 task.metadata = metadata;
             }
@@ -1365,7 +1563,8 @@ pub const Fetch = struct {
 
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
-
+        var reject_unauthorized = true;
+        var check_server_identity: JSValue = .zero;
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
@@ -1510,6 +1709,24 @@ pub const Fetch = struct {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
                                 disable_keepalive = decompress.to(i32) == 0;
+                            }
+                        }
+
+                        if (options.get(ctx, "tls")) |tls| {
+                            if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
+                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                                    if (reject.isBoolean()) {
+                                        reject_unauthorized = reject.asBoolean();
+                                    } else if (reject.isNumber()) {
+                                        reject_unauthorized = reject.to(i32) != 0;
+                                    }
+                                }
+
+                                if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                                    if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                        check_server_identity = checkServerIdentity;
+                                    }
+                                }
                             }
                         }
 
@@ -1685,6 +1902,24 @@ pub const Fetch = struct {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
                                 disable_keepalive = decompress.to(i32) == 0;
+                            }
+                        }
+
+                        if (options.get(ctx, "tls")) |tls| {
+                            if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
+                                if (tls.get(ctx, "rejectUnauthorized")) |reject| {
+                                    if (reject.isBoolean()) {
+                                        reject_unauthorized = reject.asBoolean();
+                                    } else if (reject.isNumber()) {
+                                        reject_unauthorized = reject.to(i32) != 0;
+                                    }
+                                }
+
+                                if (tls.get(ctx, "checkServerIdentity")) |checkServerIdentity| {
+                                    if (checkServerIdentity.isCell() and checkServerIdentity.isCallable(globalThis.vm())) {
+                                        check_server_identity = checkServerIdentity;
+                                    }
+                                }
                             }
                         }
 
@@ -1942,6 +2177,7 @@ pub const Fetch = struct {
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
                 .disable_decompression = disable_decompression,
+                .reject_unauthorized = reject_unauthorized,
                 .redirect_type = redirect_type,
                 .verbose = verbose,
                 .proxy = proxy,
@@ -1950,6 +2186,7 @@ pub const Fetch = struct {
                 .globalThis = globalThis,
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,
+                .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
             },
             // Pass the Strong value instead of creating a new one, or else we
             // will leak it

@@ -74,7 +74,7 @@ dv.getUint8(0); // => 3
 // [0x11, 0x0, 0x0, 0x0]
 ```
 
-Now lets write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
+Now let's write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
 
 ```ts
 dv.setUint16(1, 513);
@@ -90,7 +90,7 @@ console.log(dv.getUint8(1)); // => 2
 console.log(dv.getUint8(2)); // => 1
 ```
 
-Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cuase an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
+Attempting to write a value that requires more space than is available in the underlying `ArrayBuffer` will cause an error. Below we attempt to write a `Float64` (which requires 8 bytes) at byte offset `0`, but there are only four total bytes in the buffer.
 
 ```ts
 dv.setFloat64(0, 3.1415);

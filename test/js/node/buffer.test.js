@@ -499,6 +499,23 @@ it("creating buffers larger than pool size", () => {
   expect(sb).toBe(s);
 });
 
+it("should use args correctly", () => {
+  const buf1 = Buffer.allocUnsafe(26);
+
+  for (let i = 0; i < 26; i++) {
+    // 97 is the decimal ASCII value for 'a'.
+    buf1[i] = i + 97;
+  }
+
+  expect(buf1.toString("utf8")).toBe("abcdefghijklmnopqrstuvwxyz");
+  expect(buf1.toString("utf8", 0, 5)).toBe("abcde");
+
+  const buf2 = Buffer.from("tést");
+  expect(buf2.toString("hex")).toBe("74c3a97374");
+  expect(buf2.toString("utf8", 0, 3)).toBe("té");
+  expect(buf2.toString(undefined, 0, 3)).toBe("té");
+});
+
 it("hex toString()", () => {
   const hexb = Buffer.allocUnsafe(256);
   for (let i = 0; i < 256; i++) {
@@ -2401,15 +2418,6 @@ it("Buffer.toString(encoding, start, end)", () => {
   expect(buf.toString("utf8", 3, 1)).toStrictEqual("");
   expect(buf.toString("utf8", 100, 200)).toStrictEqual("");
   expect(buf.toString("utf8", 100, 1)).toStrictEqual("");
-});
-
-it("Buffer.toString(offset, length, encoding)", () => {
-  const buf = Buffer.from("0123456789", "utf8");
-
-  expect(buf.toString(3, 6, "utf8")).toStrictEqual("345678");
-  expect(buf.toString(3, 100, "utf8")).toStrictEqual("3456789");
-  expect(buf.toString(100, 200, "utf8")).toStrictEqual("");
-  expect(buf.toString(100, 50, "utf8")).toStrictEqual("");
 });
 
 it("Buffer.asciiSlice())", () => {

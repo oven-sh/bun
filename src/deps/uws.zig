@@ -165,7 +165,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @as(*NativeSocketHandleType(is_ssl), @ptrCast(us_socket_get_native_handle(comptime ssl_int, this.socket).?));
         }
 
-        pub fn fd(this: ThisSocket) i32 {
+        pub inline fn fd(this: ThisSocket) i32 {
             if (comptime is_ssl) {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
@@ -369,8 +369,17 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect({s}, {d})", .{ host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            var host_ = allocator.dupeZ(u8, host) catch return null;
-            defer allocator.free(host_);
+
+            var host_: ?[*:0]u8 = brk: {
+                // getaddrinfo expects `node` to be null if localhost
+                if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
+                    break :brk null;
+                }
+
+                break :brk allocator.dupeZ(u8, host) catch return null;
+            };
+
+            defer if (host_) |host__| allocator.free(host__[0..host.len]);
 
             var socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
             const socket_ = ThisSocket{ .socket = socket };
@@ -2257,3 +2266,27 @@ extern fn uws_app_listen_domain_with_options(
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
+
+extern fn us_socket_pair(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+extern fn us_socket_from_fd(
+    ctx: *SocketContext,
+    ext_size: c_int,
+    fds: LIBUS_SOCKET_DESCRIPTOR,
+) ?*Socket;
+
+pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_pair(ctx, ext_size, fds) orelse return null,
+    };
+}
+
+pub fn newSocketFromFd(ctx: *SocketContext, ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {
+    return SocketTCP{
+        .socket = us_socket_from_fd(ctx, ext_size, fd) orelse return null,
+    };
+}

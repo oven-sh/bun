@@ -3083,11 +3083,11 @@ void GlobalObject::finishCreation(VM& vm)
 // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
 // https://github.com/oven-sh/bun/issues/4588
 #if OS(DARWIN)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "MacIntel"_s));
+            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("MacIntel"_s)));
 #elif OS(WINDOWS)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "Win32"_s));
+            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Win32"_s)));
 #elif OS(LINUX)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, "Linux x86_64"_s));
+            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Linux x86_64"_s)));
 #endif
 
             obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));

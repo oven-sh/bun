@@ -229,6 +229,6 @@ test("navigator", () => {
   } else if (process.platform === "win32") {
     expect(navigator.platform).toBe("Win32");
   } else if (process.platform === "linux") {
-    expect(navigator.platform).toBe("Linux");
+    expect(navigator.platform).toBe("Linux x86_64");
   }
 });

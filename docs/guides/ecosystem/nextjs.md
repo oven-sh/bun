@@ -32,4 +32,4 @@ $ bun run dev
 
 ---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Any changes you make to `pages/index.tsx` will be hot-reloaded in the browser.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Any changes you make to `(pages/app)/index.tsx` will be hot-reloaded in the browser.

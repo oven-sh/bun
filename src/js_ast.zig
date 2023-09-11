@@ -5998,6 +5998,14 @@ pub const Ast = struct {
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
+    pub fn fromParts(parts: []Part) Ast {
+        return Ast{
+            .parts = Part.List.init(parts),
+            .allocator = bun.default_allocator,
+            .runtime_imports = .{},
+        };
+    }
+
     pub fn initTest(parts: []Part) Ast {
         return Ast{
             .parts = Part.List.init(parts),

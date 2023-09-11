@@ -41,7 +41,7 @@ To add one workspace as a dependency of another, modify its `package.json`. Here
 {
   "name": "stuff-b",
   "dependencies": {
-+   "stuff-a": "*"
++   "stuff-a": "workspace:*"
   }
 }
 ```

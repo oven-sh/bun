@@ -35,7 +35,7 @@ Open `index.ts` and paste the following code snippet, which implements a simple 
 const server = Bun.serve({
   port: 3000,
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 
@@ -46,7 +46,7 @@ Run the file from your shell.
 
 ```bash
 $ bun index.ts
-Listening at http://localhost:3000 ...
+Listening on http://localhost:3000 ...
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to test the server. You should see a simple page that says "Bun!".
@@ -97,9 +97,9 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 
   const server = Bun.serve({
     fetch() {
-+     const body = figlet.textSync('Bun!');
++     const body = figlet.textSync("Bun!");
 +     return new Response(body);
--     return new Response(`Bun!`);
+-     return new Response("Bun!");
     },
     port: 3000,
   });

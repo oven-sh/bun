@@ -13,7 +13,7 @@ Start an HTTP server in Bun with `Bun.serve`.
 ```ts
 Bun.serve({
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 ```
@@ -24,9 +24,9 @@ The `fetch` handler handles incoming requests. It receives a [`Request`](https:/
 Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname === "/") return new Response(`Home page!`);
+    if (url.pathname === "/") return new Response("Home page!");
     if (url.pathname === "/blog") return new Response("Blog!");
-    return new Response(`404!`);
+    return new Response("404!");
   },
 });
 ```
@@ -38,7 +38,7 @@ Bun.serve({
   port: 8080, // defaults to $BUN_PORT, $PORT, $NODE_PORT otherwise 3000
   hostname: "mydomain.com", // defaults to "0.0.0.0"
   fetch(req) {
-    return new Response(`404!`);
+    return new Response("404!");
   },
 });
 ```
@@ -192,7 +192,7 @@ import {type Serve} from "bun";
 
 export default {
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 } satisfies Serve;
 ```
@@ -254,7 +254,7 @@ Below are Bun and Node.js implementations of a simple HTTP server that responds 
 ```ts#Bun
 Bun.serve({
   fetch(req: Request) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
   port: 3000,
 });

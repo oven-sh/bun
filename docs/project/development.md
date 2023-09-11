@@ -127,7 +127,7 @@ After cloning the repository, run the following command to run the first build. 
 $ make setup
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, lets print the version number on the development build of Bun.
+The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
 $ packages/debug-bun-*/bun-debug --version

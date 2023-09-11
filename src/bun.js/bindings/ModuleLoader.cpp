@@ -534,17 +534,9 @@ JSValue fetchCommonJSModule(
             RELEASE_AND_RETURN(scope, {});
         }
 
-        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-
-        globalObject->moduleLoader()->provideFetch(
-            globalObject,
-            specifierValue,
-            JSC::SourceCode(JSC::SyntheticSourceProvider::create(WTFMove(function), JSC::SourceOrigin(), Bun::toWTFString(*specifier))));
-        RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, jsNumber(-1));
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, value.isCell() && value.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+        target->hasEvaluated = true;
+        RELEASE_AND_RETURN(scope, target);
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);

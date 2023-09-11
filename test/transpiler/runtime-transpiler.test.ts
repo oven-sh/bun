@@ -32,7 +32,7 @@ describe("// @bun", () => {
 });
 
 describe("json imports", () => {
-  test("require(*.json)", () => {
+  test("require(*.json)", async () => {
     const {
       name,
       description,
@@ -42,7 +42,6 @@ describe("json imports", () => {
       default: defaultExport,
       ...other
     } = require("./runtime-transpiler-json-fixture.json");
-    delete require.cache[require.resolve("./runtime-transpiler-json-fixture.json")];
     const obj = {
       "name": "Spiral 4v4 NS",
       "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
@@ -60,6 +59,40 @@ describe("json imports", () => {
       default: { a: 1 },
     }).toEqual(obj);
     expect(other).toEqual({});
+
+    // This tests that importing and requiring when already in the cache keeps the state the same
+    {
+      const {
+        name,
+        description,
+        players,
+        version,
+        creator,
+        default: defaultExport,
+        // @ts-ignore
+      } = await import("./runtime-transpiler-json-fixture.json");
+      const obj = {
+        "name": "Spiral 4v4 NS",
+        "description": "4v4 unshared map. 4 spawns in a spiral. Preferred to play with 4v4 NS.",
+        "version": "1.0",
+        "creator": "Grand Homie",
+        "players": [8, 8],
+        default: { a: 1 },
+      };
+      expect({
+        name,
+        description,
+        players,
+        version,
+        creator,
+        default: { a: 1 },
+      }).toEqual(obj);
+      // They should be strictly equal
+      expect(defaultExport.players).toBe(players);
+      expect(defaultExport).toEqual(obj);
+    }
+
+    delete require.cache[require.resolve("./runtime-transpiler-json-fixture.json")];
   });
 
   test("import(*.json)", async () => {

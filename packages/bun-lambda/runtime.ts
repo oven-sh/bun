@@ -22,11 +22,11 @@ function log(level: string, ...args: any[]): void {
   if (!args.length) {
     return;
   }
-  const message = Bun.inspect(...args).replace(/\n/g, "\r");
+  const messages = args.map(arg => Bun.inspect(arg).replace(/\n/g, "\r"));
   if (requestId === undefined) {
-    logger(level, message);
+    logger(level, ...messages);
   } else {
-    logger(level, `RequestId: ${requestId}`, message);
+    logger(level, `RequestId: ${requestId}`, ...messages);
   }
 }
 

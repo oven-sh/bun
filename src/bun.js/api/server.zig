@@ -5845,13 +5845,11 @@ const SocketAddress = struct {
 
         if (addr.len == 4) {
             result.tag = .ipv4;
-            const ip = std.mem.readIntSlice(u32, addr, .Big);
-
             result.value = try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
-                (ip >> (8 * 3)) & 0xFF,
-                (ip >> (8 * 2)) & 0xFF,
-                (ip >> (8 * 1)) & 0xFF,
-                (ip >> (8 * 0)) & 0xFF,
+                addr[0],
+                addr[1],
+                addr[2],
+                addr[3],
             });
         } else if (addr.len == 16) {
             result.tag = .ipv6;
@@ -5859,6 +5857,7 @@ const SocketAddress = struct {
             const ip = std.mem.readIntSlice(u128, addr, .Big);
             const buf = try allocator.alloc(u8, 4 * 8 + 7); // 8 groups of 4 digits, seperated by 7 colons
 
+            // iterate through buf, printing 4 bits at a time from ip, and placing colons every 5 chars
             for (buf, 0..) |*c, i| {
                 if ((i + 1) % 5 == 0 and i != 0) {
                     c.* = ':';

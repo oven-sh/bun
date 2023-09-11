@@ -1158,6 +1158,7 @@ pub const Command = struct {
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
             RootCommandMatcher.case("rm"),
+            RootCommandMatcher.case("un"),
             RootCommandMatcher.case("uninstall"),
             => .RemoveCommand,
 

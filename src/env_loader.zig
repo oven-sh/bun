@@ -881,8 +881,8 @@ pub const Map = struct {
 
         var iter_ = this.map.iterator();
         while (iter_.next()) |entry| {
-            // allow var from .env.development or .env.production to be loaded again.
-            if (!entry.value_ptr.conditional) {
+            // Allow var from .env.development or .env.production to be loaded again. Also don't clone empty vars.
+            if (!entry.value_ptr.conditional and entry.value_ptr.value.len > 0) {
                 try env_map.putMove(bun.constStrToU8(entry.key_ptr.*), bun.constStrToU8(entry.value_ptr.value));
             }
         }

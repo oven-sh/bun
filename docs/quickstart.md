@@ -46,7 +46,7 @@ Run the file from your shell.
 
 ```bash
 $ bun index.ts
-Listening at http://localhost:3000 ...
+Listening on http://localhost:3000 ...
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to test the server. You should see a simple page that says "Bun!".

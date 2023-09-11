@@ -144,7 +144,7 @@ If `exports` is not defined, Bun falls back to `"module"` (ESM imports only) the
 
 ## Path re-mapping
 
-In the spirit of treating TypeScript as a first-class citizen, the Bun runtime will re-map import paths according to the [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) field in `tsconfig.json`. This is a major divergence from Node.js, which doesn't support any form of import path re-mapping.
+In the spirit of treating TypeScript as a first-class citizen, the Bun runtime will re-map import paths according to the [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) field in `tsconfig.json`. This is a major divergence from Node.js, which supports import remapping through subpath imports / subpath patterns.
 
 ```jsonc#tsconfig.json
 {

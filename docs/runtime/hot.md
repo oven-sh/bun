@@ -3,6 +3,14 @@ Bun supports two kinds of automatic reloading via CLI flags:
 - `--watch` mode, which hard restarts Bun's process when imported files change/
 - `--hot` mode, which soft reloads the code (without restarting the process) when imported files change.
 
+{% callout %}
+
+**🧹 Terminal is cleared.** After the first reload your terminal will be cleared.
+
+Do not panic if you see empty terminal after the first reloading, it is fine.
+
+{% /callout %}
+
 ## `--watch` mode
 
 Watch mode can be used with `bun test` or when running TypeScript, JSX, and JavaScript files.

@@ -1353,21 +1353,7 @@ pub fn read(
                     if (op.positional) {
                         const rc = os.system.lseek(op.fd, @intCast(op.offset), 0);
                         if (rc == -1) {
-                            return switch (@intFromEnum(os.errno(rc))) {
-                                os.EINTR => continue,
-                                os.EAGAIN => error.WouldBlock,
-                                os.EBADF => error.NotOpenForReading,
-                                os.ECONNRESET => error.ConnectionResetByPeer,
-                                os.EINVAL => error.Alignment,
-                                os.EIO => error.InputOutput,
-                                os.EISDIR => error.IsDir,
-                                os.ENOBUFS => error.SystemResources,
-                                os.ENOMEM => error.SystemResources,
-                                os.ENXIO => error.Unseekable,
-                                os.EOVERFLOW => error.Unseekable,
-                                os.ESPIPE => error.Unseekable,
-                                else => |err| asError(err),
-                            };
+                            return error.Unseekable;
                         }
                     }
                     const rc = os.system.read(

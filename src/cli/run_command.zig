@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const uws = @import("../deps/uws.zig");
 
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
@@ -226,17 +227,37 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    inline fn spawn(
+    pub const SpawnedScript = struct {
+        pid: std.os.pid_t,
+        output_buffer: bun.ByteList,
+        output_fd: std.os.fd_t,
+
+        pub fn deinit(this: *SpawnedScript, alloc: std.mem.Allocator) void {
+            this.output_buffer.deinitWithAllocator(alloc);
+            alloc.destroy(this);
+        }
+    };
+
+    inline fn spawnScript(
         allocator: std.mem.Allocator,
         name: string,
         cwd: string,
         env: *DotEnv.Loader,
         argv: [*:null]?[*:0]const u8,
-    ) !?std.os.pid_t {
+    ) !?*SpawnedScript {
         var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
         if (comptime Environment.isMac) {
             flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
         }
+
+        var spawned = try allocator.create(SpawnedScript);
+        errdefer spawned.deinit(allocator);
+
+        spawned.* = .{
+            .pid = undefined,
+            .output_buffer = try bun.ByteList.initCapacity(allocator, 1024),
+            .output_fd = -1,
+        };
 
         var attr = try PosixSpawn.Attr.init();
         defer attr.deinit();
@@ -245,9 +266,17 @@ pub const RunCommand = struct {
 
         var actions = try PosixSpawn.Actions.init();
         defer actions.deinit();
-        try actions.inherit(0);
-        try actions.inherit(1);
-        try actions.inherit(2);
+        try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
+
+        // Have both stdout and stderr write to the same buffer
+        const fds = try std.os.pipe2(0);
+        try actions.dup2(fds[1], bun.STDOUT_FD);
+        try actions.dup2(fds[1], bun.STDERR_FD);
+        spawned.output_fd = fds[0];
+
+        // ?! do i call close() on one of these
+        // std.os.close(fds[1]);
+
         try actions.chdir(cwd);
 
         var arena = bun.ArenaAllocator.init(allocator);
@@ -265,7 +294,10 @@ pub const RunCommand = struct {
                 Output.flush();
                 return null;
             },
-            .result => |pid| return pid,
+            .result => |pid| {
+                spawned.pid = pid;
+                return spawned;
+            },
         }
     }
 
@@ -277,7 +309,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
-    ) !?std.os.pid_t {
+    ) !?*SpawnedScript {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var script = original_script;
@@ -321,22 +353,25 @@ pub const RunCommand = struct {
         argv[1] = "-c";
         argv[2] = combined_script;
 
-        return spawn(allocator, name, cwd, env, argv) catch |err| {
+        return spawnScript(allocator, name, cwd, env, argv) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             Output.flush();
             return null;
         };
     }
 
-    pub fn waitForPackageScript(name: string, pid: std.os.pid_t, is_sync: bool) bool {
+    pub fn waitForPackageScript(script: *SpawnedScript, name: string, is_sync: bool, alloc: std.mem.Allocator) bool {
+        log("Waiting for script {s}, {d}", .{ name, script.pid });
         while (true) {
-            switch (PosixSpawn.waitpid(pid, if (is_sync) 0 else std.os.W.NOHANG)) {
+            switch (PosixSpawn.waitpid(script.pid, if (is_sync) 0 else std.os.W.NOHANG)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
                     Output.flush();
                     return true;
                 },
                 .result => |result| {
+                    defer script.deinit(alloc);
+
                     if (result.pid == 0) return false;
                     if (std.os.W.IFEXITED(result.status)) {
                         const code = std.os.W.EXITSTATUS(result.status);
@@ -375,8 +410,8 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
     ) !bool {
-        if (try spawnPackageScript(allocator, original_script, name, cwd, env, passthrough, silent)) |pid| {
-            _ = waitForPackageScript(name, pid, true);
+        if (try spawnPackageScript(allocator, original_script, name, cwd, env, passthrough, silent)) |script| {
+            _ = waitForPackageScript(script, name, true, allocator);
         }
         return true;
     }

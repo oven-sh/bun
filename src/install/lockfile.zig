@@ -92,7 +92,7 @@ const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUn
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = .v1,
+format: FormatVersion = FormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -121,10 +121,8 @@ pub const Scripts = struct {
         script: string,
     };
     const Entries = std.ArrayListUnmanaged(Entry);
-    const Status = struct {
-        pid: std.os.pid_t,
-    };
-    const Queue = std.fifo.LinearFifo(Status, .Dynamic);
+
+    const Queue = std.fifo.LinearFifo(*RunCommand.SpawnedScript, .Dynamic);
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: Entries = .{},
@@ -154,21 +152,21 @@ pub const Scripts = struct {
         defer queue.deinit();
 
         for (@field(this, hook).items) |entry| {
-            if (try RunCommand.spawnPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent)) |pid| {
-                try queue.writeItem(.{ .pid = pid });
+            if (try RunCommand.spawnPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent)) |script| {
+                try queue.writeItem(script);
             }
 
             while (queue.readableLength() >= MAX_PARALLEL_PROCESSES) {
-                if (queue.readItem()) |status| {
-                    if (!RunCommand.waitForPackageScript(hook, status.pid, false)) {
-                        try queue.writeItem(status);
+                if (queue.readItem()) |script| {
+                    if (!RunCommand.waitForPackageScript(script, hook, false, allocator)) {
+                        try queue.writeItem(script);
                     }
                 }
             }
         }
 
-        while (queue.readItem()) |status| {
-            _ = RunCommand.waitForPackageScript(hook, status.pid, true);
+        while (queue.readItem()) |script| {
+            _ = RunCommand.waitForPackageScript(script, hook, true, allocator);
         }
     }
 

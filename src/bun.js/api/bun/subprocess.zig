@@ -1474,7 +1474,13 @@ pub const Subprocess = struct {
             while (true) {
                 switch (std.os.linux.getErrno(fd)) {
                     .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
-                    .INTR => continue,
+                    .INTR => {
+                        fd = std.os.linux.pidfd_open(
+                            pid,
+                            pidfd_flags,
+                        );
+                        continue;
+                    },
                     else => |err| {
                         if (err == .INVAL) {
                             if (pidfd_flags != 0) {

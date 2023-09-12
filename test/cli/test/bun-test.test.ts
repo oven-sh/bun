@@ -694,13 +694,13 @@ describe("bun test", () => {
     test.todo("check formatting for %p", () => {});
   });
   // https://github.com/oven-sh/bun/issues/4118
-  test("expect NODE_ENV == 'test'", () => {
+  test("expect NODE_ENV === 'test'", () => {
     const stderr = runTest({
       input: `
         import {expect, test} from "bun:test";
         test("expect NODE_ENV=test", () => {
             expect(process.env.NODE_ENV).toBe("test");
-            expect(process?.env.NODE_ENV).toBe("test");
+            expect(process?.env?.NODE_ENV).toBe("test");
             expect(process && process.env && process.env.NODE_ENV).toBe("test");
         });
       `,

@@ -913,8 +913,7 @@ pub const EventLoop = struct {
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
-            var actual = uws.Loop.get().?;
-            this.virtual_machine.event_loop_handle = actual;
+            this.virtual_machine.event_loop_handle = uws.Loop.get();
             this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
@@ -955,7 +954,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = uws.Loop.get().?,
+            .loop = uws.Loop.get(),
         };
     }
 
@@ -1003,6 +1002,12 @@ pub const MiniEventLoop = struct {
             while (this.tasks.readItem()) |task| {
                 task.run(context);
             }
+        }
+    }
+
+    pub fn drainTasks(this: *MiniEventLoop, context: *anyopaque) void {
+        while (this.tasks.readItem()) |task| {
+            task.run(context);
         }
     }
 
@@ -1091,6 +1096,17 @@ pub const AnyEventLoop = union(enum) {
             },
             .mini => {
                 this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);
+            },
+        }
+    }
+
+    pub fn drainTasks(this: *AnyEventLoop, context: *anyopaque) void {
+        switch (this.*) {
+            .jsc => {
+                unreachable;
+            },
+            .mini => {
+                this.mini.drainTasks(context);
             },
         }
     }

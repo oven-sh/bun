@@ -708,12 +708,11 @@ pub const SocketContext = opaque {
     pub fn deinit(this: *SocketContext, ssl: bool) void {
         this.close(ssl);
         //always deinit in next iteration
-        if (Loop.get()) |loop| {
-            if (ssl) {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit_ssl);
-            } else {
-                loop.nextTick(*SocketContext, this, SocketContext._deinit);
-            }
+        const loop = Loop.get();
+        if (ssl) {
+            loop.nextTick(*SocketContext, this, SocketContext._deinit_ssl);
+        } else {
+            loop.nextTick(*SocketContext, this, SocketContext._deinit);
         }
     }
 
@@ -817,7 +816,9 @@ pub const Loop = extern struct {
         this.active -|= @as(u32, @intCast(count));
     }
 
-    pub fn get() ?*Loop {
+    /// Lazily initializes a per-thread loop and returns it.
+    /// Will automatically free all initialized loops at exit.
+    pub fn get() *Loop {
         return uws_get_loop();
     }
 
@@ -891,7 +892,7 @@ pub const Loop = extern struct {
 
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
-    extern fn uws_get_loop() ?*Loop;
+    extern fn uws_get_loop() *Loop;
     extern fn us_create_loop(
         hint: ?*anyopaque,
         wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
@@ -902,7 +903,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timeoutMs: i64) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;

@@ -1163,7 +1163,7 @@ pub const BundleV2 = struct {
             thread.detach();
         } else {
             BundleThread.instance.queue.push(completion);
-            BundleThread.instance.waker.wake() catch {};
+            BundleThread.instance.waker.wake();
         }
 
         completion.poll_ref.ref(globalThis.bunVM());

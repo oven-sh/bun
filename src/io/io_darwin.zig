@@ -512,7 +512,7 @@ pub const Waker = struct {
 
     const zeroed = std.mem.zeroes([16]Kevent64);
 
-    pub fn wake(this: *Waker) !void {
+    pub fn wake(this: *Waker) void {
         bun.JSC.markBinding(@src());
 
         if (io_darwin_schedule_wakeup(this.machport)) {

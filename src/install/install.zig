@@ -9,6 +9,8 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const uws = @import("../deps/uws.zig");
+const JSC = bun.JSC;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -1613,6 +1615,51 @@ pub const CacheLevel = struct {
 const AsyncIO = bun.AsyncIO;
 const Waker = AsyncIO.Waker;
 
+const Waiter = struct {
+    onWait: *const fn (this: *anyopaque) AsyncIO.Errno!usize,
+    onWake: *const fn (this: *anyopaque) void,
+    ctx: *anyopaque,
+
+    pub fn init(
+        ctx: anytype,
+        comptime onWait: *const fn (this: @TypeOf(ctx)) AsyncIO.Errno!usize,
+        comptime onWake: *const fn (this: @TypeOf(ctx)) void,
+    ) Waiter {
+        return Waiter{
+            .ctx = @ptrCast(ctx),
+            .onWait = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWait)))),
+            .onWake = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWake)))),
+        };
+    }
+
+    pub fn wait(this: *Waiter) AsyncIO.Errno!usize {
+        return this.onWait(this.ctx);
+    }
+
+    pub fn wake(this: *Waiter) void {
+        this.onWake(this.ctx);
+    }
+
+    pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
+        const Handlers = struct {
+            fn onWait(uws_loop: *uws.Loop) AsyncIO.Errno!usize {
+                uws_loop.run();
+                return 0;
+            }
+
+            fn onWake(uws_loop: *uws.Loop) void {
+                uws_loop.wakeup();
+            }
+        };
+
+        return Waiter.init(
+            loop,
+            Handlers.onWait,
+            Handlers.onWake,
+        );
+    }
+};
+
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
@@ -1671,10 +1718,13 @@ pub const PackageManager = struct {
     global_link_dir: ?std.fs.IterableDir = null,
     global_dir: ?std.fs.IterableDir = null,
     global_link_dir_path: string = "",
-    waiter: Waker = undefined,
+    waiter: Waiter = undefined,
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     onWake: WakeHandler = .{},
+
+    uws_event_loop: *uws.Loop,
+    file_poll_store: JSC.FilePoll.Store,
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1728,7 +1778,7 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.waiter.wake() catch {};
+        this.waiter.wake();
     }
 
     pub fn sleep(this: *PackageManager) void {
@@ -3688,6 +3738,7 @@ pub const PackageManager = struct {
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
 
+    /// fn tick(
     pub fn runTasks(
         manager: *PackageManager,
         comptime ExtractCompletionContext: type,
@@ -4307,6 +4358,8 @@ pub const PackageManager = struct {
         }
 
         manager.drainDependencyList();
+
+        manager.uws_event_loop.run();
 
         if (comptime log_level.showProgress()) {
             if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
@@ -5295,8 +5348,10 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
-            .waiter = try Waker.init(ctx.allocator),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
             // .progress
+            .uws_event_loop = uws.Loop.get(),
+            .file_poll_store = JSC.FilePoll.Store.init(ctx.allocator),
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -5372,7 +5427,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .waiter = try Waker.init(allocator),
+            .waiter = Waiter.fromUWSLoop(uws.Loop.get()),
+            .uws_event_loop = uws.Loop.get(),
+            .file_poll_store = JSC.FilePoll.Store.init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
 
@@ -6856,7 +6913,7 @@ pub const PackageManager = struct {
                                     .posix,
                                 );
 
-                                scripts.enqueue(this.lockfile, buf, path_str);
+                                scripts.enqueue(this.lockfile, buf, path_str, name);
                             } else if (!scripts.filled) {
                                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                                 const path_str = Path.joinAbsString(
@@ -6871,6 +6928,7 @@ pub const PackageManager = struct {
                                     this.node_modules_folder.dir,
                                     destination_dir_subpath,
                                     path_str,
+                                    name,
                                 ) catch |err| {
                                     if (comptime log_level != .silent) {
                                         const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
@@ -7630,6 +7688,7 @@ pub const PackageManager = struct {
                             manager.lockfile,
                             lockfile.buffers.string_bytes.items,
                             strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                            maybe_root.name.slice(lockfile.buffers.string_bytes.items),
                         );
                     }
                 }
@@ -7745,12 +7804,7 @@ pub const PackageManager = struct {
             try manager.setupGlobalDir(&ctx);
         }
 
-        // We don't always save the lockfile.
-        // This is for two reasons.
-        // 1. It's unnecessary work if there are no changes
-        // 2. There is a determinism issue in the file where alignment bytes might be garbage data
-        //    This is a bug that needs to be fixed, however we can work around it for now
-        //    by avoiding saving the lockfile
+        // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
             (did_meta_hash_change or manager.lockfile.isEmpty() or manager.options.enable.force_save_lockfile))
         save: {
@@ -7801,6 +7855,7 @@ pub const PackageManager = struct {
                 manager.lockfile,
                 manager.lockfile.buffers.string_bytes.items,
                 strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                root.name.slice(manager.lockfile.buffers.string_bytes.items),
             );
         }
 
@@ -7945,15 +8000,15 @@ pub const PackageManager = struct {
         if (run_lifecycle_scripts and install_summary.fail == 0) {
             // 2. install
             // 3. postinstall
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");
-            try manager.lockfile.scripts.runInParallel(manager.allocator, manager.env, log_level != .silent, "postinstall");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "install");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "postinstall");
 
             // 4. preprepare
             // 5. prepare
             // 6. postprepare
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preprepare");
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "prepare");
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postprepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "preprepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "prepare");
+            try manager.lockfile.scripts.spawnAllPackageScripts(manager, log_level, log_level != .silent, "postprepare");
         }
 
         if (comptime log_level != .silent) {

@@ -11,6 +11,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSAst = bun.JSAst;
+const JSC = bun.JSC;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -122,6 +123,7 @@ pub const Scripts = struct {
     const Entry = struct {
         cwd: string,
         script: string,
+        package_name: string,
     };
     const Entries = std.ArrayListUnmanaged(Entry);
 
@@ -145,31 +147,25 @@ pub const Scripts = struct {
     pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
         for (@field(this, hook).items) |entry| {
             if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
+            _ = try RunCommand.runPackageScriptForeground(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
         }
     }
 
-    pub fn runInParallel(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+    pub fn spawnAllPackageScripts(this: *Scripts, ctx: *PackageManager, comptime log_level: anytype, silent: bool, comptime hook: []const u8) !void {
+        _ = log_level;
         if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-        var queue = Queue.init(allocator);
-        defer queue.deinit();
 
-        for (@field(this, hook).items) |entry| {
-            if (try RunCommand.spawnPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent)) |script| {
-                try queue.writeItem(script);
+        const items = @field(this, hook).items;
+        if (items.len > 0) {
+            ctx.pending_tasks = @truncate(items.len);
+
+            for (items) |entry| {
+                try RunCommand.spawnPackageScript(ctx, entry.script, hook, entry.package_name, entry.cwd, &.{}, silent);
             }
 
-            while (queue.readableLength() >= MAX_PARALLEL_PROCESSES) {
-                if (queue.readItem()) |script| {
-                    if (!RunCommand.waitForPackageScript(script, hook, false, allocator)) {
-                        try queue.writeItem(script);
-                    }
-                }
+            while (ctx.pending_tasks > 0) {
+                ctx.uws_event_loop.tick();
             }
-        }
-
-        while (queue.readItem()) |script| {
-            _ = RunCommand.waitForPackageScript(script, hook, true, allocator);
         }
     }
 
@@ -1883,13 +1879,14 @@ pub const Package = extern struct {
             return false;
         }
 
-        pub fn enqueue(this: *const Package.Scripts, lockfile: *Lockfile, buf: []const u8, cwd: string) void {
+        pub fn enqueue(this: *const Package.Scripts, lockfile: *Lockfile, buf: []const u8, cwd: string, package_name: string) void {
             inline for (Package.Scripts.Hooks) |hook| {
                 const script = @field(this, hook);
                 if (!script.isEmpty()) {
                     @field(lockfile.scripts, hook).append(lockfile.allocator, .{
                         .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
                         .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
+                        .package_name = package_name,
                     }) catch unreachable;
                 }
             }
@@ -1930,6 +1927,7 @@ pub const Package = extern struct {
             node_modules: std.fs.Dir,
             subpath: [:0]const u8,
             cwd: string,
+            name: string,
         ) !void {
             var pkg_dir = try bun.openDir(node_modules, subpath);
             defer pkg_dir.close();
@@ -1954,7 +1952,7 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd);
+            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd, name);
         }
     };
 
@@ -4383,21 +4381,14 @@ const default_trusted_dependencies = brk: {
 
     // This file contains a list of dependencies that Bun runs `postinstall` on by default.
     const data = @embedFile("./default-trusted-dependencies.txt");
-    comptime var line_start = 0;
-    comptime var i = 0;
-    @setEvalBranchQuota(123456);
-    while (i < data.len) {
-        while (i < data.len) : (i += 1) {
-            if (data[i] == '\n' or data[i] == '\r') break;
-        }
-        while (data[i] == '\r' or data[i] == '\n') i += 1;
-        const line_slice = data[line_start..i];
-        if (line_slice.len == 0) break;
+    @setEvalBranchQuota(99999);
+
+    var iter = std.mem.tokenizeAny(u8, data, " \n\t");
+    while (iter.next()) |dep| {
         if (map.len == max_values) {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");
         }
-        line_start = i;
-        map.putAssumeCapacity(line_slice, 0);
+        map.putAssumeCapacity(dep, 0);
     }
 
     break :brk &map;

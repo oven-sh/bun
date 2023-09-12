@@ -23,6 +23,7 @@ const uws = @import("root").bun.uws;
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
+const PackageManager = @import("../install/install.zig").PackageManager;
 
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
@@ -1720,6 +1721,10 @@ pub const FilePoll = struct {
         pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
     };
 
+    const RunCommand = @import("../../src/cli/run_command.zig").RunCommand;
+    const PostinstallSubprocess = RunCommand.PostinstallSubprocess;
+    const PostinstallSubprocessPid = RunCommand.PostinstallSubprocess.PidPollData;
+
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
         FileSink,
@@ -1729,6 +1734,8 @@ pub const FilePoll = struct {
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
+        PostinstallSubprocess,
+        PostinstallSubprocessPid,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -1827,7 +1834,6 @@ pub const FilePoll = struct {
             @field(Owner.Tag, "Subprocess") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
                 var loader = ptr.as(JSC.Subprocess);
-
                 loader.onExitNotification();
             },
             @field(Owner.Tag, "FileSink") => {
@@ -1835,23 +1841,35 @@ pub const FilePoll = struct {
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);
             },
-
             @field(Owner.Tag, "DNSResolver") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSResolver", .{poll.fd});
                 var loader: *DNSResolver = ptr.as(DNSResolver);
                 loader.onDNSPoll(poll);
             },
-
             @field(Owner.Tag, "GetAddrInfoRequest") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
+            },
+            @field(Owner.Tag, "PostinstallSubprocess") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) PostinstallSubprocess Output", .{poll.fd});
+                var loader: *PostinstallSubprocess = ptr.as(PostinstallSubprocess);
+                loader.onOutputUpdate(size_or_offset, poll.fileDescriptor());
+            },
+            @field(Owner.Tag, "PidPollData") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) PostinstallSubprocess Pid", .{poll.fd});
+                var loader: *PostinstallSubprocess = ptr.as(PostinstallSubprocess);
+                loader.onProcessUpdate(size_or_offset);
             },
 
             else => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected?", .{poll.fd});
             },
         }
+    }
+
+    pub inline fn fileDescriptor(this: *FilePoll) bun.FileDescriptor {
+        return @intCast(this.fd);
     }
 
     pub const Flags = enum {
@@ -2070,6 +2088,24 @@ pub const FilePoll = struct {
 
     pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
+        poll.fd = @intCast(fd);
+        poll.flags = Flags.Set.init(flags);
+        poll.owner = owner;
+        poll.next_to_free = null;
+
+        if (KQueueGenerationNumber != u0) {
+            max_generation_number +%= 1;
+            poll.generation_number = max_generation_number;
+        }
+        return poll;
+    }
+
+    pub fn initWithPackageManager(m: *PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
+        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
+    }
+
+    pub fn initWithPackageManagerWithOwner(manager: *PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+        var poll = manager.file_poll_store.get();
         poll.fd = @intCast(fd);
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;

@@ -9,6 +9,20 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "sharp",
+      "program": "bun-debug",
+      "args": ["install", "sharp"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "/tmp/scratchpad_20230911T213851",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test [file]",
       "program": "bun-debug",
       "args": ["test", "${file}"],

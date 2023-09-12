@@ -582,7 +582,7 @@ pub const Listener = struct {
 
         var socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
-            uws.Loop.get().?,
+            uws.Loop.get(),
             @sizeOf(usize),
             ctx_opts,
         ) orelse {
@@ -919,7 +919,7 @@ pub const Listener = struct {
 
         globalObject.bunVM().eventLoop().ensureWaker();
 
-        var socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
+        var socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{

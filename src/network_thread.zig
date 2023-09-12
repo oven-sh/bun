@@ -164,7 +164,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
         const one = @as([8]u8, @bitCast(@as(usize, batch.len)));
         _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
-        this.waker.wake() catch @panic("Failed to wake");
+        this.waker.wake();
     }
 }
 

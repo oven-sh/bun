@@ -482,6 +482,10 @@ pub const RunCommand = struct {
 
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
+
+        this_bundler.resolver.opts.load_tsconfig_json = false;
+        this_bundler.options.load_tsconfig_json = false;
+
         this_bundler.configureLinker();
 
         var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
@@ -500,7 +504,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("Error loading current directory", .{});
+            Output.prettyErrorln("error loading current directory", .{});
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };

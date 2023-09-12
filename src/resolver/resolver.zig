@@ -3840,7 +3840,7 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
-        {
+        if (r.opts.load_tsconfig_json) {
             var tsconfig_path: ?string = null;
             if (r.opts.tsconfig_override == null) {
                 if (entries.getComptimeQuery("tsconfig.json")) |lookup| {

@@ -822,7 +822,7 @@ describe("path.parse and path.format", () => {
         ext: ".txt",
         name: "Ł",
       },
-    }
+    },
   ];
   testCases.forEach(({ input, expected }) => {
     it(`case ${input}`, () => {

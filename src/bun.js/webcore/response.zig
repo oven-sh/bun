@@ -1563,7 +1563,7 @@ pub const Fetch = struct {
 
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
-        var reject_unauthorized = true;
+        var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone

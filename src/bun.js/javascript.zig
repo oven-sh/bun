@@ -1516,9 +1516,9 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
-            ret.path = @as(string, @tagName(result));
+            ret.path = result.path;
             return;
         }
 

@@ -1437,6 +1437,153 @@ fn NewPrinter(
             ) catch unreachable;
         }
 
+        pub fn printUnquotedUTF16(e: *Printer, text: []const u16) void {
+            var i: usize = 0;
+            const n: usize = text.len;
+
+            // e(text.len) catch unreachable;
+
+            while (i < n) {
+                const CodeUnitType = u32;
+
+                const c: CodeUnitType = text[i];
+                i += 1;
+
+                // TODO: here
+                switch (c) {
+
+                    // Special-case the null character since it may mess with code written in C
+                    // that treats null characters as the end of the string.
+                    0x00 => {
+                        // We don't want "\x001" to be written as "\01"
+                        if (i < n and text[i] >= '0' and text[i] <= '9') {
+                            e.print("\\x00");
+                        } else {
+                            e.print("\\0");
+                        }
+                    },
+
+                    // Special-case the bell character since it may cause dumping this file to
+                    // the terminal to make a sound, which is undesirable. Note that we can't
+                    // use an octal literal to print this shorter since octal literals are not
+                    // allowed in strict mode (or in template strings).
+                    0x07 => {
+                        e.print("\\x07");
+                    },
+                    0x08 => {
+                        e.print("\\b");
+                    },
+                    0x0C => {
+                        e.print("\\f");
+                    },
+                    '\t' => {
+                        e.print("\\t");
+                    },
+                    '\n' => {
+                        e.print("\\n");
+                    },
+                    // we never print \r un-escaped
+                    std.ascii.control_code.cr => {
+                        e.print("\\r");
+                    },
+                    // \v
+                    std.ascii.control_code.vt => {
+                        e.print("\\v");
+                    },
+                    // "\\"
+                    '\\' => {
+                        e.print("\\\\");
+                    },
+
+                    0x2028 => {
+                        e.print("\\u2028");
+                    },
+                    0x2029 => {
+                        e.print("\\u2029");
+                    },
+                    0xFEFF => {
+                        e.print("\\uFEFF");
+                    },
+
+                    else => {
+                        switch (c) {
+                            first_ascii...last_ascii => {
+                                e.print(@as(u8, @intCast(c)));
+                            },
+                            first_high_surrogate...last_high_surrogate => {
+
+                                // Is there a next character?
+                                if (i < n) {
+                                    const c2: CodeUnitType = text[i];
+
+                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
+                                        i += 1;
+
+                                        // Escape this character if UTF-8 isn't allowed
+                                        if (ascii_only_always_on_unless_minifying) {
+                                            var ptr = e.writer.reserve(12) catch unreachable;
+                                            ptr[0..12].* = [_]u8{
+                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
+                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
+                                            };
+                                            e.writer.advance(12);
+
+                                            continue;
+                                            // Otherwise, encode to UTF-8
+                                        }
+
+                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
+
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
+                                        continue;
+                                    }
+                                }
+
+                                // Write an unpaired high surrogate
+                                var ptr = e.writer.reserve(6) catch unreachable;
+                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.writer.advance(6);
+                            },
+                            // Is this an unpaired low surrogate or four-digit hex escape?
+                            first_low_surrogate...last_low_surrogate => {
+                                // Write an unpaired high surrogate
+                                var ptr = e.writer.reserve(6) catch unreachable;
+                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                e.writer.advance(6);
+                            },
+                            else => {
+                                if (ascii_only_always_on_unless_minifying) {
+                                    if (c > 0xFF) {
+                                        var ptr = e.writer.reserve(6) catch unreachable;
+                                        // Write an unpaired high surrogate
+                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
+                                        e.writer.advance(6);
+                                    } else {
+                                        // Can this be a two-digit hex escape?
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
+                                        e.writer.advance(4);
+                                    }
+                                } else {
+                                    // chars < 255 as two digit hex escape
+                                    if (c <= 0xFF) {
+                                        var ptr = e.writer.reserve(4) catch unreachable;
+                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
+                                        e.writer.advance(4);
+                                        continue;
+                                    }
+
+                                    var ptr = e.writer.reserve(4) catch return;
+                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        }
+
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
             var i: usize = 0;
             const n: usize = text.len;
@@ -3149,53 +3296,14 @@ fn NewPrinter(
                 p.print(" ");
             }
 
-            if (comptime is_bun_platform) {
-                // Translate any non-ASCII to unicode escape sequences
-                var ascii_start: usize = 0;
-                var is_ascii = false;
-                var iter = CodepointIterator.init(e.value);
-                var cursor = CodepointIterator.Cursor{};
-                while (iter.next(&cursor)) {
-                    switch (cursor.c) {
-                        first_ascii...last_ascii => {
-                            if (!is_ascii) {
-                                ascii_start = cursor.i;
-                                is_ascii = true;
-                            }
-                        },
-                        else => {
-                            if (is_ascii) {
-                                p.print(e.value[ascii_start..cursor.i]);
-                                is_ascii = false;
-                            }
-
-                            switch (cursor.c) {
-                                0...0xFFFF => {
-                                    p.print([_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[cursor.c >> 12],
-                                        hex_chars[(cursor.c >> 8) & 15],
-                                        hex_chars[(cursor.c >> 4) & 15],
-                                        hex_chars[cursor.c & 15],
-                                    });
-                                },
-                                else => {
-                                    p.print("\\u{");
-                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                    p.print("}");
-                                },
-                            }
-                        },
-                    }
-                }
-
-                if (is_ascii) {
-                    p.print(e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                p.print(e.value);
+            switch (e.data) {
+                .raw => |raw| {
+                    p.print(raw);
+                },
+                .decoded => |decoded| {
+                    p.printUnquotedUTF16(decoded.items);
+                    decoded.deinit();
+                },
             }
 
             // Need a space before the next identifier to avoid it turning into flags

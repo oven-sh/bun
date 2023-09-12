@@ -1467,7 +1467,7 @@ pub const Subprocess = struct {
             else
                 0;
             var fd: std.os.linux.fd_t = std.os.linux.pidfd_open(
-                pid,
+                @intCast(pid),
                 pidfd_flags,
             );
 
@@ -1476,7 +1476,7 @@ pub const Subprocess = struct {
                     .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
                     .INTR => {
                         fd = std.os.linux.pidfd_open(
-                            pid,
+                            @intCast(pid),
                             pidfd_flags,
                         );
                         continue;
@@ -1485,7 +1485,7 @@ pub const Subprocess = struct {
                         if (err == .INVAL) {
                             if (pidfd_flags != 0) {
                                 fd = std.os.linux.pidfd_open(
-                                    pid,
+                                    @intCast(pid),
                                     0,
                                 );
                                 pidfd_flags = 0;

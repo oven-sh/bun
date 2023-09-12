@@ -1,6 +1,5 @@
 import type { Server, ServerWebSocket } from "bun";
 import { AwsClient } from "aws4fetch";
-import type { APIGatewayProxyEvent } from "aws-lambda";
 
 type Lambda = {
   fetch: (request: Request, server: Server) => Promise<Response | undefined>;
@@ -309,7 +308,7 @@ type HttpEventV1 = {
   readonly body?: string;
 };
 
-function isHttpEventV1(event: any): event is APIGatewayProxyEvent {
+function isHttpEventV1(event: any): event is HttpEventV1 {
   return !event.Records && event.version !== "2.0" && event.version !== "0" && typeof event.requestContext === "object";
 }
 

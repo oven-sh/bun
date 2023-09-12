@@ -670,7 +670,7 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(fd);
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -1516,9 +1516,9 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
-            ret.path = @as(string, @tagName(result));
+            ret.path = result.path;
             return;
         }
 

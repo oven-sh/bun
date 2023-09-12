@@ -273,6 +273,7 @@ pub const Run = struct {
                 } else {
                     vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                vm.log.msgs.items.len = 0;
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }

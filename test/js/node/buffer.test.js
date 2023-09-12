@@ -2572,3 +2572,16 @@ it("construct buffer from UTF16, issue #3914", () => {
   const buf = Buffer.from(str, "latin1");
   expect(buf).toStrictEqual(raw);
 });
+
+it("construct buffer from hex, issue #4919", () => {
+  const data = "测试63e9f6c4b04fa8c80f3fb0ee";
+
+  const slice1 = data.substring(0, 2);
+  const slice2 = data.substring(2);
+
+  const buf1 = Buffer.from(slice1, "hex");
+  const buf2 = Buffer.from(slice2, "hex");
+
+  expect(buf1).toStrictEqual(Buffer.from([]));
+  expect(buf2).toStrictEqual(Buffer.from([0x63, 0xe9, 0xf6, 0xc4, 0xb0, 0x4f, 0xa8, 0xc8, 0x0f, 0x3f, 0xb0, 0xee]));
+});

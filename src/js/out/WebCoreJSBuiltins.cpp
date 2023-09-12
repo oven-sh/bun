@@ -722,9 +722,9 @@ const char* const s_moduleMainCode = "(function (){\"use strict\";return @requir
 const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireCodeLength = 769;
+const int s_moduleRequireCodeLength = 725;
 static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireCode = "(function (id){\"use strict\";const existing=@requireMap.@get(id)||@requireMap.@get(id=@resolveSync(id,this.path,!1));if(existing)return @evaluateCommonJSModule(existing),existing.exports;if(id.endsWith(\".json\")||id.endsWith(\".toml\")||id.endsWith(\".node\"))return @internalRequire(id);const mod=@createCommonJSModule(id,{},!1);@requireMap.@set(id,mod);var out=this.@require(id,mod);if(out===-1){try{out=@requireESM(id)}catch(exception){throw @requireMap.@delete(id),exception}const esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady){const namespace=@Loader.getModuleNamespaceObject(esm.module);return mod.exports=namespace.__esModule\?namespace:Object.create(namespace,{__esModule:{value:!0}})}}return @evaluateCommonJSModule(mod),mod.exports})\n";
+const char* const s_moduleRequireCode = "(function (id){\"use strict\";const existing=@requireMap.@get(id)||@requireMap.@get(id=@resolveSync(id,this.path,!1));if(existing)return @evaluateCommonJSModule(existing),existing.exports;if(id.endsWith(\".node\"))return @internalRequire(id);const mod=@createCommonJSModule(id,{},!1);@requireMap.@set(id,mod);var out=this.@require(id,mod);if(out===-1){try{out=@requireESM(id)}catch(exception){throw @requireMap.@delete(id),exception}const esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady){const namespace=@Loader.getModuleNamespaceObject(esm.module);return mod.exports=namespace.__esModule\?namespace:Object.create(namespace,{__esModule:{value:!0}})}}return @evaluateCommonJSModule(mod),mod.exports})\n";
 
 // requireResolve
 const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

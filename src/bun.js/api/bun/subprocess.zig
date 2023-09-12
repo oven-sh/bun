@@ -1718,7 +1718,7 @@ pub const Subprocess = struct {
                 this.waitpid_err = err;
             },
             .result => |result| {
-                if (result.pid == pid) {
+                if (result.pid != 0) {
                     if (std.os.W.IFEXITED(result.status)) {
                         this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                     }

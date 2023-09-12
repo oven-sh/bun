@@ -246,14 +246,14 @@ describe("node:http", () => {
         let headers;
         var server = createServer((req, res) => {
           headers = req.headers;
-          req.on('data', () => {});
+          req.on("data", () => {});
           req.on("end", () => {
             res.end();
           });
         });
         const url = await listen(server);
         await fetch(url, { decompress: false });
-        expect(headers['accept-encoding']).toBeFalsy();
+        expect(headers["accept-encoding"]).toBeFalsy();
         done();
       } catch (e) {
         done(e);

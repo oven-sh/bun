@@ -2119,7 +2119,7 @@ pub const ZigConsoleClient = struct {
                         this.globalThis,
                         this.custom_formatted_object.function,
                         this.custom_formatted_object.this,
-                        this.max_depth - this.depth,
+                        if (this.depth > this.max_depth) 0 else this.max_depth - this.depth,
                         this.max_depth,
                         enable_ansi_colors,
                     );

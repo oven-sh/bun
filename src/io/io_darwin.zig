@@ -1350,6 +1350,12 @@ pub fn read(
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
+                    if (op.positional) {
+                        const rc = os.system.lseek(op.fd, @intCast(op.offset), 0);
+                        if (rc == -1) {
+                            return error.Unseekable;
+                        }
+                    }
                     const rc = os.system.read(
                         op.fd,
                         op.buf,

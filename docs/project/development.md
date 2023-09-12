@@ -46,7 +46,8 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm clang lld
+$ sudo pacman -S llvm15 clang15 lld
+
 ```
 
 {% /codetabs %}
@@ -68,6 +69,14 @@ If not, run this to manually link it:
 $ export PATH="$PATH:$(brew --prefix llvm@15)/bin"
 $ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
 $ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
+```
+
+```bash#Arch
+
+$ export PATH="$PATH:/usr/lib/llvm15/bin"
+$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm15/lib"
+$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm15/include"
+
 ```
 
 {% /codetabs %}

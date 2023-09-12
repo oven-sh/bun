@@ -1246,7 +1246,15 @@ const PackageInstall = struct {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
-                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0) catch |err| {
+                                if (err != error.PathAlreadyExists) {
+                                    return err;
+                                }
+
+                                std.os.unlinkat(destination_dir_.dir.fd, entry.path, 0) catch {};
+                                try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            };
+
                             real_file_count += 1;
                         },
                         else => {},

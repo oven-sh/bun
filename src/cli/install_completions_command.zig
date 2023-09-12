@@ -346,7 +346,7 @@ pub const InstallCompletionsCommand = struct {
             }
 
             Output.printErrorln(
-                "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
+                "Please either append it to your respective config file (.bashrc, .zshrc, etc):\n   bun completions >> ~/.bashrc\n   bun completions >> ~/.zshrc \n\n Pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 .{},
             );
             Global.exit(fail_exit_code);

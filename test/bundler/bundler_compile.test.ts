@@ -18,6 +18,9 @@ describe("bundler", () => {
     files: {
       "/entry.ts": `
         // testing random features of bun
+        import 'node:process';
+        import 'process';
+
         import { Database } from "bun:sqlite";
         import { serve } from 'bun';
         import { getRandomSeed } from 'bun:jsc';

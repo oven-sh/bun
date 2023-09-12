@@ -3919,12 +3919,7 @@ pub const FIFO = struct {
             }
         }
 
-        if (comptime Environment.isLinux) {
-            if (available == 0) {
-                std.debug.assert(this.poll_ref == null);
-                return .pending;
-            }
-        } else if (available == std.math.maxInt(@TypeOf(available)) and this.poll_ref == null) {
+        if (available == std.math.maxInt(@TypeOf(available)) and this.poll_ref == null) {
             // we don't know if it's readable or not
             return switch (bun.isReadable(this.fd)) {
                 .hup => {

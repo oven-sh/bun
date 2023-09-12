@@ -1419,6 +1419,7 @@ pub const BundleOptions = struct {
     transform_options: Api.TransformOptions,
     polyfill_node_globals: bool = false,
     transform_only: bool = false,
+    load_tsconfig_json: bool = true,
 
     rewrite_jest_for_tests: bool = false,
 

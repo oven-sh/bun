@@ -812,6 +812,17 @@ describe("path.parse and path.format", () => {
         name: "another_dir",
       },
     },
+    {
+      // https://github.com/oven-sh/bun/issues/4954
+      input: "/test/Ł.txt",
+      expected: {
+        root: "/",
+        dir: "/test",
+        base: "Ł.txt",
+        ext: ".txt",
+        name: "Ł",
+      },
+    }
   ];
   testCases.forEach(({ input, expected }) => {
     it(`case ${input}`, () => {

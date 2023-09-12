@@ -670,7 +670,7 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(fd);
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});

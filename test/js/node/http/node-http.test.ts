@@ -873,7 +873,7 @@ describe("node:http", () => {
     });
   });
 
-  test("should listen on port if string, issue#4582", () => {
+  test("should listen on port if string, issue#4582", done => {
     const server = createServer((req, res) => {
       res.end();
     });

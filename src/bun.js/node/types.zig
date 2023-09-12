@@ -2198,22 +2198,14 @@ pub const Path = struct {
         base.setOutputEncoding();
         name_.setOutputEncoding();
         ext.setOutputEncoding();
-        var entries = [10]JSC.ZigString{
-            JSC.ZigString.init("dir"),
-            JSC.ZigString.init("root"),
-            JSC.ZigString.init("base"),
-            JSC.ZigString.init("name"),
-            JSC.ZigString.init("ext"),
-            dir,
-            root,
-            base,
-            name_,
-            ext,
-        };
 
-        var keys: []JSC.ZigString = entries[0..5];
-        var values: []JSC.ZigString = entries[5..10];
-        return JSC.JSValue.fromEntries(globalThis, keys.ptr, values.ptr, 5, true);
+        var result = JSC.JSValue.createEmptyObject(globalThis, 5);
+        result.put(globalThis, JSC.ZigString.static("dir"), dir.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("root"), root.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("base"), base.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("name"), name_.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("ext"), ext.toValueGC(globalThis));
+        return result;
     }
     pub fn relative(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

@@ -2,6 +2,44 @@
 // Do not edit by hand.
 type RemoveThis<F> = F extends (this: infer T, ...args: infer A) => infer R ? (...args: A) => R : F;
 
+// ReadableByteStreamInternals.ts
+declare const $privateInitializeReadableByteStreamController: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["privateInitializeReadableByteStreamController"]>;
+declare const $readableStreamByteStreamControllerStart: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamByteStreamControllerStart"]>;
+declare const $privateInitializeReadableStreamBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["privateInitializeReadableStreamBYOBRequest"]>;
+declare const $isReadableByteStreamController: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableByteStreamController"]>;
+declare const $isReadableStreamBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableStreamBYOBRequest"]>;
+declare const $isReadableStreamBYOBReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableStreamBYOBReader"]>;
+declare const $readableByteStreamControllerCancel: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCancel"]>;
+declare const $readableByteStreamControllerError: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerError"]>;
+declare const $readableByteStreamControllerClose: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerClose"]>;
+declare const $readableByteStreamControllerClearPendingPullIntos: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerClearPendingPullIntos"]>;
+declare const $readableByteStreamControllerGetDesiredSize: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerGetDesiredSize"]>;
+declare const $readableStreamHasBYOBReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamHasBYOBReader"]>;
+declare const $readableStreamHasDefaultReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamHasDefaultReader"]>;
+declare const $readableByteStreamControllerHandleQueueDrain: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerHandleQueueDrain"]>;
+declare const $readableByteStreamControllerPull: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerPull"]>;
+declare const $readableByteStreamControllerShouldCallPull: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerShouldCallPull"]>;
+declare const $readableByteStreamControllerCallPullIfNeeded: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCallPullIfNeeded"]>;
+declare const $transferBufferToCurrentRealm: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["transferBufferToCurrentRealm"]>;
+declare const $readableStreamReaderKind: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamReaderKind"]>;
+declare const $readableByteStreamControllerEnqueue: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerEnqueue"]>;
+declare const $readableByteStreamControllerEnqueueChunk: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerEnqueueChunk"]>;
+declare const $readableByteStreamControllerRespondWithNewView: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondWithNewView"]>;
+declare const $readableByteStreamControllerRespond: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespond"]>;
+declare const $readableByteStreamControllerRespondInternal: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInternal"]>;
+declare const $readableByteStreamControllerRespondInReadableState: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInReadableState"]>;
+declare const $readableByteStreamControllerRespondInClosedState: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInClosedState"]>;
+declare const $readableByteStreamControllerProcessPullDescriptors: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerProcessPullDescriptors"]>;
+declare const $readableByteStreamControllerFillDescriptorFromQueue: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerFillDescriptorFromQueue"]>;
+declare const $readableByteStreamControllerShiftPendingDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerShiftPendingDescriptor"]>;
+declare const $readableByteStreamControllerInvalidateBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerInvalidateBYOBRequest"]>;
+declare const $readableByteStreamControllerCommitDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCommitDescriptor"]>;
+declare const $readableByteStreamControllerConvertDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerConvertDescriptor"]>;
+declare const $readableStreamFulfillReadIntoRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamFulfillReadIntoRequest"]>;
+declare const $readableStreamBYOBReaderRead: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamBYOBReaderRead"]>;
+declare const $readableByteStreamControllerPullInto: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerPullInto"]>;
+declare const $readableStreamAddReadIntoRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamAddReadIntoRequest"]>;
+
 // WritableStreamInternals.ts
 declare const $isWritableStream: RemoveThis<typeof import("../builtins/WritableStreamInternals")["isWritableStream"]>;
 declare const $isWritableStreamDefaultWriter: RemoveThis<typeof import("../builtins/WritableStreamInternals")["isWritableStreamDefaultWriter"]>;
@@ -73,6 +111,27 @@ declare const $transformStreamDefaultSinkAbortAlgorithm: RemoveThis<typeof impor
 declare const $transformStreamDefaultSinkCloseAlgorithm: RemoveThis<typeof import("../builtins/TransformStreamInternals")["transformStreamDefaultSinkCloseAlgorithm"]>;
 declare const $transformStreamDefaultSourcePullAlgorithm: RemoveThis<typeof import("../builtins/TransformStreamInternals")["transformStreamDefaultSourcePullAlgorithm"]>;
 
+// StreamInternals.ts
+declare const $markPromiseAsHandled: RemoveThis<typeof import("../builtins/StreamInternals")["markPromiseAsHandled"]>;
+declare const $shieldingPromiseResolve: RemoveThis<typeof import("../builtins/StreamInternals")["shieldingPromiseResolve"]>;
+declare const $promiseInvokeOrNoopMethodNoCatch: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopMethodNoCatch"]>;
+declare const $promiseInvokeOrNoopNoCatch: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopNoCatch"]>;
+declare const $promiseInvokeOrNoopMethod: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopMethod"]>;
+declare const $promiseInvokeOrNoop: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoop"]>;
+declare const $promiseInvokeOrFallbackOrNoop: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrFallbackOrNoop"]>;
+declare const $validateAndNormalizeQueuingStrategy: RemoveThis<typeof import("../builtins/StreamInternals")["validateAndNormalizeQueuingStrategy"]>;
+declare const $createFIFO: RemoveThis<typeof import("../builtins/StreamInternals")["createFIFO"]>;
+declare const $newQueue: RemoveThis<typeof import("../builtins/StreamInternals")["newQueue"]>;
+declare const $dequeueValue: RemoveThis<typeof import("../builtins/StreamInternals")["dequeueValue"]>;
+declare const $enqueueValueWithSize: RemoveThis<typeof import("../builtins/StreamInternals")["enqueueValueWithSize"]>;
+declare const $peekQueueValue: RemoveThis<typeof import("../builtins/StreamInternals")["peekQueueValue"]>;
+declare const $resetQueue: RemoveThis<typeof import("../builtins/StreamInternals")["resetQueue"]>;
+declare const $extractSizeAlgorithm: RemoveThis<typeof import("../builtins/StreamInternals")["extractSizeAlgorithm"]>;
+declare const $extractHighWaterMark: RemoveThis<typeof import("../builtins/StreamInternals")["extractHighWaterMark"]>;
+declare const $extractHighWaterMarkFromQueuingStrategyInit: RemoveThis<typeof import("../builtins/StreamInternals")["extractHighWaterMarkFromQueuingStrategyInit"]>;
+declare const $createFulfilledPromise: RemoveThis<typeof import("../builtins/StreamInternals")["createFulfilledPromise"]>;
+declare const $toDictionary: RemoveThis<typeof import("../builtins/StreamInternals")["toDictionary"]>;
+
 // ReadableStreamInternals.ts
 declare const $readableStreamReaderGenericInitialize: RemoveThis<typeof import("../builtins/ReadableStreamInternals")["readableStreamReaderGenericInitialize"]>;
 declare const $privateInitializeReadableStreamDefaultController: RemoveThis<typeof import("../builtins/ReadableStreamInternals")["privateInitializeReadableStreamDefaultController"]>;
@@ -138,62 +197,3 @@ declare const $readableStreamToArrayBufferDirect: RemoveThis<typeof import("../b
 declare const $readableStreamToTextDirect: RemoveThis<typeof import("../builtins/ReadableStreamInternals")["readableStreamToTextDirect"]>;
 declare const $readableStreamToArrayDirect: RemoveThis<typeof import("../builtins/ReadableStreamInternals")["readableStreamToArrayDirect"]>;
 declare const $readableStreamDefineLazyIterators: RemoveThis<typeof import("../builtins/ReadableStreamInternals")["readableStreamDefineLazyIterators"]>;
-
-// StreamInternals.ts
-declare const $markPromiseAsHandled: RemoveThis<typeof import("../builtins/StreamInternals")["markPromiseAsHandled"]>;
-declare const $shieldingPromiseResolve: RemoveThis<typeof import("../builtins/StreamInternals")["shieldingPromiseResolve"]>;
-declare const $promiseInvokeOrNoopMethodNoCatch: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopMethodNoCatch"]>;
-declare const $promiseInvokeOrNoopNoCatch: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopNoCatch"]>;
-declare const $promiseInvokeOrNoopMethod: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoopMethod"]>;
-declare const $promiseInvokeOrNoop: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrNoop"]>;
-declare const $promiseInvokeOrFallbackOrNoop: RemoveThis<typeof import("../builtins/StreamInternals")["promiseInvokeOrFallbackOrNoop"]>;
-declare const $validateAndNormalizeQueuingStrategy: RemoveThis<typeof import("../builtins/StreamInternals")["validateAndNormalizeQueuingStrategy"]>;
-declare const $createFIFO: RemoveThis<typeof import("../builtins/StreamInternals")["createFIFO"]>;
-declare const $newQueue: RemoveThis<typeof import("../builtins/StreamInternals")["newQueue"]>;
-declare const $dequeueValue: RemoveThis<typeof import("../builtins/StreamInternals")["dequeueValue"]>;
-declare const $enqueueValueWithSize: RemoveThis<typeof import("../builtins/StreamInternals")["enqueueValueWithSize"]>;
-declare const $peekQueueValue: RemoveThis<typeof import("../builtins/StreamInternals")["peekQueueValue"]>;
-declare const $resetQueue: RemoveThis<typeof import("../builtins/StreamInternals")["resetQueue"]>;
-declare const $extractSizeAlgorithm: RemoveThis<typeof import("../builtins/StreamInternals")["extractSizeAlgorithm"]>;
-declare const $extractHighWaterMark: RemoveThis<typeof import("../builtins/StreamInternals")["extractHighWaterMark"]>;
-declare const $extractHighWaterMarkFromQueuingStrategyInit: RemoveThis<typeof import("../builtins/StreamInternals")["extractHighWaterMarkFromQueuingStrategyInit"]>;
-declare const $createFulfilledPromise: RemoveThis<typeof import("../builtins/StreamInternals")["createFulfilledPromise"]>;
-declare const $toDictionary: RemoveThis<typeof import("../builtins/StreamInternals")["toDictionary"]>;
-
-// ReadableByteStreamInternals.ts
-declare const $privateInitializeReadableByteStreamController: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["privateInitializeReadableByteStreamController"]>;
-declare const $readableStreamByteStreamControllerStart: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamByteStreamControllerStart"]>;
-declare const $privateInitializeReadableStreamBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["privateInitializeReadableStreamBYOBRequest"]>;
-declare const $isReadableByteStreamController: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableByteStreamController"]>;
-declare const $isReadableStreamBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableStreamBYOBRequest"]>;
-declare const $isReadableStreamBYOBReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["isReadableStreamBYOBReader"]>;
-declare const $readableByteStreamControllerCancel: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCancel"]>;
-declare const $readableByteStreamControllerError: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerError"]>;
-declare const $readableByteStreamControllerClose: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerClose"]>;
-declare const $readableByteStreamControllerClearPendingPullIntos: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerClearPendingPullIntos"]>;
-declare const $readableByteStreamControllerGetDesiredSize: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerGetDesiredSize"]>;
-declare const $readableStreamHasBYOBReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamHasBYOBReader"]>;
-declare const $readableStreamHasDefaultReader: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamHasDefaultReader"]>;
-declare const $readableByteStreamControllerHandleQueueDrain: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerHandleQueueDrain"]>;
-declare const $readableByteStreamControllerPull: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerPull"]>;
-declare const $readableByteStreamControllerShouldCallPull: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerShouldCallPull"]>;
-declare const $readableByteStreamControllerCallPullIfNeeded: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCallPullIfNeeded"]>;
-declare const $transferBufferToCurrentRealm: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["transferBufferToCurrentRealm"]>;
-declare const $readableStreamReaderKind: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamReaderKind"]>;
-declare const $readableByteStreamControllerEnqueue: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerEnqueue"]>;
-declare const $readableByteStreamControllerEnqueueChunk: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerEnqueueChunk"]>;
-declare const $readableByteStreamControllerRespondWithNewView: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondWithNewView"]>;
-declare const $readableByteStreamControllerRespond: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespond"]>;
-declare const $readableByteStreamControllerRespondInternal: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInternal"]>;
-declare const $readableByteStreamControllerRespondInReadableState: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInReadableState"]>;
-declare const $readableByteStreamControllerRespondInClosedState: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerRespondInClosedState"]>;
-declare const $readableByteStreamControllerProcessPullDescriptors: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerProcessPullDescriptors"]>;
-declare const $readableByteStreamControllerFillDescriptorFromQueue: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerFillDescriptorFromQueue"]>;
-declare const $readableByteStreamControllerShiftPendingDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerShiftPendingDescriptor"]>;
-declare const $readableByteStreamControllerInvalidateBYOBRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerInvalidateBYOBRequest"]>;
-declare const $readableByteStreamControllerCommitDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerCommitDescriptor"]>;
-declare const $readableByteStreamControllerConvertDescriptor: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerConvertDescriptor"]>;
-declare const $readableStreamFulfillReadIntoRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamFulfillReadIntoRequest"]>;
-declare const $readableStreamBYOBReaderRead: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamBYOBReaderRead"]>;
-declare const $readableByteStreamControllerPullInto: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableByteStreamControllerPullInto"]>;
-declare const $readableStreamAddReadIntoRequest: RemoveThis<typeof import("../builtins/ReadableByteStreamInternals")["readableStreamAddReadIntoRequest"]>;

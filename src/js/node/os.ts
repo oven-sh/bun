@@ -77,6 +77,7 @@ function lazyCpus({ cpus }) {
 
 function bound(obj) {
   return {
+    availableParallelism: obj.availableParallelism.bind(obj),
     arch: obj.arch.bind(obj),
     cpus: lazyCpus(obj),
     endianness: obj.endianness.bind(obj),

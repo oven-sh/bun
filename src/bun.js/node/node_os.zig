@@ -17,6 +17,7 @@ pub const Os = struct {
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         const module = JSC.JSValue.createEmptyObject(globalObject, 22);
 
+        module.put(globalObject, JSC.ZigString.static("availableParallelism"), JSC.NewFunction(globalObject, JSC.ZigString.static("availableParallelism"), 0, availableParallelism, true));
         module.put(globalObject, JSC.ZigString.static("arch"), JSC.NewFunction(globalObject, JSC.ZigString.static("arch"), 0, arch, true));
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
         module.put(globalObject, JSC.ZigString.static("endianness"), JSC.NewFunction(globalObject, JSC.ZigString.static("endianness"), 0, endianness, true));
@@ -47,6 +48,24 @@ pub const Os = struct {
 
     pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
     pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
+
+    pub fn availableParallelism(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+	
+        return if (std.Thread.getCpuCount()) |rc| {
+            if (rc < 1) {
+                return JSC.JSValue.jsNumberFromUint64(1);
+            }
+            return JSC.JSValue.jsNumberFromUint64(rc);
+        } else |_| {
+            const err = JSC.SystemError{
+                .message = bun.String.static("Failed to get availableParallelism information"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+            };
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsNumberFromUint64(1);
+        };
+    }
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());

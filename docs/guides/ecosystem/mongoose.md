@@ -75,7 +75,7 @@ await mongoose.disconnect();
 
 ---
 
-Lets run this with `bun run`.
+Let's run this with `bun run`.
 
 ```bash
 $ bun run index.ts

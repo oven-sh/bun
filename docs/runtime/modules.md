@@ -43,7 +43,7 @@ In this case, we are importing from `./hello`, a relative path with no extension
 - `./hello/index.json`
 - `./hello/index.mjs`
 
-Import paths are case-insensitive.
+Import paths are case-insensitive, meaning these are all valid imports:
 
 ```ts#index.ts
 import { hello } from "./hello";

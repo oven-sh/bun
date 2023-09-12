@@ -1466,16 +1466,17 @@ pub const Subprocess = struct {
                 std.os.O.NONBLOCK
             else
                 0;
-            var fd: std.os.linux.fd_t = std.os.linux.pidfd_open(
+
+            var rc = std.os.linux.pidfd_open(
                 @intCast(pid),
                 pidfd_flags,
             );
 
             while (true) {
-                switch (std.os.linux.getErrno(fd)) {
-                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
+                switch (std.os.linux.getErrno(rc)) {
+                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
                     .INTR => {
-                        fd = std.os.linux.pidfd_open(
+                        rc = std.os.linux.pidfd_open(
                             @intCast(pid),
                             pidfd_flags,
                         );
@@ -1484,7 +1485,7 @@ pub const Subprocess = struct {
                     else => |err| {
                         if (err == .INVAL) {
                             if (pidfd_flags != 0) {
-                                fd = std.os.linux.pidfd_open(
+                                rc = std.os.linux.pidfd_open(
                                     @intCast(pid),
                                     0,
                                 );

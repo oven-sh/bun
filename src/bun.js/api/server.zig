@@ -2723,7 +2723,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRender(this: *RequestContext) void {
-            ctxLog("render", .{});
+            ctxLog("doRender", .{});
 
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -3039,7 +3039,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (last) {
                     var bytes = this.request_body_buf;
-                    defer this.request_body_buf = .{};
+                    this.request_body_buf = .{};
                     var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
@@ -3054,7 +3054,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         //     this.request_body_buf.clearAndFree(this.allocator);
                         // } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                            this.request_body_buf.clearAndFree(this.allocator);
+                            bytes.clearAndFree(this.allocator);
                             body.value.toError(err, this.server.globalThis);
                             break :getter;
                         };

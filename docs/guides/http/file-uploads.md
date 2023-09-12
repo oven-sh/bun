@@ -81,7 +81,7 @@ const server = Bun.serve({
 +   if (url.pathname === '/action') {
 +     const formdata = await req.formData();
 +     const name = formdata.get('name');
-+     const profilePicture = formdata.get('profilePicture');+
++     const profilePicture = formdata.get('profilePicture');
 +     if (!profilePicture) throw new Error('Must upload a profile picture.');
 +     // write profilePicture to disk
 +     await Bun.write('profilePicture.png', profilePicture);

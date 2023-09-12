@@ -10,11 +10,11 @@ function familySync() {
 const GLIBC = "glibc";
 const MUSL = "musl";
 
-function versionAsync() {
-  return Promise.resolve(version());
+function version() {
+  return Promise.resolve(versionSync());
 }
 
-function version() {
+function versionSync() {
   return null;
 }
 
@@ -34,5 +34,5 @@ export default {
   isNonGlibcLinux,
   isNonGlibcLinuxSync,
   version,
-  versionAsync,
+  versionSync,
 };

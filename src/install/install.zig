@@ -343,6 +343,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -421,6 +423,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{ .extract = tarball };
     }
 };
@@ -1246,7 +1250,15 @@ const PackageInstall = struct {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
-                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0) catch |err| {
+                                if (err != error.PathAlreadyExists) {
+                                    return err;
+                                }
+
+                                std.os.unlinkat(destination_dir_.dir.fd, entry.path, 0) catch {};
+                                try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            };
+
                             real_file_count += 1;
                         },
                         else => {},
@@ -1677,6 +1689,10 @@ pub const PackageManager = struct {
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
         return this.env.getHttpProxy(url);
+    }
+
+    pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
+        return this.env.getTLSRejectUnauthorized();
     }
 
     pub const WakeHandler = struct {
@@ -5243,7 +5259,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, entries_option.entries, .production);
+        try env.load(entries_option.entries, .production);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;

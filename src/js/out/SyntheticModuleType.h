@@ -5,6 +5,7 @@ enum SyntheticModuleType : uint32_t {
     ObjectModule = 3,
     File = 4,
     ESM = 5,
+    JSONForObjectLoader = 6,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as `(1 << 9) & id`

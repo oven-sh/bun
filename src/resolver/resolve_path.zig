@@ -471,7 +471,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         Fs.FileSystem.instance.top_level_dir,
         &relative_from_buf,
         &[_][]const u8{
-            normalizeStringBuf(from, relative_from_buf[1..], false, platform, true),
+            normalizeStringBuf(from, relative_from_buf[1..], true, platform, true),
         },
         platform,
     );
@@ -484,7 +484,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         Fs.FileSystem.instance.top_level_dir,
         &relative_to_buf,
         &[_][]const u8{
-            normalizeStringBuf(to, relative_to_buf[1..], false, platform, true),
+            normalizeStringBuf(to, relative_to_buf[1..], true, platform, true),
         },
         platform,
     );

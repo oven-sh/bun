@@ -30,7 +30,7 @@ cloned solidjs/solid-start#main to /path/to/my-app/.solid-start
 
 ---
 
-As instructed by the `create-solid` CLI, lets install our dependencies.
+As instructed by the `create-solid` CLI, let's install our dependencies.
 
 ```sh
 $ cd my-app

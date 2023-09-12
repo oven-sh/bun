@@ -72,20 +72,20 @@ To build for production, you'll need to add the right SvelteKit adapter. Current
 
 Now, make the following changes to your `svelte.config.js`.
 
-```ts
+```ts-diff
 - import adapter from "@sveltejs/adapter-auto";
 + import adapter from "svelte-adapter-bun";
-import { vitePreprocess } from "@sveltejs/kit/vite";
+  import { vitePreprocess } from "@sveltejs/kit/vite";
 
-/** @type {import('@sveltejs/kit').Config} */
-const config = {
-  kit: {
-    adapter: adapter(),
-  },
-  preprocess: vitePreprocess(),
-};
+  /** @type {import('@sveltejs/kit').Config} */
+  const config = {
+    kit: {
+      adapter: adapter(),
+    },
+    preprocess: vitePreprocess(),
+  };
 
-export default config;
+  export default config;
 ```
 
 ---

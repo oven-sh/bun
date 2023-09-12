@@ -39,7 +39,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
     return existing.exports;
   }
 
-  if (id.endsWith(".json") || id.endsWith(".toml") || id.endsWith(".node")) {
+  if (id.endsWith(".node")) {
     return $internalRequire(id);
   }
 

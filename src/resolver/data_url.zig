@@ -39,18 +39,24 @@ pub const PercentEncoding = struct {
         };
     }
 
-    /// decode path if it is percent encoded
+    /// decode path if it is percent encoded, returns EncodeError if URL unsafe characters are present and not percent encoded
     pub fn decode(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
+        return _decode(allocator, path, true);
+    }
+
+    /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
+    pub fn decodeUnstrict(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
+        return _decode(allocator, path, false);
+    }
+
+    fn _decode(allocator: Allocator, path: []const u8, strict: bool) EncodeError!?[]u8 {
         var ret: ?[]u8 = null;
         errdefer if (ret) |some| allocator.free(some);
         var ret_index: usize = 0;
         var i: usize = 0;
 
         while (i < path.len) : (i += 1) {
-            if (path[i] == '%') {
-                if (!isPchar(path[i..])) {
-                    return error.InvalidCharacter;
-                }
+            if (path[i] == '%' and path[i..].len >= 3 and isHex(path[i + 1]) and isHex(path[i + 2])) {
                 if (ret == null) {
                     ret = try allocator.alloc(u8, path.len);
                     bun.copy(u8, ret.?, path[0..i]);
@@ -63,7 +69,7 @@ pub const PercentEncoding = struct {
                 ret.?[ret_index] = new;
                 ret_index += 1;
                 i += 2;
-            } else if (path[i] != '/' and !isPchar(path[i..])) {
+            } else if (path[i] != '/' and !isPchar(path[i..]) and strict) {
                 return error.InvalidCharacter;
             } else if (ret != null) {
                 ret.?[ret_index] = path[i];
@@ -112,7 +118,7 @@ pub const DataURL = struct {
     }
 
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const percent_decoded = PercentEncoding.decode(allocator, url.data) catch url.data orelse url.data;
+        const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
             var buf = try allocator.alloc(u8, len);

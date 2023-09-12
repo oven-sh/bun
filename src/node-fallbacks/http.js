@@ -9,5 +9,5 @@ export var {
   Agent,
   globalAgent,
   STATUS_CODES,
-  METHIDS,
+  METHODS,
 } = http;

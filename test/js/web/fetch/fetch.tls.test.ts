@@ -1,5 +1,7 @@
 import { it, expect } from "bun:test";
 import tls from "tls";
+import { join } from "node:path";
+import { bunEnv, bunExe } from "harness";
 
 type TLSOptions = {
   cert: string;
@@ -126,6 +128,28 @@ it("fetch with invalid tls + rejectUnauthorized: false should not throw", async 
       } catch (e: any) {
         expect(e).toBe("unreachable");
       }
+    }
+  });
+});
+
+it("fetch should respect rejectUnauthorized env", async () => {
+  await createServer(CERT_EXPIRED, async port => {
+    const url = `https://localhost:${port}`;
+
+    for (let i = 0; i < 2; i++) {
+      const proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER: url,
+          NODE_TLS_REJECT_UNAUTHORIZED: i.toString(),
+        },
+        stderr: "inherit",
+        stdout: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "fetch-reject-authorized-env-fixture.js")],
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(i);
     }
   });
 });

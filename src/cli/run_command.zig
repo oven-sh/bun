@@ -525,9 +525,9 @@ pub const RunCommand = struct {
             if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, .production) catch {};
+                    this_bundler.env.load(dir, .production) catch {};
                 } else {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, .development) catch {};
+                    this_bundler.env.load(dir, .development) catch {};
                 }
             }
         }

@@ -62,6 +62,64 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(0);
       });
 
+      it("invalid tsconfig.json is ignored", async () => {
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            name: "test",
+            version: "0.0.0",
+            scripts: {
+              "boop": "echo 'hi'",
+            },
+          }),
+        );
+
+        await writeFile(join(run_dir, "tsconfig.json"), "!!!bad!!!");
+
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "--silent", withRun ? "run" : "", "boop"].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("hi\n");
+        expect(exitCode).toBe(0);
+      });
+
+      it("valid tsconfig.json with invalid extends doesn't crash", async () => {
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            name: "test",
+            version: "0.0.0",
+            scripts: {},
+          }),
+        );
+        await writeFile(
+          join(run_dir, "tsconfig.json"),
+          JSON.stringify(
+            {
+              extends: "!!!bad!!!",
+            },
+            null,
+            2,
+          ),
+        );
+
+        await writeFile(join(run_dir, "index.js"), "console.log('hi')");
+
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "--silent", withRun ? "run" : "", "./index.js"].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+        expect(stdout.toString()).toBe("hi\n");
+        expect(exitCode).toBe(0);
+      });
+
       it("falling back to index with no package.json", async () => {
         await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
 

@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket } from "bun";
 import { AwsClient } from "aws4fetch";
+import type { APIGatewayProxyEvent } from "aws-lambda";
 
 type Lambda = {
   fetch: (request: Request, server: Server) => Promise<Response | undefined>;
@@ -294,7 +295,6 @@ function formatBody(body?: string, isBase64Encoded?: boolean): string | null {
 }
 
 type HttpEventV1 = {
-  readonly version: "1.0";
   readonly requestContext: {
     readonly requestId: string;
     readonly domainName: string;
@@ -309,16 +309,13 @@ type HttpEventV1 = {
   readonly body?: string;
 };
 
-function isHttpEventV1(event: any): event is HttpEventV1 {
-  return event.version === "1.0" && typeof event.requestContext === "object";
+function isHttpEventV1(event: any): event is APIGatewayProxyEvent {
+  return !event.Records && event.version !== "2.0" && event.version !== "0" && typeof event.requestContext === "object";
 }
 
 function formatHttpEventV1(event: HttpEventV1): Request {
   const request = event.requestContext;
   const headers = new Headers();
-  for (const [name, value] of Object.entries(event.headers)) {
-    headers.append(name, value);
-  }
   for (const [name, values] of Object.entries(event.multiValueHeaders ?? {})) {
     for (const value of values) {
       headers.append(name, value);
@@ -327,9 +324,6 @@ function formatHttpEventV1(event: HttpEventV1): Request {
   const hostname = headers.get("Host") ?? request.domainName;
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
   const url = new URL(request.path, `${proto}://${hostname}/`);
-  for (const [name, value] of new URLSearchParams(event.queryStringParameters)) {
-    url.searchParams.append(name, value);
-  }
   for (const [name, values] of Object.entries(event.multiValueQueryStringParameters ?? {})) {
     for (const value of values ?? []) {
       url.searchParams.append(name, value);
@@ -360,7 +354,7 @@ type HttpEventV2 = {
 };
 
 function isHttpEventV2(event: any): event is HttpEventV2 {
-  return event.version === "2.0" && typeof event.requestContext === "object";
+  return !event.Records && event.version === "2.0" && typeof event.requestContext === "object";
 }
 
 function formatHttpEventV2(event: HttpEventV2): Request {
@@ -387,6 +381,10 @@ function formatHttpEventV2(event: HttpEventV2): Request {
     headers,
     body: formatBody(event.body, event.isBase64Encoded),
   });
+}
+
+function isHttpEvent(event: any): boolean {
+  return isHttpEventV1(event) || isHttpEventV2(event);
 }
 
 type WebSocketEvent = {
@@ -538,7 +536,7 @@ class LambdaServer implements Server {
         statusCode: 200,
       };
     }
-    if (!request?.headers.has("Host")) {
+    if (!isHttpEvent(event.event)) {
       return response.text();
     }
     return formatResponse(response);

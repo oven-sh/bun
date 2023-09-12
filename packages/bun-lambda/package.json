@@ -2,6 +2,8 @@
   "name": "bun-lambda",
   "private": true,
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.120",
+    "aws-lambda": "^1.0.7",
     "bun-types": "^0.7.0",
     "jszip": "^3.10.1",
     "oclif": "^3.6.5",

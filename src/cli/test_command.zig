@@ -566,7 +566,7 @@ pub const TestCommand = struct {
         Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        var env_loader = brk: {
+        var env_loader: *DotEnv.Loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
@@ -663,6 +663,10 @@ pub const TestCommand = struct {
 
         if (TZ_NAME.len > 0) {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
+        }
+
+        if (vm.bundler.env.get("NODE_ENV") == null) {
+            try vm.bundler.env.map.put("NODE_ENV", "test");
         }
 
         var scanner = Scanner{

@@ -216,7 +216,7 @@ import { serve, file } from "bun";
 
 serve({
   fetch(req) {
-    return new Response(Bun.file("./hello.txt"));
+    return new Response(file("./hello.txt"));
   },
 });
 ```

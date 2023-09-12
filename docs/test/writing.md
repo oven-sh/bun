@@ -109,7 +109,7 @@ $ bun test --todo
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --skip` will only execute tests/suites that have been marked with `.only()`.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`.
 
 ```ts
 import { test, describe } from "bun:test";

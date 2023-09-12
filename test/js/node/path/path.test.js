@@ -415,6 +415,9 @@ it("path.join", () => {
 
 it("path.relative", () => {
   const failures = [];
+  const cwd = process.cwd();
+  const cwdParent = path.dirname(cwd);
+  const parentIsRoot = cwdParent == "/";
 
   const relativeTests = [
     // [
@@ -477,6 +480,16 @@ it("path.relative", () => {
         ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
         ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
         ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/app/node_modules/pkg", "../static", `../../..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app/node_modules/pkg", "../../static", `../../..${parentIsRoot ? "" : path.dirname(cwdParent)}/static`],
+        ["/app", "../static", `..${parentIsRoot ? "" : cwdParent}/static`],
+        ["/app", "../".repeat(64) + "static", "../static"],
+        [".", "../static", cwd == "/" ? "static" : "../static"],
+        ["/", "../static", parentIsRoot ? "static" : `${cwdParent}/static`.slice(1)],
+        ["../", "../", ""],
+        ["../", "../../", parentIsRoot ? "" : ".."],
+        ["../../", "../", parentIsRoot ? "" : path.basename(cwdParent)],
+        ["../../", "../../", ""],
       ],
     ],
   ];

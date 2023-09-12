@@ -343,6 +343,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -421,6 +423,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{ .extract = tarball };
     }
 };
@@ -1677,6 +1681,10 @@ pub const PackageManager = struct {
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
         return this.env.getHttpProxy(url);
+    }
+
+    pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
+        return this.env.getTLSRejectUnauthorized();
     }
 
     pub const WakeHandler = struct {
@@ -5243,7 +5251,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, entries_option.entries, .production);
+        try env.load(entries_option.entries, .production);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;

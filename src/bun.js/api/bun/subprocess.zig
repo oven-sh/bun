@@ -1499,7 +1499,7 @@ pub const Subprocess = struct {
                                     \\"pidfd_open(2)" system call is not supported by your Linux kernel
                                     \\To fix this error, either:
                                     \\- Upgrade your Linux kernel to a newer version (current: {})
-                                    \\- Ensure the seccomp filter allows \"pidfd_open\"
+                                    \\- Ensure the seccomp filter allows "pidfd_open"
                                 ,
                                     .{
                                         kernel.fmt(""),

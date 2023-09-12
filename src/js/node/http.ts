@@ -654,7 +654,6 @@ class IncomingMessage extends Readable {
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        this.destroy();
         break;
       }
       for (var v of value) {

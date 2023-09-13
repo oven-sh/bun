@@ -1,11 +1,9 @@
 const json = await (await fetch("https://raw.githubusercontent.com/jshttp/mime-db/master/db.json")).json();
 
 json["application/javascript"].extensions.push(`ts`, `tsx`, `mts`, `mtsx`, `cts`, `cjs`, `mjs`, `js`);
-
-delete json["application/node"];
-delete json["application/deno"];
-delete json["application/wasm"];
-
+for (let key of ["node","deno","wasm"]) {
+  delete json[`application/${key}`];
+}
 var categories = new Set();
 var all = "pub const all = struct {";
 for (let key of Object.keys(json).sort()) {

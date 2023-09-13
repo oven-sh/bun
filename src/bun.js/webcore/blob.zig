@@ -742,15 +742,13 @@ pub const Blob = struct {
         }
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
-            // we should respect the slice source offset and size
-            // Bun.write(dest, src.slice(0, 100))
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
                 destination_blob.store.?,
                 source_blob.store.?,
 
-                source_blob.offset,
-                source_blob.size,
+                destination_blob.offset,
+                destination_blob.size,
                 ctx.ptr(),
             ) catch unreachable;
             file_copier.schedule();

@@ -130,7 +130,7 @@ const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 worker.unref();
 ```
 
-Note: `worker.unref()` is not available in browers.
+Note: `worker.unref()` is not available in browsers.
 
 ### `worker.ref()`
 
@@ -151,7 +151,7 @@ const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
 });
 ```
 
-Note: `worker.ref()` is not available in browers.
+Note: `worker.ref()` is not available in browsers.
 
 ## Memory usage with `smol`
 

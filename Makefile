@@ -1880,7 +1880,7 @@ PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin b
 
 .PHONY: base64
 base64:
-	cd $(BUN_DEPS_DIR)/base64 && make clean && cmake $(CMAKE_FLAGS) . && make
+	cd $(BUN_DEPS_DIR)/base64 && make clean && rm -rf CMakeCache.txt CMakeFiles && cmake $(CMAKE_FLAGS) . && make
 	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
 
 .PHONY: cold-jsc-start

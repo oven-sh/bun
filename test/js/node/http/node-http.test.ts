@@ -241,6 +241,27 @@ describe("node:http", () => {
     //   });
     // });
 
+    it("should not insert extraneous accept-encoding header", async done => {
+      try {
+        let headers;
+        var server = createServer((req, res) => {
+          headers = req.headers;
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.end();
+          });
+        });
+        const url = await listen(server);
+        await fetch(url, { decompress: false });
+        expect(headers["accept-encoding"]).toBeFalsy();
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        server.close();
+      }
+    });
+
     it("should make a standard GET request when passed string as first arg", done => {
       runTest(done, (server, port, done) => {
         const req = request(`http://localhost:${port}`, res => {
@@ -870,7 +891,7 @@ describe("node:http", () => {
     });
   });
 
-  test("should listen on port if string, issue#4582", () => {
+  test("should listen on port if string, issue#4582", done => {
     const server = createServer((req, res) => {
       res.end();
     });

@@ -472,11 +472,11 @@ pub const Bundler = struct {
                 }
 
                 if (!has_production_env and this.options.isTest()) {
-                    try this.env.load(&this.fs.fs, dir, .@"test");
+                    try this.env.load(dir, .@"test");
                 } else if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, .production);
+                    try this.env.load(dir, .production);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, .development);
+                    try this.env.load(dir, .development);
                 }
             },
             .disable => {

@@ -561,64 +561,6 @@ pub const RunCommand = struct {
         };
     }
 
-    // pub fn waitForPackageScript(script: *SpawnedScript, name: string, is_sync: bool, alloc: std.mem.Allocator) bool {
-    //     log("Waiting for script {s}, {d}", .{ name, script.pid });
-    //     // script.readNonBlocking(alloc) catch |err| {
-    //     //     Output.prettyErrorln("<r><red>error<r>: Failed to read output of script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-    //     //     Output.flush();
-    //     //     // ?! kill process?
-    //     //     return true;
-    //     // };
-    //     while (true) {
-    //         switch (PosixSpawn.waitpid(script.pid, if (is_sync) 0 else std.os.W.NOHANG)) {
-    //             .err => |err| {
-    //                 // script.readAllOutput();
-
-    //                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{d} {s}<r>", .{ name, err.errno, @tagName(err.getErrno()) });
-    //                 Output.flush();
-    //                 // ?! kill process?
-    //                 return true;
-    //             },
-    //             .result => |result| {
-    //                 if (result.pid == 0) return false;
-    //                 if (std.os.W.IFEXITED(result.status)) {
-    //                     defer script.deinit(alloc);
-
-    //                     // script.readAllOutput();
-
-    //                     const code = std.os.W.EXITSTATUS(result.status);
-    //                     if (code > 0) {
-    //                         if (code != 2) {
-    //                             Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
-    //                             Output.flush();
-    //                         }
-    //                         Global.exit(code);
-    //                     }
-    //                     return true;
-    //                 }
-    //                 if (std.os.W.IFSIGNALED(result.status)) {
-    //                     const signal = std.os.W.TERMSIG(result.status);
-
-    //                     // script.readAllOutput();
-
-    //                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
-    //                     Output.flush();
-    //                     Global.exit(1);
-    //                 }
-    //                 if (std.os.W.IFSTOPPED(result.status)) {
-    //                     const signal = std.os.W.STOPSIG(result.status);
-
-    //                     // script.readAllOutput();
-
-    //                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
-    //                     Output.flush();
-    //                     Global.exit(1);
-    //                 }
-    //             },
-    //         }
-    //     }
-    // }
-
     pub fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,

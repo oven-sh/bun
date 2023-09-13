@@ -1005,12 +1005,6 @@ pub const MiniEventLoop = struct {
         }
     }
 
-    pub fn drainTasks(this: *MiniEventLoop, context: *anyopaque) void {
-        while (this.tasks.readItem()) |task| {
-            task.run(context);
-        }
-    }
-
     pub fn enqueueTask(
         this: *MiniEventLoop,
         comptime Context: type,
@@ -1096,17 +1090,6 @@ pub const AnyEventLoop = union(enum) {
             },
             .mini => {
                 this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);
-            },
-        }
-    }
-
-    pub fn drainTasks(this: *AnyEventLoop, context: *anyopaque) void {
-        switch (this.*) {
-            .jsc => {
-                unreachable;
-            },
-            .mini => {
-                this.mini.drainTasks(context);
             },
         }
     }

@@ -71,7 +71,7 @@ In development mode, Bun will surface errors in-browser with a built-in error pa
 
 {% image src="/images/exception_page.png" caption="Bun's built-in 500 page" /%}
 
-To handle server-side errors, implement an `error` handler. This function should return a `Response` to served to the client when an error occurs. This response will supercede Bun's default error page in `development` mode.
+To handle server-side errors, implement an `error` handler. This function should return a `Response` to served to the client when an error occurs. This response will supersede Bun's default error page in `development` mode.
 
 ```ts
 Bun.serve({

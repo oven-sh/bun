@@ -12,7 +12,9 @@ You can also create a global configuration file at the following paths:
 
 If both a global and local `bunfig` are detected, the results are shallow-merged, with local overriding global. CLI flags will override `bunfig` setting where applicable.
 
-## Runtime
+## `bunfig.toml`
+
+### Runtime
 
 ```toml
 # scripts to run before `bun run`ning a file or script
@@ -42,7 +44,7 @@ logLevel = "debug" # "debug", "warn", "error"
 ".bagel" = "js"
 ```
 
-## Test runner
+### Test runner
 
 ```toml
 [test]
@@ -53,7 +55,7 @@ preload = ["./setup.ts"]
 smol = true
 ```
 
-## Package manager
+### Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured in [`bunfig.toml`](/docs/runtime/configuration).
 

@@ -1,6 +1,6 @@
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
-  const Iterator = async function* ConsoleAsyncIterator() {
+  const iterator = (async function* ConsoleAsyncIterator() {
     const stream = Bun.stdin.stream();
     var reader = stream.getReader();
 
@@ -57,11 +57,11 @@ export function asyncIterator(this: Console) {
         throw deferredError;
       }
     }
-  };
+  })();
 
   const symbol = globalThis.Symbol.asyncIterator;
-  this[symbol] = Iterator;
-  return Iterator();
+  this[symbol] = () => iterator;
+  return iterator;
 }
 
 export function write(this: Console, input) {

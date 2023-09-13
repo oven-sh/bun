@@ -21,8 +21,6 @@ export function asyncIterator(this: Console) {
         last = i + 1;
         i = indexOf(actualChunk, last);
 
-        console.log("last", last, "i", i, "actualChunk", actualChunk);
-
         while (i !== -1) {
           yield decoder.decode(actualChunk.subarray(last, i));
           last = i + 1;

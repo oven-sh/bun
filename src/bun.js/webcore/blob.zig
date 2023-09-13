@@ -742,13 +742,15 @@ pub const Blob = struct {
         }
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
+            // we should respect the slice source offset and size
+            // Bun.write(dest, src.slice(0, 100))
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
                 destination_blob.store.?,
                 source_blob.store.?,
 
-                destination_blob.offset,
-                destination_blob.size,
+                source_blob.offset,
+                source_blob.size,
                 ctx.ptr(),
             ) catch unreachable;
             file_copier.schedule();
@@ -1680,6 +1682,7 @@ pub const Blob = struct {
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
+            read_eof: bool = false,
             size: SizeType = 0,
             buffer: []u8 = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
@@ -1797,8 +1800,7 @@ pub const Blob = struct {
 
             pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 defer this.doReadLoop();
-
-                this.read_len = @as(SizeType, @truncate(result catch |err| {
+                const read_len = @as(SizeType, @truncate(result catch |err| {
                     if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                         this.errno = AsyncIO.asError(-completion.result);
                         this.system_error = (bun.sys.Error{
@@ -1821,6 +1823,8 @@ pub const Blob = struct {
                     this.read_len = 0;
                     return;
                 }));
+                this.read_eof = read_len == 0;
+                this.read_len = read_len;
             }
 
             fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
@@ -1930,7 +1934,7 @@ pub const Blob = struct {
                 this.read_off += this.read_len;
                 var remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
 
-                if (remain.len > 0 and this.errno == null) {
+                if (remain.len > 0 and this.errno == null and !this.read_eof) {
                     this.doRead();
                     return;
                 }
@@ -2939,9 +2943,6 @@ pub const Blob = struct {
             ptr.* = empty;
             ptr.allocator = allocator;
             return ptr.toJS(globalThis);
-        }
-        if (this.size == Blob.max_size) {
-            this.resolveSize();
         }
 
         // If the optional start parameter is not used as a parameter when making this call, let relativeStart be 0.

@@ -487,7 +487,7 @@ pub const InstallCompletionsCommand = struct {
             };
 
             if (needs_to_tell_them_to_add_completions_file) {
-                Output.prettyErrorln("<r>To enable completions, add this to your \"{s}\":\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
+                Output.prettyErrorln("<r>To enable completions, add this to your {s}:\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
                     rc_string,
                     completions_path,
                     completions_path,

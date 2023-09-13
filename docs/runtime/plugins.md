@@ -127,7 +127,7 @@ In this case we're using `"object"`—a built-in loader (intended for use by plu
 ---
 
 - `ts`
-- `.ts` `.mts` `cts`
+- `.ts` `.mts` `.cts`
 - Transform TypeScript then transpile
 
 ---

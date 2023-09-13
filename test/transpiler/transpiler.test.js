@@ -1973,6 +1973,11 @@ console.log(resolve.length)
       expectParseError("/x/msuygig", 'Duplicate flag "g" in regular expression');
     });
 
+    it("non-ascii regexp literals", () => {
+      var str = "🔴11 54 / 10,000";
+      expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
+    });
+
     it("identifier escapes", () => {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
       expectParseError("var \u0076\u0061\u0072", 'Expected identifier but found "\u0076\u0061\u0072"');

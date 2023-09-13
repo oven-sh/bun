@@ -3054,7 +3054,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         //     this.request_body_buf.clearAndFree(this.allocator);
                         // } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                            bytes.clearAndFree(this.allocator);
+                            this.request_body_buf.clearAndFree(this.allocator);
                             body.value.toError(err, this.server.globalThis);
                             break :getter;
                         };

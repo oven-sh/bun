@@ -2,14 +2,26 @@
 name: Migrate from Jest to Bun's test runner
 ---
 
-In many cases, Bun's test runner can run Jest test suites with no code changes.
+In many cases, Bun's test runner can run Jest test suites with no code changes. Just run `bun test` instead of `npx jest`, `yarn test`, etc.
+
+```sh-diff
+- $ npx jest
+- $ yarn test
++ $ bun test
+```
+
+---
+
+There's often no need for code changes.
 
 - Bun internally re-writes imports from `@jest/globals` to use the `bun:test` equivalents.
 - If you're relying on Jest to inject `test`, `expect`, etc. as globals, Bun does that too.
 
-```sh-diff
-- $ npx jest
-+ $ bun test
+But if you'd rather switch to the `bun:test` imports, you can do that too.
+
+```ts-diff
+- import {test, expect} from "@jest/globals";
++ import {test, expect} from "bun:test";
 ```
 
 ---
@@ -72,11 +84,20 @@ $ bun test --coverage
 
 ---
 
+Replace `testTimeout` with the `--test-timeout` CLI flag.
+
+```sh
+$ bun test --timeout 10000
+```
+
+---
+
 Many other flags become irrelevant or obsolete when using `bun test`.
 
+- `transform` — Buns supports TypeScript & JSX. Other file types can be configured with [Plugins](/docs/runtime/plugins).
 - `extensionsToTreatAsEsm`
 - `haste` — Bun uses it's own internal source maps
-- `watchman` — use `--watch` to run tests in watch mode
+- `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode
 - `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](/docs/runtime/configuration.md#runtime)
 
 ---

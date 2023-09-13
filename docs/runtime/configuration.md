@@ -10,7 +10,7 @@ You can also create a global configuration file at the following paths:
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-If both a global and local `bunfig` are detected, the results are shallow-merged, with local overridding global. CLI flags will override `bunfig` setting where applicable.
+If both a global and local `bunfig` are detected, the results are shallow-merged, with local overriding global. CLI flags will override `bunfig` setting where applicable.
 
 ## Runtime
 

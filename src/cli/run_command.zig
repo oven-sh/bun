@@ -234,8 +234,11 @@ pub const RunCommand = struct {
         script_name: []const u8,
         package_name: []const u8,
 
+        finished_fds: u8 = 0,
+
         output_buffer: bun.ByteList,
         pid_poll: *JSC.FilePoll,
+        waitpid_result: ?PosixSpawn.WaitPidResult,
         stdout_poll: *JSC.FilePoll,
         stderr_poll: *JSC.FilePoll,
         package_manager: *PackageManager,
@@ -252,6 +255,7 @@ pub const RunCommand = struct {
             stderr_fd: bun.FileDescriptor,
             pid_fd: bun.FileDescriptor,
         ) !?*PostinstallSubprocess {
+            // TODO: this doesnt handle some cleanup edge cases on error
             var this = try manager.allocator.create(PostinstallSubprocess);
             errdefer this.deinit(manager.allocator);
 
@@ -259,20 +263,17 @@ pub const RunCommand = struct {
                 .package_name = package_name,
                 .script_name = script_name,
                 .package_manager = manager,
-                .pid_poll = undefined,
-                .stdout_poll = undefined,
-                .stderr_poll = undefined,
+                .waitpid_result = null,
                 .output_buffer = .{},
+                .pid_poll = JSC.FilePoll.initWithPackageManager(
+                    manager,
+                    pid_fd,
+                    .{},
+                    @as(*PidPollData, @ptrCast(this)),
+                ),
+                .stdout_poll = JSC.FilePoll.initWithPackageManager(manager, stdout_fd, .{}, this),
+                .stderr_poll = JSC.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this),
             };
-
-            this.pid_poll = JSC.FilePoll.initWithPackageManager(
-                manager,
-                pid_fd,
-                .{},
-                @as(*PidPollData, @ptrCast(this)),
-            );
-            this.stdout_poll = JSC.FilePoll.initWithPackageManager(manager, stdout_fd, .{}, this);
-            this.stderr_poll = JSC.FilePoll.initWithPackageManager(manager, stderr_fd, .{}, this);
 
             try this.stdout_poll.register(manager.uws_event_loop, .readable, false).throw();
             try this.stderr_poll.register(manager.uws_event_loop, .readable, false).throw();
@@ -284,8 +285,11 @@ pub const RunCommand = struct {
             )) {
                 .result => {},
                 .err => |err| {
+                    // Sometimes the pid poll can fail to register if the process exits
+                    // between posix_spawn() and pid_poll.register(), but it is unlikely.
+                    // Any other error is unexpected here.
                     if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen");
+                        @panic("This shouldn't happen. Could not register pid poll");
                     }
 
                     this.package_manager.pending_tasks -= 1;
@@ -298,7 +302,19 @@ pub const RunCommand = struct {
         }
 
         pub fn onOutputUpdate(this: *PostinstallSubprocess, size: i64, fd: bun.FileDescriptor) void {
+            var needed_capacity = this.output_buffer.len + @as(u32, @intCast(size));
+            _ = needed_capacity;
             this.output_buffer.ensureUnusedCapacity(this.package_manager.allocator, @intCast(size)) catch @panic("Failed to allocate memory for output buffer");
+
+            if (size == 0) {
+                this.finished_fds += 1;
+                if (this.waitpid_result) |result| {
+                    if (this.finished_fds == 2) {
+                        this.onResult(result);
+                    }
+                }
+                return;
+            }
 
             var remaining = size;
             while (remaining > 0) {
@@ -311,70 +327,84 @@ pub const RunCommand = struct {
             }
         }
 
-        pub fn readAllThenDump(this: *PostinstallSubprocess) void {
-            // wait for both file polls to be done first!
-
+        pub fn printOutput(this: *PostinstallSubprocess) void {
             Output.errorWriter().writeAll(this.output_buffer.slice()) catch {};
         }
 
         pub fn onProcessUpdate(this: *PostinstallSubprocess, _: i64) void {
-            Output.debug("onProcessUpdate", .{});
             switch (PosixSpawn.waitpid(this.pid_poll.fileDescriptor(), std.os.W.NOHANG)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{ this.script_name, this.package_name, err.errno, @tagName(err.getErrno()) });
                     Output.flush();
                     this.package_manager.pending_tasks -= 1;
                 },
-                .result => |result| {
-                    if (result.pid == 0) {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{ this.script_name, this.package_name, 0, "Unknown" });
-                        Output.flush();
+                .result => |result| this.onResult(result),
+            }
+        }
 
-                        this.package_manager.pending_tasks -= 1;
+        pub fn onResult(this: *PostinstallSubprocess, result: PosixSpawn.WaitPidResult) void {
+            if (result.pid == 0) {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{ this.script_name, this.package_name, 0, "Unknown" });
+                Output.flush();
+
+                this.package_manager.pending_tasks -= 1;
+                return;
+            }
+            if (std.os.W.IFEXITED(result.status)) {
+                defer this.deinit(this.package_manager.allocator);
+
+                const code = std.os.W.EXITSTATUS(result.status);
+                if (code > 0) {
+                    if (this.finished_fds < 2) {
+                        this.waitpid_result = result;
                         return;
                     }
-                    if (std.os.W.IFEXITED(result.status)) {
-                        defer this.deinit(this.package_manager.allocator);
+                    this.printOutput();
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(code) });
+                    Output.flush();
+                    Global.exit(code);
+                }
 
-                        const code = std.os.W.EXITSTATUS(result.status);
-                        if (code > 0) {
-                            this.readAllThenDump();
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(code) });
-                            Output.flush();
-                            Global.exit(code);
-                        }
-                        Output.debug("EXIT WITH CODE {d}?", .{code});
+                this.package_manager.pending_tasks -= 1;
+                return;
+            }
+            if (std.os.W.IFSIGNALED(result.status)) {
+                const signal = std.os.W.TERMSIG(result.status);
 
-                        this.package_manager.pending_tasks -= 1;
-                        return;
-                    }
-                    if (std.os.W.IFSIGNALED(result.status)) {
-                        const signal = std.os.W.TERMSIG(result.status);
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
+                this.printOutput();
 
-                        this.readAllThenDump();
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
+                Output.flush();
+                Global.exit(1);
+            }
+            if (std.os.W.IFSTOPPED(result.status)) {
+                const signal = std.os.W.STOPSIG(result.status);
 
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
-                        Output.flush();
-                        Global.exit(1);
-                    }
-                    if (std.os.W.IFSTOPPED(result.status)) {
-                        const signal = std.os.W.STOPSIG(result.status);
+                if (this.finished_fds < 2) {
+                    this.waitpid_result = result;
+                    return;
+                }
+                this.printOutput();
 
-                        this.readAllThenDump();
-
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
-                        Output.flush();
-                        Global.exit(1);
-                    }
-                },
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by signal {any}<r>", .{ this.script_name, this.package_name, bun.SignalCode.from(signal) });
+                Output.flush();
+                Global.exit(1);
             }
         }
 
         pub fn deinit(this: *PostinstallSubprocess, alloc: std.mem.Allocator) void {
-            std.os.close(this.stdout_poll.fileDescriptor());
-            std.os.close(this.stderr_poll.fileDescriptor());
-            // ?! close pid poll?
-            // this.output_buffer.deinitWithAllocator(alloc);
+            _ = this.stdout_poll.unregister(this.package_manager.uws_event_loop);
+            _ = this.stderr_poll.unregister(this.package_manager.uws_event_loop);
+            _ = this.pid_poll.unregister(this.package_manager.uws_event_loop);
+
+            _ = bun.sys.close(this.stdout_poll.fileDescriptor());
+            _ = bun.sys.close(this.stderr_poll.fileDescriptor());
+            _ = bun.sys.close(this.pid_poll.fileDescriptor());
+
             alloc.destroy(this);
         }
     };

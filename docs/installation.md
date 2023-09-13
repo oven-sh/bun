@@ -10,6 +10,8 @@ Bun ships as a single executable that can be installed a few different ways.
 
 ```bash#macOS/Linux_(curl)
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+# to install a specific version
+$ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
 ```bash#NPM

@@ -25,7 +25,9 @@ Some notable missing features:
 
 ---
 
-If you're using `testEnvironment` to run your tests in a browser-like environment, you'll need to register `jsdom` or `happy-dom` using Bun's `preload` feature. Follow the instructions in the [DOM testing with Bun and happy-dom](/guides/test/happy-dom) guide.
+If you're using `testEnvironment: "jsdom"` to run your tests in a browser-like environment, you should follow the [DOM testing with Bun and happy-dom](/guides/test/happy-dom) guide to inject browser APIs into the global scope. This guide relies on [`happy-dom`](https://github.com/capricorn86/happy-dom), which is a leaner and faster alternative to [`jsdom`](https://github.com/jsdom/jsdom).
+
+At the moment jsdom does not work in Bun due to its internal use of V8 APIs. Track support for it [here](https://github.com/oven-sh/bun/issues/3554).
 
 ```toml#bunfig.toml
 [test]
@@ -36,13 +38,13 @@ preload = ["./happy-dom.ts"]
 
 Replace `bail` in your Jest config with the `--bail` CLI flag.
 
-```ts-diff
+<!-- ```ts-diff
 - import type {Config} from 'jest';
 -
 - const config: Config = {
 -   bail: 3
 - };
-```
+``` -->
 
 ```sh-diff
 $ bun test --bail 3
@@ -50,9 +52,9 @@ $ bun test --bail 3
 
 ---
 
-Replace `collectCoverage` and `collectCoverageFrom` with the `--coverage` CLI flag.
+Replace `collectCoverage` with the `--coverage` CLI flag.
 
-```ts-diff
+<!-- ```ts-diff
 - import type {Config} from 'jest';
 -
 - const config: Config = {
@@ -62,7 +64,7 @@ Replace `collectCoverage` and `collectCoverageFrom` with the `--coverage` CLI fl
 -     '!**/vendor/**',
 -   ],
 - };
-```
+``` -->
 
 ```sh
 $ bun test --coverage

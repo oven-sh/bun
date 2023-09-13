@@ -2538,7 +2538,10 @@ pub const E = struct {
     };
 
     pub const RegExp = struct {
-        value: string,
+        data: union(enum) {
+            raw: string,
+            decoded: bun.BabyList(u16),
+        },
 
         // This exists for JavaScript bindings
         // The RegExp constructor expects flags as a second argument.
@@ -2548,7 +2551,7 @@ pub const E = struct {
         //      ^
         flags_offset: ?u16 = null,
 
-        pub var empty = RegExp{ .value = "" };
+        pub var empty = RegExp{ .data = .{ .raw = "" } };
 
         pub fn pattern(this: RegExp) string {
 

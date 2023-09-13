@@ -318,6 +318,14 @@ pub const InstallCompletionsCommand = struct {
                                     break :outer;
                             }
                         }
+                        {
+                            outer: {
+                                var paths = [_]string{ home_dir, "./.bun" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
+                                    break :outer;
+                            }
+                        }
                     }
 
                     const dirs_to_try = [_]string{

@@ -395,52 +395,64 @@ pub const InstallCompletionsCommand = struct {
             var completions_absolute_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var completions_path = bun.getFdPath(output_file.handle, &completions_absolute_path_buf) catch unreachable;
             var rc_filepath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const rc_string = if (shell == .bash) ".bashrc" else ".zshrc";
             const needs_to_tell_them_to_add_completions_file = brk: {
                 var dot_rc: std.fs.File = zshrc: {
                     if (shell == .zsh){
-                    first: {
+                        first: {
 
-                        // https://zsh.sourceforge.io/Intro/intro_3.html
-                        // There are five startup files that zsh will read commands from:
-                        // $ZDOTDIR/.zshenv
-                        // $ZDOTDIR/.zprofile
-                        // $ZDOTDIR/.zshrc
-                        // $ZDOTDIR/.zlogin
-                        // $ZDOTDIR/.zlogout
+                            // https://zsh.sourceforge.io/Intro/intro_3.html
+                            // There are five startup files that zsh will read commands from:
+                            // $ZDOTDIR/.zshenv
+                            // $ZDOTDIR/.zprofile
+                            // $ZDOTDIR/.zshrc
+                            // $ZDOTDIR/.zlogin
+                            // $ZDOTDIR/.zlogout
 
-                        if (bun.getenvZ("ZDOTDIR")) |zdot_dir| {
-                            bun.copy(u8, &rc_filepath, zdot_dir);
-                            bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
-                            rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
-                            var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
-                            break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                            if (bun.getenvZ("ZDOTDIR")) |zdot_dir| {
+                                bun.copy(u8, &rc_filepath, zdot_dir);
+                                bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
+                                rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
+                                var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
+                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                            }
+                        }
+
+                        second: {
+                            if (bun.getenvZ("HOME")) |zdot_dir| {
+                                bun.copy(u8, &rc_filepath, zdot_dir);
+                                bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
+                                rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
+                                var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
+                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
+                            }
+                        }
+
+                        third: {
+                            if (bun.getenvZ("HOME")) |zdot_dir| {
+                                bun.copy(u8, &rc_filepath, zdot_dir);
+                                bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshenv");
+                                rc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
+                                var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
+                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
+                            }
+                        }
+                    }
+                    if (shell == .bash){
+                        first: {
+                            if (bun.getenvZ("HOME")) |bdot_dir| {
+                                bun.copy(u8, &rc_filepath, bdot_dir);
+                                bun.copy(u8, rc_filepath[bdot_dir.len..], "/.bashrc");
+                                rc_filepath[bdot_dir.len + "/.bashrc".len] = 0;
+                                var filepath = rc_filepath[0 .. bdot_dir.len + "/.bashrc".len :0];
+                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                            }
                         }
                     }
 
-                    second: {
-                        if (bun.getenvZ("HOME")) |zdot_dir| {
-                            bun.copy(u8, &rc_filepath, zdot_dir);
-                            bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
-                            rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
-                            var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
-                            break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
-                        }
-                    }
-
-                    third: {
-                        if (bun.getenvZ("HOME")) |zdot_dir| {
-                            bun.copy(u8, &rc_filepath, zdot_dir);
-                            bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshenv");
-                            rc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
-                            var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
-                            break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
-                        }
-                    }
-                    }
 
 
-
-                    break :brk true;                    
+                    break :brk true;         
                 };
                 defer dot_rc.close();
                 var buf = allocator.alloc(
@@ -472,12 +484,13 @@ pub const InstallCompletionsCommand = struct {
 
                 dot_rc.pwriteAll(extra, read) catch break :brk true;
 
-                Output.prettyErrorln("<r><d>Enabled loading bun's completions in .zshrc<r>", .{});
+                Output.prettyErrorln("<r><d>Enabled loading bun's completions in {s}<r>", .{rc_string});
                 break :brk false;
             };
 
             if (needs_to_tell_them_to_add_completions_file) {
-                Output.prettyErrorln("<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
+                Output.prettyErrorln("<r>To enable completions, add this to your \"{s}\":\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
+                    rc_string,
                     completions_path,
                     completions_path,
                 });

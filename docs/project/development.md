@@ -1,58 +1,71 @@
-Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
+# Setting Up Your Development Environment for Bun
 
-Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code.
+Configuring a development environment for Bun can take 10-30 minutes, depending on your internet speed and computer. You'll need around 10GB of free disk space for the repository and build artifacts.
 
-{% codetabs %}
+If you're using Windows, you must use a WSL (Windows Subsystem for Linux) environment because Bun doesn't compile natively on Windows.
 
-```bash#Native
-$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+Before starting, make sure you already have a release build of Bun installed because we'll use it to transpile and minify our code.
+
+## Installation Steps
+
+Choose one of the following methods to install Bun:
+
+### Method 1: Using curl (for macOS, Linux, and WSL)
+
+```bash
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
-```bash#npm
-$ npm install -g bun # the last `npm` command you'll ever need
+### Method 2: Using npm (for all platforms)
+
+```bash
+$ npm install -g bun
 ```
 
-```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
+### Method 3: Using Homebrew (for macOS and Linux)
+
+```bash
+$ brew tap oven-sh/bun
 $ brew install bun
 ```
 
-```bash#Docker
+### Method 4: Using Docker
+
+```bash
 $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
-```bash#proto
+### Method 5: Using proto (for all platforms)
+
+```bash
 $ proto install bun
 ```
 
-{% /codetabs %}
+## Installing LLVM
 
-## Install LLVM
+Bun requires LLVM 15 and Clang 15 (Clang is part of LLVM) to match WebKit's version. Mismatching versions can lead to memory allocation failures. You can install LLVM through your system's package manager:
 
-Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+### macOS (Homebrew)
 
-{% codetabs %}
-
-```bash#macOS (Homebrew)
+```bash
 $ brew install llvm@15
 ```
 
-```bash#Ubuntu/Debian
-$ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
+### Ubuntu/Debian
+
+```bash
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
-```bash#Arch
-$ sudo pacman -S llvm15 clang15 lld
+### Arch Linux
 
+```bash
+$ sudo pacman -S llvm15 clang15 lld
 ```
 
-{% /codetabs %}
-
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
+If none of the above solutions apply, you can install LLVM 15 [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
 
 Make sure LLVM 15 is in your path:
 
@@ -60,234 +73,88 @@ Make sure LLVM 15 is in your path:
 $ which clang-15
 ```
 
-If not, run this to manually link it:
+If it's not, manually link it using the following commands:
 
-{% codetabs %}
+### macOS (Homebrew)
 
-```bash#macOS (Homebrew)
-# use fish_add_path if you're using fish
+```bash
+# Use fish_add_path if you're using fish
 $ export PATH="$PATH:$(brew --prefix llvm@15)/bin"
 $ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
 $ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 ```
 
-```bash#Arch
+### Arch Linux
 
+```bash
 $ export PATH="$PATH:/usr/lib/llvm15/bin"
 $ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm15/lib"
 $ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm15/include"
-
 ```
 
-{% /codetabs %}
+## Installing Dependencies
 
-## Install Dependencies
+Use your system's package manager to install the remaining dependencies for Bun:
 
-Using your system's package manager, install the rest of Bun's dependencies:
+### macOS (Homebrew)
 
-{% codetabs %}
-
-```bash#macOS (Homebrew)
+```bash
 $ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libtool ninja pkg-config rust
 ```
 
-```bash#Ubuntu/Debian
+### Ubuntu/Debian
+
+```bash
 $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc esbuild
 ```
 
-```bash#Arch
-$ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
-```
-
-{% /codetabs %}
-
-{% details summary="Ubuntu — Unable to locate package esbuild" %}
-
-The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
+### Arch Linux
 
 ```bash
-$ curl -fsSL https://esbuild.github.io/dl/latest | sh
-$ chmod +x ./esbuild
-$ sudo mv ./esbuild /usr/local/bin
+$ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
-{% /details %}
+In addition to this, you'll need an npm package manager (e.g., Bun, npm) to install the dependencies listed in `package.json`.
 
-In addition to this, you will need an npm package manager (`bun`, `npm`, etc) to install the `package.json` dependencies.
+## Installing Zig
 
-## Install Zig
-
-Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
+Zig can be installed using the npm package `@oven/zig` or by using [zigup](https://github.com/marler8997/zigup).
 
 ```bash
 $ bun install -g @oven/zig
 $ zigup 0.12.0-dev.163+6780a6bbf
 ```
 
-{% callout %}
-We last updated Zig on **July 18th, 2023**
-{% /callout %}
-
 ## First Build
 
-After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
+After cloning the repository, run the following command for the initial build. This step may take a while as it will clone submodules and build dependencies.
 
 ```bash
 $ make setup
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
+The binary can be found at `packages/debug-bun-{platform}-{arch}/bun-debug`. It's recommended to add this to your `$PATH`. To verify the build, let's print the version number of the development build of Bun.
 
 ```bash
 $ packages/debug-bun-*/bun-debug --version
 bun 1.x.y__dev
 ```
 
-Note: `make setup` is just an alias for the following:
+Note: `make setup` is equivalent to the following command:
 
 ```bash
 $ make assert-deps submodule npm-install-dev node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64 cpp zig link
 ```
 
-## Rebuilding
-
-Bun uses a series of make commands to rebuild parts of the codebase. The general rule for rebuilding is there is `make link` to rerun the linker, and then different make targets for different parts of the codebase. Do not pass `-j` to make as these scripts will break if run out of order, and multiple cores will be used when possible during the builds.
-
-{% table %}
-
-- What changed
-- Run this command
-
----
-
-- Zig Code
-- `make zig`
-
----
-
-- C++ Code
-- `make cpp`
-
----
-
-- Zig + C++ Code
-- `make dev` (combination of the above two)
-
----
-
-- JS/TS Code in `src/js`
-- `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`.
-
----
-
-- `*.classes.ts`
-- `make generate-classes dev`
-
----
-
-- JSSink
-- `make generate-sink cpp`
-
----
-
-- `src/node_fallbacks/*`
-- `make node-fallbacks zig`
-
----
-
-- `identifier_data.zig`
-- `make identifier-cache zig`
-
----
-
-- Code using `cppFn`/`JSC.markBinding`
-- `make headers` (TODO: explain what this is used for and why it's useful)
-
-{% /table %}
-
-`make setup` cloned a bunch of submodules and built the subprojects. When a submodule is out of date, run `make submodule` to quickly reset/update all your submodules, then you can rebuild individual submodules with their respective command.
-
-{% table %}
-
-- Dependency
-- Run this command
-
----
-
-- WebKit
-- `bun install` (it is a prebuilt package)
-
----
-
-- uWebSockets
-- `make uws`
-
----
-
-- Mimalloc
-- `make mimalloc`
-
----
-
-- PicoHTTPParser
-- `make picohttp`
-
----
-
-- zlib
-- `make zlib`
-
----
-
-- BoringSSL
-- `make boringssl`
-
----
-
-- libarchive
-- `make libarchive`
-
----
-
-- lolhtml
-- `make lolhtml`
-
----
-
-- sqlite
-- `make sqlite`
-
----
-
-- TinyCC
-- `make tinycc`
-
----
-
-- c-ares
-- `make c-ares`
-
----
-
-- zstd
-- `make zstd`
-
----
-
-- Base64
-- `make base64`
-
-{% /table %}
-
-The above will probably also need Zig and/or C++ code rebuilt.
+This command cloned submodules and built subprojects. When a submodule is out of date, you can run `make submodule` to quickly reset/update all your submodules and then rebuild individual submodules with their respective command.
 
 ## VSCode
 
-VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+VSCode is the recommended IDE for working on Bun, as it has been pre-configured. Upon opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS (Zig Language Server) is automatically configured.
 
-### ZLS
+### ZLS (Zig Language Server)
 
-ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
+The ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function correctly with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
 
 ```bash
 $ git clone https://github.com/zigtools/zls
@@ -296,7 +163,7 @@ $ git checkout f91ff831f4959efcb7e648dba4f0132c296d26c0
 $ zig build
 ```
 
-Then add absolute paths to Zig and ZLS in your vscode config:
+Then, add absolute paths to Zig and ZLS in your vscode config:
 
 ```json
 {
@@ -305,69 +172,65 @@ Then add absolute paths to Zig and ZLS in your vscode config:
 }
 ```
 
-## JavaScript builtins
+## JavaScript Builtins
 
-When you change anything in `src/js/builtins/*` or switch branches, run this:
+When you modify anything in `src/js/builtins/*` or switch branches, run this:
 
 ```bash
 $ make js cpp
 ```
 
-That inlines the TypeScript code into C++ headers.
+This inlines the TypeScript code into C++ headers.
 
-{% callout %}
-Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
-{% /callout %}
+For more information on how `src/js` works, check `src/js/README.md` in the codebase.
 
-For more information on how `src/js` works, see `src/js/README.md` in the codebase.
+## Code Generation Scripts
 
-## Code generation scripts
+Bun relies on code generation scripts for various tasks. Here are some of them:
 
-Bun leverages a lot of code generation scripts.
+### Headers Generation
 
-The [./src/bun.js/bindings/headers.h](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/headers.h) file has bindings to & from Zig <> C++ code. This file is generated by running the following:
+Bun generates the [./src/bun.js/bindings/headers.h](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/headers.h) file for Zig <> C++ code bindings. To generate this file, run:
 
 ```bash
 $ make headers
 ```
 
-This ensures that the types for Zig and the types for C++ match up correctly, by using comptime reflection over functions exported/imported.
+This ensures that Zig and C++ types match up correctly.
 
-TypeScript files that end with `*.classes.ts` are another code generation script. They generate C++ boilerplate for classes implemented in Zig. The generated code lives in:
+### Classes Generation
 
-- [src/bun.js/bindings/ZigGeneratedClasses.cpp](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/ZigGeneratedClasses.cpp)
-- [src/bun.js/bindings/ZigGeneratedClasses.h](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/ZigGeneratedClasses.h)
-- [src/bun.js/bindings/generated_classes.zig](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/generated_classes.zig)
-  To generate the code, run:
+Bun generates C++ boilerplate for classes implemented in Zig from `*.classes.ts` TypeScript files. To generate this code, run:
 
 ```bash
 $ make codegen
 ```
 
-Lastly, we also have a [code generation script](src/bun.js/scripts/generate-jssink.js) for our native stream implementations.
-To run that, run:
+### JSSink Generation
+
+Bun has a
+
+ [code generation script](src/bun.js/scripts/generate-jssink.js) for native stream implementations. To run it, use this command:
 
 ```bash
 $ make generate-sink
 ```
 
-You probably won't need to run that one much.
+You probably won't need to run this one often.
 
-## Modifying ESM modules
+## Modifying ESM Modules
 
-Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. The bundled code is committed so CI builds can run without needing a copy of Bun.
+Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These modules live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. When you make changes to these modules, run:
 
-When these are changed, run:
-
-```
+```bash
 $ make js
 ```
 
-In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
+In debug builds, Bun automatically loads these modules from the filesystem, so there's no need to rerun `make dev`.
 
-## Release build
+## Building a Release Version
 
-To build a release build of Bun, run:
+To build a release version of Bun, use the following commands:
 
 ```bash
 $ make release-bindings -j12
@@ -376,135 +239,84 @@ $ make release
 
 The binary will be located at `packages/bun-{platform}-{arch}/bun`.
 
-## Valgrind
+## Valgrind (Linux Only)
 
-On Linux, valgrind can help find memory issues.
+On Linux, Valgrind can help find memory issues. Keep in mind:
 
-Keep in mind:
+- JavaScriptCore doesn't support Valgrind and may report spurious errors.
+- Valgrind is slow.
+- Mimalloc may cause spurious errors when the debug build is enabled.
 
-- JavaScriptCore doesn't support valgrind. It will report spurious errors.
-- Valgrind is slow
-- Mimalloc will sometimes cause spurious errors when debug build is enabled
-
-You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You may need to manually compile Valgrind instead of using it from your Linux package manager.
-
-`--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
+Ensure you have a recent version of Valgrind with DWARF 5 debug symbols. You may need to compile Valgrind manually:
 
 ```bash
 $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
-## Updating `WebKit`
+## Updating WebKit
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
-
-```bash
-$ git status
-On branch my-branch
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
-```
-
-For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+The Bun team may update the version of WebKit used in Bun. When this happens, you might see changes in the WebKit submodule. To update it, run the following commands from the Bun repository root:
 
 ```bash
 $ bun install
 $ make cpp
 ```
 
-<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
-
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
-
-<!--
-```bash
-$ cd src/bun.js/WebKit
-$ git fetch
-$ git checkout <hash>
-``` -->
+If you encounter issues, check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) for the hash of the current WebKit commit in use.
 
 ## Troubleshooting
 
-### 'span' file not found on Ubuntu
+If you encounter issues during the setup process, here are some troubleshooting steps:
 
-> ⚠️ Please note that the instructions below are specific to issues occurring on Ubuntu. It is unlikely that the same issues will occur on other Linux distributions.
+### 'span' File Not Found on Ubuntu
 
-The Clang compiler typically uses the `libstdc++` C++ standard library by default. `libstdc++` is the default C++ Standard Library implementation provided by the GNU Compiler Collection (GCC). While Clang may link against the `libc++` library, this requires explicitly providing the `-stdlib` flag when running Clang.
-
-Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
-
-```
-fatal error: 'span' file not found
-#include <span>
-         ^~~~~~
-```
-
-To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
+If you see a 'span' file not found error on Ubuntu, it may be due to GCC's `libstdc++` library. Bun relies on C++20 features not present in GCC versions below 11. To fix this, you can upgrade GCC to version 11:
 
 ```bash
 $ sudo apt update
 $ sudo apt install gcc-11 g++-11
-# If the above command fails with `Unable to locate package gcc-11` we need
-# to add the APT repository
-$ sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-# Now run `apt install` again
-$ sudo apt install gcc-11 g++-11
-```
-
-Now, we need to set GCC 11 as the default compiler:
-
-```bash
 $ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 ```
 
 ### libarchive
 
-If you see an error when compiling `libarchive`, run this:
+If you encounter issues with `libarchive` during compilation, run:
 
 ```bash
 $ brew install pkg-config
 ```
 
-### missing files on `zig build obj`
+### Missing Files in 'zig build obj'
 
-If you see an error about missing files on `zig build obj`, make sure you built the headers.
+If you see missing files in 'zig build obj', ensure you've built the headers:
 
 ```bash
 $ make headers
 ```
 
-### cmakeconfig.h not found
+### cmakeconfig.h Not Found
 
-If you see an error about `cmakeconfig.h` not being found, this is because the precompiled WebKit did not install properly.
+If you encounter an error about 'cmakeconfig.h' not being found, run:
 
 ```bash
 $ bun install
 ```
 
-Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+### macOS 'Library Not Found for -lSystem'
 
-```bash
-# this should reveal two directories. if not, something went wrong
-$ echo node_modules/bun-webkit*
-```
-
-### macOS `library not found for -lSystem`
-
-If you see this error when compiling, run:
+If you encounter the 'library not found for -lSystem' error on macOS, run:
 
 ```bash
 $ xcode-select --install
 ```
 
-## Arch Linux / Cannot find `libatomic.a`
+## Arch Linux - Cannot Find 'libatomic.a'
 
-Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+On Arch Linux, Bun requires 'libatomic' to be statically linked. You can create a symlink to make it work locally:
 
 ```bash
 $ sudo ln -s /lib/libatomic.so /lib/libatomic.a
 ```
 
-The built version of bun may not work on other systems if compiled this way.
+Please note that the built version of Bun may not work on other systems if compiled this way.

@@ -123,7 +123,7 @@ By default, an active `Worker` will keep the main (spawning) process alive, so a
 
 ### `worker.unref()`
 
-To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivlent to what Node.js' `worker_threads` does.
+To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivalent to what Node.js' `worker_threads` does.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);

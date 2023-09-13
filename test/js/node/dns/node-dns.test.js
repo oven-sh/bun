@@ -132,7 +132,7 @@ test("dns.resolveMx (bun.sh)", done => {
     expect(results instanceof Array).toBe(true);
     const priority = results[0].priority;
     expect(priority >= 0 && priority < 65535).toBe(true);
-    expect(results[0].exchange.includes(".registrar-servers.com")).toBe(true);
+    expect(results[0].exchange.includes("aspmx.l.google.com")).toBe(true);
     done(err);
   });
 });

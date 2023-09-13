@@ -44,11 +44,11 @@ To scope the hooks to a test file:
 ```ts
 import { describe, beforeAll } from "bun:test";
 
-describe("test group", () => {
-  beforeAll(() => {
-    // setup
-  });
+beforeAll(() => {
+  // setup
+});
 
+describe("test group", () => {
   // tests...
 });
 ```

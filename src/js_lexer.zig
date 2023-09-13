@@ -295,7 +295,7 @@ fn NewLexer_(
             this.comments_to_preserve_before.clearAndFree();
         }
 
-        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
+        pub fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
             defer buf_.* = buf;
             if (comptime is_json) lexer.is_ascii_only = false;
@@ -2075,9 +2075,11 @@ fn NewLexer_(
             if (comptime is_json) unreachable;
         }
 
-        pub fn scanRegExp(lexer: *LexerType) !void {
+        // returns true of the regex contents need to be decoded
+        pub fn scanRegExp(lexer: *LexerType) !bool {
             lexer.assertNotJSON();
             lexer.regex_flags_start = null;
+            var decode = lexer.code_point >= 0x80;
             while (true) {
                 switch (lexer.code_point) {
                     '/' => {
@@ -2121,19 +2123,47 @@ fn NewLexer_(
                                 },
                             }
                         }
-                        return;
+
+                        return decode;
                     },
                     '[' => {
                         lexer.step();
+                        if (lexer.code_point >= 0x80) decode = true;
                         while (lexer.code_point != ']') {
-                            try lexer.scanRegExpValidateAndStep();
+                            try lexer.scanRegExpValidateAndStep(&decode);
                         }
                         lexer.step();
+                        if (lexer.code_point >= 0x80) decode = true;
                     },
                     else => {
-                        try lexer.scanRegExpValidateAndStep();
+                        try lexer.scanRegExpValidateAndStep(&decode);
                     },
                 }
+            }
+
+            return decode;
+        }
+
+        fn scanRegExpValidateAndStep(lexer: *LexerType, decode: *bool) !void {
+            lexer.assertNotJSON();
+
+            if (lexer.code_point == '\\') {
+                lexer.step();
+                if (lexer.code_point >= 0x80) decode.* = true;
+            }
+
+            switch (lexer.code_point) {
+                '\r', '\n', 0x2028, 0x2029 => {
+                    // Newlines aren't allowed in regular expressions
+                    try lexer.syntaxError();
+                },
+                -1 => { // EOF
+                    try lexer.syntaxError();
+                },
+                else => {
+                    lexer.step();
+                    if (lexer.code_point >= 0x80) decode.* = true;
+                },
             }
         }
 
@@ -2590,27 +2620,6 @@ fn NewLexer_(
             }
 
             try lexer.nextInsideJSXElement();
-        }
-
-        fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
-            lexer.assertNotJSON();
-
-            if (lexer.code_point == '\\') {
-                lexer.step();
-            }
-
-            switch (lexer.code_point) {
-                '\r', '\n', 0x2028, 0x2029 => {
-                    // Newlines aren't allowed in regular expressions
-                    try lexer.syntaxError();
-                },
-                -1 => { // EOF
-                    try lexer.syntaxError();
-                },
-                else => {
-                    lexer.step();
-                },
-            }
         }
 
         pub fn rescanCloseBraceAsTemplateToken(lexer: *LexerType) !void {

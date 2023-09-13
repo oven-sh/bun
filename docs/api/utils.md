@@ -204,7 +204,7 @@ Bun.ArrayBufferSink;
 
 ## `Bun.deepEquals()`
 
-Nestedly checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
 
 ```ts
 const foo = { a: 1, b: 2, c: { d: 3 } };

@@ -166,7 +166,7 @@ export default {
 
     divider("Bundler"),
     page("bundler", "`Bun.build`", {
-      description: "Bundle code for comsumption in the browser with Bun's native bundler.",
+      description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
     // page("bundler/intro", "How bundlers work", {
     //   description: "A visual introduction to bundling",

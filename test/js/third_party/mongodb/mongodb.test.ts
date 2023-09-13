@@ -12,7 +12,7 @@ describe("mongodb", () => {
     const clientConnection = await client.connect();
 
     try {
-      const db = client.db("oven");
+      const db = client.db("bun");
 
       const schema = db.collection("bun");
 

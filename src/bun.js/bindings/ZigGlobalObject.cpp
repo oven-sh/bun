@@ -103,6 +103,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/GetterSetter.h"
 #include "napi.h"
 #include "JSSQLStatement.h"
 #include "ModuleLoader.h"
@@ -1061,6 +1062,18 @@ JSC_DEFINE_CUSTOM_SETTER(lazyProcessEnvSetter,
         JSC::EncodedJSValue value, JSC::PropertyName))
 {
     return false;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSC::JSValue::encode(callFrame->thisValue());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(lazyProcessEnvGetter,
@@ -3768,7 +3781,16 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    putDirect(vm, JSC::Identifier::fromString(vm, "self"_s), this->globalThis(), JSC::PropertyAttribute::DontEnum | 0);
+    putDirectAccessor(
+        this,
+        builtinNames.selfPublicName(),
+        JSC::GetterSetter::create(
+            vm,
+            this,
+            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+        0);
+
     putDirect(vm, JSC::Identifier::fromString(vm, "global"_s), this->globalThis(), JSC::PropertyAttribute::DontEnum | 0);
 
     putDirect(

@@ -140,3 +140,12 @@ it("deletable", () => {
     });
   }
 });
+
+it("self is a getter", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
+  expect(descriptor.get).toBeInstanceOf(Function);
+  expect(descriptor.set).toBeInstanceOf(Function);
+  expect(descriptor.enumerable).toBe(true);
+  expect(descriptor.configurable).toBe(true);
+  expect(globalThis.self).toBe(globalThis);
+});

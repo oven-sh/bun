@@ -96,7 +96,7 @@ $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#Arch
-$ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
 {% /codetabs %}

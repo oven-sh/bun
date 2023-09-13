@@ -526,6 +526,8 @@ pub const VirtualMachine = struct {
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
 
+    registered_one_shot_epoll_fds: std.AutoHashMap(u64, void),
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
@@ -1068,6 +1070,7 @@ pub const VirtualMachine = struct {
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .registered_one_shot_epoll_fds = std.AutoHashMap(u64, void).init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1170,6 +1173,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .registered_one_shot_epoll_fds = std.AutoHashMap(u64, void).init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1301,6 +1305,7 @@ pub const VirtualMachine = struct {
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
+            .registered_one_shot_epoll_fds = std.AutoHashMap(u64, void).init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1922,6 +1927,7 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        this.registered_one_shot_epoll_fds.deinit();
     }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);

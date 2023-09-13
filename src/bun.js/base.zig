@@ -2168,10 +2168,19 @@ pub const FilePoll = struct {
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
+            var op = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+
+            if (op == linux.EPOLL.CTL_ADD and this.flags.contains(.one_shot)) {
+                var gpe = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.getOrPut(fd);
+                if (gpe.found_existing) {
+                    op = linux.EPOLL.CTL_MOD;
+                }
+            }
+
             const ctl = linux.epoll_ctl(
                 watcher_fd,
-                if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD,
-                @as(std.os.fd_t, @intCast(fd)),
+                op,
+                @intCast(fd),
                 &event,
             );
             this.flags.insert(.was_ever_registered);
@@ -2310,24 +2319,23 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
-        if (comptime !Environment.isLinux) {
-            if (this.flags.contains(.needs_rearm)) {
-                log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
-                this.flags.remove(.poll_process);
-                this.flags.remove(.poll_readable);
-                this.flags.remove(.poll_process);
-                this.flags.remove(.poll_machport);
-                return JSC.Maybe(void).success;
-            }
+        if (this.flags.contains(.needs_rearm)) {
+            log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+            this.flags.remove(.poll_process);
+            this.flags.remove(.poll_readable);
+            this.flags.remove(.poll_process);
+            this.flags.remove(.poll_machport);
+            return JSC.Maybe(void).success;
         }
 
         log("unregister: {s} ({d})", .{ @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
+            _ = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.remove(fd);
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,
-                @as(std.os.fd_t, @intCast(fd)),
+                @intCast(fd),
                 null,
             );
 

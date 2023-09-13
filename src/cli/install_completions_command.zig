@@ -397,7 +397,7 @@ pub const InstallCompletionsCommand = struct {
             var rc_filepath: [bun.MAX_PATH_BYTES]u8 = undefined;
             const rc_string = if (shell == .bash) ".bashrc" else ".zshrc";
             const needs_to_tell_them_to_add_completions_file = brk: {
-                var dot_rc: std.fs.File = zshrc: {
+                var dot_rc: std.fs.File = rc: {
                     if (shell == .zsh){
                         first: {
 
@@ -414,7 +414,7 @@ pub const InstallCompletionsCommand = struct {
                                 bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
                                 rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
                                 var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
-                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                                break :rc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
                             }
                         }
 
@@ -424,7 +424,7 @@ pub const InstallCompletionsCommand = struct {
                                 bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshrc");
                                 rc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
                                 var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
-                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
+                                break :rc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
                             }
                         }
 
@@ -434,7 +434,7 @@ pub const InstallCompletionsCommand = struct {
                                 bun.copy(u8, rc_filepath[zdot_dir.len..], "/.zshenv");
                                 rc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
                                 var filepath = rc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
-                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
+                                break :rc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;
                             }
                         }
                     }
@@ -445,7 +445,7 @@ pub const InstallCompletionsCommand = struct {
                                 bun.copy(u8, rc_filepath[bdot_dir.len..], "/.bashrc");
                                 rc_filepath[bdot_dir.len + "/.bashrc".len] = 0;
                                 var filepath = rc_filepath[0 .. bdot_dir.len + "/.bashrc".len :0];
-                                break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                                break :rc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
                             }
                         }
                     }

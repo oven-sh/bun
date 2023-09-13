@@ -2168,10 +2168,10 @@ pub const FilePoll = struct {
 
             var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
-            var op = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
+            var op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
             if (op == linux.EPOLL.CTL_ADD and this.flags.contains(.one_shot)) {
-                var gpe = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.getOrPut(fd);
+                var gpe = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.getOrPut(fd) catch unreachable;
                 if (gpe.found_existing) {
                     op = linux.EPOLL.CTL_MOD;
                 }

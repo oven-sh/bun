@@ -18,7 +18,7 @@ const defaultResponseBodies = {
   404: "Not Found",
   405: "Method Not Allowed",
   500: "Internal Server Error",
-} as Record<ValidStatusCode, string>;
+} satisfies Record<ValidStatusCode, string>;
 
 function getDefaultJSONBody(request: Request) {
   return {
@@ -163,6 +163,5 @@ export function createServer() {
       return response;
     },
   });
-  const { port, stop } = server;
-  return { server, port, stop };
+  return server;
 }

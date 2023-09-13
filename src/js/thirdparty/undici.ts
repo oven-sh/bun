@@ -1,47 +1,46 @@
+import type { IncomingHttpHeaders } from "node:http";
+import type * as e from "node:events";
+import type * as s from "stream";
+
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
+const { Readable } = StreamModule as { Readable: s.Readable };
 const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
-var Response = globalThis.Response;
-var Headers = globalThis.Headers;
-var Request = globalThis.Request;
-var URLSearchParams = globalThis.URLSearchParams;
-var URL = globalThis.URL;
+const kBunUndiciProxyAgentUri = Symbol("::bunUndiciProxyAgentUri::");
+const kBunUndiciProxyAgentToken = Symbol("::bunUndiciProxyAgentToken::");
+// const kBunUndiciProxyAgentHeaders = Symbol("::bunUndiciProxyAgentHeaders::");
+
+const { fetch } = Bun;
+// @ts-ignore
+const { Response, Request, Headers, URLSearchParams, URL, FormData } = globalThis;
+
 class File extends Blob {}
 class FileReader extends EventTarget {
+  // @ts-ignore
   constructor() {
     throw new Error("Not implemented yet!");
   }
 }
 
-var FormData = globalThis.FormData;
 function notImplemented() {
   throw new Error("Not implemented in bun");
 }
 
-/**
- * An object representing a URL.
- * @typedef {Object} UrlObject
- * @property {string | number} [port]
- * @property {string} [path]
- * @property {string} [pathname]
- * @property {string} [hostname]
- * @property {string} [origin]
- * @property {string} [protocol]
- * @property {string} [search]
- */
+type UrlObject = {
+  port: string | number;
+  path: string;
+  pathname: string;
+  hostname: string;
+  origin: string;
+  protocol: "http://" | "https://";
+  search: string;
+};
 
-/**
- * @typedef {import('http').IncomingHttpHeaders} IncomingHttpHeaders
- * @typedef {'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'CONNECT' | 'OPTIONS' | 'TRACE' | 'PATCH'} HttpMethod
- * @typedef {import('stream').Readable} Readable
- * @typedef {import('events').EventEmitter} EventEmitter
- */
+type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH";
 
 class BodyReadable extends ReadableFromWeb {
   #response;
@@ -102,36 +101,37 @@ class BodyReadable extends ReadableFromWeb {
 // *   upgrade?: boolean | string | null;
 // *   blocking?: boolean;
 
+type RequestOptions = {
+  dispatcher?: Dispatcher;
+  method: HttpMethod | string;
+  signal?: AbortSignal | e.EventEmitter | null;
+  maxRedirections?: number;
+  body?: string | Buffer | Uint8Array | s.Readable | null | FormData;
+  headers?: IncomingHttpHeaders | string[] | null;
+  query?: Record<string, any>;
+  reset?: boolean;
+  throwOnError?: boolean;
+};
+
+type UndiciResponse = {
+  statusCode: number;
+  headers: IncomingHttpHeaders;
+  body: BodyReadable | null;
+  trailers: Record<string, string>;
+  opaque: unknown;
+  context: Record<string, any>;
+};
+
 /**
  * Performs an HTTP request.
- * @param {string | URL | UrlObject} url
- * @param {{
- *   dispatcher: Dispatcher;
- *   method: HttpMethod;
- *   signal?: AbortSignal | EventEmitter | null;
- *   maxRedirections?: number;
- *   body?: string | Buffer | Uint8Array | Readable | null | FormData;
- *   headers?: IncomingHttpHeaders | string[] | null;
- *   query?: Record<string, any>;
- *   reset?: boolean;
- *   throwOnError?: boolean;
- * }} [options]
- * @returns {{
- *   statusCode: number;
- *   headers: IncomingHttpHeaders;
- *   body: ResponseBody;
- *   trailers: Object<string, string>;
- *   opaque: *;
- *   context: Object<string, *>;
- * }}
  */
 async function request(
-  url,
+  url: string | URL | UrlObject,
   options = {
     method: "GET",
     signal: null,
     headers: null,
-    query: null,
+    query: undefined,
     // idempotent: false, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
@@ -140,9 +140,10 @@ async function request(
     reset: false,
     throwOnError: false,
     body: null,
-    // dispatcher,
+    maxRedirections: undefined,
+    dispatcher: undefined,
   },
-) {
+): Promise<UndiciResponse> {
   let {
     method = "GET",
     headers: inputHeaders,
@@ -157,8 +158,8 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
-  } = options;
+    dispatcher,
+  } = options as RequestOptions;
 
   // TODO: More validations
 
@@ -174,18 +175,19 @@ async function request(
   if (typeof url === "string" && query) url = new URL(url);
   if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
-  method = method && typeof method === "string" ? method.toUpperCase() : null;
+  const sanitizedMethod = method && typeof method === "string" ? method.toUpperCase() : null;
   // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
   }
 
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
+  // @ts-ignore
+  if (inputBody && (inputBody as s.Readable).read && inputBody instanceof Readable) {
     // TODO: Streaming via ReadableStream?
     let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
+    (inputBody as s.Readable).setEncoding("utf8");
+    for await (const chunk of inputBody) {
       data += chunk;
     }
     inputBody = new TextEncoder().encode(data);
@@ -200,21 +202,39 @@ async function request(
     throw new Error("signal must be an instance of AbortSignal");
   }
 
+  let proxy: string | undefined;
+  if (dispatcher && dispatcher instanceof ProxyAgent) {
+    // get proxy uri
+    proxy = dispatcher[kBunUndiciProxyAgentUri];
+    // if proxyAgent.token is defined, put a proxy auth header with token in the headers
+    const token = dispatcher[kBunUndiciProxyAgentToken];
+    if (token) {
+      if (inputHeaders) {
+        if (Array.isArray(inputHeaders)) {
+          // TODO: figure out what to do here???
+        } else {
+          inputHeaders["proxy-authorization"] = token;
+        }
+      }
+    }
+  }
+
   let resp;
-  /** @type {Response} */
   const {
     status: statusCode,
     headers,
+    // @ts-ignore
     trailers,
   } = (resp = await fetch(url, {
     signal,
     mode: "cors",
-    method,
+    method: sanitizedMethod,
     headers: inputHeaders || kEmptyObject,
     body: inputBody,
-    redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
+    redirect: maxRedirections === undefined || maxRedirections > 0 ? "follow" : "manual",
     keepalive: !reset,
-  }));
+    proxy,
+  } as RequestInit));
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
@@ -265,6 +285,63 @@ function Undici() {
 
 class Dispatcher extends EventEmitter {}
 class Agent extends Dispatcher {}
+
+type ProxyAgentOptions = {
+  uri: string;
+  /**
+   * @deprecated use opts.token
+   */
+  auth?: string;
+  token?: string;
+  headers?: IncomingHttpHeaders;
+};
+
+class ProxyAgent extends Dispatcher {
+  #uri: string;
+  #token?: string;
+  // #headers?: Dict<string | string[]>;
+
+  constructor(uri: string, options: ProxyAgentOptions) {
+    super();
+
+    if (!uri || typeof uri !== "string") throw new TypeError("uri must be a string");
+    if (uri.startsWith("https://")) throw new TypeError("proxy over TLS not implemented");
+    if (!uri.startsWith("http://")) throw new Error("uri must be a valid URL string with the protocol `http://`");
+
+    let token;
+    if (options) {
+      if (typeof options !== "object") throw new TypeError("options must be an object");
+      // Auth token can either be passed via `token` or `auth` prop, though `auth` is now deprecated
+      const { token: _token, auth } = options;
+      token = _token ?? auth;
+      if (token && (typeof token !== "string" || !token.startsWith("Basic ")))
+        throw new TypeError("token must be a string formated as `Basic <TOKEN_IN_BASE_64>`");
+    }
+
+    this.#uri = uri;
+    this.#token = token;
+    // this.#headers = options.headers;
+  }
+
+  get [kBunUndiciProxyAgentUri]() {
+    return this.#uri;
+  }
+
+  get [kBunUndiciProxyAgentToken]() {
+    return this.#token;
+  }
+
+  // get [kBunUndiciProxyAgentHeaders]() {
+  //   return this.#headers;
+  // }
+
+  dispatch() {
+    return false;
+  }
+
+  async close(): Promise<void> {}
+}
+
 class Pool extends Dispatcher {
   request() {
     throw new Error("Not implemented in bun");
@@ -282,6 +359,7 @@ Undici.Pool = Pool;
 Undici.BalancedPool = BalancedPool;
 Undici.Client = Client;
 Undici.Agent = Agent;
+Undici.ProxyAgent = ProxyAgent;
 
 Undici.buildConnector =
   Undici.errors =
@@ -324,5 +402,6 @@ export default {
   BalancedPool,
   Client,
   Agent,
+  ProxyAgent,
   Undici,
 };

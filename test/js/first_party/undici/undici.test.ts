@@ -1,24 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { request } from "undici";
+import { request, ProxyAgent } from "undici";
+import type { Server } from "bun";
 
 import { createServer } from "../../../http-test-server";
 
 describe("undici", () => {
-  let serverCtl: ReturnType<typeof createServer>;
+  let server: Server;
   let hostUrl: string;
   let hostname = "localhost";
   let port: number;
   let host: string;
 
   beforeAll(() => {
-    serverCtl = createServer();
-    port = serverCtl.port;
+    server = createServer();
+    port = server.port;
     host = `${hostname}:${port}`;
     hostUrl = `http://${host}`;
   });
 
   afterAll(() => {
-    serverCtl.stop();
+    server.stop();
   });
 
   describe("request", () => {
@@ -134,6 +135,18 @@ describe("undici", () => {
 
     it("should properly append headers to the request", async () => {
       const { body } = await request(`${hostUrl}/headers`, {
+        headers: {
+          "x-foo": "bar",
+        },
+      });
+      expect(body).toBeDefined();
+      const json = (await body.json()) as { headers: { "x-foo": string } };
+      expect(json.headers["x-foo"]).toBe("bar");
+    });
+
+    it("should allow the passing of a `ProxyAgent` to `request` as a `dispatcher`", async () => {
+      const { body } = await request(`${hostUrl}/headers`, {
+        dispatcher: new ProxyAgent("http://testing.com"),
         headers: {
           "x-foo": "bar",
         },

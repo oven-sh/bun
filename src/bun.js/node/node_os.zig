@@ -49,20 +49,15 @@ pub const Os = struct {
     pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
     pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
-    pub fn availableParallelism(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn availableParallelism(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
-	
+
         return if (std.Thread.getCpuCount()) |rc| {
             if (rc < 1) {
                 return JSC.JSValue.jsNumberFromUint64(1);
             }
             return JSC.JSValue.jsNumberFromUint64(rc);
         } else |_| {
-            const err = JSC.SystemError{
-                .message = bun.String.static("Failed to get availableParallelism information"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-            };
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
             return JSC.JSValue.jsNumberFromUint64(1);
         };
     }

@@ -3039,7 +3039,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (last) {
                     var bytes = this.request_body_buf;
-                    this.request_body_buf = .{};
+
                     var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
@@ -3070,6 +3070,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         };
                         // }
                     }
+                    this.request_body_buf = .{};
 
                     if (old == .Locked) {
                         var vm = this.server.vm;

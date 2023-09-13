@@ -13122,7 +13122,7 @@ fn NewParser_(
                     return p.newExpr(
                         E.RegExp{
                             .data = .{
-                                .decoded = buf,
+                                .decoded = bun.BabyList(u16).init(buf.items),
                             },
                             .flags_offset = p.lexer.regex_flags_start,
                         },

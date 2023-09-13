@@ -2540,7 +2540,7 @@ pub const E = struct {
     pub const RegExp = struct {
         data: union(enum) {
             raw: string,
-            decoded: std.ArrayList(u16),
+            decoded: bun.BabyList(u16),
         },
 
         // This exists for JavaScript bindings

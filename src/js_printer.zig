@@ -3192,8 +3192,7 @@ fn NewPrinter(
                     p.print(raw);
                 },
                 .decoded => |decoded| {
-                    p.printUnquotedUTF16(decoded.items);
-                    decoded.deinit();
+                    p.printUnquotedUTF16(decoded.slice());
                 },
             }
 

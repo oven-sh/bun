@@ -438,7 +438,7 @@ pub const InstallCompletionsCommand = struct {
                             }
                         }
                     }
-                    if (shell == .bash) {
+                    else if (shell == .bash) {
                         first: {
                             if (bun.getenvZ("HOME")) |bdot_dir| {
                                 bun.copy(u8, &rc_filepath, bdot_dir);

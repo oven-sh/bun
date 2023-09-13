@@ -49,7 +49,7 @@ test("set button text", () => {
 
 ---
 
-With Happy DOM propertly configured, this test runs as expected.
+With Happy DOM properly configured, this test runs as expected.
 
 ```sh
 $ bun test

@@ -73,12 +73,7 @@ it("can use the console iterator more than once", async () => {
     },
   });
   const { stdout, stdin } = proc;
-  stdin.write("hello\n");
-  stdin.write("world\n");
-  stdin.write("break\n");
-  stdin.flush();
-  stdin.write("another\n");
-  stdin.write("break\n");
+  stdin.write("hello\nworld\nbreak\nanother\nbreak\n");
   stdin.flush();
   stdin.end();
 

@@ -130,8 +130,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--watch`
-- n/a
-- Not applicable
+- `--watch`
+- No differences
 
 ---
 

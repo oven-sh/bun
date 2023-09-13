@@ -16,7 +16,7 @@ describe("should work for static input", () => {
   for (let input of inputs) {
     it(input.replaceAll("\n", "\\n"), () => {
       const { stdout } = spawnSync({
-        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.js"],
+        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: Buffer.from(input),
         env: {
           BUN_DEBUG_QUIET_LOGS: "1",
@@ -41,7 +41,7 @@ describe("should work for streaming input", () => {
   for (let input of inputs) {
     it(input.replaceAll("\n", "\\n"), async () => {
       const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.js"],
+        cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: "pipe",
         stdout: "pipe",
         env: {
@@ -60,4 +60,28 @@ describe("should work for streaming input", () => {
       proc.kill(0);
     });
   }
+});
+
+// https://github.com/oven-sh/bun/issues/5175
+it("can use the console iterator more than once", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run-2.ts"],
+    stdin: "pipe",
+    stdout: "pipe",
+    env: {
+      BUN_DEBUG_QUIET_LOGS: "1",
+    },
+  });
+  const { stdout, stdin } = proc;
+  stdin.write("hello\n");
+  stdin.write("world\n");
+  stdin.write("break\n");
+  stdin.flush();
+  stdin.write("another\n");
+  stdin.write("break\n");
+  stdin.flush();
+  stdin.end();
+
+  expect(await new Response(stdout).text()).toBe('["hello","world"]["another"]');
+  proc.kill(0);
 });

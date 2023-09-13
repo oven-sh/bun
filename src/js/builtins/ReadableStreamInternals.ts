@@ -1073,12 +1073,12 @@ export function createTextStream(highWaterMark) {
       }
 
       if (hasBuffer && !hasString) {
-        return new globalThis.TextDecoder().decode($Bun.concatArrayBuffers(array));
+        return new globalThis.TextDecoder().decode(Bun.concatArrayBuffers(array));
       }
 
       // worst case: mixed content
 
-      var arrayBufferSink = new $Bun.ArrayBufferSink();
+      var arrayBufferSink = new Bun.ArrayBufferSink();
       arrayBufferSink.start({
         highWaterMark: estimatedLength,
         asUint8Array: true,
@@ -1205,7 +1205,7 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
     highWaterMark && typeof highWaterMark === "number"
       ? { highWaterMark, stream: true, asUint8Array: true }
       : { stream: true, asUint8Array: true };
-  var sink = new $Bun.ArrayBufferSink();
+  var sink = new Bun.ArrayBufferSink();
   sink.start(opts);
 
   var controller = {
@@ -1679,7 +1679,7 @@ export function readableStreamIntoText(stream) {
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
-  var sink = new $Bun.ArrayBufferSink();
+  var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   sink.start(highWaterMark ? { highWaterMark } : {});

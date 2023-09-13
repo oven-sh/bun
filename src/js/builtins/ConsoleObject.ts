@@ -1,14 +1,13 @@
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
-  const iterator = (async function* ConsoleAsyncIterator() {
-    const stream = Bun.stdin.stream();
+  const stream = Bun.stdin.stream();
+
+  var decoder = new TextDecoder("utf-8", { fatal: false });
+  var deferredError;
+  var indexOf = Bun.indexOfLine;
+
+  async function* ConsoleAsyncIterator() {
     var reader = stream.getReader();
-
-    // TODO: use builtin
-    var decoder = new (globalThis as any).TextDecoder("utf-8", { fatal: false }) as TextDecoder;
-    var deferredError;
-    var indexOf = Bun.indexOfLine;
-
     try {
       while (true) {
         var done, value;
@@ -24,6 +23,7 @@ export function asyncIterator(this: Console) {
           if (pendingChunk) {
             yield decoder.decode(pendingChunk);
           }
+          console.log("done?");
           return;
         }
 
@@ -51,17 +51,18 @@ export function asyncIterator(this: Console) {
     } catch (e) {
       deferredError = e;
     } finally {
+      console.log("finally");
       reader.releaseLock();
 
       if (deferredError) {
         throw deferredError;
       }
     }
-  })();
+  }
 
   const symbol = globalThis.Symbol.asyncIterator;
-  this[symbol] = () => iterator;
-  return iterator;
+  this[symbol] = ConsoleAsyncIterator;
+  return ConsoleAsyncIterator();
 }
 
 export function write(this: Console, input) {

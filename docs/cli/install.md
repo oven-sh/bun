@@ -69,7 +69,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]

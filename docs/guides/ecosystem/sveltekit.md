@@ -2,7 +2,7 @@
 name: Build an app with SvelteKit and Bun
 ---
 
-Use `bunx` to scaffold your app with the `create-svelte` CLI. Answer the prompts to select a template and set up your development environment.
+Use `bun create` to scaffold your app with the `svelte` package. Answer the prompts to select a template and set up your development environment.
 
 ```sh
 $ bun create svelte@latest my-app

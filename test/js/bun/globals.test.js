@@ -123,3 +123,20 @@ describe("File", () => {
     expect(await foo.text()).toBe("foo");
   });
 });
+
+it("deletable", () => {
+  const globals = ["Blob", "fetch", "Headers", "Request", "Response", "setTimeout", "clearTimeout", "setInterval"];
+  for (let name of globals) {
+    it(name, () => {
+      const prev = globalThis[name];
+      try {
+        expect(delete globalThis[name]).toBe(true);
+        expect(globalThis[name]).toBe(undefined);
+        globalThis[name] = 123;
+        expect(globalThis[name]).toBe(123);
+      } finally {
+        globalThis[name] = prev;
+      }
+    });
+  }
+});

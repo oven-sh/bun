@@ -1492,7 +1492,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   var nativePtr = $getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = $lazyStreamPrototypeMap.$get(nativeType);
   if (Prototype === undefined) {
-    var [pull, start, cancel, setClose, deinit, setRefOrUnref, drain] = $lazyLoad(nativeType);
+    var [pull, start, cancel, setClose, deinit, setRefOrUnref, drain] = $lazy(nativeType);
     var closer = [false];
     var handleResult;
     function handleNativeReadableStreamPromiseResult(val) {

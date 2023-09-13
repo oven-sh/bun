@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
+import { applyGlobalReplacements, define } from "./replacements";
 import { cap, fmtCPPString, low } from "./helpers";
 import { spawn } from "bun";
 
@@ -47,24 +47,6 @@ const TMP_DIR = path.join(SRC_DIR, "../out/tmp/builtins");
 
 if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR, { recursive: true });
-
-const define = {
-  "process.env.NODE_ENV": "production",
-  "IS_BUN_DEVELOPMENT": "false",
-};
-
-for (const name in enums) {
-  const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
-  define[`__intrinsic__${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`__intrinsic__${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
-}
-
-for (const name of globalsToPrefix) {
-  define[name] = "__intrinsic__" + name;
-}
 
 interface ParsedBuiltin {
   name: string;
@@ -231,7 +213,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({

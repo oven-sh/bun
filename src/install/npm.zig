@@ -812,7 +812,7 @@ pub const PackageManifest = struct {
         if (json.asProperty("name")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;
 
-            if (!strings.eql(field, expected_name)) {
+            if (!strings.eqlInsensitive(field, expected_name)) {
                 Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
                 return null;
             }

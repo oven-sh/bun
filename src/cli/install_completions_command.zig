@@ -398,7 +398,7 @@ pub const InstallCompletionsCommand = struct {
             const rc_string = if (shell == .bash) ".bashrc" else ".zshrc";
             const needs_to_tell_them_to_add_completions_file = brk: {
                 var dot_rc: std.fs.File = rc: {
-                    if (shell == .zsh){
+                    if (shell == .zsh) {
                         first: {
 
                             // https://zsh.sourceforge.io/Intro/intro_3.html
@@ -438,7 +438,7 @@ pub const InstallCompletionsCommand = struct {
                             }
                         }
                     }
-                    if (shell == .bash){
+                    if (shell == .bash) {
                         first: {
                             if (bun.getenvZ("HOME")) |bdot_dir| {
                                 bun.copy(u8, &rc_filepath, bdot_dir);
@@ -450,9 +450,7 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-
-
-                    break :brk true;         
+                    break :brk true;
                 };
                 defer dot_rc.close();
                 var buf = allocator.alloc(

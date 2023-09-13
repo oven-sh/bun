@@ -2940,6 +2940,9 @@ pub const Blob = struct {
             ptr.allocator = allocator;
             return ptr.toJS(globalThis);
         }
+        if (this.size == Blob.max_size) {
+            this.resolveSize();
+        }
 
         // If the optional start parameter is not used as a parameter when making this call, let relativeStart be 0.
         var relativeStart: i64 = 0;

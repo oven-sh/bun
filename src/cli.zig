@@ -1510,6 +1510,28 @@ pub const Command = struct {
 
                 const template_name = positionals[0];
 
+                // if template_name is "react"
+                // print message telling user to use "bun create vite" instead
+                if (strings.eqlComptime(template_name, "react")) {
+                    Output.prettyErrorln(
+                        \\The "react" template has been deprecated.
+                        \\It is recommended to use "react-app" or "vite" instead.
+                        \\
+                        \\To create a project using Create React App, run
+                        \\
+                        \\  bun create react-app
+                        \\
+                        \\To create a React project using Vite, run
+                        \\
+                        \\  bun create vite
+                        \\
+                        \\Then select "React" from the list of frameworks.
+                        \\
+                    , .{});
+                    Global.exit(1);
+                    return;
+                }
+
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
                     strings.startsWithChar(template_name, '@'));

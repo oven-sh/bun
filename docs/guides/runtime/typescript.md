@@ -50,7 +50,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     "allowImportingTsExtensions": true,
     "moduleDetection": "force",
     // if TS 4.x or earlier
-    "moduleResolution": "nodenext",
+    // "moduleResolution": "nodenext",
 
     "jsx": "react-jsx", // support JSX
     "allowJs": true, // allow importing `.js` from `.ts`

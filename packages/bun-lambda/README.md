@@ -8,7 +8,7 @@ First, you will need to deploy the layer to your AWS account. Clone this reposit
 
 ```sh
 git clone git@github.com:oven-sh/bun.git
-cd packages/bun-lambda
+cd bun/packages/bun-lambda
 bun install
 bun run publish-layer
 ```

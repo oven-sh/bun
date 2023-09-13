@@ -135,9 +135,9 @@ The biggest difference between CommonJS and ES Modules is that CommonJS modules 
 You can `import` any file or package, even `.cjs` files.
 
 ```ts
-const { foo } = require("./foo"); // extensions are optional
-const { bar } = require("./bar.mjs");
-const { baz } = require("./my-typescript.tsx");
+import { foo } from "./foo"; // extensions are optional
+import bar from "./bar.ts";
+import { stuff } from "./my-commonjs.cjs";
 ```
 
 ### Using `import` and `require()` together

@@ -363,6 +363,7 @@ function execFile(file, args, options, callback) {
               const encoding = child.stdout.readableEncoding;
               const actualLen = Buffer.byteLength(chunk, encoding);
               if (encodedStdoutLen === undefined) {
+                encodedStdoutLen = 0;
                 for (let i = 0; i < _stdout.length; i++) {
                   encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
                 }
@@ -370,7 +371,7 @@ function execFile(file, args, options, callback) {
                 encodedStdoutLen += actualLen;
               }
               const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-              ArrayPrototypePush.call(_stdout, StringPrototypeSlice.apply(chunk, 0, truncatedLen));
+              ArrayPrototypePush.call(_stdout, StringPrototypeSlice.apply(chunk, [0, truncatedLen]));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
               kill();

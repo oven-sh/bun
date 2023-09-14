@@ -2,6 +2,10 @@ import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { strictEqual } from "assert";
+import { equals } from "@vitest/expect";
+import exp from "constants";
+import { ExecException } from "child_process";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -11,7 +15,33 @@ const platformTmpDir = require("fs").realpathSync(tmpdir());
 // Not 100% accurate, but good enough for this test
 const SEMVER_REGEX =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z\d][-a-zA-Z.\d]*)?(\+[a-zA-Z\d][-a-zA-Z.\d]*)?$/;
+describe("ChildProcess.exec()", () => {
+  describe("When stdout exceeds the constant maxBuffer size", async () => {
+    type MaxBufferTestResult = {
+      stdoutlen: number;
+      error: ExecException | null;
+    };
 
+    // defined in child_process
+    const maxBufferSizeConst = 1024 * 1024;
+
+    const testPayloadSize = maxBufferSizeConst / 2;
+
+    const result = await new Promise<MaxBufferTestResult>(resolve => {
+      exec(`printf '=%.0s' {1..${testPayloadSize}}`, (error, stdout) => {
+        resolve({ stdoutlen: stdout.length, error: error });
+      });
+    });
+
+    it("should return a trimmed version of stdout", () => {
+      expect(result.stdoutlen).toBeLessThan(testPayloadSize);
+    });
+
+    it("should return the correct buffer overflow error", () => {
+      expect(result.error?.message).toBe("stdout maxBuffer length exceeded");
+    });
+  });
+});
 describe("ChildProcess.spawn()", () => {
   it("should emit `spawn` on spawn", async () => {
     const proc = new ChildProcess();

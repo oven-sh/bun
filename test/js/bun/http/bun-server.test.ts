@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunExe, bunEnv } from "harness";
 
 describe("Server", () => {
   test("normlizes incoming request URLs", async () => {
@@ -356,5 +357,15 @@ describe("Server", () => {
       expect(signalOnServer).toBe(true);
       server.stop(true);
     }
+  });
+
+  test("should not crash with big formData", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "big-form-data.fixture.js"],
+      cwd: import.meta.dir,
+      env: bunEnv,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
   });
 });

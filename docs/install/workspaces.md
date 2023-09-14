@@ -17,10 +17,20 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 **Glob support** — Bun supports simple `<directory>/*` globs in `"workspaces"`. Full glob syntax (e.g. `**` and `?`) is not yet supported.
 {% /callout %}
 
-When referencing other packages from monorepo, use `"workspace:*"` as the version, otherwise you might get errors like `Workspace name "example-package-in-monorepo" already exists`.
+When referencing other packages in the monorepo, use `"workspace:*"` as the version field in your `package.json`.
+
+```json
+{
+  "name": "pkg-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-b": "workspace:*"
+  }
+}
+```
 
 {% callout %}
-**Version Support** — Bun supports simple `workspace:*` versions in `"dependencies"`. Full version syntax (e.g. `workspace:^*`) is not yet supported.
+**Version support** — Bun supports simple `workspace:*` versions in `"dependencies"`. Full version syntax (e.g. `workspace:^*`) is not yet supported.
 {% /callout %}
 
 Workspaces have a couple major benefits.

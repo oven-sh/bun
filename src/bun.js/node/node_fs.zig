@@ -58,465 +58,136 @@ else
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
+pub const Async = struct {
+    pub const chmod = NewAsyncFSTask(Return.Chmod, Arguments.Chmod, NodeFS.chmod);
+    pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
+    pub const close = NewAsyncFSTask(Return.Close, Arguments.Close, NodeFS.close);
+    pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
+    pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
+    pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
+    pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
+    pub const fstat = NewAsyncFSTask(Return.Fstat, Arguments.Fstat, NodeFS.fstat);
+    pub const fsync = NewAsyncFSTask(Return.Fsync, Arguments.Fsync, NodeFS.fsync);
+    pub const ftruncate = NewAsyncFSTask(Return.Ftruncate, Arguments.FTruncate, NodeFS.ftruncate);
+    pub const link = NewAsyncFSTask(Return.Link, Arguments.Link, NodeFS.link);
+    pub const lstat = NewAsyncFSTask(Return.Stat, Arguments.Stat, NodeFS.lstat);
+    pub const lutimes = NewAsyncFSTask(Return.Lutimes, Arguments.Lutimes, NodeFS.lutimes);
+    pub const mkdir = NewAsyncFSTask(Return.Mkdir, Arguments.Mkdir, NodeFS.mkdir);
+    pub const open = NewAsyncFSTask(Return.Open, Arguments.Open, NodeFS.open);
+    pub const read = NewAsyncFSTask(Return.Read, Arguments.Read, NodeFS.read);
+    pub const readdir = NewAsyncFSTask(Return.Readdir, Arguments.Readdir, NodeFS.readdir);
+    pub const readFile = NewAsyncFSTask(Return.ReadFile, Arguments.ReadFile, NodeFS.readFile);
+    pub const readlink = NewAsyncFSTask(Return.Readlink, Arguments.Readlink, NodeFS.readlink);
+    pub const readv = NewAsyncFSTask(Return.Readv, Arguments.Readv, NodeFS.readv);
+    pub const realpath = NewAsyncFSTask(Return.Realpath, Arguments.Realpath, NodeFS.realpath);
+    pub const rename = NewAsyncFSTask(Return.Rename, Arguments.Rename, NodeFS.rename);
+    pub const rm = NewAsyncFSTask(Return.Rm, Arguments.Rm, NodeFS.rm);
+    pub const rmdir = NewAsyncFSTask(Return.Rmdir, Arguments.RmDir, NodeFS.rmdir);
+    pub const stat = NewAsyncFSTask(Return.Stat, Arguments.Stat, NodeFS.stat);
+    pub const symlink = NewAsyncFSTask(Return.Symlink, Arguments.Symlink, NodeFS.symlink);
+    pub const truncate = NewAsyncFSTask(Return.Truncate, Arguments.Truncate, NodeFS.truncate);
+    pub const utimes = NewAsyncFSTask(Return.Utimes, Arguments.Utimes, NodeFS.utimes);
+    pub const write = NewAsyncFSTask(Return.Write, Arguments.Write, NodeFS.write);
+    pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
+    pub const writev = NewAsyncFSTask(Return.Writev, Arguments.Writev, NodeFS.writev);
+    pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
+    pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
+    pub const mkdtemp = NewAsyncFSTask(Return.Mkdtemp, Arguments.MkdirTemp, NodeFS.mkdtemp);
 
-pub const AsyncReaddirTask = struct {
-    promise: JSC.JSPromise.Strong,
-    args: Arguments.Readdir,
-    globalObject: *JSC.JSGlobalObject,
-    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-    result: JSC.Maybe(Return.Readdir),
-    ref: JSC.PollRef = .{},
-    arena: bun.ArenaAllocator,
-    tracker: JSC.AsyncTaskTracker,
+    fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
+        return struct {
+            promise: JSC.JSPromise.Strong,
+            args: ArgumentType,
+            globalObject: *JSC.JSGlobalObject,
+            task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+            result: JSC.Maybe(ReturnType),
+            ref: JSC.PollRef = .{},
+            tracker: JSC.AsyncTaskTracker,
 
-    pub fn create(globalObject: *JSC.JSGlobalObject, readdir_args: Arguments.Readdir, vm: *JSC.VirtualMachine, arena: bun.ArenaAllocator) JSC.JSValue {
-        var task = bun.default_allocator.create(AsyncReaddirTask) catch @panic("out of memory");
-        task.* = AsyncReaddirTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = readdir_args,
-            .result = undefined,
-            .globalObject = globalObject,
-            .arena = arena,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-        };
-        task.ref.ref(vm);
-        task.args.path.toThreadSafe();
-        task.tracker.didSchedule(globalObject);
-        JSC.WorkPool.schedule(&task.task);
+            pub const Task = @This();
 
-        return task.promise.value();
-    }
+            pub fn create(
+                globalObject: *JSC.JSGlobalObject,
+                args: ArgumentType,
+                vm: *JSC.VirtualMachine,
+            ) JSC.JSValue {
+                var task = bun.default_allocator.create(Task) catch @panic("out of memory");
+                task.* = Task{
+                    .promise = JSC.JSPromise.Strong.init(globalObject),
+                    .args = args,
+                    .result = undefined,
+                    .globalObject = globalObject,
+                    .tracker = JSC.AsyncTaskTracker.init(vm),
+                };
+                task.ref.ref(vm);
+                task.args.toThreadSafe();
+                task.tracker.didSchedule(globalObject);
+                JSC.WorkPool.schedule(&task.task);
 
-    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncReaddirTask = @fieldParentPtr(AsyncReaddirTask, "task", task);
+                return task.promise.value();
+            }
 
-        var node_fs = NodeFS{};
-        this.result = node_fs.readdir(this.args, .promise);
+            fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+                var this: *Task = @fieldParentPtr(Task, "task", task);
 
-        if (this.result == .err) {
-            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
-        }
+                var node_fs = NodeFS{};
+                this.result = Function(&node_fs, this.args, .promise);
 
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
-    }
-
-    fn runFromJSThread(this: *AsyncReaddirTask) void {
-        var globalObject = this.globalObject;
-
-        var success = @as(JSC.Maybe(Return.Readdir).Tag, this.result) == .result;
-        const result = switch (this.result) {
-            .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Readdir, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
+                if (this.result == .err) {
+                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    std.mem.doNotOptimizeAway(&node_fs);
                 }
 
-                break :brk out;
-            },
-        };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
+                this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+            }
 
-        const tracker = this.tracker;
-        this.deinit();
+            pub fn runFromJSThread(this: *Task) void {
+                var globalObject = this.globalObject;
+                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const result = switch (this.result) {
+                    .err => |err| err.toJSC(globalObject),
+                    .result => |res| brk: {
+                        var exceptionref: JSC.C.JSValueRef = null;
+                        const out = JSC.JSValue.c(JSC.To.JS.withType(ReturnType, res, globalObject, &exceptionref));
+                        const exception = JSC.JSValue.c(exceptionref);
+                        if (exception != .zero) {
+                            success = false;
+                            break :brk exception;
+                        }
 
-        tracker.willDispatch(globalObject);
-        defer tracker.didDispatch(globalObject);
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
-    }
+                        break :brk out;
+                    },
+                };
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
+                promise_value.ensureStillAlive();
 
-    pub fn deinit(this: *AsyncReaddirTask) void {
-        this.ref.unref(this.globalObject.bunVM());
-        this.args.deinitAndUnprotect();
-        this.promise.strong.deinit();
-        this.arena.deinit();
-        bun.default_allocator.destroy(this);
-    }
-};
+                const tracker = this.tracker;
+                tracker.willDispatch(globalObject);
+                defer tracker.didDispatch(globalObject);
 
-pub const AsyncStatTask = struct {
-    promise: JSC.JSPromise.Strong,
-    args: Arguments.Stat,
-    globalObject: *JSC.JSGlobalObject,
-    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-    result: JSC.Maybe(Return.Stat),
-    ref: JSC.PollRef = .{},
-    is_lstat: bool = false,
-    arena: bun.ArenaAllocator,
-    tracker: JSC.AsyncTaskTracker,
+                this.deinit();
+                switch (success) {
+                    false => {
+                        promise.reject(globalObject, result);
+                    },
+                    true => {
+                        promise.resolve(globalObject, result);
+                    },
+                }
+            }
 
-    pub fn create(
-        globalObject: *JSC.JSGlobalObject,
-        readdir_args: Arguments.Stat,
-        vm: *JSC.VirtualMachine,
-        is_lstat: bool,
-        arena: bun.ArenaAllocator,
-    ) JSC.JSValue {
-        var task = bun.default_allocator.create(AsyncStatTask) catch @panic("out of memory");
-        task.* = AsyncStatTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = readdir_args,
-            .result = undefined,
-            .globalObject = globalObject,
-            .is_lstat = is_lstat,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-            .arena = arena,
-        };
-        task.ref.ref(vm);
-        task.args.path.toThreadSafe();
-        task.tracker.didSchedule(globalObject);
-
-        JSC.WorkPool.schedule(&task.task);
-
-        return task.promise.value();
-    }
-
-    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncStatTask = @fieldParentPtr(AsyncStatTask, "task", task);
-
-        var node_fs = NodeFS{};
-        this.result = if (this.is_lstat)
-            node_fs.lstat(this.args, .promise)
-        else
-            node_fs.stat(this.args, .promise);
-
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
-    }
-
-    fn runFromJSThread(this: *AsyncStatTask) void {
-        var globalObject = this.globalObject;
-        var success = @as(JSC.Maybe(Return.Lstat).Tag, this.result) == .result;
-        const result = switch (this.result) {
-            .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Lstat, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
+            pub fn deinit(this: *Task) void {
+                if (this.result == .err) {
+                    bun.default_allocator.free(this.result.err.path);
                 }
 
-                break :brk out;
-            },
+                this.ref.unref(this.globalObject.bunVM());
+                this.args.deinit();
+                this.promise.strong.deinit();
+                bun.default_allocator.destroy(this);
+            }
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
-
-        const tracker = this.tracker;
-        tracker.willDispatch(globalObject);
-        defer tracker.didDispatch(globalObject);
-
-        this.deinit();
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
-    }
-
-    pub fn deinit(this: *AsyncStatTask) void {
-        this.ref.unref(this.globalObject.bunVM());
-        this.args.deinitAndUnprotect();
-        this.promise.strong.deinit();
-        this.arena.deinit();
-        bun.default_allocator.destroy(this);
-    }
-};
-
-pub const AsyncRealpathTask = struct {
-    promise: JSC.JSPromise.Strong,
-    args: Arguments.Realpath,
-    globalObject: *JSC.JSGlobalObject,
-    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-    result: JSC.Maybe(Return.Realpath),
-    ref: JSC.PollRef = .{},
-    arena: bun.ArenaAllocator,
-    tracker: JSC.AsyncTaskTracker,
-
-    pub fn create(
-        globalObject: *JSC.JSGlobalObject,
-        args: Arguments.Realpath,
-        vm: *JSC.VirtualMachine,
-        arena: bun.ArenaAllocator,
-    ) JSC.JSValue {
-        var task = bun.default_allocator.create(AsyncRealpathTask) catch @panic("out of memory");
-        task.* = AsyncRealpathTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = args,
-            .result = undefined,
-            .globalObject = globalObject,
-            .arena = arena,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-        };
-        task.ref.ref(vm);
-        task.args.path.toThreadSafe();
-        task.tracker.didSchedule(globalObject);
-        JSC.WorkPool.schedule(&task.task);
-
-        return task.promise.value();
-    }
-
-    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncRealpathTask = @fieldParentPtr(AsyncRealpathTask, "task", task);
-
-        var node_fs = NodeFS{};
-        this.result = node_fs.realpath(this.args, .promise);
-
-        if (this.result == .err) {
-            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
-        }
-
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
-    }
-
-    fn runFromJSThread(this: *AsyncRealpathTask) void {
-        var globalObject = this.globalObject;
-        var success = @as(JSC.Maybe(Return.Realpath).Tag, this.result) == .result;
-        const result = switch (this.result) {
-            .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Realpath, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
-                }
-
-                break :brk out;
-            },
-        };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
-
-        const tracker = this.tracker;
-        tracker.willDispatch(globalObject);
-        defer tracker.didDispatch(globalObject);
-
-        this.deinit();
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
-    }
-
-    pub fn deinit(this: *AsyncRealpathTask) void {
-        if (this.result == .err) {
-            bun.default_allocator.free(this.result.err.path);
-        }
-
-        this.ref.unref(this.globalObject.bunVM());
-        this.args.deinitAndUnprotect();
-        this.promise.strong.deinit();
-        this.arena.deinit();
-        bun.default_allocator.destroy(this);
-    }
-};
-
-pub const AsyncReadFileTask = struct {
-    promise: JSC.JSPromise.Strong,
-    args: Arguments.ReadFile,
-    globalObject: *JSC.JSGlobalObject,
-    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-    result: JSC.Maybe(Return.ReadFile),
-    ref: JSC.PollRef = .{},
-    arena: bun.ArenaAllocator,
-    tracker: JSC.AsyncTaskTracker,
-
-    pub fn create(
-        globalObject: *JSC.JSGlobalObject,
-        args: Arguments.ReadFile,
-        vm: *JSC.VirtualMachine,
-        arena: bun.ArenaAllocator,
-    ) JSC.JSValue {
-        var task = bun.default_allocator.create(AsyncReadFileTask) catch @panic("out of memory");
-        task.* = AsyncReadFileTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = args,
-            .result = undefined,
-            .globalObject = globalObject,
-            .arena = arena,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-        };
-        task.ref.ref(vm);
-        task.args.path.toThreadSafe();
-        task.tracker.didSchedule(globalObject);
-        JSC.WorkPool.schedule(&task.task);
-
-        return task.promise.value();
-    }
-
-    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncReadFileTask = @fieldParentPtr(AsyncReadFileTask, "task", task);
-
-        var node_fs = NodeFS{};
-        this.result = node_fs.readFile(this.args, .promise);
-
-        if (this.result == .err) {
-            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
-        }
-
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
-    }
-
-    fn runFromJSThread(this: *AsyncReadFileTask) void {
-        var globalObject = this.globalObject;
-
-        var success = @as(JSC.Maybe(Return.ReadFile).Tag, this.result) == .result;
-        const result = switch (this.result) {
-            .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.ReadFile, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
-                }
-
-                break :brk out;
-            },
-        };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
-
-        const tracker = this.tracker;
-        tracker.willDispatch(globalObject);
-        defer tracker.didDispatch(globalObject);
-
-        this.deinit();
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
-    }
-
-    pub fn deinit(this: *AsyncReadFileTask) void {
-        this.ref.unref(this.globalObject.bunVM());
-        this.args.deinitAndUnprotect();
-        this.promise.strong.deinit();
-        this.arena.deinit();
-        bun.default_allocator.destroy(this);
-    }
-};
-
-pub const AsyncCopyFileTask = struct {
-    promise: JSC.JSPromise.Strong,
-    args: Arguments.CopyFile,
-    globalObject: *JSC.JSGlobalObject,
-    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
-    result: JSC.Maybe(Return.CopyFile),
-    ref: JSC.PollRef = .{},
-    arena: bun.ArenaAllocator,
-    tracker: JSC.AsyncTaskTracker,
-
-    pub fn create(
-        globalObject: *JSC.JSGlobalObject,
-        copyfile_args: Arguments.CopyFile,
-        vm: *JSC.VirtualMachine,
-        arena: bun.ArenaAllocator,
-    ) JSC.JSValue {
-        var task = bun.default_allocator.create(AsyncCopyFileTask) catch @panic("out of memory");
-        task.* = AsyncCopyFileTask{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
-            .args = copyfile_args,
-            .result = undefined,
-            .globalObject = globalObject,
-            .tracker = JSC.AsyncTaskTracker.init(vm),
-            .arena = arena,
-        };
-        task.ref.ref(vm);
-        task.args.src.toThreadSafe();
-        task.args.dest.toThreadSafe();
-        task.tracker.didSchedule(globalObject);
-
-        JSC.WorkPool.schedule(&task.task);
-
-        return task.promise.value();
-    }
-
-    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncCopyFileTask = @fieldParentPtr(AsyncCopyFileTask, "task", task);
-
-        var node_fs = NodeFS{};
-        this.result = node_fs.copyFile(this.args, .promise);
-
-        if (this.result == .err) {
-            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
-        }
-
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
-    }
-
-    fn runFromJSThread(this: *AsyncCopyFileTask) void {
-        var globalObject = this.globalObject;
-        var success = @as(JSC.Maybe(Return.CopyFile).Tag, this.result) == .result;
-        const result = switch (this.result) {
-            .err => |err| err.toJSC(globalObject),
-            .result => |res| brk: {
-                var exceptionref: JSC.C.JSValueRef = null;
-                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.CopyFile, res, globalObject, &exceptionref));
-                const exception = JSC.JSValue.c(exceptionref);
-                if (exception != .zero) {
-                    success = false;
-                    break :brk exception;
-                }
-
-                break :brk out;
-            },
-        };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
-
-        const tracker = this.tracker;
-        tracker.willDispatch(globalObject);
-        defer tracker.didDispatch(globalObject);
-
-        this.deinit();
-        switch (success) {
-            false => {
-                promise.reject(globalObject, result);
-            },
-            true => {
-                promise.resolve(globalObject, result);
-            },
-        }
-    }
-
-    pub fn deinit(this: *AsyncCopyFileTask) void {
-        this.ref.unref(this.globalObject.bunVM());
-        this.args.deinit();
-        this.promise.strong.deinit();
-        this.arena.deinit();
-        bun.default_allocator.destroy(this);
     }
 };
 
@@ -581,7 +252,7 @@ pub const AsyncCpTask = struct {
             this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
         }
 
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.creat(this, runFromJSThread));
     }
 
     fn runFromJSThread(this: *AsyncCpTask) void {
@@ -710,6 +381,16 @@ pub const Arguments = struct {
             this.new_path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: @This()) void {
+            this.old_path.deinitAndUnprotect();
+            this.new_path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *@This()) void {
+            this.old_path.toThreadSafe();
+            this.new_path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Rename {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -748,6 +429,14 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *@This()) void {
+            this.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
@@ -782,6 +471,21 @@ pub const Arguments = struct {
         position: ?u52 = 0,
 
         pub fn deinit(_: *const @This()) void {}
+
+        pub fn deinitAndUnprotect(this: *const @This()) void {
+            this.buffers.value.unprotect();
+            this.buffers.buffers.deinit();
+        }
+
+        pub fn toThreadSafe(this: *const @This()) void {
+            this.buffers.value.protect();
+
+            var clone = bun.default_allocator.dupe(bun.default_allocator, this.buffers.buffers.items) catch @panic("out of memory");
+            this.buffers.buffers.deinit();
+            this.buffers.buffers.items = clone;
+            this.buffers.buffers.capacity = clone.len;
+            this.buffers.buffers.allocator = bun.default_allocator;
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Writev {
             const fd_value = arguments.nextEat() orelse {
@@ -855,7 +559,23 @@ pub const Arguments = struct {
         buffers: JSC.Node.VectorArrayBuffer,
         position: ?u52 = 0,
 
-        pub fn deinit(_: *const @This()) void {}
+        pub fn deinit(this: *const @This()) void {
+            _ = this;
+        }
+
+        pub fn deinitAndUnprotect(this: *const @This()) void {
+            this.buffers.value.unprotect();
+            this.buffers.buffers.deinit();
+        }
+
+        pub fn toThreadSafe(this: *const @This()) void {
+            this.buffers.value.protect();
+            var clone = bun.default_allocator.dupe(bun.default_allocator, this.buffers.buffers.items) catch @panic("out of memory");
+            this.buffers.buffers.deinit();
+            this.buffers.buffers.items = clone;
+            this.buffers.buffers.capacity = clone.len;
+            this.buffers.buffers.allocator = bun.default_allocator;
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readv {
             const fd_value = arguments.nextEat() orelse {
@@ -932,6 +652,14 @@ pub const Arguments = struct {
             _ = this;
         }
 
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            _ = this;
+        }
+
+        pub fn toThreadSafe(this: *const @This()) void {
+            _ = this;
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FTruncate {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
@@ -980,6 +708,14 @@ pub const Arguments = struct {
 
         pub fn deinit(this: @This()) void {
             this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *@This()) void {
+            this.path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Chown {
@@ -1039,6 +775,8 @@ pub const Arguments = struct {
         gid: gid_t,
 
         pub fn deinit(_: @This()) void {}
+
+        pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fchown {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1112,6 +850,14 @@ pub const Arguments = struct {
 
         pub fn deinit(this: @This()) void {
             this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *@This()) void {
+            this.path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Lutimes {
@@ -1189,6 +935,14 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
+        pub fn toThreadSafe(this: *@This()) void {
+            this.path.toThreadSafe();
+        }
+
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            this.path.deinitAndUnprotect();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Chmod {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1233,6 +987,10 @@ pub const Arguments = struct {
     pub const FChmod = struct {
         fd: FileDescriptor,
         mode: Mode = 0x777,
+
+        pub fn deinit(_: *const @This()) void {}
+
+        pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FChmod {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1303,6 +1061,10 @@ pub const Arguments = struct {
             this.path.deinitAndUnprotect();
         }
 
+        pub fn toThreadSafe(this: *Stat) void {
+            this.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stat {
             const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
@@ -1355,6 +1117,8 @@ pub const Arguments = struct {
         big_int: bool = false,
 
         pub fn deinit(_: @This()) void {}
+
+        pub fn toThreadSafe(_: *@This()) void {}
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fstat {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1412,6 +1176,11 @@ pub const Arguments = struct {
             this.new_path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: Symlink) void {
+            this.old_path.deinitAndUnprotect();
+            this.new_path.deinitAndUnprotect();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Link {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1452,6 +1221,16 @@ pub const Arguments = struct {
         pub fn deinit(this: Symlink) void {
             this.old_path.deinit();
             this.new_path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: Symlink) void {
+            this.old_path.deinitAndUnprotect();
+            this.new_path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *@This()) void {
+            this.old_path.toThreadSafe();
+            this.new_path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Symlink {
@@ -1512,6 +1291,14 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: *Realpath) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Realpath) void {
+            this.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readlink {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1558,6 +1345,10 @@ pub const Arguments = struct {
 
         pub fn deinitAndUnprotect(this: *Realpath) void {
             this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Realpath) void {
+            this.path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Realpath {
@@ -1620,13 +1411,7 @@ pub const Arguments = struct {
         }
     };
 
-    pub const Rm = struct {
-        path: PathLike,
-        force: bool = false,
-        max_retries: u32 = 0,
-        recursive: bool = false,
-        retry_delay: c_uint = 100,
-    };
+    pub const Rm = RmDir;
 
     pub const RmDir = struct {
         path: PathLike,
@@ -2048,42 +1833,6 @@ pub const Arguments = struct {
                 .fd = fd,
                 .atime = atime,
                 .mtime = mtime,
-            };
-        }
-    };
-
-    pub const FSync = struct {
-        fd: FileDescriptor,
-
-        pub fn deinit(_: FSync) void {}
-
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FSync {
-            const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "File descriptor is required",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
-            }, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "fd must be a number",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
-            };
-
-            if (exception.* != null) return null;
-
-            return FSync{
-                .fd = fd,
             };
         }
     };
@@ -3196,6 +2945,8 @@ pub const Arguments = struct {
     pub const Fsync = struct {
         fd: FileDescriptor,
 
+        pub fn deinit(_: Fsync) void {}
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fsync {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
                 if (exception.* == null) {
@@ -3411,69 +3162,49 @@ pub const NodeFS = struct {
     }
 
     pub fn appendFile(this: *NodeFS, args: Arguments.AppendFile, comptime flavor: Flavor) Maybe(Return.AppendFile) {
+        _ = flavor;
         var data = args.data.slice();
 
         switch (args.file) {
             .fd => |fd| {
-                switch (comptime flavor) {
-                    .sync => {
-                        while (data.len > 0) {
-                            const written = switch (Syscall.write(fd, data)) {
-                                .result => |result| result,
-                                .err => |err| return .{ .err = err },
-                            };
-                            data = data[written..];
-                        }
-
-                        return Maybe(Return.AppendFile).success;
-                    },
-                    else => {
-                        @compileError("Not implemented yet");
-                    },
+                while (data.len > 0) {
+                    const written = switch (Syscall.write(fd, data)) {
+                        .result => |result| result,
+                        .err => |err| return .{ .err = err },
+                    };
+                    data = data[written..];
                 }
+
+                return Maybe(Return.AppendFile).success;
             },
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
-                switch (comptime flavor) {
-                    .sync => {
-                        const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
-                            .result => |result| result,
-                            .err => |err| return .{ .err = err },
-                        };
 
-                        defer {
-                            _ = Syscall.close(fd);
-                        }
+                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
+                    .result => |result| result,
+                    .err => |err| return .{ .err = err },
+                };
 
-                        while (data.len > 0) {
-                            const written = switch (Syscall.write(fd, data)) {
-                                .result => |result| result,
-                                .err => |err| return .{ .err = err },
-                            };
-                            data = data[written..];
-                        }
-
-                        return Maybe(Return.AppendFile).success;
-                    },
-                    else => {
-                        @compileError("Not implemented yet");
-                    },
+                defer {
+                    _ = Syscall.close(fd);
                 }
+
+                while (data.len > 0) {
+                    const written = switch (Syscall.write(fd, data)) {
+                        .result => |result| result,
+                        .err => |err| return .{ .err = err },
+                    };
+                    data = data[written..];
+                }
+
+                return Maybe(Return.AppendFile).success;
             },
         }
-
-        return Maybe(Return.AppendFile).todo;
     }
 
     pub fn close(_: *NodeFS, args: Arguments.Close, comptime flavor: Flavor) Maybe(Return.Close) {
-        switch (comptime flavor) {
-            .sync => {
-                return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
-            },
-            else => {},
-        }
-
-        return .{ .err = Syscall.Error.todo };
+        _ = flavor;
+        return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
@@ -3714,132 +3445,92 @@ pub const NodeFS = struct {
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
+        _ = flavor;
         const Ret = Maybe(Return.Exists);
-        switch (comptime flavor) {
-            .sync => {
-                const path = args.path orelse return Ret{ .result = false };
-                const slice = path.sliceZ(&this.sync_error_buf);
-                // access() may not work correctly on NFS file systems with UID
-                // mapping enabled, because UID mapping is done on the server and
-                // hidden from the client, which checks permissions. Similar
-                // problems can occur to FUSE mounts.
-                const rc = (system.access(slice, std.os.F_OK));
-                return Ret{ .result = rc == 0 };
-            },
-            else => {},
-        }
-
-        return Ret.todo;
+        const path = args.path orelse return Ret{ .result = false };
+        const slice = path.sliceZ(&this.sync_error_buf);
+        // access() may not work correctly on NFS file systems with UID
+        // mapping enabled, because UID mapping is done on the server and
+        // hidden from the client, which checks permissions. Similar
+        // problems can occur to FUSE mounts.
+        const rc = (system.access(slice, std.os.F_OK));
+        return Ret{ .result = rc == 0 };
     }
 
     pub fn chown(this: *NodeFS, args: Arguments.Chown, comptime flavor: Flavor) Maybe(Return.Chown) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fchmod).todo;
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
 
-        switch (comptime flavor) {
-            .sync => return Syscall.chown(path, args.uid, args.gid),
-            else => {},
-        }
-
-        return Maybe(Return.Chown).todo;
+        return Syscall.chown(path, args.uid, args.gid);
     }
 
     /// This should almost never be async
     pub fn chmod(this: *NodeFS, args: Arguments.Chmod, comptime flavor: Flavor) Maybe(Return.Chmod) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fchmod).todo;
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Chmod).errnoSysP(C.chmod(path, args.mode), .chmod, path) orelse
-                    Maybe(Return.Chmod).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Chmod).todo;
+        return Maybe(Return.Chmod).errnoSysP(C.chmod(path, args.mode), .chmod, path) orelse
+            Maybe(Return.Chmod).success;
     }
 
     /// This should almost never be async
     pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fchmod).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => {
-                return Syscall.fchmod(args.fd, args.mode);
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Fchmod).todo;
+        return Syscall.fchmod(args.fd, args.mode);
     }
     pub fn fchown(_: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fchown).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
-                    Maybe(Return.Fchown).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Fchown).todo;
+        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
+            Maybe(Return.Fchown).success;
     }
     pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fdatasync).todo;
         }
-        switch (comptime flavor) {
-            .sync => return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
-                Maybe(Return.Fdatasync).success,
-            else => {},
-        }
-
-        return Maybe(Return.Fdatasync).todo;
+        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
+            Maybe(Return.Fdatasync).success;
     }
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fstat).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => {
-                if (comptime Environment.isPosix) {
-                    return switch (Syscall.fstat(args.fd)) {
-                        .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
-                        .err => |err| Maybe(Return.Fstat){ .err = err },
-                    };
-                }
-            },
-            else => {},
+        if (comptime Environment.isPosix) {
+            return switch (Syscall.fstat(args.fd)) {
+                .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
+                .err => |err| Maybe(Return.Fstat){ .err = err },
+            };
         }
 
         return Maybe(Return.Fstat).todo;
     }
 
     pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Fsync).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
-                Maybe(Return.Fsync).success,
-            else => {},
-        }
-
-        return Maybe(Return.Fsync).todo;
+        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
+            Maybe(Return.Fsync).success;
     }
 
     pub fn ftruncateSync(args: Arguments.FTruncate) Maybe(Return.Ftruncate) {
@@ -3847,14 +3538,11 @@ pub const NodeFS = struct {
     }
 
     pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
-        switch (comptime flavor) {
-            .sync => return ftruncateSync(args),
-            else => {},
-        }
-
-        return Maybe(Return.Ftruncate).todo;
+        _ = flavor;
+        return ftruncateSync(args);
     }
     pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Futimes).todo;
         }
@@ -3870,66 +3558,43 @@ pub const NodeFS = struct {
             },
         };
 
-        switch (comptime flavor) {
-            .sync => return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd, &times), .futimens)) |err|
-                err
-            else
-                Maybe(Return.Futimes).success,
-            else => {},
-        }
-
-        return Maybe(Return.Futimes).todo;
+        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd, &times), .futimens)) |err|
+            err
+        else
+            Maybe(Return.Futimes).success;
     }
 
     pub fn lchmod(this: *NodeFS, args: Arguments.LCHmod, comptime flavor: Flavor) Maybe(Return.Lchmod) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lchmod).todo;
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Lchmod).errnoSysP(C.lchmod(path, args.mode), .lchmod, path) orelse
-                    Maybe(Return.Lchmod).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Lchmod).todo;
+        return Maybe(Return.Lchmod).errnoSysP(C.lchmod(path, args.mode), .lchmod, path) orelse
+            Maybe(Return.Lchmod).success;
     }
 
     pub fn lchown(this: *NodeFS, args: Arguments.LChown, comptime flavor: Flavor) Maybe(Return.Lchown) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lchown).todo;
         }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Lchown).errnoSysP(C.lchown(path, args.uid, args.gid), .lchown, path) orelse
-                    Maybe(Return.Lchown).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Lchown).todo;
+        return Maybe(Return.Lchown).errnoSysP(C.lchown(path, args.uid, args.gid), .lchown, path) orelse
+            Maybe(Return.Lchown).success;
     }
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
+        _ = flavor;
         var new_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Link).errnoSysP(system.link(from, to, 0), .link, from) orelse
-                    Maybe(Return.Link).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Link).todo;
+        return Maybe(Return.Link).errnoSysP(system.link(from, to, 0), .link, from) orelse
+            Maybe(Return.Link).success;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
         if (comptime Environment.isWindows) {
@@ -3957,158 +3622,146 @@ pub const NodeFS = struct {
     }
     // Node doesn't absolute the path so we don't have to either
     fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
-        switch (comptime flavor) {
-            .sync => {
-                const path = args.path.sliceZ(&this.sync_error_buf);
-                return switch (Syscall.mkdir(path, args.mode)) {
-                    .result => Maybe(Return.Mkdir){ .result = bun.String.empty },
-                    .err => |err| Maybe(Return.Mkdir){ .err = err },
-                };
-            },
-            else => {},
-        }
+        _ = flavor;
 
-        return Maybe(Return.Mkdir).todo;
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        return switch (Syscall.mkdir(path, args.mode)) {
+            .result => Maybe(Return.Mkdir){ .result = bun.String.empty },
+            .err => |err| Maybe(Return.Mkdir){ .err = err },
+        };
     }
 
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
     pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+        _ = flavor;
         const Option = Maybe(Return.Mkdir);
         if (comptime Environment.isWindows) return Option.todo;
 
-        switch (comptime flavor) {
-            // The sync version does no allocation except when returning the path
-            .sync => {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const path = args.path.sliceZWithForceCopy(&buf, true);
-                const len = @as(u16, @truncate(path.len));
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const path = args.path.sliceZWithForceCopy(&buf, true);
+        const len = @as(u16, @truncate(path.len));
 
-                // First, attempt to create the desired directory
-                // If that fails, then walk back up the path until we have a match
-                switch (Syscall.mkdir(path, args.mode)) {
-                    .err => |err| {
-                        switch (err.getErrno()) {
-                            else => {
-                                @memcpy(this.sync_error_buf[0..len], path[0..len]);
-                                return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
-                            },
+        // First, attempt to create the desired directory
+        // If that fails, then walk back up the path until we have a match
+        switch (Syscall.mkdir(path, args.mode)) {
+            .err => |err| {
+                switch (err.getErrno()) {
+                    else => {
+                        @memcpy(this.sync_error_buf[0..len], path[0..len]);
+                        return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
+                    },
 
-                            .EXIST => {
-                                return Option{ .result = bun.String.empty };
-                            },
-                            // continue
-                            .NOENT => {},
-                        }
+                    .EXIST => {
+                        return Option{ .result = bun.String.empty };
                     },
-                    .result => {
-                        return Option{
-                            .result = if (args.path == .slice_with_underlying_string)
-                                args.path.slice_with_underlying_string.underlying
-                            else
-                                bun.String.create(args.path.slice()),
-                        };
-                    },
+                    // continue
+                    .NOENT => {},
                 }
+            },
+            .result => {
+                return Option{
+                    .result = if (args.path == .slice_with_underlying_string)
+                        args.path.slice_with_underlying_string.underlying
+                    else
+                        bun.String.create(args.path.slice()),
+                };
+            },
+        }
 
-                var working_mem = &this.sync_error_buf;
-                @memcpy(working_mem[0..len], path[0..len]);
+        var working_mem = &this.sync_error_buf;
+        @memcpy(working_mem[0..len], path[0..len]);
 
-                var i: u16 = len - 1;
+        var i: u16 = len - 1;
 
-                // iterate backwards until creating the directory works successfully
-                while (i > 0) : (i -= 1) {
-                    if (path[i] == std.fs.path.sep) {
-                        working_mem[i] = 0;
-                        var parent: [:0]u8 = working_mem[0..i :0];
+        // iterate backwards until creating the directory works successfully
+        while (i > 0) : (i -= 1) {
+            if (path[i] == std.fs.path.sep) {
+                working_mem[i] = 0;
+                var parent: [:0]u8 = working_mem[0..i :0];
 
-                        switch (Syscall.mkdir(parent, args.mode)) {
-                            .err => |err| {
-                                working_mem[i] = std.fs.path.sep;
-                                switch (err.getErrno()) {
-                                    .EXIST => {
-                                        // Handle race condition
-                                        break;
-                                    },
-                                    .NOENT => {
-                                        continue;
-                                    },
-                                    else => return .{ .err = err.withPath(parent) },
-                                }
-                            },
-                            .result => {
-                                // We found a parent that worked
-                                working_mem[i] = std.fs.path.sep;
+                switch (Syscall.mkdir(parent, args.mode)) {
+                    .err => |err| {
+                        working_mem[i] = std.fs.path.sep;
+                        switch (err.getErrno()) {
+                            .EXIST => {
+                                // Handle race condition
                                 break;
                             },
-                        }
-                    }
-                }
-                var first_match: u16 = i;
-                i += 1;
-                // after we find one that works, we go forward _after_ the first working directory
-                while (i < len) : (i += 1) {
-                    if (path[i] == std.fs.path.sep) {
-                        working_mem[i] = 0;
-                        var parent: [:0]u8 = working_mem[0..i :0];
-
-                        switch (Syscall.mkdir(parent, args.mode)) {
-                            .err => |err| {
-                                working_mem[i] = std.fs.path.sep;
-                                switch (err.getErrno()) {
-                                    .EXIST => {
-                                        if (Environment.allow_assert) std.debug.assert(false);
-                                        continue;
-                                    },
-                                    else => return .{ .err = err },
-                                }
+                            .NOENT => {
+                                continue;
                             },
-
-                            .result => {
-                                working_mem[i] = std.fs.path.sep;
-                            },
-                        }
-                    }
-                }
-
-                working_mem[len] = 0;
-
-                // Our final directory will not have a trailing separator
-                // so we have to create it once again
-                switch (Syscall.mkdir(working_mem[0..len :0], args.mode)) {
-                    .err => |err| {
-                        switch (err.getErrno()) {
-                            // handle the race condition
-                            .EXIST => {
-                                var display_path = bun.String.empty;
-                                if (first_match != std.math.maxInt(u16)) {
-                                    display_path = bun.String.create(working_mem[0..first_match]);
-                                }
-                                return Option{ .result = display_path };
-                            },
-
-                            // NOENT shouldn't happen here
-                            else => return .{
-                                .err = err.withPath(path),
-                            },
+                            else => return .{ .err = err.withPath(parent) },
                         }
                     },
                     .result => {
-                        return Option{
-                            .result = if (first_match != std.math.maxInt(u16))
-                                bun.String.create(working_mem[0..first_match])
-                            else if (args.path == .slice_with_underlying_string)
-                                args.path.slice_with_underlying_string.underlying
-                            else
-                                bun.String.create(args.path.slice()),
-                        };
+                        // We found a parent that worked
+                        working_mem[i] = std.fs.path.sep;
+                        break;
+                    },
+                }
+            }
+        }
+        var first_match: u16 = i;
+        i += 1;
+        // after we find one that works, we go forward _after_ the first working directory
+        while (i < len) : (i += 1) {
+            if (path[i] == std.fs.path.sep) {
+                working_mem[i] = 0;
+                var parent: [:0]u8 = working_mem[0..i :0];
+
+                switch (Syscall.mkdir(parent, args.mode)) {
+                    .err => |err| {
+                        working_mem[i] = std.fs.path.sep;
+                        switch (err.getErrno()) {
+                            .EXIST => {
+                                if (Environment.allow_assert) std.debug.assert(false);
+                                continue;
+                            },
+                            else => return .{ .err = err },
+                        }
+                    },
+
+                    .result => {
+                        working_mem[i] = std.fs.path.sep;
+                    },
+                }
+            }
+        }
+
+        working_mem[len] = 0;
+
+        // Our final directory will not have a trailing separator
+        // so we have to create it once again
+        switch (Syscall.mkdir(working_mem[0..len :0], args.mode)) {
+            .err => |err| {
+                switch (err.getErrno()) {
+                    // handle the race condition
+                    .EXIST => {
+                        var display_path = bun.String.empty;
+                        if (first_match != std.math.maxInt(u16)) {
+                            display_path = bun.String.create(working_mem[0..first_match]);
+                        }
+                        return Option{ .result = display_path };
+                    },
+
+                    // NOENT shouldn't happen here
+                    else => return .{
+                        .err = err.withPath(path),
                     },
                 }
             },
-            else => {},
+            .result => {
+                return Option{
+                    .result = if (first_match != std.math.maxInt(u16))
+                        bun.String.create(working_mem[0..first_match])
+                    else if (args.path == .slice_with_underlying_string)
+                        args.path.slice_with_underlying_string.underlying
+                    else
+                        bun.String.create(args.path.slice()),
+                };
+            },
         }
-
-        return Maybe(Return.Mkdir).todo;
     }
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
@@ -4136,75 +3789,54 @@ pub const NodeFS = struct {
         return .{ .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
-        switch (comptime flavor) {
-            // The sync version does no allocation except when returning the path
-            .sync => {
-                const path = args.path.sliceZ(&this.sync_error_buf);
-                return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
-                    .err => |err| .{
-                        .err = err.withPath(args.path.slice()),
-                    },
-                    .result => |fd| .{ .result = fd },
-                };
+        _ = flavor;
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
+            .err => |err| .{
+                .err = err.withPath(args.path.slice()),
             },
-            else => {},
-        }
-
-        return Maybe(Return.Open).todo;
+            .result => |fd| .{ .result = fd },
+        };
     }
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
         return Maybe(Return.OpenDir).todo;
     }
 
     fn _read(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        _ = flavor;
         if (Environment.allow_assert) std.debug.assert(args.position == null);
+        var buf = args.buffer.slice();
+        buf = buf[@min(args.offset, buf.len)..];
+        buf = buf[0..@min(buf.len, args.length)];
 
-        switch (comptime flavor) {
-            // The sync version does no allocation except when returning the path
-            .sync => {
-                var buf = args.buffer.slice();
-                buf = buf[@min(args.offset, buf.len)..];
-                buf = buf[0..@min(buf.len, args.length)];
-
-                return switch (Syscall.read(args.fd, buf)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{
-                        .result = .{
-                            .bytes_read = @as(u52, @truncate(amt)),
-                        },
-                    },
-                };
+        return switch (Syscall.read(args.fd, buf)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Read).todo;
+            .result => |amt| .{
+                .result = .{
+                    .bytes_read = @as(u52, @truncate(amt)),
+                },
+            },
+        };
     }
 
     fn _pread(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        switch (comptime flavor) {
-            .sync => {
-                var buf = args.buffer.slice();
-                buf = buf[@min(args.offset, buf.len)..];
-                buf = buf[0..@min(buf.len, args.length)];
+        _ = flavor;
+        var buf = args.buffer.slice();
+        buf = buf[@min(args.offset, buf.len)..];
+        buf = buf[0..@min(buf.len, args.length)];
 
-                return switch (Syscall.pread(args.fd, buf, args.position.?)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{
-                        .result = .{
-                            .bytes_read = @as(u52, @truncate(amt)),
-                        },
-                    },
-                };
+        return switch (Syscall.pread(args.fd, buf, args.position.?)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Read).todo;
+            .result => |amt| .{
+                .result = .{
+                    .bytes_read = @as(u52, @truncate(amt)),
+                },
+            },
+        };
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
@@ -4236,127 +3868,91 @@ pub const NodeFS = struct {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        switch (comptime flavor) {
-            .sync => {
-                var buf = args.buffer.slice();
-                buf = buf[@min(args.offset, buf.len)..];
-                buf = buf[0..@min(buf.len, args.length)];
+        _ = flavor;
 
-                return switch (Syscall.write(args.fd, buf)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{
-                        .result = .{
-                            .bytes_written = @as(u52, @truncate(amt)),
-                        },
-                    },
-                };
+        var buf = args.buffer.slice();
+        buf = buf[@min(args.offset, buf.len)..];
+        buf = buf[0..@min(buf.len, args.length)];
+
+        return switch (Syscall.write(args.fd, buf)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{
+                .result = .{
+                    .bytes_written = @as(u52, @truncate(amt)),
+                },
+            },
+        };
     }
 
     fn _pwrite(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
+        _ = flavor;
         const position = args.position.?;
 
-        switch (comptime flavor) {
-            .sync => {
-                var buf = args.buffer.slice();
-                buf = buf[@min(args.offset, buf.len)..];
-                buf = buf[0..@min(args.length, buf.len)];
+        var buf = args.buffer.slice();
+        buf = buf[@min(args.offset, buf.len)..];
+        buf = buf[0..@min(args.length, buf.len)];
 
-                return switch (Syscall.pwrite(args.fd, buf, position)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{ .result = .{
-                        .bytes_written = @as(u52, @truncate(amt)),
-                    } },
-                };
+        return switch (Syscall.pwrite(args.fd, buf, position)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{ .result = .{
+                .bytes_written = @as(u52, @truncate(amt)),
+            } },
+        };
     }
 
     fn _preadv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
+        _ = flavor;
         const position = args.position.?;
 
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.preadv(args.fd, args.buffers.buffers.items, position)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{ .result = .{
-                        .bytes_read = @as(u52, @truncate(amt)),
-                    } },
-                };
+        return switch (Syscall.preadv(args.fd, args.buffers.buffers.items, position)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{ .result = .{
+                .bytes_read = @as(u52, @truncate(amt)),
+            } },
+        };
     }
 
     fn _readv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.readv(args.fd, args.buffers.buffers.items)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{ .result = .{
-                        .bytes_read = @as(u52, @truncate(amt)),
-                    } },
-                };
+        _ = flavor;
+        return switch (Syscall.readv(args.fd, args.buffers.buffers.items)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{ .result = .{
+                .bytes_read = @as(u52, @truncate(amt)),
+            } },
+        };
     }
 
     fn _pwritev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        _ = flavor;
         const position = args.position.?;
-
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.pwritev(args.fd, args.buffers.buffers.items, position)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{ .result = .{
-                        .bytes_written = @as(u52, @truncate(amt)),
-                    } },
-                };
+        return switch (Syscall.pwritev(args.fd, args.buffers.buffers.items, position)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{ .result = .{
+                .bytes_written = @as(u52, @truncate(amt)),
+            } },
+        };
     }
 
     fn _writev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.writev(args.fd, args.buffers.buffers.items)) {
-                    .err => |err| .{
-                        .err = err,
-                    },
-                    .result => |amt| .{ .result = .{
-                        .bytes_written = @as(u52, @truncate(amt)),
-                    } },
-                };
+        _ = flavor;
+        return switch (Syscall.writev(args.fd, args.buffers.buffers.items)) {
+            .err => |err| .{
+                .err = err,
             },
-            else => {},
-        }
-
-        return Maybe(Return.Write).todo;
+            .result => |amt| .{ .result = .{
+                .bytes_written = @as(u52, @truncate(amt)),
+            } },
+        };
     }
 
     pub fn readdir(this: *NodeFS, args: Arguments.Readdir, comptime flavor: Flavor) Maybe(Return.Readdir) {

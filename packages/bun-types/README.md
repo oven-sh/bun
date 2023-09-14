@@ -21,9 +21,11 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 
 ```jsonc-diff
   {
-    
-+   "types": ["bun-types"],
-    
+    "compilerOptions": {
++     "types": ["bun-types"]
+      // other options...
+    }
+
     // other options...
   }
 ```

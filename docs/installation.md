@@ -149,3 +149,27 @@ To write the completions to a custom location:
 $ bun completions > path-to-file      # write to file
 $ bun completions /path/to/directory  # write into directory
 ```
+
+## Uninstall
+
+If you need to remove Bun from your system, use the following commands.
+
+{% codetabs %}
+
+```bash#macOS/Linux_(curl)
+$ rm -rf ~/.bun # for macOS, Linux, and WSL
+```
+
+```bash#NPM
+$ npm uninstall -g bun
+```
+
+```bash#Homebrew
+$ brew uninstall bun
+```
+
+```bash#Proto
+$ proto uninstall bun
+```
+
+{% /codetabs %}

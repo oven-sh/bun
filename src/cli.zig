@@ -897,7 +897,7 @@ pub const HelpCommand = struct {
             \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
             \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
             \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
-            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies & save to package.json
+            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
             \\  <b><blue>link<r>                           Link an npm package globally
             \\  <b><blue>unlink<r>                         Globally unlink an npm package
             \\  <b>pm<r>                             More commands for managing packages

@@ -253,6 +253,11 @@ describe("TextDecoder", () => {
     // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
   });
 
+  it("constructor should accept undefined as utf-8", () => {
+    const decoder = new TextDecoder(undefined, { fatal: true, ignoreBOM: false });
+    expect(decoder.encoding).toBe("utf-8");
+  })
+
   it("should throw on invalid input", () => {
     expect(() => {
       const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });

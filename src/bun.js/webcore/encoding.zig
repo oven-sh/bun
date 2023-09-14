@@ -702,6 +702,8 @@ pub const TextDecoder = struct {
                     globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
                     return null;
                 }
+            } else if (arguments[0].isUndefined()) {
+                // undefined is used to mean "use the default encoding"
             } else {
                 globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
                 return null;

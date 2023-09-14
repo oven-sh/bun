@@ -1,5 +1,11 @@
 Bun treats TypeScript as a first-class citizen.
 
+{% callout %}
+
+**Note** — To add type declarations for Bun APIs like the `Bun` global, follow the instructions at [Intro > TypeScript](/docs/typescript). This page describes how the Bun runtime runs TypeScript code.
+
+{% /callout %}
+
 ## Running `.ts` files
 
 Bun can directly execute `.ts` and `.tsx` files just like vanilla JavaScript, with no extra configuration. If you import a `.ts` or `.tsx` file (or an `npm` module that exports these files), Bun internally transpiles it into JavaScript then executes the file.
@@ -14,106 +20,16 @@ That said, if you are using Bun as a development tool but still targeting Node.j
 
 {% /callout %}
 
-## Configuring `tsconfig.json`
-
-Bun supports a number of features that TypeScript doesn't support by default, such as extensioned imports, top-level await, and `exports` conditions. It also implements global APIs like the `Bun`. To enable these features, your `tsconfig.json` must be configured properly.
-
-{% callout %}
-If you initialized your project with `bun init`, everything is already configured properly.
-{% /callout %}
-
-To get started, install the `bun-types` package.
-
-```sh
-$ bun add -d bun-types # dev dependency
-```
-
-If you're using a canary build of Bun, use the `canary` tag. The canary package is updated on every commit to the `main` branch.
-
-```sh
-$ bun add -d bun-types@canary
-```
-
-<!-- ### Quick setup
-
-{% callout %}
-
-**Note** — This approach requires TypeScript 5.0 or later!
-
-{% /callout %}
-
-Add the following to your `tsconfig.json`.
-
-```json-diff
-  {
-+   "extends": ["bun-types"]
-    // other options...
-  }
-```
-
-{% callout %}
-**Note** — The `"extends"` field in your `tsconfig.json` can accept an array of values. If you're already using `"extends"`, just add `"bun-types"` to the array.
-{% /callout %}
-
-That's it! You should be able to use Bun's full feature set without seeing any TypeScript compiler errors.
-
-### Manual setup -->
-
-### Recommended `compilerOptions`
-
-These are the recommended `compilerOptions` for a Bun project.
-
-```jsonc
-{
-  "compilerOptions": {
-    // add Bun type definitions
-    "types": ["bun-types"],
-
-    // enable latest features
-    "lib": ["esnext"],
-    "module": "esnext",
-    "target": "esnext",
-
-    // if TS 5.x+
-    "moduleResolution": "bundler",
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "moduleDetection": "force",
-    // if TS 4.x or earlier
-    "moduleResolution": "nodenext",
-
-    "jsx": "react-jsx", // support JSX
-    "allowJs": true, // allow importing `.js` from `.ts`
-    "esModuleInterop": true, // allow default imports for CommonJS modules
-
-    // best practices
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
-  }
-}
-```
-
-### Add DOM types
-
-Settings `"types": ["bun-types"]` means TypeScript will ignore other global type definitions, including `lib: ["dom"]`. To add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
-
-```ts
-/// <reference lib="dom" />
-/// <reference lib="dom.iterable" />
-```
-
-The same applies to other global type definition _libs_ like `webworker`.
-
 ## Path mapping
 
 When resolving modules, Bun's runtime respects path mappings defined in [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) in your `tsconfig.json`. No other runtime does this.
 
-Given the following `tsconfig.json`...
+Consider the following `tsconfig.json`.
 
 ```json
 {
   "compilerOptions": {
+    "baseUrl": "./src",
     "paths": {
       "data": ["./data.ts"]
     }
@@ -121,7 +37,14 @@ Given the following `tsconfig.json`...
 }
 ```
 
-...the import from `"data"` will work as expected.
+Bun will use `baseUrl` to resolve module paths.
+
+```ts
+// resolves to ./src/components/Button.tsx
+import { Button } from "components/Button.tsx";
+```
+
+Bun will also correctly resolve imports from `"data"`.
 
 {% codetabs %}
 

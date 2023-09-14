@@ -5,6 +5,7 @@ import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helper
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
+import { define } from "./replacements";
 
 const t = new Bun.Transpiler({ loader: "tsx" });
 
@@ -173,6 +174,7 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
     target: "bun",
     external: builtinModules,
     define: {
+      ...define,
       IS_BUN_DEVELOPMENT: String(!!debug),
       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
       "process.platform": JSON.stringify(platform),
@@ -222,7 +224,7 @@ for (const [name, bundle, outputs] of [
         .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
         .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
         .replace(/]\s*,\s*__debug_end__\)/g, ")")
-        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
           try {
             const str = JSON.parse(specifier);

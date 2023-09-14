@@ -39,6 +39,32 @@ mime_types: ?bun.HTTP.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
+}
+
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+        _ = this.listening_sockets_for_watch_mode.swapRemove(i);
+    }
+}
+
+pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    for (this.listening_sockets_for_watch_mode.items) |socket| {
+        _ = Syscall.close(socket);
+    }
+    this.listening_sockets_for_watch_mode = .{};
+}
+
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     if (this.hot_map == null) {
         this.hot_map = HotMap.init(allocator);

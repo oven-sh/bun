@@ -1134,6 +1134,31 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
         return JSValue::encode(JSValue {});                                                                                                                                                                                             \
     }
 
+inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
+{
+    auto& builtinNames = WebCore::builtinNames(vm);
+    auto fn = globalObject->getDirect(builtinNames.requireNativeModulePrivateName());
+    auto callData = JSC::getCallData(vm, fn);
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, "util/types"));
+    return JSC::call(globalObject, fn, callData, globalObject, args);
+}
+
+inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)
+{
+    auto config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
+    config->putDirect(vm, Identifier::fromString(vm, "isDebugBuild"_s), jsBoolean(false), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasOpenSSL"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "fipsMode"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasIntl"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasTracing"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasNodeOptions"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasInspector"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "noBrowserGlobals"_s), jsBoolean(false), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(64), 0);
+    return config;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = jsGlobalObject->vm();
@@ -1146,7 +1171,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "async_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("async_wrap");
     if (moduleName == "buffer"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("buffer", "2020");
     if (moduleName == "cares_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("cares_wrap");
-    if (moduleName == "config"_s) PROCESS_BINDING_NOT_IMPLEMENTED("config");
+    if (moduleName == "config"_s) return JSValue::encode(processBindingConfig());
     if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
     if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
     if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
@@ -1157,6 +1182,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
     if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED("natives");
+    if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("natives", "2254");
     if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
     if (moduleName == "pipe_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("pipe_wrap");
     if (moduleName == "process_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("process_wrap");
@@ -1168,12 +1194,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "tty_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("tty_wrap", "4694");
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
     if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
-    if (moduleName == "util"_s) PROCESS_BINDING_NOT_IMPLEMENTED("util");
+    if (moduleName == "util"_s) return JSValue::encode(processBindingUtil(globalObject, vm));
     if (moduleName == "uv"_s) return JSValue::encode(process->bindingUV());
     if (moduleName == "v8"_s) PROCESS_BINDING_NOT_IMPLEMENTED("v8");
     if (moduleName == "zlib"_s) PROCESS_BINDING_NOT_IMPLEMENTED("zlib");
-    if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("natives", "2254");
-    if (moduleName == "util"_s) PROCESS_BINDING_NOT_IMPLEMENTED("util");
     // clang-format on
 
     throwScope.throwException(globalObject, createError(globalObject, makeString("No such module: "_s, moduleName)));

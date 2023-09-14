@@ -1155,14 +1155,6 @@ inline void TransformStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
     /* ProcessObjectInternals.ts */
-// binding
-#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_BINDING 1
-extern const char* const s_processObjectInternalsBindingCode;
-extern const int s_processObjectInternalsBindingCodeLength;
-extern const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility;
-extern const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility;
-
 // getStdioWriteStream
 #define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
 extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
@@ -1188,19 +1180,16 @@ extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueu
 extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
-    macro(binding, processObjectInternalsBinding, 1) \
     macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
     macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
-    macro(processObjectInternalsBindingCode, binding, ASCIILiteral(), s_processObjectInternalsBindingCodeLength) \
     macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
     macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
     macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
-    macro(binding) \
     macro(getStdioWriteStream) \
     macro(getStdinStream) \
     macro(initializeNextTickQueue) \

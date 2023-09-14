@@ -120,10 +120,7 @@ pub const ReadableStream = struct {
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
                     stream.detachIfPossible(globalThis);
-<<<<<<< HEAD
-=======
                     blobby.deinit();
->>>>>>> 80323475d (detach checking source)
                     return AnyBlob{ .Blob = blob };
                 }
             },

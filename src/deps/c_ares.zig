@@ -524,11 +524,12 @@ pub const Channel = opaque {
     }
 
     pub fn resolve(this: *Channel, name: []const u8, comptime lookup_name: []const u8, comptime Type: type, ctx: *Type, comptime cares_type: type, comptime callback: cares_type.Callback(Type)) void {
+        if (name.len >= 1023 or (name.len == 0 and !(bun.strings.eqlComptime(lookup_name, "ns") or bun.strings.eqlComptime(lookup_name, "soa")))) {
+            return cares_type.callbackWrapper(lookup_name, Type, callback).?(ctx, ARES_EBADNAME, 0, null, 0);
+        }
+
         var name_buf: [1024]u8 = undefined;
-        const name_ptr: ?[*:0]const u8 = brk: {
-            if (name.len == 0 or name.len >= 1023) {
-                break :brk null;
-            }
+        const name_ptr: [*:0]const u8 = brk: {
             const len = @min(name.len, name_buf.len - 1);
             @memcpy(name_buf[0..len], name[0..len]);
 

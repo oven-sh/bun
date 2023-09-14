@@ -6327,6 +6327,9 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.getRemotePort) != GetterType)
+            @compileLog("Expected TCPSocket.getRemotePort to be a getter");
+
         if (@TypeOf(TCPSocket.setMaxSendFragment) != CallbackType)
             @compileLog("Expected TCPSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setMaxSendFragment)));
         if (@TypeOf(TCPSocket.setServername) != CallbackType)
@@ -6360,6 +6363,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.getPeerCertificate, .{ .name = "TCPSocketPrototype__getPeerCertificate" });
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
+            @export(TCPSocket.getRemotePort, .{ .name = "TCPSocketPrototype__getRemotePort" });
             @export(TCPSocket.getSession, .{ .name = "TCPSocketPrototype__getSession" });
             @export(TCPSocket.getSharedSigalgs, .{ .name = "TCPSocketPrototype__getSharedSigalgs" });
             @export(TCPSocket.getTLSFinishedMessage, .{ .name = "TCPSocketPrototype__getTLSFinishedMessage" });
@@ -6531,6 +6535,9 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.getRemotePort) != GetterType)
+            @compileLog("Expected TLSSocket.getRemotePort to be a getter");
+
         if (@TypeOf(TLSSocket.setMaxSendFragment) != CallbackType)
             @compileLog("Expected TLSSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setMaxSendFragment)));
         if (@TypeOf(TLSSocket.setServername) != CallbackType)
@@ -6564,6 +6571,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.getPeerCertificate, .{ .name = "TLSSocketPrototype__getPeerCertificate" });
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
+            @export(TLSSocket.getRemotePort, .{ .name = "TLSSocketPrototype__getRemotePort" });
             @export(TLSSocket.getSession, .{ .name = "TLSSocketPrototype__getSession" });
             @export(TLSSocket.getSharedSigalgs, .{ .name = "TLSSocketPrototype__getSharedSigalgs" });
             @export(TLSSocket.getTLSFinishedMessage, .{ .name = "TLSSocketPrototype__getTLSFinishedMessage" });

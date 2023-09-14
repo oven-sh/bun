@@ -283,6 +283,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 length,
             );
         }
+        pub fn remotePort(this: ThisSocket) i32 {
+            return us_socket_remote_port(
+                comptime ssl_int,
+                this.socket,
+            );
+        }
 
         pub fn connect(
             host: []const u8,
@@ -1105,6 +1111,7 @@ extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8
 
 extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
+extern fn us_socket_remote_port(ssl: i32, s: ?*Socket) i32;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_header_iterator_s = opaque {};

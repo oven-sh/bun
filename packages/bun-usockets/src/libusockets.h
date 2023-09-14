@@ -384,6 +384,7 @@ int us_socket_local_port(int ssl, struct us_socket_t *s);
 void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *length);
 
 /* Bun extras */
+int us_socket_remote_port(int ssl, struct us_socket_t *s);
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd);
 struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s);

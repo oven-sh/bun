@@ -2144,7 +2144,8 @@ pub const FilePoll = struct {
     pub fn register(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
         return registerWithFd(this, loop, flag, one_shot, this.fd);
     }
-    pub fn registerWithFd(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
+    pub fn registerWithFd(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool, _fd: u64) JSC.Maybe(void) {
+        var fd = _fd;
         const watcher_fd = loop.fd;
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
@@ -2170,11 +2171,9 @@ pub const FilePoll = struct {
 
             var op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
-            if (op == linux.EPOLL.CTL_ADD and this.flags.contains(.one_shot)) {
-                var gpe = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.getOrPut(fd) catch unreachable;
-                if (gpe.found_existing) {
-                    op = linux.EPOLL.CTL_MOD;
-                }
+            if (op == linux.EPOLL.CTL_ADD) {
+                this.fd = @intCast(std.c.dup(@intCast(this.fd)));
+                fd = this.fd;
             }
 
             const ctl = linux.epoll_ctl(
@@ -2331,9 +2330,6 @@ pub const FilePoll = struct {
         log("unregister: {s} ({d})", .{ @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
-            if (this.flags.contains(.one_shot)) {
-                _ = JSC.VirtualMachine.get().registered_one_shot_epoll_fds.remove(fd);
-            }
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,

@@ -61,7 +61,7 @@ If you run `bun init` in a new directory, this `tsconfig.json` will be generated
 $ bun init
 ```
 
-### DOM types
+## DOM types
 
 Unfortunately, setting a value for `"types"` means that TypeScript will ignore other global type definitions, including `lib: ["dom"]`. If you need to add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
 

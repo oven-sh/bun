@@ -672,7 +672,7 @@ pub fn cleanWithLogger(
     // If yes, choose that version instead.
     // Why lower?
     //
-    // Normally, the problem is looks like this:
+    // Normally, the problem looks like this:
     //   Package A: "react@^17"
     //   Package B: "react@17.0.1
     //
@@ -983,7 +983,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, entries_option.entries, .production);
+        try env_loader.load(entries_option.entries, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,

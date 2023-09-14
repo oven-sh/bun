@@ -395,7 +395,7 @@ public:
             globalObject,
             clientData(vm)->builtinNames().requirePrivateName(),
             2,
-            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | 0);
     }
 };
 

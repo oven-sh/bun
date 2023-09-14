@@ -950,7 +950,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), Bun__Process__send, ImplementationVisibility::Public);
     } else {
-        return jsNumber(4);
+        return jsUndefined();
     }
 }
 

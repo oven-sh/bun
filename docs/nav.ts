@@ -35,6 +35,9 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
+    page("typescript", "TypeScript", {
+      description: "Install and configure type declarations for Bun's APIs",
+    }),
     page("templates", "Templates", {
       description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
     }),
@@ -166,7 +169,7 @@ export default {
 
     divider("Bundler"),
     page("bundler", "`Bun.build`", {
-      description: "Bundle code for comsumption in the browser with Bun's native bundler.",
+      description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
     // page("bundler/intro", "How bundlers work", {
     //   description: "A visual introduction to bundling",

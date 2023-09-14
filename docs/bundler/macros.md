@@ -129,7 +129,7 @@ if (returnFalse()) {
 }
 ```
 
-## Serializablility
+## Serializability
 
 Bun's transpiler needs to be able to serialize the result of the macro so it can be inlined into the AST. All JSON-compatible data structures are supported:
 

@@ -50,7 +50,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on`
+🟡 Missing `on`.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -94,7 +94,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
-🟡 See `Globals > process`.
+🟡 See [`process`](#process) Global.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
@@ -122,7 +122,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
-🟡 See `node:util`.
+🟡 See [`node:util`](#node-util).
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
@@ -130,7 +130,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tls`](https://nodejs.org/api/tls.html)
 
-🟡 Missing `tls.createSecurePair`
+🟡 Missing `tls.createSecurePair`.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
@@ -364,7 +364,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
 - 🟡
-- Missing `tls.createSecurePair`
+- Missing `tls.createSecurePair`.
 
 ---
 
@@ -418,7 +418,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_zlib" %} [`node:zlib`](https://nodejs.org/api/zlib.html) {% /anchor %}
 - 🟡
-- Missing `zlib.brotli*`
+- Missing `zlib.brotli*`.
 
 {% /table %}
 {% /block %} -->
@@ -621,7 +621,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`require()`](https://nodejs.org/api/globals.html#require)
 
-🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
+🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options).
 
 ### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
 

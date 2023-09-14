@@ -351,6 +351,7 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
+        case WebCore::BufferEncodingType::hex:
         case WebCore::BufferEncodingType::ascii:
         case WebCore::BufferEncodingType::latin1: {
             result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, view.characters16(), view.length(), static_cast<uint8_t>(encoding));

@@ -15,7 +15,7 @@ let $debug_log_enabled = ((env) => (
     .split(/[-_./]/g)
     .join("_")
     .toUpperCase()})
-))(@Bun.env);
+))(Bun.env);
 let $debug_log = $debug_log_enabled ? (...args) => {
   // warn goes to stderr without colorizing
   console.warn(Bun.enableANSIColors ? '\\x1b[90m[${publicName}]\\x1b[0m' : '[${publicName}]', ...args);

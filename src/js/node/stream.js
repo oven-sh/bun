@@ -5540,6 +5540,10 @@ NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, en
     return false;
   }
   fileSink.flush(true);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+  }
   // TODO: Should we just have a calculation based on encoding and length of chunk?
   if (cb) cb(null, chunk.byteLength);
   return true;

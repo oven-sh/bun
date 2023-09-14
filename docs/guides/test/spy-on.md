@@ -36,7 +36,7 @@ Once the spy is created, it can be used to write `expect` assertions relating to
 + test("turtles", ()=>{
 +   expect(spy).toHaveBeenCalledTimes(0);
 +   leo.sayHi("pizza");
-+   expect(spy).toHaveBeenCalledTimes(0);
++   expect(spy).toHaveBeenCalledTimes(1);
 +   expect(spy.mock.calls).toEqual([[ "pizza" ]]);
 + })
 ```

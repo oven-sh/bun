@@ -412,7 +412,7 @@ For complete documentation, refer to the [Node.js documentation](https://nodejs.
 
 `Blob` is a Web API commonly used for representing files. `Blob` was initially implemented in browsers (unlike `ArrayBuffer` which is part of JavaScript itself), but it is now supported in Node and Bun.
 
-It isn't common to directly create `Blob` instances. More often, you'll recieve instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
+It isn't common to directly create `Blob` instances. More often, you'll receive instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
 
 ```ts
 const blob = new Blob(["<html>Hello</html>"], {
@@ -507,7 +507,7 @@ for await (const chunk of stream) {
 }
 ```
 
-For a more complete discusson of streams in Bun, see [API > Streams](/docs/api/streams).
+For a more complete discussion of streams in Bun, see [API > Streams](/docs/api/streams).
 
 ## Conversion
 

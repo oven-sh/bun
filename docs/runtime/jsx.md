@@ -175,7 +175,7 @@ The function name used to represent [JSX fragments](https://react.dev/reference/
 
   // output
   import { myjsx, MyFragment } from "react";
-  createElement("Box", { width: 5 }, "Hello");
+  myjsx(MyFragment, null, "Hello");
   ```
 
 {% /table %}

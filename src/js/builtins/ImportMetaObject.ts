@@ -177,13 +177,11 @@ export function createRequireCache() {
 
     ownKeys(target) {
       var array = [...$requireMap.$keys()];
-      const registryKeys = [...Loader.registry.$keys()];
-      for (const key of registryKeys) {
-        if (!array.includes(key)) {
+      for (const key of Loader.registry.$keys()) {
+        if (!array.includes(key) && Loader.registry.$get(key)?.evaluated) {
           $arrayPush(array, key);
         }
       }
-
       return array;
     },
 
@@ -193,7 +191,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(target, key: string) {
-      if ($requireMap.$has(key) || Loader.registry.$has(key)) {
+      if ($requireMap.$has(key) || Loader.registry.$get(key)?.evaluated) {
         return {
           configurable: true,
           enumerable: true,

@@ -1712,7 +1712,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 
@@ -1905,7 +1905,7 @@ pub const Fetch = struct {
                             if (decompress.isBoolean()) {
                                 disable_decompression = !decompress.asBoolean();
                             } else if (decompress.isNumber()) {
-                                disable_keepalive = decompress.to(i32) == 0;
+                                disable_decompression = decompress.to(i32) == 0;
                             }
                         }
 

@@ -24,13 +24,14 @@ export const globalReplacements: ReplacementRule[] = [
 ];
 
 // This is a list of globals we should access using @ notation
+// This prevents a global override attacks.
+// Note that the public `Bun` global is immutable.
 // undefined -> __intrinsic__undefined -> @undefined
 export const globalsToPrefix = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
   "Buffer",
-  "Bun",
   "Infinity",
   "Loader",
   "Promise",
@@ -78,6 +79,41 @@ export const warnOnIdentifiersNotPresentAtRuntime = [
   "notImplementedIssue",
   "notImplementedIssueFn",
 ];
+
+// These are passed to --define to the bundler
+export const define: Record<string, string> = {
+  "process.env.NODE_ENV": "production",
+  "IS_BUN_DEVELOPMENT": "false",
+
+  $streamClosed: "1",
+  $streamClosing: "2",
+  $streamErrored: "3",
+  $streamReadable: "4",
+  $streamWaiting: "5",
+  $streamWritable: "6",
+};
+
+// ------------------------------ //
+
+for (const name in enums) {
+  const value = enums[name];
+  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
+  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
+  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
+  define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
+  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
+}
+
+for (const name of globalsToPrefix) {
+  define[name] = "__intrinsic__" + name;
+}
+
+for (const key in define) {
+  if (key.startsWith("$")) {
+    define["__intrinsic__" + key.slice(1)] = define[key];
+    delete define[key];
+  }
+}
 
 export interface ReplacementRule {
   from: RegExp;

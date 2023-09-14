@@ -1293,7 +1293,7 @@ class ClientRequest extends OutgoingMessage {
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
-        decompress: false,
+        decompress: true,
       })
         .then(response => {
           var res = (this.#res = new IncomingMessage(response, {

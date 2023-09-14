@@ -20,6 +20,12 @@ describe("got", () => {
     server.stop();
   });
 
+  test("should work when compressed", async () => {
+    const response = await got(`https://bun.sh/`);
+    expect(response.statusCode).toBe(200);
+  
+  });
+
   test("json response", async () => {
     const server = Bun.serve({
       port: 0,

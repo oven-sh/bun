@@ -1028,7 +1028,6 @@ pub const Listener = struct {
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tcp);
                 const err = JSC.SystemError{
-                    // .errno = @as(c_int, @intCast(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED))),
                     .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                     .message = bun.String.static("Failed to connect"),
                     .syscall = bun.String.static("connect"),

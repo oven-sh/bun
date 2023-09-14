@@ -11,7 +11,7 @@ Remix currently relies on Node.js APIs that Bun does not yet implement. The guid
 Initialize a Remix app with `create-remix`.
 
 ```sh
-$ bunx create-remix
+$ bun create remix
 
  remix   v1.19.3 💿 Let's build a better website...
 

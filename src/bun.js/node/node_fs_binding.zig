@@ -67,6 +67,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
+            
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
@@ -108,11 +109,6 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime !@hasField(JSC.Node.Async, @tagName(FunctionEnum))) {
-                globalObject.throw("Not implemented yet", .{});
-                return .zero;
-            }
-
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
@@ -140,7 +136,11 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             // TODO: handle globalObject.throwValue
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
-            return Task.create(globalObject, args, globalObject.bunVM());
+            if (comptime FunctionEnum == .cp) {
+                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+            } else {
+                return Task.create(globalObject, args, globalObject.bunVM());
+            }
         }
     };
     return NodeBindingClosure.bind;

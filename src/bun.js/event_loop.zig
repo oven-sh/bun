@@ -338,6 +338,11 @@ const Fdatasync = JSC.Node.Async.fdatasync;
 const Access = JSC.Node.Async.access;
 const AppendFile = JSC.Node.Async.appendFile;
 const Mkdtemp = JSC.Node.Async.mkdtemp;
+const Exists = JSC.Node.Async.exists;
+const Futimes = JSC.Node.Async.futimes;
+const Lchmod = JSC.Node.Async.lchmod;
+const Lchown = JSC.Node.Async.lchown;
+const Unlink = JSC.Node.Async.unlink;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -392,6 +397,11 @@ pub const Task = TaggedPointerUnion(.{
     Access,
     AppendFile,
     Mkdtemp,
+    Exists,
+    Futimes,
+    Lchmod,
+    Lchown,
+    Unlink,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -863,6 +873,26 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Mkdtemp))) => {
                     var any: *Mkdtemp = task.get(Mkdtemp).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Exists))) => {
+                    var any: *Exists = task.get(Exists).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Futimes))) => {
+                    var any: *Futimes = task.get(Futimes).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lchmod))) => {
+                    var any: *Lchmod = task.get(Lchmod).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Lchown))) => {
+                    var any: *Lchown = task.get(Lchown).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(Unlink))) => {
+                    var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
                 else => if (Environment.allow_assert) {

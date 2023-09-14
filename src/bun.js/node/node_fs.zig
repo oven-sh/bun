@@ -55,24 +55,32 @@ else
     // TODO:
     0;
 
+const SliceWithUnderlyingStringOrBuffer = JSC.Node.SliceWithUnderlyingStringOrBuffer;
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
+    pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
+    pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
     pub const chmod = NewAsyncFSTask(Return.Chmod, Arguments.Chmod, NodeFS.chmod);
     pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
     pub const close = NewAsyncFSTask(Return.Close, Arguments.Close, NodeFS.close);
     pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
+    pub const exists = NewAsyncFSTask(Return.Exists, Arguments.Exists, NodeFS.exists);
     pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
     pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
     pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
     pub const fstat = NewAsyncFSTask(Return.Fstat, Arguments.Fstat, NodeFS.fstat);
     pub const fsync = NewAsyncFSTask(Return.Fsync, Arguments.Fsync, NodeFS.fsync);
     pub const ftruncate = NewAsyncFSTask(Return.Ftruncate, Arguments.FTruncate, NodeFS.ftruncate);
+    pub const futimes = NewAsyncFSTask(Return.Futimes, Arguments.Futimes, NodeFS.futimes);
+    pub const lchmod = NewAsyncFSTask(Return.Lchmod, Arguments.LCHmod, NodeFS.lchmod);
+    pub const lchown = NewAsyncFSTask(Return.Lchown, Arguments.LChown, NodeFS.lchown);
     pub const link = NewAsyncFSTask(Return.Link, Arguments.Link, NodeFS.link);
     pub const lstat = NewAsyncFSTask(Return.Stat, Arguments.Stat, NodeFS.lstat);
     pub const lutimes = NewAsyncFSTask(Return.Lutimes, Arguments.Lutimes, NodeFS.lutimes);
     pub const mkdir = NewAsyncFSTask(Return.Mkdir, Arguments.Mkdir, NodeFS.mkdir);
+    pub const mkdtemp = NewAsyncFSTask(Return.Mkdtemp, Arguments.MkdirTemp, NodeFS.mkdtemp);
     pub const open = NewAsyncFSTask(Return.Open, Arguments.Open, NodeFS.open);
     pub const read = NewAsyncFSTask(Return.Read, Arguments.Read, NodeFS.read);
     pub const readdir = NewAsyncFSTask(Return.Readdir, Arguments.Readdir, NodeFS.readdir);
@@ -86,13 +94,13 @@ pub const Async = struct {
     pub const stat = NewAsyncFSTask(Return.Stat, Arguments.Stat, NodeFS.stat);
     pub const symlink = NewAsyncFSTask(Return.Symlink, Arguments.Symlink, NodeFS.symlink);
     pub const truncate = NewAsyncFSTask(Return.Truncate, Arguments.Truncate, NodeFS.truncate);
+    pub const unlink = NewAsyncFSTask(Return.Unlink, Arguments.Unlink, NodeFS.unlink);
     pub const utimes = NewAsyncFSTask(Return.Utimes, Arguments.Utimes, NodeFS.utimes);
     pub const write = NewAsyncFSTask(Return.Write, Arguments.Write, NodeFS.write);
     pub const writeFile = NewAsyncFSTask(Return.WriteFile, Arguments.WriteFile, NodeFS.writeFile);
     pub const writev = NewAsyncFSTask(Return.Writev, Arguments.Writev, NodeFS.writev);
-    pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
-    pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
-    pub const mkdtemp = NewAsyncFSTask(Return.Mkdtemp, Arguments.MkdirTemp, NodeFS.mkdtemp);
+
+    pub const cp = AsyncCpTask;
 
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
@@ -252,7 +260,7 @@ pub const AsyncCpTask = struct {
             this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
         }
 
-        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.creat(this, runFromJSThread));
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
     }
 
     fn runFromJSThread(this: *AsyncCpTask) void {
@@ -438,7 +446,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -477,10 +485,10 @@ pub const Arguments = struct {
             this.buffers.buffers.deinit();
         }
 
-        pub fn toThreadSafe(this: *const @This()) void {
+        pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            var clone = bun.default_allocator.dupe(bun.default_allocator, this.buffers.buffers.items) catch @panic("out of memory");
+            var clone = bun.default_allocator.dupe(std.os.iovec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -568,9 +576,9 @@ pub const Arguments = struct {
             this.buffers.buffers.deinit();
         }
 
-        pub fn toThreadSafe(this: *const @This()) void {
+        pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
-            var clone = bun.default_allocator.dupe(bun.default_allocator, this.buffers.buffers.items) catch @panic("out of memory");
+            var clone = bun.default_allocator.dupe(std.os.iovec, this.buffers.buffers.items) catch @panic("out of memory");
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1176,9 +1184,14 @@ pub const Arguments = struct {
             this.new_path.deinit();
         }
 
-        pub fn deinitAndUnprotect(this: Symlink) void {
+        pub fn deinitAndUnprotect(this: *Link) void {
             this.old_path.deinitAndUnprotect();
             this.new_path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Link) void {
+            this.old_path.toThreadSafe();
+            this.new_path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Link {
@@ -1291,11 +1304,11 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
-        pub fn deinitAndUnprotect(this: *Realpath) void {
+        pub fn deinitAndUnprotect(this: *Readlink) void {
             this.path.deinitAndUnprotect();
         }
 
-        pub fn toThreadSafe(this: *Realpath) void {
+        pub fn toThreadSafe(this: *Readlink) void {
             this.path.toThreadSafe();
         }
 
@@ -1390,6 +1403,18 @@ pub const Arguments = struct {
     pub const Unlink = struct {
         path: PathLike,
 
+        pub fn deinit(this: Unlink) void {
+            this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *Unlink) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Unlink) void {
+            this.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Unlink {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1421,6 +1446,14 @@ pub const Arguments = struct {
         max_retries: u32 = 0,
         recursive: bool = false,
         retry_delay: c_uint = 100,
+
+        pub fn deinitAndUnprotect(this: *RmDir) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *RmDir) void {
+            this.path.toThreadSafe();
+        }
 
         pub fn deinit(this: RmDir) void {
             this.path.deinit();
@@ -1486,6 +1519,14 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: *Mkdir) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Mkdir) void {
+            this.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Mkdir {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1537,10 +1578,18 @@ pub const Arguments = struct {
             this.prefix.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: *MkdirTemp) void {
+            this.prefix.deinit();
+        }
+
+        pub fn toThreadSafe(this: *MkdirTemp) void {
+            this.prefix.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            var prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, arguments.arena.allocator(), prefix_value) orelse {
+            var prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "prefix must be a string or TypedArray",
@@ -1593,6 +1642,10 @@ pub const Arguments = struct {
 
         pub fn deinitAndUnprotect(this: Readdir) void {
             this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Readdir) void {
+            this.path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readdir {
@@ -1649,6 +1702,7 @@ pub const Arguments = struct {
         fd: FileDescriptor,
 
         pub fn deinit(_: Close) void {}
+        pub fn toThreadSafe(_: Close) void {}
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Close {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1688,6 +1742,14 @@ pub const Arguments = struct {
 
         pub fn deinit(this: Open) void {
             this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: Open) void {
+            this.path.deinitAndUnprotect();
+        }
+
+        pub fn toThreadSafe(this: *Open) void {
+            this.path.toThreadSafe();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Open {
@@ -1755,6 +1817,10 @@ pub const Arguments = struct {
         mtime: TimeLike,
 
         pub fn deinit(_: Futimes) void {}
+
+        pub fn toThreadSafe(self: *const @This()) void {
+            _ = self;
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Futimes {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1863,7 +1929,7 @@ pub const Arguments = struct {
     ///
     pub const Write = struct {
         fd: FileDescriptor,
-        buffer: StringOrBuffer,
+        buffer: JSC.Node.SliceWithUnderlyingStringOrBuffer,
         // buffer_val: JSC.JSValue = JSC.JSValue.zero,
         offset: u64 = 0,
         length: u64 = std.math.maxInt(u64),
@@ -1871,6 +1937,10 @@ pub const Arguments = struct {
         encoding: Encoding = Encoding.buffer,
 
         pub fn deinit(_: Write) void {}
+
+        pub fn toThreadSafe(self: *@This()) void {
+            self.buffer.toThreadSafe();
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Write {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -1899,7 +1969,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), arguments.arena.allocator(), arguments.next() orelse {
+            const buffer = SliceWithUnderlyingStringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -1926,7 +1996,7 @@ pub const Arguments = struct {
                 .fd = fd,
                 .buffer = buffer,
                 .encoding = switch (buffer) {
-                    .string => Encoding.utf8,
+                    .SliceWithUnderlyingString => Encoding.utf8,
                     .buffer => Encoding.buffer,
                 },
             };
@@ -1939,7 +2009,7 @@ pub const Arguments = struct {
                     var current = current_;
                     switch (buffer) {
                         // fs.write(fd, string[, position[, encoding]], callback)
-                        .string => {
+                        .SliceWithUnderlyingString => {
                             if (current.isNumber()) {
                                 args.position = current.to(i52);
                                 arguments.eat();
@@ -1987,6 +2057,14 @@ pub const Arguments = struct {
         position: ?ReadPosition = null,
 
         pub fn deinit(_: Read) void {}
+
+        pub fn toThreadSafe(this: Read) void {
+            this.buffer.buffer.value.protect();
+        }
+
+        pub fn deinitAndUnprotect(this: *Read) void {
+            this.buffer.buffer.value.unprotect();
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Read {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -2126,6 +2204,10 @@ pub const Arguments = struct {
             self.path.deinitAndUnprotect();
         }
 
+        pub fn toThreadSafe(self: *ReadFile) void {
+            self.path.toThreadSafe();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
@@ -2212,8 +2294,16 @@ pub const Arguments = struct {
             self.file.deinit();
         }
 
+        pub fn toThreadSafe(self: *WriteFile) void {
+            self.file.toThreadSafe();
+        }
+
+        pub fn deinitAndUnprotect(self: *WriteFile) void {
+            self.file.deinitAndUnprotect();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
-            const file = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
+            const file = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -2227,7 +2317,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const data = StringOrBuffer.fromJS(ctx.ptr(), arguments.arena.allocator(), arguments.next() orelse {
+            const data = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2422,6 +2512,18 @@ pub const Arguments = struct {
             }
         }
 
+        pub fn toThreadSafe(this: *Exists) void {
+            if (this.path) |*path| {
+                path.toThreadSafe();
+            }
+        }
+
+        pub fn deinitAndUnprotect(this: *Exists) void {
+            if (this.path) |*path| {
+                path.deinitAndUnprotect();
+            }
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Exists {
             return Exists{
                 .path = PathLike.fromJS(ctx, arguments, exception),
@@ -2435,6 +2537,14 @@ pub const Arguments = struct {
 
         pub fn deinit(this: Access) void {
             this.path.deinit();
+        }
+
+        pub fn toThreadSafe(this: *Access) void {
+            this.path.toThreadSafe();
+        }
+
+        pub fn deinitAndUnprotect(this: *Access) void {
+            this.path.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Access {
@@ -2751,6 +2861,9 @@ pub const Arguments = struct {
         fd: FileDescriptor,
 
         pub fn deinit(_: FdataSync) void {}
+        pub fn toThreadSafe(self: *const @This()) void {
+            _ = self;
+        }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FdataSync {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -2788,9 +2901,19 @@ pub const Arguments = struct {
         dest: PathLike,
         mode: Constants.Copyfile,
 
-        fn deinit(this: CopyFile) void {
+        pub fn deinit(this: CopyFile) void {
             this.src.deinit();
             this.dest.deinit();
+        }
+
+        pub fn toThreadSafe(this: *CopyFile) void {
+            this.src.toThreadSafe();
+            this.dest.toThreadSafe();
+        }
+
+        pub fn deinitAndUnprotect(this: *CopyFile) void {
+            this.src.deinitAndUnprotect();
+            this.dest.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyFile {
@@ -2946,6 +3069,7 @@ pub const Arguments = struct {
         fd: FileDescriptor,
 
         pub fn deinit(_: Fsync) void {}
+        pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fsync {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
@@ -4347,50 +4471,39 @@ pub const NodeFS = struct {
         return Maybe(Return.WriteFile).success;
     }
 
-    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, comptime flavor: Flavor) Maybe(Return.WriteFile) {
-        switch (comptime flavor) {
-            .sync => return writeFileWithPathBuffer(&this.sync_error_buf, args),
-            else => {},
-        }
-
-        return Maybe(Return.WriteFile).todo;
+    pub fn writeFile(this: *NodeFS, args: Arguments.WriteFile, comptime _: Flavor) Maybe(Return.WriteFile) {
+        return writeFileWithPathBuffer(&this.sync_error_buf, args);
     }
 
-    pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime flavor: Flavor) Maybe(Return.Readlink) {
+    pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime _: Flavor) Maybe(Return.Readlink) {
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
-        switch (comptime flavor) {
-            .sync => {
-                const path = args.path.sliceZ(inbuf);
 
-                const len = switch (Syscall.readlink(path, &outbuf)) {
-                    .err => |err| return .{
-                        .err = err.withPath(args.path.slice()),
-                    },
-                    .result => |buf_| buf_,
-                };
+        const path = args.path.sliceZ(inbuf);
 
-                return .{
-                    .result = switch (args.encoding) {
-                        .buffer => .{
-                            .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
-                        },
-                        else => if (args.path == .slice_with_underlying_string and
-                            strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
-                            .{
-                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                            }
-                        else
-                            .{
-                                .BunString = bun.String.create(outbuf[0..len]),
-                            },
-                    },
-                };
+        const len = switch (Syscall.readlink(path, &outbuf)) {
+            .err => |err| return .{
+                .err = err.withPath(args.path.slice()),
             },
-            else => {},
-        }
+            .result => |buf_| buf_,
+        };
 
-        return Maybe(Return.Readlink).todo;
+        return .{
+            .result = switch (args.encoding) {
+                .buffer => .{
+                    .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
+                },
+                else => if (args.path == .slice_with_underlying_string and
+                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
+                    .{
+                        .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                    }
+                else
+                    .{
+                        .BunString = bun.String.create(outbuf[0..len]),
+                    },
+            },
+        };
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -4453,325 +4566,309 @@ pub const NodeFS = struct {
     //     return error.NotImplementedYet;
     // }
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
+        _ = flavor;
         var from_buf = &this.sync_error_buf;
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        switch (comptime flavor) {
-            .sync => {
-                var from = args.old_path.sliceZ(from_buf);
-                var to = args.new_path.sliceZ(&to_buf);
-                return Syscall.rename(from, to);
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Rename).todo;
+        var from = args.old_path.sliceZ(from_buf);
+        var to = args.new_path.sliceZ(&to_buf);
+        return Syscall.rename(from, to);
     }
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
-        switch (comptime flavor) {
-            .sync => {
-                if (comptime Environment.isMac) {
-                    if (args.recursive) {
-                        var dest = args.path.sliceZ(&this.sync_error_buf);
+        _ = flavor;
 
-                        var flags: u32 = bun.C.darwin.RemoveFileFlags.cross_mount |
-                            bun.C.darwin.RemoveFileFlags.allow_long_paths |
-                            bun.C.darwin.RemoveFileFlags.recursive;
+        if (comptime Environment.isMac) {
+            if (args.recursive) {
+                var dest = args.path.sliceZ(&this.sync_error_buf);
 
-                        while (true) {
-                            if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                                switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+                var flags: u32 = bun.C.darwin.RemoveFileFlags.cross_mount |
+                    bun.C.darwin.RemoveFileFlags.allow_long_paths |
+                    bun.C.darwin.RemoveFileFlags.recursive;
+
+                while (true) {
+                    if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
+                        switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+                            .AGAIN, .INTR => continue,
+                            .NOENT => return Maybe(Return.Rmdir).success,
+                            .MLINK => {
+                                var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                @memcpy(copy[0..dest.len], dest);
+                                copy[dest.len] = 0;
+                                var dest_copy = copy[0..dest.len :0];
+                                switch (Syscall.unlink(dest_copy).getErrno()) {
                                     .AGAIN, .INTR => continue,
-                                    .NOENT => return Maybe(Return.Rmdir).success,
-                                    .MLINK => {
-                                        var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                        @memcpy(copy[0..dest.len], dest);
-                                        copy[dest.len] = 0;
-                                        var dest_copy = copy[0..dest.len :0];
-                                        switch (Syscall.unlink(dest_copy).getErrno()) {
-                                            .AGAIN, .INTR => continue,
-                                            .NOENT => return errno,
-                                            .SUCCESS => continue,
-                                            else => return errno,
-                                        }
-                                    },
-                                    .SUCCESS => unreachable,
+                                    .NOENT => return errno,
+                                    .SUCCESS => continue,
                                     else => return errno,
                                 }
-                            }
-
-                            return Maybe(Return.Rmdir).success;
+                            },
+                            .SUCCESS => unreachable,
+                            else => return errno,
                         }
                     }
 
-                    return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-                        Maybe(Return.Rmdir).success;
-                } else if (comptime Environment.isLinux) {
-                    if (args.recursive) {
-                        std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                            const errno: std.os.E = switch (err) {
-                                error.InvalidHandle => .BADF,
-                                error.AccessDenied => .PERM,
-                                error.FileTooBig => .FBIG,
-                                error.SymLinkLoop => .LOOP,
-                                error.ProcessFdQuotaExceeded => .NFILE,
-                                error.NameTooLong => .NAMETOOLONG,
-                                error.SystemFdQuotaExceeded => .MFILE,
-                                error.SystemResources => .NOMEM,
-                                error.ReadOnlyFileSystem => .ROFS,
-                                error.FileSystem => .IO,
-                                error.FileBusy => .BUSY,
-                                error.DeviceBusy => .BUSY,
-
-                                // One of the path components was not a directory.
-                                // This error is unreachable if `sub_path` does not contain a path separator.
-                                error.NotDir => .NOTDIR,
-                                // On Windows, file paths must be valid Unicode.
-                                error.InvalidUtf8 => .INVAL,
-
-                                // On Windows, file paths cannot contain these characters:
-                                // '/', '*', '?', '"', '<', '>', '|'
-                                error.BadPathName => .INVAL,
-
-                                else => .FAULT,
-                            };
-                            return Maybe(Return.Rm){
-                                .err = bun.sys.Error.fromCode(errno, .rmdir),
-                            };
-                        };
-
-                        return Maybe(Return.Rmdir).success;
-                    }
-
-                    return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-                        Maybe(Return.Rmdir).success;
+                    return Maybe(Return.Rmdir).success;
                 }
-            },
-            else => {},
-        }
+            }
 
-        return Maybe(Return.Rmdir).todo;
+            return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                Maybe(Return.Rmdir).success;
+        } else if (comptime Environment.isLinux) {
+            if (args.recursive) {
+                std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
+                    const errno: std.os.E = switch (err) {
+                        error.InvalidHandle => .BADF,
+                        error.AccessDenied => .PERM,
+                        error.FileTooBig => .FBIG,
+                        error.SymLinkLoop => .LOOP,
+                        error.ProcessFdQuotaExceeded => .NFILE,
+                        error.NameTooLong => .NAMETOOLONG,
+                        error.SystemFdQuotaExceeded => .MFILE,
+                        error.SystemResources => .NOMEM,
+                        error.ReadOnlyFileSystem => .ROFS,
+                        error.FileSystem => .IO,
+                        error.FileBusy => .BUSY,
+                        error.DeviceBusy => .BUSY,
+
+                        // One of the path components was not a directory.
+                        // This error is unreachable if `sub_path` does not contain a path separator.
+                        error.NotDir => .NOTDIR,
+                        // On Windows, file paths must be valid Unicode.
+                        error.InvalidUtf8 => .INVAL,
+
+                        // On Windows, file paths cannot contain these characters:
+                        // '/', '*', '?', '"', '<', '>', '|'
+                        error.BadPathName => .INVAL,
+
+                        else => .FAULT,
+                    };
+                    return Maybe(Return.Rm){
+                        .err = bun.sys.Error.fromCode(errno, .rmdir),
+                    };
+                };
+
+                return Maybe(Return.Rmdir).success;
+            }
+
+            return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                Maybe(Return.Rmdir).success;
+        }
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
-        switch (comptime flavor) {
-            .sync => {
-                if (comptime Environment.isMac) {
-                    var dest = args.path.sliceZ(&this.sync_error_buf);
+        _ = flavor;
 
-                    while (true) {
-                        var flags: u32 = 0;
-                        if (args.recursive) {
-                            flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
-                            flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
-                            flags |= bun.C.darwin.RemoveFileFlags.recursive;
-                        }
+        if (comptime Environment.isMac) {
+            var dest = args.path.sliceZ(&this.sync_error_buf);
 
-                        if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                            switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+            while (true) {
+                var flags: u32 = 0;
+                if (args.recursive) {
+                    flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
+                    flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
+                    flags |= bun.C.darwin.RemoveFileFlags.recursive;
+                }
+
+                if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
+                    switch (@as(os.E, @enumFromInt(errno.err.errno))) {
+                        .AGAIN, .INTR => continue,
+                        .NOENT => {
+                            if (args.force) {
+                                return Maybe(Return.Rm).success;
+                            }
+
+                            return errno;
+                        },
+
+                        .MLINK => {
+                            var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            @memcpy(copy[0..dest.len], dest);
+                            copy[dest.len] = 0;
+                            var dest_copy = copy[0..dest.len :0];
+                            switch (Syscall.unlink(dest_copy).getErrno()) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {
                                     if (args.force) {
-                                        return Maybe(Return.Rm).success;
+                                        continue;
                                     }
 
                                     return errno;
                                 },
-
-                                .MLINK => {
-                                    var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                    @memcpy(copy[0..dest.len], dest);
-                                    copy[dest.len] = 0;
-                                    var dest_copy = copy[0..dest.len :0];
-                                    switch (Syscall.unlink(dest_copy).getErrno()) {
-                                        .AGAIN, .INTR => continue,
-                                        .NOENT => {
-                                            if (args.force) {
-                                                continue;
-                                            }
-
-                                            return errno;
-                                        },
-                                        .SUCCESS => continue,
-                                        else => return errno,
-                                    }
-                                },
-                                .SUCCESS => unreachable,
+                                .SUCCESS => continue,
                                 else => return errno,
                             }
-                        }
-
-                        return Maybe(Return.Rm).success;
-                    }
-                } else if (comptime Environment.isLinux or Environment.isWindows) {
-                    if (args.recursive) {
-                        std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
-                            const errno: E = switch (err) {
-                                error.InvalidHandle => .BADF,
-                                error.AccessDenied => .PERM,
-                                error.FileTooBig => .FBIG,
-                                error.SymLinkLoop => .LOOP,
-                                error.ProcessFdQuotaExceeded => .NFILE,
-                                error.NameTooLong => .NAMETOOLONG,
-                                error.SystemFdQuotaExceeded => .MFILE,
-                                error.SystemResources => .NOMEM,
-                                error.ReadOnlyFileSystem => .ROFS,
-                                error.FileSystem => .IO,
-                                error.FileBusy => .BUSY,
-                                error.DeviceBusy => .BUSY,
-
-                                // One of the path components was not a directory.
-                                // This error is unreachable if `sub_path` does not contain a path separator.
-                                error.NotDir => .NOTDIR,
-                                // On Windows, file paths must be valid Unicode.
-                                error.InvalidUtf8 => .INVAL,
-
-                                // On Windows, file paths cannot contain these characters:
-                                // '/', '*', '?', '"', '<', '>', '|'
-                                error.BadPathName => .INVAL,
-
-                                else => .FAULT,
-                            };
-                            if (args.force) {
-                                return Maybe(Return.Rm).success;
-                            }
-                            return Maybe(Return.Rm){
-                                .err = bun.sys.Error.fromCode(errno, .unlink),
-                            };
-                        };
-                        return Maybe(Return.Rm).success;
-                    }
-                }
-
-                if (comptime Environment.isPosix) {
-                    var dest = args.path.osPath(&this.sync_error_buf);
-                    std.os.unlinkZ(dest) catch |er| {
-                        // empircally, it seems to return AccessDenied when the
-                        // file is actually a directory on macOS.
-                        if (args.recursive and
-                            (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
-                        {
-                            std.os.rmdirZ(dest) catch |err| {
-                                if (args.force) {
-                                    return Maybe(Return.Rm).success;
-                                }
-
-                                const code: E = switch (err) {
-                                    error.AccessDenied => .PERM,
-                                    error.SymLinkLoop => .LOOP,
-                                    error.NameTooLong => .NAMETOOLONG,
-                                    error.SystemResources => .NOMEM,
-                                    error.ReadOnlyFileSystem => .ROFS,
-                                    error.FileBusy => .BUSY,
-                                    error.FileNotFound => .NOENT,
-                                    error.InvalidUtf8 => .INVAL,
-                                    error.BadPathName => .INVAL,
-                                    else => .FAULT,
-                                };
-
-                                return .{
-                                    .err = bun.sys.Error.fromCode(
-                                        code,
-                                        .rmdir,
-                                    ),
-                                };
-                            };
-
-                            return Maybe(Return.Rm).success;
-                        }
-
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
-
-                        {
-                            const code: E = switch (er) {
-                                error.AccessDenied => .PERM,
-                                error.SymLinkLoop => .LOOP,
-                                error.NameTooLong => .NAMETOOLONG,
-                                error.SystemResources => .NOMEM,
-                                error.ReadOnlyFileSystem => .ROFS,
-                                error.FileBusy => .BUSY,
-                                error.InvalidUtf8 => .INVAL,
-                                error.BadPathName => .INVAL,
-                                error.FileNotFound => .NOENT,
-                                else => .FAULT,
-                            };
-
-                            return .{
-                                .err = bun.sys.Error.fromCode(
-                                    code,
-                                    .unlink,
-                                ),
-                            };
-                        }
-                    };
-
-                    return Maybe(Return.Rm).success;
-                }
-
-                if (comptime Environment.isWindows) {
-                    var dest = args.path.osPath(&this.sync_error_buf);
-                    std.os.windows.DeleteFile(dest, .{
-                        .dir = null,
-                        .remove_dir = brk: {
-                            const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
-                                if (args.force) {
-                                    return Maybe(Return.Rm).success;
-                                }
-
-                                const code: E = switch (err) {
-                                    error.FileNotFound => .NOENT,
-                                    error.PermissionDenied => .PERM,
-                                    else => .INVAL,
-                                };
-
-                                return .{
-                                    .err = bun.sys.Error.fromCode(
-                                        code,
-                                        .unlink,
-                                    ),
-                                };
-                            };
-                            // TODO: check FILE_ATTRIBUTE_INVALID
-                            break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
                         },
-                    }) catch |er| {
-                        // empircally, it seems to return AccessDenied when the
-                        // file is actually a directory on macOS.
-
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
-
-                        {
-                            const code: E = switch (er) {
-                                error.FileNotFound => .NOENT,
-                                error.AccessDenied => .PERM,
-                                error.NameTooLong => .INVAL,
-                                error.FileBusy => .BUSY,
-                                error.NotDir => .NOTDIR,
-                                error.IsDir => .ISDIR,
-                                error.DirNotEmpty => .INVAL,
-                                error.NetworkNotFound => .NOENT,
-                                else => .UNKNOWN,
-                            };
-
-                            return .{
-                                .err = bun.sys.Error.fromCode(
-                                    code,
-                                    .unlink,
-                                ),
-                            };
-                        }
-                    };
-
-                    return Maybe(Return.Rm).success;
+                        .SUCCESS => unreachable,
+                        else => return errno,
+                    }
                 }
-            },
-            else => {},
+
+                return Maybe(Return.Rm).success;
+            }
+        } else if (comptime Environment.isLinux or Environment.isWindows) {
+            if (args.recursive) {
+                std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
+                    const errno: E = switch (err) {
+                        error.InvalidHandle => .BADF,
+                        error.AccessDenied => .PERM,
+                        error.FileTooBig => .FBIG,
+                        error.SymLinkLoop => .LOOP,
+                        error.ProcessFdQuotaExceeded => .NFILE,
+                        error.NameTooLong => .NAMETOOLONG,
+                        error.SystemFdQuotaExceeded => .MFILE,
+                        error.SystemResources => .NOMEM,
+                        error.ReadOnlyFileSystem => .ROFS,
+                        error.FileSystem => .IO,
+                        error.FileBusy => .BUSY,
+                        error.DeviceBusy => .BUSY,
+
+                        // One of the path components was not a directory.
+                        // This error is unreachable if `sub_path` does not contain a path separator.
+                        error.NotDir => .NOTDIR,
+                        // On Windows, file paths must be valid Unicode.
+                        error.InvalidUtf8 => .INVAL,
+
+                        // On Windows, file paths cannot contain these characters:
+                        // '/', '*', '?', '"', '<', '>', '|'
+                        error.BadPathName => .INVAL,
+
+                        else => .FAULT,
+                    };
+                    if (args.force) {
+                        return Maybe(Return.Rm).success;
+                    }
+                    return Maybe(Return.Rm){
+                        .err = bun.sys.Error.fromCode(errno, .unlink),
+                    };
+                };
+                return Maybe(Return.Rm).success;
+            }
         }
 
-        return Maybe(Return.Rm).todo;
+        if (comptime Environment.isPosix) {
+            var dest = args.path.osPath(&this.sync_error_buf);
+            std.os.unlinkZ(dest) catch |er| {
+                // empircally, it seems to return AccessDenied when the
+                // file is actually a directory on macOS.
+                if (args.recursive and
+                    (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
+                {
+                    std.os.rmdirZ(dest) catch |err| {
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+
+                        const code: E = switch (err) {
+                            error.AccessDenied => .PERM,
+                            error.SymLinkLoop => .LOOP,
+                            error.NameTooLong => .NAMETOOLONG,
+                            error.SystemResources => .NOMEM,
+                            error.ReadOnlyFileSystem => .ROFS,
+                            error.FileBusy => .BUSY,
+                            error.FileNotFound => .NOENT,
+                            error.InvalidUtf8 => .INVAL,
+                            error.BadPathName => .INVAL,
+                            else => .FAULT,
+                        };
+
+                        return .{
+                            .err = bun.sys.Error.fromCode(
+                                code,
+                                .rmdir,
+                            ),
+                        };
+                    };
+
+                    return Maybe(Return.Rm).success;
+                }
+
+                if (args.force) {
+                    return Maybe(Return.Rm).success;
+                }
+
+                {
+                    const code: E = switch (er) {
+                        error.AccessDenied => .PERM,
+                        error.SymLinkLoop => .LOOP,
+                        error.NameTooLong => .NAMETOOLONG,
+                        error.SystemResources => .NOMEM,
+                        error.ReadOnlyFileSystem => .ROFS,
+                        error.FileBusy => .BUSY,
+                        error.InvalidUtf8 => .INVAL,
+                        error.BadPathName => .INVAL,
+                        error.FileNotFound => .NOENT,
+                        else => .FAULT,
+                    };
+
+                    return .{
+                        .err = bun.sys.Error.fromCode(
+                            code,
+                            .unlink,
+                        ),
+                    };
+                }
+            };
+
+            return Maybe(Return.Rm).success;
+        }
+
+        if (comptime Environment.isWindows) {
+            var dest = args.path.osPath(&this.sync_error_buf);
+            std.os.windows.DeleteFile(dest, .{
+                .dir = null,
+                .remove_dir = brk: {
+                    const file_attrs = std.os.windows.GetFileAttributesW(dest.ptr) catch |err| {
+                        if (args.force) {
+                            return Maybe(Return.Rm).success;
+                        }
+
+                        const code: E = switch (err) {
+                            error.FileNotFound => .NOENT,
+                            error.PermissionDenied => .PERM,
+                            else => .INVAL,
+                        };
+
+                        return .{
+                            .err = bun.sys.Error.fromCode(
+                                code,
+                                .unlink,
+                            ),
+                        };
+                    };
+                    // TODO: check FILE_ATTRIBUTE_INVALID
+                    break :brk (file_attrs & std.os.windows.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                },
+            }) catch |er| {
+                // empircally, it seems to return AccessDenied when the
+                // file is actually a directory on macOS.
+
+                if (args.force) {
+                    return Maybe(Return.Rm).success;
+                }
+
+                {
+                    const code: E = switch (er) {
+                        error.FileNotFound => .NOENT,
+                        error.AccessDenied => .PERM,
+                        error.NameTooLong => .INVAL,
+                        error.FileBusy => .BUSY,
+                        error.NotDir => .NOTDIR,
+                        error.IsDir => .ISDIR,
+                        error.DirNotEmpty => .INVAL,
+                        error.NetworkNotFound => .NOENT,
+                        else => .UNKNOWN,
+                    };
+
+                    return .{
+                        .err = bun.sys.Error.fromCode(
+                            code,
+                            .unlink,
+                        ),
+                    };
+                }
+            };
+
+            return Maybe(Return.Rm).success;
+        }
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
         if (comptime Environment.isWindows) {
@@ -4795,38 +4892,26 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Symlink).todo;
         }
 
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        switch (comptime flavor) {
-            .sync => {
-                return Syscall.symlink(
-                    args.old_path.sliceZ(&this.sync_error_buf),
-                    args.new_path.sliceZ(&to_buf),
-                );
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Symlink).todo;
+        return Syscall.symlink(
+            args.old_path.sliceZ(&this.sync_error_buf),
+            args.new_path.sliceZ(&to_buf),
+        );
     }
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Truncate).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse
-                    Maybe(Return.Truncate).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Truncate).todo;
+        return Maybe(Return.Truncate).errno(C.truncate(path.sliceZ(&this.sync_error_buf), len)) orelse
+            Maybe(Return.Truncate).success;
     }
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, comptime flavor: Flavor) Maybe(Return.Truncate) {
         return switch (args.path) {
@@ -4842,19 +4927,13 @@ pub const NodeFS = struct {
         };
     }
     pub fn unlink(this: *NodeFS, args: Arguments.Unlink, comptime flavor: Flavor) Maybe(Return.Unlink) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Unlink).todo;
         }
 
-        switch (comptime flavor) {
-            .sync => {
-                return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
-                    Maybe(Return.Unlink).success;
-            },
-            else => {},
-        }
-
-        return Maybe(Return.Unlink).todo;
+        return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
+            Maybe(Return.Unlink).success;
     }
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
         std.debug.assert(flavor == .sync);
@@ -4879,6 +4958,7 @@ pub const NodeFS = struct {
         return Maybe(Return.UnwatchFile).todo;
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
+        _ = flavor;
         if (comptime Environment.isWindows) {
             return Maybe(Return.Utimes).todo;
         }
@@ -4896,21 +4976,13 @@ pub const NodeFS = struct {
             },
         };
 
-        switch (comptime flavor) {
-            // futimes uses the syscall version
-            // we use libc because here, not for a good reason
-            // just missing from the linux syscall interface in zig and I don't want to modify that right now
-            .sync => return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utimes, args.path.slice())) |err|
-                err
-            else
-                Maybe(Return.Utimes).success,
-            else => {},
-        }
-
-        return Maybe(Return.Utimes).todo;
+        return if (Maybe(Return.Utimes).errnoSysP(std.c.utimes(args.path.sliceZ(&this.sync_error_buf), &times), .utimes, args.path.slice())) |err|
+            err
+        else
+            Maybe(Return.Utimes).success;
     }
 
-    pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime flavor: Flavor) Maybe(Return.Lutimes) {
+    pub fn lutimes(this: *NodeFS, args: Arguments.Lutimes, comptime _: Flavor) Maybe(Return.Lutimes) {
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lutimes).todo;
         }
@@ -4928,18 +5000,10 @@ pub const NodeFS = struct {
             },
         };
 
-        switch (comptime flavor) {
-            // futimes uses the syscall version
-            // we use libc because here, not for a good reason
-            // just missing from the linux syscall interface in zig and I don't want to modify that right now
-            .sync => return if (Maybe(Return.Lutimes).errnoSysP(C.lutimes(args.path.sliceZ(&this.sync_error_buf), &times), .lutimes, args.path.slice())) |err|
-                err
-            else
-                Maybe(Return.Lutimes).success,
-            else => {},
-        }
-
-        return Maybe(Return.Lutimes).todo;
+        return if (Maybe(Return.Lutimes).errnoSysP(C.lutimes(args.path.sliceZ(&this.sync_error_buf), &times), .lutimes, args.path.slice())) |err|
+            err
+        else
+            Maybe(Return.Lutimes).success;
     }
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
         if (comptime Environment.isWindows) {

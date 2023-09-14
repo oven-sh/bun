@@ -2171,11 +2171,6 @@ pub const FilePoll = struct {
 
             var op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
 
-            if (op == linux.EPOLL.CTL_ADD) {
-                this.fd = @intCast(std.c.dup(@intCast(this.fd)));
-                fd = this.fd;
-            }
-
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 op,
@@ -2318,13 +2313,15 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
-        if (this.flags.contains(.needs_rearm)) {
-            log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
-            this.flags.remove(.poll_process);
-            this.flags.remove(.poll_readable);
-            this.flags.remove(.poll_process);
-            this.flags.remove(.poll_machport);
-            return JSC.Maybe(void).success;
+        if (comptime Environment.isMac) {
+            if (this.flags.contains(.needs_rearm)) {
+                log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+                this.flags.remove(.poll_process);
+                this.flags.remove(.poll_readable);
+                this.flags.remove(.poll_process);
+                this.flags.remove(.poll_machport);
+                return JSC.Maybe(void).success;
+            }
         }
 
         log("unregister: {s} ({d})", .{ @tagName(flag), fd });

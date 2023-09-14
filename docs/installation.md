@@ -115,29 +115,9 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
 this is some output
 ``` -->
 
-## TypeScript
+<!-- ## Completions
 
-To install TypeScript definitions for Bun's built-in APIs in your project, install `bun-types`.
-
-```sh
-$ bun add -d bun-types # dev dependency
-```
-
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
-
-```json-diff
-  {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
-  }
-```
-
-Refer to [Ecosystem > TypeScript](/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
-
-## Completions
-
-Shell auto-completion should be configured automatically when Bun is installed.
+Shell auto-completion should be configured automatically when Bun is installed!
 
 If not, run the following command. It uses `$SHELL` to determine which shell you're using and writes a completion file to the appropriate place on disk. It's automatically re-run on every `bun upgrade`.
 
@@ -150,7 +130,7 @@ To write the completions to a custom location:
 ```bash
 $ bun completions > path-to-file      # write to file
 $ bun completions /path/to/directory  # write into directory
-```
+``` -->
 
 ## Uninstall
 

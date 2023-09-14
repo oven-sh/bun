@@ -22,6 +22,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 describe("v8 date parser", () => {
+  // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/webkit/date-parse-comments-test.js#L27
   test("test/webkit/date-parse-comments-test.js", () => {
     var timeZoneOffset = Date.parse(" Dec 25 1995 1:30 ") - Date.parse(" Dec 25 1995 1:30 GMT ");
     function testDateParse(date, numericResult) {
@@ -96,6 +97,7 @@ describe("v8 date parser", () => {
     testDateParse("We(comment 1) (comment 2) Dec 25 1995 1:30 GMT", 819855000000);
   });
 
+  // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/mjsunit/regress/regress-4640.js#L6
   test("test/mjsunit/regress-4640.js", () => {
     expect(new Date("275760-10-14").getMilliseconds()).toBeNaN();
     expect(new Date("275760-09-23").getMilliseconds()).toBeNaN();
@@ -113,6 +115,7 @@ describe("v8 date parser", () => {
     expect(new Date("+100000-10-13 ").getMilliseconds()).not.toBeNaN();
   });
 
+  // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/mjsunit/date-parse.js#L34
   test("test/mjsunit/date-parse.js", () => {
     // Test that we can parse dates in all the different formats that we
     // have to support.
@@ -433,6 +436,7 @@ describe("v8 date parser", () => {
     });
   });
 
+  // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/intl/regress-1451943.js#L5
   test("test/intl/regress-1451943.js", () => {
     let beforeOct1582GregorianTransition = new Date("1582-01-01T00:00Z");
     let afterOct1582GregorianTransition = new Date("1583-01-01T00:00Z");

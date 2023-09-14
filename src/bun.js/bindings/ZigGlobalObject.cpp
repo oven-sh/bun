@@ -126,6 +126,8 @@
 
 #include "JSDOMFile.h"
 
+#include "ProcessBindingConstants.h"
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -226,6 +228,10 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 static bool has_loaded_jsc = false;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+
+namespace Bun {
+extern JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+}
 
 namespace WebCore {
 class Base64Utilities {
@@ -1043,8 +1049,7 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
 
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
-    return JSC::JSValue::encode(
-        globalObject->processObject());
+    return JSC::JSValue::encode(globalObject->processObject());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(property_lazyCryptoGetter,
@@ -1627,8 +1632,6 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return JSC::JSValue::encode(jsUndefined());
 }
 
-extern JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1816,7 +1819,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 
             obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, jsFunctionTty_isatty, ImplementationVisibility::Public), 1);
 
-            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
+            obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 2);
 
             return JSValue::encode(obj);
         }
@@ -3186,8 +3189,8 @@ void GlobalObject::finishCreation(VM& vm)
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
-            auto* process = Zig::Process::create(
-                *globalObject, Zig::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
+            auto* process = Bun::Process::create(
+                *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
 
             init.set(process);
         });
@@ -3247,7 +3250,7 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     m_processBindingConstants.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::ProcessBindingConstants>::Initializer& init) {
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
                 ProcessBindingConstants::create(
                     init.vm,
@@ -3728,7 +3731,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), 0),
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        // GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
@@ -4103,7 +4106,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_requireFunctionUnbound.visit(visitor);
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);
-    thisObject->m_processBindingConstants.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);

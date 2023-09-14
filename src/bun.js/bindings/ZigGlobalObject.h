@@ -13,21 +13,22 @@ namespace JSC {
 class Structure;
 class Identifier;
 class LazyClassStructure;
-
-} // namespace JSC
-
-namespace JSC {
-
 enum class JSPromiseRejectionOperation : unsigned;
-
-}
+} // namespace JSC
 
 namespace WebCore {
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-}
+class GlobalScope;
+class SubtleCrypto;
+class EventTarget;
+} // namespace WebCore
+
+namespace Bun {
+class InternalModuleRegistry;
+} // namespace Bun
 
 #include "root.h"
 
@@ -43,19 +44,9 @@ class DOMWrapperWorld;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "ProcessBindingConstants.h"
-
-namespace WebCore {
-class GlobalScope;
-class SubtleCrypto;
-class EventTarget;
-}
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
-// defined in ModuleLoader.cpp
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 // #include "EventTarget.h"
 
@@ -266,7 +257,8 @@ public:
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
-    Bun::ProcessBindingConstants* processBindingConstants() { return m_processBindingConstants.getInitializedOnMainThread(this); }
+
+    JSObject* processBindingConstants() { return m_processBindingConstants.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -523,7 +515,7 @@ private:
      * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
-    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
+    LazyProperty<JSGlobalObject, Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
@@ -542,7 +534,7 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
@@ -556,12 +548,12 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
 
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
-    LazyProperty<JSGlobalObject, Bun::ProcessBindingConstants> m_processBindingConstants;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
+    LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
 

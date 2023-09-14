@@ -148,12 +148,6 @@ To configure lockfile behavior:
 # path to read bun.lockb from
 path = "bun.lockb"
 
-# path to save bun.lockb to
-savePath = "bun.lockb"
-
-# whether to save the lockfile to disk
-save = true
-
 # whether to save a non-Bun lockfile alongside bun.lockb
 # only "yarn" is supported
 print = "yarn"

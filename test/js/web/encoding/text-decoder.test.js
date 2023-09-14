@@ -262,7 +262,7 @@ describe("TextDecoder", () => {
   it("should support undifined", () => {
     const decoder = new TextDecoder(undefined);
     expect(decoder.encoding).toBe("utf-8");
-  })
+  });
 });
 
 it("truncated sequences", () => {

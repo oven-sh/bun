@@ -26,7 +26,7 @@ describe("got", () => {
         const data = await request.json();
         expect(data).toEqual({ hello: "world" });
 
-        return new Response("Hello world");
+        return new Response("Hello World!");
       },
     });
 

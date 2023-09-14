@@ -1365,8 +1365,8 @@ class ClientRequest extends OutgoingMessage {
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
-        // Disable auto gzip/deflate
-        decompress: false,
+        // TODO: check zlib to disable this
+        decompress: true,
       })
         .then(response => {
           const prevIsHTTPS = isNextIncomingMessageHTTPS;

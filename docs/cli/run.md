@@ -26,10 +26,11 @@ $ bun run index.ts
 $ bun run index.tsx
 ```
 
-The "naked" `bun` command is equivalent to `bun run`.
+Alternatively, you can omit the `run` keyword and use the "naked" command; it behaves identically.
 
 ```bash
 $ bun index.tsx
+$ bun index.js
 ```
 
 ### `--watch`

@@ -221,7 +221,7 @@ describe("node:http", () => {
 
     it("should be async readable", async done => {
       try {
-        const data = "abcd".repeat(10000);
+        const data = "a".repeat(16385);
         var server = createServer((req, res) => {
           req.on("data", () => {});
           req.on("end", () => {

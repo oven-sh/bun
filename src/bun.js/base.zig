@@ -2144,8 +2144,7 @@ pub const FilePoll = struct {
     pub fn register(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
         return registerWithFd(this, loop, flag, one_shot, this.fd);
     }
-    pub fn registerWithFd(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool, _fd: u64) JSC.Maybe(void) {
-        var fd = _fd;
+    pub fn registerWithFd(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });

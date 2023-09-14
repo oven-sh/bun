@@ -1,6 +1,6 @@
 // See ./README.md for instructions on how to run this benchmark.
 const port = process.env.PORT || 4001;
-const CLIENTS_TO_WAIT_FOR = parseInt(process.env.CLIENTS_COUNT || "", 10) || 16;
+const CLIENTS_TO_WAIT_FOR = parseInt(process.env.CLIENTS_COUNT || "", 10) || 32;
 
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);

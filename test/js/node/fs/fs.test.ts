@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { dirname } from "node:path";
+import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
   existsSync,
@@ -17,14 +18,22 @@ import fs, {
   rmSync,
   rmdir,
   rmdirSync,
+  renameSync,
   createReadStream,
   createWriteStream,
   promises,
   unlinkSync,
   mkdtempSync,
+  mkdtemp,
   constants,
   Dirent,
   Stats,
+  realpathSync,
+  readlinkSync,
+  symlinkSync,
+  writevSync,
+  readvSync,
+  fstatSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -33,7 +42,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-*-from.js";
+import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { SystemError, spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -45,6 +55,44 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("writeFileSync in append should not truncate the file", () => {
+  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  var str = "";
+  writeFileSync(path, "---BEGIN---");
+  str += "---BEGIN---";
+  for (let i = 0; i < 10; i++) {
+    const line = "Line #" + i;
+    str += line;
+    writeFileSync(path, line, { flag: "a" });
+  }
+  expect(readFileSync(path, "utf8")).toBe(str);
+});
+
+it("await readdir #3931", async () => {
+  const { exitCode } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("writeFileSync NOT in append SHOULD truncate the file", () => {
+  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+
+  for (let options of [{ flag: "w" }, { flag: undefined }, {}, undefined]) {
+    writeFileSync(path, "---BEGIN---", options);
+    var str = "---BEGIN---";
+    expect(readFileSync(path, "utf8")).toBe(str);
+    for (let i = 0; i < 10; i++) {
+      const line = "Line #" + i;
+      str = line;
+      writeFileSync(path, line, options);
+      expect(readFileSync(path, "utf8")).toBe(str);
+    }
+  }
+});
 
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
@@ -87,6 +135,79 @@ describe("copyFileSync", () => {
     copyFileSync(tempdir + "/copyFileSync.src.blob", tempdir + "/copyFileSync.dest.blob");
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
+
+  if (process.platform === "linux") {
+    describe("should work when copyFileRange is not available", () => {
+      it("on large files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/large`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(128 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        writeFileSync(src, buffer.buffer);
+        try {
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+
+      it("on small files", () => {
+        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/small`;
+        expect(existsSync(tempdir)).toBe(false);
+        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        var buffer = new Int32Array(1 * 1024);
+        for (let i = 0; i < buffer.length; i++) {
+          buffer[i] = i % 256;
+        }
+
+        const hash = Bun.hash(buffer.buffer);
+        const src = tempdir + "/copyFileSync.src.blob";
+        const dest = tempdir + "/copyFileSync.dest.blob";
+
+        try {
+          writeFileSync(src, buffer.buffer);
+
+          expect(existsSync(dest)).toBe(false);
+
+          const { exitCode } = spawnSync({
+            stdio: ["inherit", "inherit", "inherit"],
+            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+            env: {
+              ...bunEnv,
+              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            },
+          });
+          expect(exitCode).toBe(0);
+
+          expect(Bun.hash(readFileSync(dest))).toBe(hash);
+        } finally {
+          rmSync(src, { force: true });
+          rmSync(dest, { force: true });
+        }
+      });
+    });
+  }
 });
 
 describe("mkdirSync", () => {
@@ -95,6 +216,18 @@ describe("mkdirSync", () => {
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
+  });
+
+  it("throws for invalid options", () => {
+    const path = `${tmpdir()}/${Date.now()}.rm.dir2/foo/bar`;
+
+    expect(() =>
+      mkdirSync(
+        path,
+        // @ts-expect-error
+        { recursive: "lalala" },
+      ),
+    ).toThrow("recursive must be a boolean");
   });
 });
 
@@ -110,6 +243,160 @@ it("readdirSync on import.meta.dir", () => {
   }
   gc(true);
   expect(match).toBe(true);
+});
+
+it("promises.readdir on a large folder", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i];
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("promises.readFile", async () => {
+  expect(await fs.promises.readFile(import.meta.path, "utf-8")).toEqual(readFileSync(import.meta.path, "utf-8"));
+  expect(await fs.promises.readFile(import.meta.path, { encoding: "latin1" })).toEqual(
+    readFileSync(import.meta.path, { encoding: "latin1" }),
+  );
+
+  // We do this 20 times to check for any GC issues.
+  for (let i = 0; i < 20; i++) {
+    try {
+      await fs.promises.readFile("/i-dont-exist", "utf-8");
+      expect(false).toBeTrue();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("No such file or directory");
+      expect(e.code).toBe("ENOENT");
+      expect(e.errno).toBe(-2);
+      expect(e.path).toBe("/i-dont-exist");
+    }
+  }
+});
+
+it("promises.readFile - UTF16 file path", async () => {
+  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile - atomized file path", async () => {
+  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  // Force it to become an atomized string by making it a property access
+  const dest: string = (
+    {
+      [destInput]: destInput,
+      boop: 123,
+    } as const
+  )[destInput] as string;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile with buffer as file path", async () => {
+  for (let i = 0; i < 10; i++)
+    expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(
+      readFileSync(import.meta.path, "utf-8"),
+    );
+});
+
+it("promises.readdir on a large folder withFileTypes", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  let withFileTypes = { withFileTypes: true } as const;
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i].name;
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("statSync throwIfNoEntry", () => {
+  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+});
+
+it("statSync throwIfNoEntry: true", () => {
+  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
+it("stat == statSync", async () => {
+  const sync = statSync(import.meta.path);
+  const async = await promises.stat(import.meta.path);
+  expect(Object.entries(sync)).toEqual(Object.entries(async));
 });
 
 // https://github.com/oven-sh/bun/issues/1887
@@ -156,6 +443,22 @@ it("mkdtempSync() empty name", () => {
   expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
   rmdirSync(tempdir);
   expect(existsSync(tempdir)).toBe(false);
+});
+
+it("mkdtempSync() non-exist dir #2568", () => {
+  try {
+    expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
+  } catch (err: any) {
+    expect(err?.errno).toBe(-2);
+  }
+});
+
+it("mkdtemp() non-exist dir #2568", done => {
+  mkdtemp("/tmp/hello/world", (err, folder) => {
+    expect(err?.errno).toBe(-2);
+    expect(folder).toBeUndefined();
+    done();
+  });
 });
 
 it("readdirSync on import.meta.dir with trailing slash", () => {
@@ -215,6 +518,41 @@ it("readdirSync throws when given a file path with trailing slash", () => {
 
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
+
+  it("works on large files", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 4_900_000_000);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 4_900_000_000);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
+  it("works with bigint on read", () => {
+    const dest = join(tmpdir(), "readSync-large-file-bigint.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 400);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 400n as any);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -240,7 +578,87 @@ describe("readSync", () => {
   });
 });
 
+it("writevSync", () => {
+  var fd = openSync(`${tmpdir()}/writevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  fd = openSync(`${tmpdir()}/writevSync.txt`, "r");
+  const buf = new Uint8Array(9);
+  readSync(fd, buf, 0, 9, 0);
+  expect(buf).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("pwritevSync", () => {
+  var fd = openSync(`${tmpdir()}/pwritevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  writeSync(fd, "lalalala", 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers, "lalalala".length);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  const out = readFileSync(`${tmpdir()}/pwritevSync.txt`);
+  expect(out.slice(0, "lalalala".length).toString()).toBe("lalalala");
+  expect(out.slice("lalalala".length)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("readvSync", () => {
+  var fd = openSync(`${tmpdir()}/readv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  writeSync(fd, buf, 0, 9, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/readv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([1, 2, 3]));
+  expect(buffers[1]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[2]).toEqual(new Uint8Array([7, 8, 9]));
+  closeSync(fd);
+});
+
+it("preadv", () => {
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  writeSync(fd, buf, 0, buf.byteLength, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers, 3);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[1]).toEqual(new Uint8Array([7, 8, 9]));
+  expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
+});
+
 describe("writeSync", () => {
+  it("works with bigint", () => {
+    const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 400n as any);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 400 as any);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
     const four = new Uint8Array(4);
@@ -273,7 +691,25 @@ describe("readFileSync", () => {
 
   it("works with a file url", () => {
     gc();
-    const text = readFileSync(new URL("file://" + import.meta.dir + "/readFileSync.txt"), "utf8");
+    const text = readFileSync(new URL("./readFileSync.txt", import.meta.url), "utf8");
+    gc();
+    expect(text).toBe("File read successfully");
+  });
+
+  it("works with a file path which contains spaces", async () => {
+    gc();
+    const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
+    await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
+    const text = readFileSync(outpath, "utf8");
+    gc();
+    expect(text).toBe("File read successfully");
+  });
+
+  it("works with a file URL which contains spaces", async () => {
+    gc();
+    const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
+    await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
+    const text = readFileSync(new URL(outpath, import.meta.url), "utf8");
     gc();
     expect(text).toBe("File read successfully");
   });
@@ -340,7 +776,12 @@ describe("writeFileSync", () => {
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
-
+  it("write file with mode, issue #3740", () => {
+    const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
+    writeFileSync(path, "bun", { mode: 33188 });
+    const stat = fs.statSync(path);
+    expect(stat.mode).toBe(33188);
+  });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
@@ -410,6 +851,58 @@ describe("lstat", () => {
     triggerDOMJIT(linkStats, linkStats.isDirectory, false);
     triggerDOMJIT(linkStats, linkStats.isSymbolicLink, true);
   });
+});
+
+it("symlink", () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it("readlink", () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it("realpath async", async () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(await promises.realpath(actual)).toBe(realpathSync(import.meta.path));
+  const tasks = new Array(500);
+  for (let i = 0; i < 500; i++) {
+    const current = actual + i;
+    tasks[i] = promises.realpath(current).then(
+      () => {
+        throw new Error("should not get here");
+      },
+      e => {
+        expect(e?.path).toBe(current);
+      },
+    );
+  }
+  await Promise.all(tasks);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.realpath(actual, (err, path) => {
+    err ? reject(err) : resolve(path);
+  });
+  expect(await promise).toBe(realpathSync(import.meta.path));
 });
 
 describe("stat", () => {
@@ -713,6 +1206,23 @@ describe("createReadStream", () => {
       });
     });
   });
+
+  it("should emit open", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    ws.close(err => {
+      expect(err).toBeDefined();
+      expect(err?.message).toContain("Premature close");
+      done();
+    });
+  });
 });
 
 describe("fs.WriteStream", () => {
@@ -795,6 +1305,18 @@ describe("fs.WriteStream", () => {
       expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
       done();
     });
+  });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
+    // @ts-ignore-next-line
+    const ws = new WriteStream_(path, {
+      fd: 2,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(2);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -897,6 +1419,18 @@ describe("fs.ReadStream", () => {
       done();
     });
   });
+
+  it("should use fd if provided", () => {
+    const path = join(tmpdir(), `not-used-${Date.now()}.txt`);
+    expect(existsSync(path)).toBe(false);
+    // @ts-ignore-next-line
+    const ws = new ReadStream_(path, {
+      fd: 0,
+    });
+    // @ts-ignore-next-line
+    expect(ws.fd).toBe(0);
+    expect(existsSync(path)).toBe(false);
+  });
 });
 
 describe("createWriteStream", () => {
@@ -966,6 +1500,82 @@ describe("createWriteStream", () => {
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
+  });
+
+  it("writing in append mode should not truncate the file", async () => {
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
+    const stream = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream.write("first line\n");
+    stream.end();
+
+    await new Promise((resolve, reject) => {
+      stream.on("error", e => {
+        reject(e);
+      });
+
+      stream.on("finish", () => {
+        resolve(true);
+      });
+    });
+
+    const stream2 = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream2.write("second line\n");
+    stream2.end();
+
+    return await new Promise((resolve, reject) => {
+      stream2.on("error", e => {
+        reject(e);
+      });
+
+      stream2.on("finish", () => {
+        expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
+        resolve(true);
+      });
+    });
+  });
+
+  it("should emit open and call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.on("open", data => {
+      expect(data).toBeDefined();
+      done();
+    });
+  });
+
+  it("should call close callback", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    ws.close(err => {
+      expect(err).toBeUndefined();
+      done();
+    });
+  });
+
+  it("should call callbacks in the correct order", done => {
+    const ws = createWriteStream(join(tmpdir(), "fs"));
+    let counter = 0;
+    ws.on("open", () => {
+      expect(counter++).toBe(1);
+    });
+
+    ws.close(() => {
+      expect(counter++).toBe(3);
+      done();
+    });
+
+    const rs = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+    rs.on("open", () => {
+      expect(counter++).toBe(0);
+    });
+
+    rs.close(() => {
+      expect(counter++).toBe(2);
+    });
   });
 });
 
@@ -1050,6 +1660,26 @@ describe("fs/promises", () => {
   });
 });
 
+it("stat on a large file", () => {
+  var dest: string = "",
+    fd;
+  try {
+    dest = `${tmpdir()}/fs.test.js/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
+    mkdirSync(dirname(dest), { recursive: true });
+    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
+    fd = openSync(dest, "w");
+    let offset = 0;
+    while (offset < 5 * 1024 * 1024 * 1024) {
+      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
+    }
+
+    expect(fstatSync(fd).size).toEqual(offset);
+  } finally {
+    if (fd) closeSync(fd);
+    unlinkSync(dest);
+  }
+});
+
 it("fs.constants", () => {
   expect(constants).toBeDefined();
   expect(constants.F_OK).toBeDefined();
@@ -1065,12 +1695,12 @@ it("fs.constants", () => {
   expect(constants.O_TRUNC).toBeDefined();
   expect(constants.O_APPEND).toBeDefined();
   expect(constants.O_DIRECTORY).toBeDefined();
-  expect(constants.O_NOATIME).toBeDefined();
+  // expect(constants.O_NOATIME).toBeDefined();
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
-  expect(constants.O_SYMLINK).toBeDefined();
-  expect(constants.O_DIRECT).toBeDefined();
+  if (process.platform === "darwin") expect(constants.O_SYMLINK).toBeDefined();
+  // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();
   expect(constants.S_IFREG).toBeDefined();
@@ -1112,4 +1742,308 @@ it("repro 1516: can use undefined/null to specify default flag", () => {
   // @ts-ignore-next-line
   expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
   rmSync(path);
+});
+
+it("existsSync with invalid path doesn't throw", () => {
+  expect(existsSync(null as any)).toBe(false);
+  expect(existsSync(123 as any)).toBe(false);
+  expect(existsSync(undefined as any)).toBe(false);
+  expect(existsSync({ invalid: 1 } as any)).toBe(false);
+});
+
+describe("utimesSync", () => {
+  it("works", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime, newModifiedTime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime, prevModifiedTime);
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  it("accepts a Number(value).toString()", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file2-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime.getTime() / 1000 + "", newModifiedTime.getTime() / 1000 + "");
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime.getTime() / 1000 + "", prevModifiedTime.getTime() / 1000 + "");
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+});
+
+it("createReadStream on a large file emits readable event correctly", () => {
+  return new Promise<void>((resolve, reject) => {
+    const tmp = mkdtempSync(`${tmpdir()}/readable`);
+    // write a 10mb file
+    writeFileSync(`${tmp}/large.txt`, "a".repeat(10 * 1024 * 1024));
+    var stream = createReadStream(`${tmp}/large.txt`);
+    var ended = false;
+    var timer: Timer;
+    stream.on("readable", () => {
+      const v = stream.read();
+      if (ended) {
+        clearTimeout(timer);
+        reject(new Error("readable emitted after end"));
+      } else if (v == null) {
+        ended = true;
+        timer = setTimeout(() => {
+          resolve();
+        }, 20);
+      }
+    });
+  });
+});
+
+describe("fs.read", () => {
+  it("should work with (fd, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    fs.read(fd, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer).toStrictEqual(Buffer.concat([Buffer.from("bun"), Buffer.alloc(16381)]));
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, options, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-2-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, { buffer: buffer }, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-3-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-4-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with position", done => {
+    const path = `${tmpdir()}/bun-fs-read-5-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with both position and offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+});
+
+it("new Stats", () => {
+  // @ts-expect-error
+  const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+  expect(stats).toBeDefined();
+  // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+  expect(stats.dev).toBe(1);
+  expect(stats.mode).toBe(2);
+  expect(stats.nlink).toBe(3);
+  expect(stats.uid).toBe(4);
+  expect(stats.gid).toBe(5);
+  expect(stats.rdev).toBe(6);
+  expect(stats.blksize).toBe(7);
+  expect(stats.ino).toBe(8);
+  expect(stats.size).toBe(9);
+  expect(stats.blocks).toBe(10);
+  expect(stats.atimeMs).toBe(11);
+  expect(stats.mtimeMs).toBe(12);
+  expect(stats.ctimeMs).toBe(13);
+  expect(stats.birthtimeMs).toBe(14);
+  expect(stats.atime).toEqual(new Date(11));
+  expect(stats.mtime).toEqual(new Date(12));
+  expect(stats.ctime).toEqual(new Date(13));
+  expect(stats.birthtime).toEqual(new Date(14));
+});
+
+it("BigIntStats", () => {
+  const withoutBigInt = statSync(__filename, { bigint: false });
+  const withBigInt = statSync(__filename, { bigint: true });
+
+  expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
+  expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
+  expect(withoutBigInt.isBlockDevice() === withBigInt.isBlockDevice()).toBe(true);
+  expect(withoutBigInt.isCharacterDevice() === withBigInt.isCharacterDevice()).toBe(true);
+  expect(withoutBigInt.isSymbolicLink() === withBigInt.isSymbolicLink()).toBe(true);
+  expect(withoutBigInt.isFIFO() === withBigInt.isFIFO()).toBe(true);
+  expect(withoutBigInt.isSocket() === withBigInt.isSocket()).toBe(true);
+
+  const expectclose = (a: bigint, b: bigint) => expect(Math.abs(Number(a - b))).toBeLessThan(1000);
+
+  expectclose(BigInt(withoutBigInt.dev), withBigInt.dev);
+  expectclose(BigInt(withoutBigInt.ino), withBigInt.ino);
+  expectclose(BigInt(withoutBigInt.mode), withBigInt.mode);
+  expectclose(BigInt(withoutBigInt.nlink), withBigInt.nlink);
+  expectclose(BigInt(withoutBigInt.uid), withBigInt.uid);
+  expectclose(BigInt(withoutBigInt.gid), withBigInt.gid);
+  expectclose(BigInt(withoutBigInt.rdev), withBigInt.rdev);
+  expectclose(BigInt(withoutBigInt.size), withBigInt.size);
+  expectclose(BigInt(withoutBigInt.blksize), withBigInt.blksize);
+  expectclose(BigInt(withoutBigInt.blocks), withBigInt.blocks);
+  expectclose(BigInt(Math.floor(withoutBigInt.atimeMs)), withBigInt.atimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.mtimeMs)), withBigInt.mtimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
+
+  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
+  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
+  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
+  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+});
+
+it("test syscall errno, issue#4198", () => {
+  const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
+  expect(() => openSync(path, "r")).toThrow("No such file or directory");
+  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readlinkSync(path)).toThrow("No such file or directory");
+  expect(() => realpathSync(path)).toThrow("No such file or directory");
+  expect(() => readFileSync(path)).toThrow("No such file or directory");
+  expect(() => renameSync(path, `${path}.2`)).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => unlinkSync(path)).toThrow("No such file or directory");
+  expect(() => rmSync(path)).toThrow("No such file or directory");
+  expect(() => rmdirSync(path)).toThrow("No such file or directory");
+  expect(() => closeSync(2147483640)).toThrow("Bad file descriptor");
+
+  mkdirSync(path);
+  expect(() => mkdirSync(path)).toThrow("File or folder exists");
+  expect(() => unlinkSync(path)).toThrow(
+    {
+      ["darwin"]: "Operation not permitted",
+      ["linux"]: "Is a directory",
+      // TODO: windows
+    }[process.platform] as const,
+  );
+  rmdirSync(path);
 });

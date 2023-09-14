@@ -48,10 +48,10 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
+        @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
-        var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);
+        var pm = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
         handleLoadLockfileErrors(load_lockfile, pm);
@@ -87,11 +87,11 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
-        var pm = PackageManager.init(ctx, null, &PackageManager.install_params) catch |err| {
+        var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
             // TODO: error messages here
             // if (err == error.MissingPackageJSON) {
             //     // TODO: error messages
-            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, &PackageManager.install_params, &_ctx);
+            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, PackageManager.Subcommand.pm, &_ctx);
             // }
 
             return err;
@@ -222,9 +222,9 @@ pub const PackageManagerCommand = struct {
                 const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
                 defer ctx.allocator.free(sorted_dependencies);
                 for (sorted_dependencies, 0..) |*dep, i| {
-                    dep.* = @truncate(DependencyID, root_deps.off + i);
+                    dep.* = @as(DependencyID, @truncate(root_deps.off + i));
                 }
-                std.sort.sort(DependencyID, sorted_dependencies, ByName{
+                std.sort.block(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,
                     .buf = string_bytes,
                 }, ByName.isLessThan);
@@ -247,7 +247,7 @@ pub const PackageManagerCommand = struct {
         }
 
         Output.prettyln(
-            \\bun pm - package manager related commands
+            \\<b><blue>bun pm<r>: package manager related commands
             \\
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
@@ -258,6 +258,8 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
+            \\
+            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
             \\
         , .{});
 
@@ -336,7 +338,7 @@ fn printNodeModulesFolderStructure(
     const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
     defer allocator.free(sorted_dependencies);
     bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
-    std.sort.sort(DependencyID, sorted_dependencies, ByName{
+    std.sort.block(DependencyID, sorted_dependencies, ByName{
         .dependencies = dependencies,
         .buf = string_bytes,
     }, ByName.isLessThan);

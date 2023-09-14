@@ -1,4 +1,5 @@
-import { createServer, Server, TLSSocket } from "tls";
+import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
+import type { PeerCertificate } from "tls";
 import { realpathSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -195,61 +196,6 @@ describe("tls.createServer listen", () => {
     );
   });
 
-  it("should listen on the correct port", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer(COMMON_CERT);
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(
-      49027,
-      mustCall(() => {
-        const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("::");
-        expect(address.port).toStrictEqual(49027);
-        expect(address.family).toStrictEqual("IPv6");
-        server.close();
-        done();
-      }),
-    );
-  });
-
-  it("should listen on the correct port with IPV4", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer(COMMON_CERT);
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(
-      49026,
-      "0.0.0.0",
-      mustCall(() => {
-        const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("0.0.0.0");
-        expect(address.port).toStrictEqual(49026);
-        expect(address.family).toStrictEqual("IPv4");
-        server.close();
-        done();
-      }),
-    );
-  });
-
   it("should listen on unix domain socket", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -339,6 +285,80 @@ describe("tls.createServer listen", () => {
     timeout = setTimeout(closeAndFail, 100);
 
     server.listen(0, "0.0.0.0", closeAndFail);
+  });
+});
+
+describe("tls.createServer", () => {
+  it("should work with getCertificate", done => {
+    let timeout: Timer;
+    let client: TLSSocket | null = null;
+    const server: Server = createServer(COMMON_CERT, socket => {
+      socket.on("secure", () => {
+        try {
+          expect(socket).toBeDefined();
+          const cert = socket.getCertificate() as PeerCertificate;
+          expect(cert).toBeDefined();
+          expect(cert.subject).toBeDefined();
+          expect(cert.subject).toMatchObject({
+            C: "AU",
+            ST: "Some-State",
+            O: "Internet Widgits Pty Ltd",
+          });
+
+          expect(cert.issuer).toBeDefined();
+          expect(cert.issuer).toMatchObject({
+            C: "AU",
+            ST: "Some-State",
+            O: "Internet Widgits Pty Ltd",
+          });
+
+          expect(cert.ca).toBeTrue();
+          expect(cert.bits).toBe(2048);
+          expect(cert.modulus).toBe(
+            "EE2EC82047480938924D5C7E99AEB11F13AD71B77AC065B79E4C650A427552E57C366639A2F32C1A718384926D510DA3E6283905C2547F7B5ECEA08D5B8B4A9D23A048849F1002AFA67D813EF685AB7CB1D988F3D2BBAF7062A90CC6415E607F000B46C8DFD4157CE4ADC7E9A662C72536816061BA2A7994E3780F9120F2E22C38E8224550EBA9739D40148CFB46C13B99B4F5A6508CF1EEF981FA9A6529F693E5A6CBEF27D471B2607855212455BCFAA44BB8152D254475379A52D28FD55C7FF35F3F1C35A4DE822F0D5588F42147EF77A5371064307E7302B48D2014DE85D9DE87201EBE363845A0BF90AF2BB253B77B812D27D4A7038B303A30A2A8021013",
+          );
+          expect(cert.exponent).toBe("0x10001");
+          expect(cert.pubkey).toBeInstanceOf(Buffer);
+          // yes these spaces are intentional
+          expect(cert.valid_from).toBe("Feb  3 14:49:35 2019 GMT");
+          expect(cert.valid_to).toBe("Feb  3 14:49:35 2020 GMT");
+          expect(cert.fingerprint).toBe("48:5F:4B:DB:FD:56:50:32:F0:27:84:3C:3F:B9:6C:DB:13:42:D2:D4");
+          expect(cert.fingerprint256).toBe(
+            "40:F9:8C:B8:9D:3C:0D:93:09:C4:A7:96:B8:A4:69:03:6C:DB:1B:83:C9:0E:76:AE:4A:F4:16:1A:A6:13:50:B2",
+          );
+          expect(cert.fingerprint512).toBe(
+            "98:56:9F:C0:A7:21:AD:BE:F3:11:AD:78:17:61:7C:36:AE:85:AB:AC:9E:1E:BF:AA:F2:92:0D:8B:36:50:07:CF:7B:C3:16:19:0F:1F:B9:09:C9:45:9D:EC:C9:44:66:72:EE:EA:CF:74:23:13:B5:FB:E1:88:52:51:D2:C6:B6:4D",
+          );
+          expect(cert.serialNumber).toBe("A2DD4153F2F748E3");
+
+          expect(cert.raw).toBeInstanceOf(Buffer);
+          client?.end();
+          server.close();
+          done();
+        } catch (err) {
+          client?.end();
+          server.close();
+          done(err);
+        }
+      });
+    });
+
+    const closeAndFail = (err: any) => {
+      clearTimeout(timeout);
+      server.close();
+      client?.end();
+      done(err || "Timeout");
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 1000);
+
+    server.listen(0, () => {
+      const address = server.address() as AddressInfo;
+      client = connect({
+        port: address.port,
+        host: address.address,
+      });
+    });
   });
 });
 
@@ -624,4 +644,16 @@ describe("tls.createServer events", () => {
       }),
     );
   });
+});
+
+it("tls.rootCertificates should exists", () => {
+  expect(tls.rootCertificates).toBeDefined();
+  expect(tls.rootCertificates).toBeInstanceOf(Array);
+  expect(tls.rootCertificates.length).toBeGreaterThan(0);
+  expect(typeof tls.rootCertificates[0]).toBe("string");
+
+  expect(rootCertificates).toBeDefined();
+  expect(rootCertificates).toBeInstanceOf(Array);
+  expect(rootCertificates.length).toBeGreaterThan(0);
+  expect(typeof rootCertificates[0]).toBe("string");
 });

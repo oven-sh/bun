@@ -1,4 +1,11 @@
-Bun ships with a built-in test runner.
+Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
+
+- TypeScript and JSX
+- Lifecycle hooks
+- Snapshot testing
+- UI & DOM testing
+- Watch mode with `--watch`
+- Script pre-loading with `--preload`
 
 ## Run tests
 
@@ -23,31 +30,49 @@ The runner recursively searches the working directory for files that match the f
 - `*.spec.{js|jsx|ts|tsx}`
 - `*_spec.{js|jsx|ts|tsx}`
 
-You can filter the set of tests to run by passing additional positional arguments to `bun test`. Any file in the directory with an _absolute path_ that contains one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
+You can filter the set of _test files_ to run by passing additional positional arguments to `bun test`. Any test file with a path that matches one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
 
 ```bash
 $ bun test <filter> <filter> ...
 ```
 
-## Snapshot testing
+To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 
-Snapshots are supported by `bun test`. First, write a test using the `.toMatchSnapshot()` matcher:
-
-```ts
-import { test, expect } from "bun:test";
-
-test("snap", () => {
-  expect("foo").toMatchSnapshot();
-});
+```sh
+# run all tests or test suites with "addition" in the name
+$ bun test --test-name-pattern addition
 ```
 
-Then generate snapshots with the following command:
+The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+
+## Timeouts
+
+Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, it will be marked as failed. The default value is `5000`.
 
 ```bash
-bun test --update-snapshots
+# default value is 5000
+$ bun test --timeout 20
 ```
 
-Snapshots will be stored in a `__snapshots__` directory next to the test file.
+## Rerun tests
+
+Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.
+
+```sh
+$ bun test --rerun-each 100
+```
+
+## Bail out with `--bail`
+
+Use the `--bail` flag to abort the test run early after a pre-determined number of test failures. By default Bun will run all tests and report all failures, but sometimes in CI environments it's preferable to terminate earlier to reduce CPU usage.
+
+```sh
+# bail after 1 failure
+$ bun test --bail
+
+# bail after 10 failure
+$ bun test --bail 10
+```
 
 ## Watch mode
 
@@ -56,6 +81,57 @@ Similar to `bun run`, you can pass the `--watch` flag to `bun test` to watch for
 ```bash
 $ bun test --watch
 ```
+
+## Lifecycle hooks
+
+Bun supports the following lifecycle hooks:
+
+| Hook         | Description                 |
+| ------------ | --------------------------- |
+| `beforeAll`  | Runs once before all tests. |
+| `beforeEach` | Runs before each test.      |
+| `afterEach`  | Runs after each test.       |
+| `afterAll`   | Runs once after all tests.  |
+
+These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
+
+```ts
+$ bun test --preload ./setup.ts
+```
+
+See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
+
+## Mocks
+
+Create mocks with the `mock` function. Mocks are automatically reset between tests.
+
+```ts
+import { test, expect, mock } from "bun:test";
+const random = mock(() => Math.random());
+
+test("random", async () => {
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
+});
+```
+
+See [Test > Mocks](/docs/test/mocks) for complete documentation.
+
+## Snapshot testing
+
+Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
+
+## UI & DOM testing
+
+Bun is compatible with popular UI testing libraries:
+
+- [HappyDOM](https://github.com/capricorn86/happy-dom)
+- [DOM Testing Library](https://testing-library.com/docs/dom-testing-library/intro/)
+- [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
+
+See [Test > DOM Testing](/docs/test/dom) for complete documentation.
 
 ## Performance
 

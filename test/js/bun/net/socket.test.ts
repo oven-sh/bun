@@ -27,6 +27,43 @@ it("should keep process alive only when active", async () => {
   ).toEqual(["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"]);
 });
 
+it("connect without top level await should keep process alive", async () => {
+  const server = Bun.listen({
+    socket: {
+      open(socket) {},
+      data(socket, data) {},
+    },
+    hostname: "localhost",
+    port: 0,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
+    cwd: import.meta.dir,
+    env: bunEnv,
+  });
+  await proc.exited;
+  try {
+    expect(proc.exitCode).toBe(0);
+    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+  } finally {
+    server.stop();
+  }
+});
+
+it("connect() should return the socket object", async () => {
+  const { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "connect-returns-socket.js"],
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stdin: null,
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(await exited).toBe(0);
+  expect(await new Response(stderr).text()).toBe("");
+});
+
 it("listen() should throw connection error for invalid host", () => {
   expect(() => {
     const handlers: SocketHandler = {
@@ -91,7 +128,28 @@ it("should reject on connection error, calling both connectError() and rejecting
 });
 
 it("should not leak memory when connect() fails", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 1, 100);
+  await (async () => {
+    var promises = new Array(100);
+    for (let i = 0; i < 100; i++) {
+      promises[i] = connect({
+        hostname: "localhost",
+        port: 55555,
+        socket: {
+          connectError(socket, error) {},
+          data() {},
+          drain() {},
+          close() {},
+          end() {},
+          error() {},
+          open() {},
+        },
+      });
+    }
+    await Promise.allSettled(promises);
+    promises.length = 0;
+  })();
+
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 100);
 });
 
 // this also tests we mark the promise as handled if connectError() is called

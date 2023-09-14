@@ -10,13 +10,13 @@ Bun uses the file extension to determine which built-in _loader_ should be used 
 
 **JavaScript**. Default for `.cjs` and `.mjs`.
 
-Parses the code and applies a set if default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment.
+Parses the code and applies a set of default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment.
 
 ### `jsx`
 
 **JavaScript + JSX.**. Default for `.js` and `.jsx`.
 
-Same as the `js` loader, but JSX syntax is supported. By default, JSX is downconverted to plain JavaScript; the details of how this is done depends on the `jsx*` compiler options in your `tsconfig.json`. Refer to the TypeScript documentation [on JSX](https://www.typescriptlang.org/docs/handbook/jsx.html) for more information.
+Same as the `js` loader, but JSX syntax is supported. By default, JSX is down-converted to plain JavaScript; the details of how this is done depends on the `jsx*` compiler options in your `tsconfig.json`. Refer to the TypeScript documentation [on JSX](https://www.typescriptlang.org/docs/handbook/jsx.html) for more information.
 
 ### `ts`
 
@@ -216,13 +216,13 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 ---
 
 - `"https://cdn.example.com/"`
-- `https://cdn.example.com/`
+- `https://cdn.example.com/logo.svg`
 
 {% /table %}
 
 {% callout %}
-The location and file name of the copied file is determined by the value of [`naming.asset`](/docs/cli/build#naming).
-{% callout %}
+The location and file name of the copied file is determined by the value of [`naming.asset`](/docs/bundler#naming).
+{% /callout %}
 This loader is copied into the `outdir` as-is. The name of the copied file is determined using the value of `naming.asset`.
 
 {% details summary="Fixing TypeScript import errors" %}
@@ -232,3 +232,15 @@ If you're using TypeScript, you may get an error like this:
 // TypeScript error
 // Cannot find module './logo.svg' or its corresponding type declarations.
 ```
+
+This can be fixed by creating `*.d.ts` file anywhere in your project (any name will work) with the following contents:
+
+```ts
+declare module "*.svg" {
+  const content: string;
+  export default content;
+}
+```
+
+This tells TypeScript that any default imports from `.svg` should be treated as a string.
+{% /details %}

@@ -43,7 +43,7 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     var el_ = this.head;
     while (el_) |join| {
         const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+        @memcpy(remaining[0..to_join.len], to_join);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
@@ -56,6 +56,44 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
 
         if (this.use_pool) prev.release();
     }
+
+    return slice[0 .. slice.len - remaining.len];
+}
+
+pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
+    if (this.head == null and end.len == 0) {
+        return &[_]u8{};
+    }
+
+    if (this.head == null) {
+        var slice = try allocator.alloc(u8, end.len);
+        @memcpy(slice[0..end.len], end);
+
+        return slice;
+    }
+
+    var slice = try allocator.alloc(u8, this.len + end.len);
+    var remaining = slice;
+    var el_ = this.head;
+    while (el_) |join| {
+        const to_join = join.data.slice[join.data.offset..];
+        @memcpy(remaining[0..to_join.len], to_join);
+
+        remaining = remaining[@min(remaining.len, to_join.len)..];
+
+        var prev = join;
+        el_ = join.next;
+        if (prev.data.needs_deinit) {
+            prev.data.allocator.free(prev.data.slice);
+            prev.data = Joinable{};
+        }
+
+        if (this.use_pool) prev.release();
+    }
+
+    @memcpy(remaining[0..end.len], end);
+
+    remaining = remaining[@min(remaining.len, end.len)..];
 
     return slice[0 .. slice.len - remaining.len];
 }
@@ -82,14 +120,14 @@ pub fn ensureNewlineAtEnd(this: *Joiner) void {
 
 pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) void {
     const data = slice[offset..];
-    this.len += @truncate(u32, data.len);
+    this.len += @as(u32, @truncate(data.len));
 
     var new_tail = if (this.use_pool)
         Joinable.Pool.get(default_allocator)
     else
         (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);
 
-    this.watcher.estimated_count += @boolToInt(
+    this.watcher.estimated_count += @intFromBool(
         this.watcher.input.len > 0 and
             bun.strings.contains(data, this.watcher.input),
     );
@@ -100,7 +138,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     new_tail.* = .{
         .allocator = default_allocator,
         .data = Joinable{
-            .offset = @truncate(u31, offset),
+            .offset = @as(u31, @truncate(offset)),
             .allocator = allocator orelse undefined,
             .needs_deinit = allocator != null,
             .slice = slice,

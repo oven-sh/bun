@@ -39,13 +39,17 @@ test("httpServer", async () => {
   // This throws a TypeError since it uses body-parser.json
   app.post("/ping", (request: Request, response: Response) => {
     expect(request.body).toEqual({ hello: "world" });
+    expect(request.query).toStrictEqual({
+      hello: "123",
+      hi: "",
+    });
     reached = true;
     response.status(200).send("POST - pong");
     httpServer.close();
   });
 
   httpServer.listen(PORT);
-  const resp = await fetch(`http://localhost:${PORT}/ping`, {
+  const resp = await fetch(`http://localhost:${PORT}/ping?hello=123&hi`, {
     method: "POST",
     body: JSON.stringify({ hello: "world" }),
     headers: {

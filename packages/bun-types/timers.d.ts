@@ -11,8 +11,8 @@
 
 declare module "timers" {
   class Timer {
-    ref(): void;
-    unref(): void;
+    ref(): Timer;
+    unref(): Timer;
     hasRef(): boolean;
   }
 

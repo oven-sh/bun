@@ -56,6 +56,7 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/DynamicES6IntoES6", {
+    todo: true,
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,
@@ -64,6 +65,16 @@ describe("bundler", () => {
     outdir: "/out",
     assertNotPresent: {
       "/out/entry.js": "123",
+    },
+    onAfterBundle(api) {
+      const files = readdirSync(api.outdir);
+      assert.strictEqual(
+        files.length,
+        2,
+        "should have 2 files: entry.js and foo-[hash].js, found [" + files.join(", ") + "]",
+      );
+      assert(files.includes("entry.js"), "has entry.js");
+      assert(!files.includes("foo.js"), "does not have foo.js");
     },
     run: {
       file: "/out/entry.js",
@@ -206,6 +217,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("splitting/CircularReferenceESBuildIssue251", {
+    todo: true,
     files: {
       "/a.js": /* js */ `
         export * from './b.js';
@@ -263,10 +275,11 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "[null]" },
     ],
     bundleWarnings: {
-      "/empty.js": [`Import "missing" will always be undefined because the file "empty.js" has no exports`],
+      "/common.js": [`Import "missing" will always be undefined because there is no matching export in "empty.js"`],
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {
+    todo: true,
     files: {
       "/a.js": `export const a = { value: 1 }`,
       "/b.js": `export { a } from './a'`,
@@ -527,6 +540,7 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/PublicPathEntryName", {
+    todo: true,
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,

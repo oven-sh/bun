@@ -75,6 +75,8 @@ const tsConfig = {
     skipLibCheck: true,
     jsx: "react-jsx",
     allowImportingTsExtensions: true,
+    noEmit: true,
+    composite: true,
     allowSyntheticDefaultImports: true,
     forceConsistentCasingInFileNames: true,
     allowJs: true,

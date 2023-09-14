@@ -111,6 +111,9 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // invalidateEventListenerRegions();
 
     eventListenersDidChange();
+    if (UNLIKELY(this->onDidChangeListener)) {
+        this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Add);
+    }
     return true;
 }
 
@@ -146,6 +149,9 @@ bool EventTarget::removeEventListener(const AtomString& eventType, EventListener
         if (eventNames().isWheelEventType(eventType))
             invalidateEventListenerRegions();
 
+        if (UNLIKELY(this->onDidChangeListener)) {
+            this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Remove);
+        }
         eventListenersDidChange();
         return true;
     }
@@ -261,7 +267,6 @@ static const AtomString& legacyType(const Event& event)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
     ASSERT(event.isInitialized());
 
     auto* data = eventTargetData();
@@ -377,6 +382,11 @@ void EventTarget::removeAllEventListeners()
         // if (data->eventListenerMap.contains(eventNames().wheelEvent) || data->eventListenerMap.contains(eventNames().mousewheelEvent))
         // invalidateEventListenerRegions();
 
+        if (UNLIKELY(this->onDidChangeListener)) {
+            for (auto& eventType : data->eventListenerMap.eventTypes()) {
+                this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Clear);
+            }
+        }
         data->eventListenerMap.clear();
         eventListenersDidChange();
     }

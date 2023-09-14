@@ -35,18 +35,18 @@ Open `index.ts` and paste the following code snippet, which implements a simple 
 const server = Bun.serve({
   port: 3000,
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 
-console.log(`Listening on http://localhost:${server.port}...`);
+console.log(`Listening on http://localhost:${server.port} ...`);
 ```
 
 Run the file from your shell.
 
 ```bash
 $ bun index.ts
-Listening at http://localhost:3000...
+Listening on http://localhost:3000 ...
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to test the server. You should see a simple page that says "Bun!".
@@ -64,7 +64,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +     "start": "bun run index.ts"
 +   },
     "devDependencies": {
-      "bun-types": "^0.4.0"
+      "bun-types": "^0.7.0"
     }
   }
 ```
@@ -97,9 +97,9 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 
   const server = Bun.serve({
     fetch() {
-+     const body = figlet.textSync('Bun!');
++     const body = figlet.textSync("Bun!");
 +     return new Response(body);
--     return new Response(`Bun!`);
+-     return new Response("Bun!");
     },
     port: 3000,
   });

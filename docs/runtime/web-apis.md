@@ -16,6 +16,11 @@ The following Web APIs are partially or completely supported.
 
 ---
 
+- Web Workers
+- [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage) [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort) [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel), [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
+
+---
+
 - Streams
 - [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream) [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream) [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy) [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy) and associated classes
 
@@ -27,12 +32,17 @@ The following Web APIs are partially or completely supported.
 ---
 
 - WebSockets
-- [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
+- [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) (_not production ready_)
 
 ---
 
 - Encoding and decoding
 - [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder) [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
+
+---
+
+- JSON
+- [`JSON`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON)
 
 ---
 
@@ -64,8 +74,7 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Errors
-- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError) [`ResolveError`](https://developer.mozilla.org/en-US/docs/Web/API/ResolveError)
-  [`BuildError`](https://developer.mozilla.org/en-US/docs/Web/API/BuildError)
+- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError)
 
 ---
 

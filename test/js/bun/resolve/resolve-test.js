@@ -26,9 +26,9 @@ it("#imports", async () => {
     await import.meta.resolve("#foo");
     throw new Error("Test failed");
   } catch (exception) {
-    expect(exception instanceof ResolveError).toBe(true);
+    expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveError");
+    expect(exception.name).toBe("ResolveMessage");
   }
 
   // Chcek that package-json-imports/#foo doesn't work
@@ -36,9 +36,9 @@ it("#imports", async () => {
     await import.meta.resolve("package-json-imports/#foo");
     throw new Error("Test failed");
   } catch (exception) {
-    expect(exception instanceof ResolveError).toBe(true);
+    expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveError");
+    expect(exception.name).toBe("ResolveMessage");
   }
 });
 
@@ -94,14 +94,14 @@ it("import.meta.resolve", async () => {
     join(import.meta.path, "../resolve-typescript-file.tsx"),
   );
 
-  // throws a ResolveError on failure
+  // throws a ResolveMessage on failure
   try {
     await import.meta.resolve("THIS FILE DOESNT EXIST");
     throw new Error("Test failed");
   } catch (exception) {
-    expect(exception instanceof ResolveError).toBe(true);
+    expect(exception instanceof ResolveMessage).toBe(true);
     expect(exception.referrer).toBe(import.meta.path);
-    expect(exception.name).toBe("ResolveError");
+    expect(exception.name).toBe("ResolveMessage");
   }
 });
 

@@ -45,7 +45,7 @@ pub const ErrorCSS = struct {
                 content.error_css,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_css;
         }
@@ -68,7 +68,7 @@ pub const ErrorJS = struct {
                 content.error_js,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return content.error_js;
         }
@@ -105,11 +105,11 @@ pub const Fallback = struct {
                     acc_len += 8;
                     while (acc_len >= 6) {
                         acc_len -= 6;
-                        try writer.writeByte(alphabet_chars[@truncate(u6, (acc >> acc_len))]);
+                        try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc >> acc_len)))]);
                     }
                 }
                 if (acc_len > 0) {
-                    try writer.writeByte(alphabet_chars[@truncate(u6, (acc << 6 - acc_len))]);
+                    try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))]);
                 }
             }
         };
@@ -133,16 +133,16 @@ pub const Fallback = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
     }
-    pub const version_hash = @embedFile("./fallback.version");
+    pub const version_hash = @import("build_options").fallback_html_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @as(u32, @truncate(std.fmt.parseInt(u64, version(), 16) catch unreachable));
         }
         return version_hash_int;
     }
@@ -220,7 +220,7 @@ pub const Runtime = struct {
                 ProdSourceContent,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContent;
         }
@@ -257,30 +257,19 @@ pub const Runtime = struct {
                 ProdSourceContentWithRefresh,
             );
             defer file.close();
-            return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
+            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
         } else {
             return ProdSourceContentWithRefresh;
         }
     }
 
-    pub const version_hash = @embedFile("./runtime.version");
+    pub const version_hash = @import("build_options").runtime_js_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @as(u32, @truncate(version_hash));
         }
         return version_hash_int;
-    }
-
-    pub inline fn version() string {
-        return version_hash;
-    }
-
-    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
-    var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
-
-    pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?bun.StoredFileDescriptorType {
-        return bytecodeCacheFetcher.fetch(bytecodeCacheFilename, fs);
     }
 
     pub const Features = struct {
@@ -294,10 +283,14 @@ pub const Runtime = struct {
 
         inject_jest_globals: bool = false,
 
+        no_macros: bool = false,
+
         commonjs_named_exports: bool = true,
 
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+
+        set_breakpoint_on_first_line: bool = false,
 
         /// Instead of jsx("div", {}, void 0)
         /// ->
@@ -323,8 +316,6 @@ pub const Runtime = struct {
 
         replace_exports: ReplaceableExport.Map = .{},
 
-        hoist_bun_plugin: bool = false,
-
         dont_bundle_twice: bool = false,
 
         /// This is a list of packages which even when require() is used, we will
@@ -335,8 +326,10 @@ pub const Runtime = struct {
         /// So we have a list of packages which we know are safe to do this with.
         unwrap_commonjs_packages: []const string = &.{},
 
+        commonjs_at_runtime: bool = false,
+
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
-            return package_name.len > 0 and strings.indexAny(this.unwrap_commonjs_packages, package_name) != null;
+            return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;
         }
 
         pub const ReplaceableExport = union(enum) {
@@ -407,13 +400,14 @@ pub const Runtime = struct {
             "$$typeof",
         };
         const all_sorted: [all.len]string = brk: {
+            @setEvalBranchQuota(1000000);
             var list = all;
             const Sorter = struct {
                 fn compare(_: void, a: []const u8, b: []const u8) bool {
                     return std.mem.order(u8, a, b) == .lt;
                 }
             };
-            std.sort.sort(string, &list, {}, Sorter.compare);
+            std.sort.block(string, &list, {}, Sorter.compare);
             break :brk list;
         };
 

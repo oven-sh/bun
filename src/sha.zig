@@ -74,6 +74,10 @@ fn NewEVP(
         pub fn final(this: *@This(), out: *Digest) void {
             std.debug.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
         }
+
+        pub fn deinit(this: *@This()) void {
+            _ = BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
+        }
     };
 }
 pub const EVP = struct {
@@ -196,7 +200,7 @@ const labels = [_][]const u8{
     "Blake3",
 };
 pub fn main() anyerror!void {
-    var file = try std.fs.cwd().openFileZ(std.os.argv[std.os.argv.len - 1], .{});
+    var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
     var bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
     var engine = BoringSSL.ENGINE_new().?;
@@ -208,7 +212,7 @@ pub fn main() anyerror!void {
 
     {
         var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.Wyhash.hash(0, bytes));
+        std.mem.doNotOptimizeAway(bun.hash(bytes));
         const zig_time = clock1.read();
         std.debug.print(
             "Wyhash:\n\n     zig: {any}\n\n",
@@ -247,10 +251,10 @@ pub fn main() anyerror!void {
         var digest2: DigestType = undefined;
         var digest3: DigestType = undefined;
         var digest4: DigestType = undefined;
-        @memset(&digest1, 0, @sizeOf(DigestType));
-        @memset(&digest2, 0, @sizeOf(DigestType));
-        @memset(&digest3, 0, @sizeOf(DigestType));
-        @memset(&digest4, 0, @sizeOf(DigestType));
+        @memset(@as([*]u8, @ptrCast(&digest1))[0..@sizeOf(DigestType)], 0);
+        @memset(@as([*]u8, @ptrCast(&digest2))[0..@sizeOf(DigestType)], 0);
+        @memset(@as([*]u8, @ptrCast(&digest3))[0..@sizeOf(DigestType)], 0);
+        @memset(@as([*]u8, @ptrCast(&digest4))[0..@sizeOf(DigestType)], 0);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);
@@ -331,4 +335,3 @@ pub fn main() anyerror!void {
 //     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
 //     try std.testing.expectEqual(hash, hash2);
 // }
-

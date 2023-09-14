@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -23,11 +23,10 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-const NewClass = @import("../base.zig").NewClass;
-const d = @import("../base.zig").d;
+
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -63,8 +62,7 @@ pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
 }
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
-    url: []const u8 = "",
-    url_was_allocated: bool = false,
+    url: bun.String = bun.String.empty,
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
@@ -120,42 +118,49 @@ pub const Request = struct {
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @truncate(u63, this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request));
+            this.reported_estimated_size = @as(u63, @truncate(this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request)));
             break :brk this.reported_estimated_size.?;
         };
     }
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.slice().len)});
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll("method: \"");
+            try writer.writeAll(comptime Output.prettyFmt("<r>method<d>:<r> \"", enable_ansi_colors));
+
             try writer.writeAll(bun.asByteSlice(@tagName(this.method)));
             try writer.writeAll("\"");
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
-            try writer.writeAll("url: \"");
+            try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
             try this.ensureURL();
-            try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
+            try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
 
-            try writer.writeAll("\"");
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+
             if (this.body.value == .Blob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try this.body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-            } else if (this.body.value == .InternalBlob) {
+            } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                if (this.body.value.size() == 0) {
+                const size = this.body.value.size();
+                if (size == 0) {
                     try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
-                    try Blob.writeFormatForSize(this.body.value.size(), writer, enable_ansi_colors);
+                    try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
                 if (this.body.value.Locked.readable) |stream| {
@@ -171,12 +176,12 @@ pub const Request = struct {
     }
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
+        if (comptime Environment.isWindows) unreachable;
         var req = Request{
-            .url = bun.asByteSlice(ctx.getFullURL()),
+            .url = bun.String.create(ctx.full_url),
             .body = try InitRequestBodyValue(.{ .Null = {} }),
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
-            .url_was_allocated = true,
         };
         return req;
     }
@@ -197,6 +202,7 @@ pub const Request = struct {
                 return MimeType.other.value;
             },
             .InternalBlob => return this.body.value.InternalBlob.contentType(),
+            .WTFStringImpl => return MimeType.text.value,
             // .InlineBlob => return this.body.value.InlineBlob.contentType(),
             .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }
@@ -247,19 +253,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        const string_contents: string = switch (this.method) {
-            .GET => "GET",
-            .HEAD => "HEAD",
-            .PATCH => "PATCH",
-            .PUT => "PUT",
-            .POST => "POST",
-            .OPTIONS => "OPTIONS",
-            .CONNECT => "CONNECT",
-            .TRACE => "TRACE",
-            .DELETE => "DELETE",
-        };
-
-        return ZigString.init(string_contents).toValueGC(globalThis);
+        return bun.String.static(@tagName(this.method)).toJSConst(globalThis);
     }
 
     pub fn getMode(
@@ -275,9 +269,8 @@ pub const Request = struct {
             this.headers = null;
         }
 
-        if (this.url_was_allocated) {
-            bun.default_allocator.free(bun.constStrToU8(this.url));
-        }
+        this.url.deref();
+        this.url = bun.String.empty;
 
         if (this.signal) |signal| {
             _ = signal.unref();
@@ -324,12 +317,12 @@ pub const Request = struct {
             return .zero;
         };
 
-        return ZigString.init(this.url).withEncoding().toValueGC(globalObject);
+        return this.url.toJS(globalObject);
     }
 
     pub fn sizeOfURL(this: *const Request) usize {
-        if (this.url.len > 0)
-            return this.url.len;
+        if (this.url.length() > 0)
+            return this.url.byteSlice().len;
 
         if (this.uws_request) |req| {
             const req_url = req.url();
@@ -356,7 +349,7 @@ pub const Request = struct {
     }
 
     pub fn ensureURL(this: *Request) !void {
-        if (this.url.len > 0) return;
+        if (!this.url.isEmpty()) return;
 
         if (this.uws_request) |req| {
             const req_url = req.url();
@@ -366,16 +359,69 @@ pub const Request = struct {
                         .is_https = this.https,
                         .host = host,
                     };
-                    const url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    const url_bytelength = std.fmt.count("{s}{any}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
                     });
+
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(this.sizeOfURL() == url.len);
+                        std.debug.assert(this.sizeOfURL() == url_bytelength);
                     }
-                    this.url = url;
-                    this.url_was_allocated = true;
+
+                    if (url_bytelength < 128) {
+                        var buffer: [128]u8 = undefined;
+                        const url = std.fmt.bufPrint(&buffer, "{s}{any}{s}", .{
+                            this.getProtocol(),
+                            fmt,
+                            req_url,
+                        }) catch @panic("Unexpected error while printing URL");
+
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(this.sizeOfURL() == url.len);
+                        }
+
+                        var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
+                        if (!href.isEmpty()) {
+                            if (href.byteSlice().ptr == url.ptr) {
+                                this.url = bun.String.createLatin1(url[0..href.length()]);
+                                href.deref();
+                            } else {
+                                this.url = href;
+                            }
+                        } else {
+                            // TODO: what is the right thing to do for invalid URLS?
+                            this.url = bun.String.create(url);
+                        }
+
+                        return;
+                    }
+
+                    if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
+                        this.url = bun.String.createUninitializedLatin1(url_bytelength);
+                        var bytes = @constCast(this.url.byteSlice());
+                        _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                            this.getProtocol(),
+                            fmt,
+                            req_url,
+                        }) catch @panic("Unexpected error while printing URL");
+                    } else {
+                        // slow path
+                        var temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                            this.getProtocol(),
+                            fmt,
+                            req_url,
+                        }) catch unreachable;
+                        defer bun.default_allocator.free(temp_url);
+                        this.url = bun.String.create(temp_url);
+                    }
+
+                    const href = bun.JSC.URL.hrefFromString(this.url);
+                    // TODO: what is the right thing to do for invalid URLS?
+                    if (!href.isEmpty()) {
+                        this.url = href;
+                    }
+
                     return;
                 }
             }
@@ -383,8 +429,7 @@ pub const Request = struct {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(this.sizeOfURL() == req_url.len);
             }
-            this.url = try bun.default_allocator.dupe(u8, req_url);
-            this.url_was_allocated = true;
+            this.url = bun.String.create(req_url);
         }
     }
 
@@ -436,18 +481,14 @@ pub const Request = struct {
             url_or_object.as(JSC.DOMURL) != null;
 
         if (is_first_argument_a_url) {
-            const slice = arguments[0].toSliceOrNull(globalThis) orelse {
+            const str = bun.String.tryFromJS(arguments[0], globalThis) orelse {
                 req.finalizeWithoutDeinit();
                 _ = req.body.unref();
                 return null;
             };
-            req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
-                req.finalizeWithoutDeinit();
-                _ = req.body.unref();
-                return null;
-            }).slice();
-            req.url_was_allocated = req.url.len > 0;
-            if (req.url.len > 0)
+            req.url = str.dupeRef();
+
+            if (!req.url.isEmpty())
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
@@ -464,8 +505,8 @@ pub const Request = struct {
                 url_or_object,
             if (is_first_argument_a_url) JSValue.undefined else url_or_object,
         };
-        const values_to_try = values_to_try_[0 .. @as(usize, @boolToInt(!is_first_argument_a_url)) +
-            @as(usize, @boolToInt(arguments.len > 1 and arguments[1].isObject()))];
+        const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
+            @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
 
         for (values_to_try) |value| {
             const value_type = value.jsType();
@@ -473,11 +514,7 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneInto(&req, globalThis.allocator(), globalThis);
-                        if (req.url_was_allocated) {
-                            req.url = req.url;
-                            req.url_was_allocated = true;
-                        }
+                        request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                         return req;
                     }
 
@@ -518,9 +555,8 @@ pub const Request = struct {
                     }
 
                     if (!fields.contains(.url)) {
-                        if (response.url.len > 0) {
-                            req.url = globalThis.allocator().dupe(u8, response.url) catch unreachable;
-                            req.url_was_allocated = true;
+                        if (!response.url.isEmpty()) {
+                            req.url = response.url.dupeRef();
                             fields.insert(.url);
                         }
                     }
@@ -552,29 +588,21 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                        return null;
-                    }).slice();
-                    req.url_was_allocated = req.url.len > 0;
-                    if (req.url.len > 0)
+                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
+                    if (!req.url.isEmpty())
                         fields.insert(.url);
 
                     // first value
-                } else if (@enumToInt(value) == @enumToInt(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
+                } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const slice = value.toSliceOrNull(globalThis) orelse {
+                    const str = bun.String.tryFromJS(value, globalThis) orelse {
                         req.finalizeWithoutDeinit();
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
-                        req.finalizeWithoutDeinit();
-                        _ = req.body.unref();
-                        return null;
-                    }).slice();
-                    req.url_was_allocated = req.url.len > 0;
-                    if (req.url.len > 0)
+                    req.url = str.dupeRef();
+                    if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
             }
@@ -615,20 +643,33 @@ pub const Request = struct {
             }
         }
 
-        if (req.url.len == 0) {
+        if (req.url.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             req.finalizeWithoutDeinit();
             _ = req.body.unref();
             return null;
         }
 
-        const parsed_url = ZigURL.parse(req.url);
-        if (parsed_url.hostname.len == 0) {
-            globalThis.throw("Failed to construct 'Request': Invalid URL (missing a hostname)", .{});
+        const href = JSC.URL.hrefFromString(req.url);
+        if (href.isEmpty()) {
+            // globalThis.throw can cause GC, which could cause the above string to be freed.
+            // so we must increment the reference count before calling it.
+            globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
+                req.url,
+            });
             req.finalizeWithoutDeinit();
             _ = req.body.unref();
             return null;
         }
+
+        // hrefFromString increments the reference count if they end up being
+        // the same
+        //
+        // we increment the reference count on usage above, so we must
+        // decrement it to be perfectly balanced.
+        req.url.deref();
+
+        req.url = href;
 
         if (req.body.value == .Blob and
             req.headers != null and
@@ -723,21 +764,20 @@ pub const Request = struct {
         req: *Request,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
+        preserve_url: bool,
     ) void {
+        _ = allocator;
         this.ensureURL() catch {};
 
         var body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
+        var original_url = req.url;
 
         req.* = Request{
             .body = body,
-            .url = allocator.dupe(u8, this.url) catch {
-                _ = body.unref();
-                globalThis.throw("Failed to clone request", .{});
-                return;
-            },
+            .url = if (preserve_url) original_url else this.url.dupeRef(),
             .method = this.method,
             .headers = this.cloneHeaders(globalThis),
         };
@@ -749,7 +789,7 @@ pub const Request = struct {
 
     pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
         var req = allocator.create(Request) catch unreachable;
-        this.cloneInto(req, allocator, globalThis);
+        this.cloneInto(req, allocator, globalThis, false);
         return req;
     }
 };

@@ -213,10 +213,11 @@ JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
     return (SourcePositionsState::Calculated == m_sourcePositionsState) ? &m_sourcePositions : nullptr;
 }
 
-static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
-static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
 ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveSourceURL()
 {
+    static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
+    static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
+
     if (m_isWasmFrame) {
         return jsOwnedString(m_vm, sourceURLWasmString);
     }
@@ -229,11 +230,12 @@ ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveSourceURL()
     return sourceURL.isNull() ? m_vm.smallStrings.emptyString() : JSC::jsString(m_vm, sourceURL);
 }
 
-static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
-static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
-static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveFunctionName()
 {
+    static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
+    static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
+    static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
+
     if (m_isWasmFrame) {
         return jsString(m_vm, JSC::Wasm::makeString(m_wasmFunctionIndexOrName));
     }

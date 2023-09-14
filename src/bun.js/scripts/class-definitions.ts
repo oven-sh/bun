@@ -5,6 +5,7 @@ interface PropertyAttribute {
 
 export type Field =
   | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
       accessor: { getter: string; setter: string };
@@ -36,10 +37,13 @@ export interface ClassDefinition {
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
 
+  getInternalProperties?: boolean;
+
   custom?: Record<string, CustomField>;
 
   configurable?: boolean;
   enumerable?: boolean;
+  structuredClone?: boolean | { transferable: boolean; tag: number };
 }
 
 export interface CustomField {
@@ -57,6 +61,7 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
+    structuredClone = false,
     ...rest
   } = {} as ClassDefinition,
 ): ClassDefinition {
@@ -65,6 +70,7 @@ export function define(
     call,
     construct,
     estimatedSize,
+    structuredClone,
     values,
     klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
     proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),

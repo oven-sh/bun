@@ -1,8 +1,25 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub const DecodeResult = struct {
     written: usize,
     fail: bool = false,
+};
+
+pub const LibBase64 = struct {
+    pub const State = extern struct {
+        eof: c_int,
+        bytes: c_int,
+        flags: c_int,
+        carry: u8,
+    };
+    pub extern fn base64_encode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) void;
+    pub extern fn base64_stream_encode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_encode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_stream_encode_final(state: *State, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_decode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) c_int;
+    pub extern fn base64_stream_decode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_decode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) c_int;
 };
 
 const mixed_decoder = brk: {
@@ -12,7 +29,7 @@ const mixed_decoder = brk: {
     });
 
     for (zig_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
-        decoder.decoder.char_to_index[c] = @intCast(u8, i);
+        decoder.decoder.char_to_index[c] = @as(u8, @intCast(i));
     }
 
     break :brk decoder;
@@ -30,7 +47,9 @@ pub fn decode(destination: []u8, source: []const u8) DecodeResult {
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
-    return zig_base64.standard.Encoder.encode(destination, source).len;
+    var outlen: usize = destination.len;
+    LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
+    return outlen;
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {
@@ -52,8 +71,16 @@ pub fn encodeLen(source: anytype) usize {
     return zig_base64.standard.Encoder.calcSize(source.len);
 }
 
-// This is just std.base64 copy-pasted
-// with support for returning how many bytes were decoded
+pub fn urlSafeEncodeLen(source: anytype) usize {
+    // Copied from WebKit
+    return ((source.len * 4) + 2) / 3;
+}
+extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
+pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
+    bun.JSC.markBinding(@src());
+    return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
+}
+
 const zig_base64 = struct {
     const assert = std.debug.assert;
     const testing = std.testing;
@@ -149,6 +176,7 @@ const zig_base64 = struct {
         }
 
         /// Compute the encoded length
+        /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calcSize(encoder: *const Base64Encoder, source_len: usize) usize {
             if (encoder.pad_char != null) {
                 return @divTrunc(source_len + 2, 3) * 4;
@@ -163,6 +191,16 @@ const zig_base64 = struct {
             const out_len = encoder.calcSize(source.len);
             assert(dest.len >= out_len);
 
+            const out_idx = encoder.encodeWithoutSizeCheck(dest, source);
+            if (encoder.pad_char) |pad_char| {
+                for (dest[out_idx..out_len]) |*pad| {
+                    pad.* = pad_char;
+                }
+            }
+            return dest[0..out_len];
+        }
+
+        pub fn encodeWithoutSizeCheck(encoder: *const Base64Encoder, dest: []u8, source: []const u8) usize {
             var acc: u12 = 0;
             var acc_len: u4 = 0;
             var out_idx: usize = 0;
@@ -171,20 +209,15 @@ const zig_base64 = struct {
                 acc_len += 8;
                 while (acc_len >= 6) {
                     acc_len -= 6;
-                    dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc >> acc_len))];
+                    dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc >> acc_len)))];
                     out_idx += 1;
                 }
             }
             if (acc_len > 0) {
-                dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc << 6 - acc_len))];
+                dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))];
                 out_idx += 1;
             }
-            if (encoder.pad_char) |pad_char| {
-                for (dest[out_idx..out_len]) |*pad| {
-                    pad.* = pad_char;
-                }
-            }
-            return dest[0..out_len];
+            return out_idx;
         }
     };
 
@@ -207,7 +240,7 @@ const zig_base64 = struct {
                 assert(!char_in_alphabet[c]);
                 assert(pad_char == null or c != pad_char.?);
 
-                result.char_to_index[c] = @intCast(u8, i);
+                result.char_to_index[c] = @as(u8, @intCast(i));
                 char_in_alphabet[c] = true;
             }
             return result;
@@ -259,7 +292,7 @@ const zig_base64 = struct {
                 acc_len += 6;
                 if (acc_len >= 8) {
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }
@@ -344,7 +377,7 @@ const zig_base64 = struct {
                 if (acc_len >= 8) {
                     if (dest_idx == dest.len) return error.NoSpaceLeft;
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }

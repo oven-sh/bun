@@ -60,18 +60,15 @@ it("btoa", () => {
   expect(btoa("abcde")).toBe("YWJjZGU=");
   expect(btoa("abcdef")).toBe("YWJjZGVm");
   expect(typeof btoa).toBe("function");
-  try {
-    btoa();
-    throw new Error("Expected error");
-  } catch (error) {
-    expect(error.name).toBe("TypeError");
-  }
+  expect(() => btoa()).toThrow("btoa requires 1 argument (a string)");
   var window = "[object Window]";
   expect(btoa("")).toBe("");
   expect(btoa(null)).toBe("bnVsbA==");
   expect(btoa(undefined)).toBe("dW5kZWZpbmVk");
   expect(btoa(window)).toBe("W29iamVjdCBXaW5kb3dd");
   expect(btoa("éé")).toBe("6ek=");
+  // check for utf16
+  expect(btoa("🧐éé".substring("🧐".length))).toBe("6ek=");
   expect(btoa("\u0080\u0081")).toBe("gIE=");
   expect(btoa(Bun)).toBe(btoa("[object Bun]"));
 });

@@ -43,13 +43,14 @@ test "SliceIterator" {
     }
 }
 
+const bun = @import("root").bun;
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub const OsIterator = struct {
     const Error = process.ArgIterator.InitError;
 
-    arena: heap.ArenaAllocator,
-    args: process.ArgIterator,
+    arena: @import("root").bun.ArenaAllocator,
+    remain: [][*:0]u8,
 
     /// The executable path (this is the first argument passed to the program)
     /// TODO: Is it the right choice for this to be null? Maybe `init` should
@@ -58,9 +59,9 @@ pub const OsIterator = struct {
 
     pub fn init(allocator: mem.Allocator) OsIterator {
         var res = OsIterator{
-            .arena = heap.ArenaAllocator.init(allocator),
-            .args = process.args(),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
             .exe_arg = undefined,
+            .remain = bun.argv(),
         };
         res.exe_arg = res.next();
         return res;
@@ -71,7 +72,13 @@ pub const OsIterator = struct {
     }
 
     pub fn next(iter: *OsIterator) ?[:0]const u8 {
-        return iter.args.next();
+        if (iter.remain.len > 0) {
+            const res = bun.sliceTo(iter.remain[0], 0);
+            iter.remain = iter.remain[1..];
+            return res;
+        }
+
+        return null;
     }
 };
 
@@ -83,12 +90,12 @@ pub const ShellIterator = struct {
         QuoteNotClosed,
     } || mem.Allocator.Error;
 
-    arena: heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     str: []const u8,
 
     pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
-            .arena = heap.ArenaAllocator.init(allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
             .str = str,
         };
     }

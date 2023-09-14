@@ -9,7 +9,6 @@ const api = @import("./api/schema.zig");
 const Api = api.Api;
 const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const bun = @import("root").bun;
@@ -69,7 +68,7 @@ pub fn validatePath(
 pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureTotalCapacity(@intCast(u32, keys.len));
+        try hash_map.ensureTotalCapacity(@as(u32, @intCast(keys.len)));
         for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -468,6 +467,13 @@ pub const Target = enum {
         };
     }
 
+    pub inline fn isNode(this: Target) bool {
+        return switch (this) {
+            .node => true,
+            else => false,
+        };
+    }
+
     pub inline fn supportsBrowserField(this: Target) bool {
         return switch (this) {
             .browser => true,
@@ -594,46 +600,71 @@ pub const Target = enum {
 
         array.set(Target.node, &[_]string{
             "node",
-            "module",
         });
-
-        var listc = [_]string{
+        array.set(Target.browser, &[_]string{
             "browser",
             "module",
-        };
-        array.set(Target.browser, &listc);
-        array.set(
-            Target.bun,
-            &[_]string{
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
-        array.set(
-            Target.bun_macro,
-            &[_]string{
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
-        // array.set(Target.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
-
-        // Original comment:
-        // The neutral target is for people that don't want esbuild to try to
-        // pick good defaults for their platform. In that case, the list of main
-        // fields is empty by default. You must explicitly configure it yourself.
-        // array.set(Target.neutral, &listc);
+        });
+        array.set(Target.bun, &[_]string{
+            "bun",
+            "worker",
+            "node",
+        });
+        array.set(Target.bun_macro, &[_]string{
+            "macro",
+            "bun",
+            "worker",
+            "node",
+        });
 
         break :brk array;
     };
+};
+
+pub const Format = enum {
+    esm,
+    cjs,
+    iife,
+
+    pub const Map = ComptimeStringMap(
+        Format,
+        .{
+            .{
+                "esm",
+                Format.esm,
+            },
+            .{
+                "cjs",
+                Format.cjs,
+            },
+            .{
+                "iife",
+                Format.iife,
+            },
+        },
+    );
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
+        if (format.isUndefinedOrNull()) return null;
+
+        if (!format.jsType().isStringLike()) {
+            JSC.throwInvalidArguments("Format must be a string", .{}, global, exception);
+            return null;
+        }
+
+        var zig_str = JSC.ZigString.init("");
+        format.toZigString(&zig_str, global);
+        if (zig_str.len == 0) return null;
+
+        return fromString(zig_str.slice()) orelse {
+            JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
+            return null;
+        };
+    }
+
+    pub fn fromString(slice: string) ?Format {
+        return Map.getWithEql(slice, strings.eqlComptime);
+    }
 };
 
 pub const Loader = enum(u8) {
@@ -745,6 +776,27 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
+    });
+
+    pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
+        .{ "js", Api.Loader.js },
+        .{ "mjs", Api.Loader.js },
+        .{ "cjs", Api.Loader.js },
+        .{ "cts", Api.Loader.ts },
+        .{ "mts", Api.Loader.ts },
+        .{ "jsx", Api.Loader.jsx },
+        .{ "ts", Api.Loader.ts },
+        .{ "tsx", Api.Loader.tsx },
+        .{ "css", Api.Loader.css },
+        .{ "file", Api.Loader.file },
+        .{ "json", Api.Loader.json },
+        .{ "toml", Api.Loader.toml },
+        .{ "wasm", Api.Loader.wasm },
+        .{ "node", Api.Loader.napi },
+        .{ "dataurl", Api.Loader.dataurl },
+        .{ "base64", Api.Loader.base64 },
+        .{ "txt", Api.Loader.text },
+        .{ "text", Api.Loader.text },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -898,7 +950,7 @@ pub const JSX = struct {
         .{ "automatic", JSX.Runtime.automatic },
         .{ "react", JSX.Runtime.classic },
         .{ "react-jsx", JSX.Runtime.automatic },
-        .{ "react-jsxDEV", JSX.Runtime.automatic },
+        .{ "react-jsxdev", JSX.Runtime.automatic },
         .{ "solid", JSX.Runtime.solid },
     });
 
@@ -987,8 +1039,8 @@ pub const JSX = struct {
         }
 
         pub const Defaults = struct {
-            pub const Factory = &[_]string{"createElement"};
-            pub const Fragment = &[_]string{"Fragment"};
+            pub const Factory = &[_]string{ "React", "createElement" };
+            pub const Fragment = &[_]string{ "React", "Fragment" };
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";
@@ -1049,7 +1101,7 @@ pub const JSX = struct {
             pragma.runtime = jsx.runtime;
 
             if (jsx.import_source.len > 0) {
-                pragma.package_name = parsePackageName(pragma.importSource());
+                pragma.package_name = jsx.import_source;
                 pragma.setImportSource(allocator);
                 pragma.classic_import_source = pragma.package_name;
             }
@@ -1105,7 +1157,9 @@ pub fn definesFromTransformOptions(
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
+    debugger: bool,
 ) !*defines.Define {
+    _ = debugger;
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -1271,7 +1325,7 @@ pub const SourceMapOption = enum {
         };
     }
 
-    pub const map = ComptimeStringMap(SourceMapOption, .{
+    pub const Map = ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
         .{ "external", .external },
@@ -1323,6 +1377,7 @@ pub const BundleOptions = struct {
     output_dir_handle: ?Dir = null,
 
     output_dir: string = "out",
+    root_dir: string = "",
     node_modules_bundle_url: string = "",
     node_modules_bundle_pretty_path: string = "",
 
@@ -1330,7 +1385,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     timings: Timings = Timings{},
-    node_modules_bundle: ?*NodeModuleBundle = null,
     production: bool = false,
     serve: bool = false,
 
@@ -1355,6 +1409,7 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
+    main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
@@ -1362,12 +1417,14 @@ pub const BundleOptions = struct {
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
-    polyfill_node_globals: bool = true,
+    polyfill_node_globals: bool = false,
     transform_only: bool = false,
+    load_tsconfig_json: bool = true,
 
     rewrite_jest_for_tests: bool = false,
 
     macro_remap: MacroRemap = MacroRemap{},
+    no_macros: bool = false,
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
@@ -1386,6 +1443,11 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
 
+    code_coverage: bool = false,
+    debugger: bool = false,
+
+    compile: bool = false,
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///
@@ -1394,20 +1456,24 @@ pub const BundleOptions = struct {
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
+    pub fn isTest(this: *const BundleOptions) bool {
+        return this.rewrite_jest_for_tests;
+    }
+
     pub fn setProduction(this: *BundleOptions, value: bool) void {
         this.production = value;
         this.jsx.development = !value;
     }
 
     pub const default_unwrap_commonjs_packages = [_]string{
-        "__bun-test-unwrap-commonjs__",
         "react",
-        "react-client",
-        "react-dom",
         "react-is",
-        "react-refresh",
-        "react-server",
+        "react-dom",
         "scheduler",
+        "react-client",
+        "react-server",
+        "react-refresh",
+        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
@@ -1439,10 +1505,21 @@ pub const BundleOptions = struct {
             this.target,
             loader_,
             env,
-            if (loader_) |e|
-                e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")
-            else
-                null,
+            node_env: {
+                if (loader_) |e|
+                    if (e.map.get("BUN_ENV") orelse e.map.get("NODE_ENV")) |env_| break :node_env env_;
+
+                if (this.isTest()) {
+                    break :node_env "\"test\"";
+                }
+
+                if (this.production) {
+                    break :node_env "\"production\"";
+                }
+
+                break :node_env "\"development\"";
+            },
+            this.debugger,
         );
         this.defines_loaded = true;
     }
@@ -1477,6 +1554,16 @@ pub const BundleOptions = struct {
             ".json",
         };
 
+        pub const MainFieldExtensionOrder = [_]string{
+            ".js",
+            ".cjs",
+            ".cts",
+            ".tsx",
+            ".ts",
+            ".jsx",
+            ".json",
+        };
+
         pub const ModuleExtensionOrder = [_]string{
             ".tsx",
             ".jsx",
@@ -1499,7 +1586,6 @@ pub const BundleOptions = struct {
         fs: *Fs.FileSystem,
         log: *logger.Log,
         transform: Api.TransformOptions,
-        node_modules_bundle_existing: ?*NodeModuleBundle,
     ) !BundleOptions {
         var opts: BundleOptions = BundleOptions{
             .log = log,
@@ -1579,72 +1665,6 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        const is_generating_bundle = (transform.generate_node_module_bundle orelse false);
-
-        if (!is_generating_bundle) {
-            if (node_modules_bundle_existing) |node_mods| {
-                opts.node_modules_bundle = node_mods;
-                const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
-                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.origin.href,
-                    pretty_path,
-                });
-            } else if (transform.node_modules_bundle_path) |bundle_path| {
-                if (bundle_path.len > 0) {
-                    load_bundle: {
-                        const pretty_path = fs.relativeTo(bundle_path);
-                        var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .mode = .read_write }) catch |err| {
-                            Output.disableBuffering();
-                            defer Output.enableBuffering();
-                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
-                            break :load_bundle;
-                        };
-
-                        const time_start = std.time.nanoTimestamp();
-                        if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
-                            var node_module_bundle = try allocator.create(NodeModuleBundle);
-                            node_module_bundle.* = bundle;
-                            opts.node_modules_bundle = node_module_bundle;
-
-                            if (opts.origin.isAbsolute()) {
-                                opts.node_modules_bundle_url = try opts.origin.joinAlloc(
-                                    allocator,
-                                    "",
-                                    "",
-                                    node_module_bundle.bundle.import_from_name,
-                                    "",
-                                    "",
-                                );
-                                opts.node_modules_bundle_pretty_path = opts.node_modules_bundle_url[opts.node_modules_bundle_url.len - node_module_bundle.bundle.import_from_name.len - 1 ..];
-                            } else {
-                                opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
-                            }
-
-                            const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
-                            Output.printElapsed(elapsed);
-                            Output.prettyErrorln(
-                                " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
-                                .{
-                                    pretty_path,
-                                    bundle.bundle.modules.len,
-                                    bundle.bundle.packages.len,
-                                },
-                            );
-                            Output.flush();
-                        } else |err| {
-                            Output.disableBuffering();
-                            Output.prettyErrorln(
-                                "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
-                                .{ pretty_path, @errorName(err) },
-                            );
-                            bundle_file.close();
-                        }
-                    }
-                }
-            }
-        }
-        // }
-
         if (transform.framework) |_framework| {
             opts.framework = try Framework.fromApi(_framework, allocator);
         }
@@ -1657,164 +1677,165 @@ pub const BundleOptions = struct {
             opts.main_fields = transform.main_fields;
         }
 
-        if (opts.framework == null and is_generating_bundle)
-            opts.env.behavior = .load_all;
-
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        if (transform.serve orelse false) {
-            opts.preserve_extensions = true;
-            opts.append_package_version_in_query_string = true;
-            if (opts.framework == null)
-                opts.env.behavior = .load_all;
+        if (comptime !bun.Environment.isWindows) {
+            if (transform.serve orelse false) {
+                opts.preserve_extensions = true;
+                opts.append_package_version_in_query_string = true;
+                if (opts.framework == null)
+                    opts.env.behavior = .load_all;
 
-            opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
+                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode.external);
 
-            opts.resolve_mode = .lazy;
+                opts.resolve_mode = .lazy;
 
-            var dir_to_use: string = opts.routes.static_dir;
-            const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
-            var disabled_static = false;
+                var dir_to_use: string = opts.routes.static_dir;
+                const static_dir_set = opts.routes.static_dir_enabled or dir_to_use.len == 0;
+                var disabled_static = false;
 
-            var chosen_dir = dir_to_use;
+                var chosen_dir = dir_to_use;
 
-            if (!static_dir_set) {
-                chosen_dir = choice: {
-                    if (fs.fs.readDirectory(fs.top_level_dir, null)) |dir_| {
-                        const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
-                        switch (dir.*) {
-                            .entries => {
-                                if (dir.entries.getComptimeQuery("public")) |q| {
-                                    if (q.entry.kind(&fs.fs) == .dir) {
-                                        break :choice "public";
+                if (!static_dir_set) {
+                    chosen_dir = choice: {
+                        if (fs.fs.readDirectory(fs.top_level_dir, null, 0, false)) |dir_| {
+                            const dir: *const Fs.FileSystem.RealFS.EntriesOption = dir_;
+                            switch (dir.*) {
+                                .entries => {
+                                    if (dir.entries.getComptimeQuery("public")) |q| {
+                                        if (q.entry.kind(&fs.fs, true) == .dir) {
+                                            break :choice "public";
+                                        }
                                     }
-                                }
 
-                                if (dir.entries.getComptimeQuery("static")) |q| {
-                                    if (q.entry.kind(&fs.fs) == .dir) {
-                                        break :choice "static";
+                                    if (dir.entries.getComptimeQuery("static")) |q| {
+                                        if (q.entry.kind(&fs.fs, true) == .dir) {
+                                            break :choice "static";
+                                        }
                                     }
-                                }
 
-                                break :choice ".";
+                                    break :choice ".";
+                                },
+                                else => {
+                                    break :choice "";
+                                },
+                            }
+                        } else |_| {
+                            break :choice "";
+                        }
+                    };
+
+                    if (chosen_dir.len == 0) {
+                        disabled_static = true;
+                        opts.routes.static_dir_enabled = false;
+                    }
+                }
+
+                if (!disabled_static) {
+                    var _dirs = [_]string{chosen_dir};
+                    opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
+                    const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
+                        switch (err) {
+                            error.FileNotFound => {
+                                opts.routes.static_dir_enabled = false;
+                            },
+                            error.AccessDenied => {
+                                Output.prettyErrorln(
+                                    "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                                    .{opts.routes.static_dir},
+                                );
+                                std.process.exit(1);
                             },
                             else => {
-                                break :choice "";
+                                Output.prettyErrorln(
+                                    "error: \"{s}\" when accessing public folder: \"{s}\"",
+                                    .{ @errorName(err), opts.routes.static_dir },
+                                );
+                                std.process.exit(1);
                             },
                         }
-                    } else |_| {
-                        break :choice "";
+
+                        break :brk null;
+                    };
+                    if (static_dir) |handle| {
+                        opts.routes.static_dir_handle = handle.dir;
                     }
-                };
-
-                if (chosen_dir.len == 0) {
-                    disabled_static = true;
-                    opts.routes.static_dir_enabled = false;
+                    opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
                 }
-            }
 
-            if (!disabled_static) {
-                var _dirs = [_]string{chosen_dir};
-                opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
-                    switch (err) {
-                        error.FileNotFound => {
-                            opts.routes.static_dir_enabled = false;
-                        },
-                        error.AccessDenied => {
-                            Output.prettyErrorln(
-                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
-                                .{opts.routes.static_dir},
-                            );
-                            std.process.exit(1);
-                        },
-                        else => {
-                            Output.prettyErrorln(
-                                "error: \"{s}\" when accessing public folder: \"{s}\"",
-                                .{ @errorName(err), opts.routes.static_dir },
-                            );
-                            std.process.exit(1);
-                        },
-                    }
+                const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
+                    !opts.routes.routes_enabled;
 
-                    break :brk null;
-                };
-                if (static_dir) |handle| {
-                    opts.routes.static_dir_handle = handle.dir;
-                }
-                opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
-            }
-
-            const should_try_to_find_a_index_html_file = (opts.framework == null or !opts.framework.?.server.isEnabled()) and
-                !opts.routes.routes_enabled;
-
-            if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
-                const dir = opts.routes.static_dir_handle.?;
-                var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
-                    switch (err) {
-                        error.FileNotFound => {},
-                        else => {
-                            Output.prettyErrorln(
-                                "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                .{ @errorName(err), opts.routes.static_dir },
-                            );
-                        },
-                    }
-
-                    opts.routes.single_page_app_routing = false;
-                    break :brk null;
-                };
-
-                if (index_html_file) |index_dot_html| {
-                    opts.routes.single_page_app_routing = true;
-                    opts.routes.single_page_app_fd = index_dot_html.handle;
-                }
-            }
-
-            if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
-                attempt: {
-                    var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    // If it's not in static-dir/index.html, check if it's in top level dir/index.html
-                    var parts = [_]string{"index.html"};
-                    var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
-                    abs_buf[full_path.len] = 0;
-                    var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
-
-                    const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
+                if (opts.routes.static_dir_enabled and should_try_to_find_a_index_html_file) {
+                    const dir = opts.routes.static_dir_handle.?;
+                    var index_html_file = dir.openFile("index.html", .{ .mode = .read_only }) catch |err| brk: {
                         switch (err) {
                             error.FileNotFound => {},
                             else => {
                                 Output.prettyErrorln(
                                     "{s} when trying to open {s}/index.html. single page app routing is disabled.",
-                                    .{ @errorName(err), fs.top_level_dir },
+                                    .{ @errorName(err), opts.routes.static_dir },
                                 );
                             },
                         }
-                        break :attempt;
+
+                        opts.routes.single_page_app_routing = false;
+                        break :brk null;
                     };
 
-                    opts.routes.single_page_app_routing = true;
-                    opts.routes.single_page_app_fd = file.handle;
+                    if (index_html_file) |index_dot_html| {
+                        opts.routes.single_page_app_routing = true;
+                        opts.routes.single_page_app_fd = index_dot_html.handle;
+                    }
                 }
+
+                if (!opts.routes.single_page_app_routing and should_try_to_find_a_index_html_file) {
+                    attempt: {
+                        var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        // If it's not in static-dir/index.html, check if it's in top level dir/index.html
+                        var parts = [_]string{"index.html"};
+                        var full_path = resolve_path.joinAbsStringBuf(fs.top_level_dir, &abs_buf, &parts, .auto);
+                        abs_buf[full_path.len] = 0;
+                        var abs_buf_z: [:0]u8 = abs_buf[0..full_path.len :0];
+
+                        const file = std.fs.openFileAbsoluteZ(abs_buf_z, .{ .mode = .read_only }) catch |err| {
+                            switch (err) {
+                                error.FileNotFound => {},
+                                else => {
+                                    Output.prettyErrorln(
+                                        "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                        .{ @errorName(err), fs.top_level_dir },
+                                    );
+                                },
+                            }
+                            break :attempt;
+                        };
+
+                        opts.routes.single_page_app_routing = true;
+                        opts.routes.single_page_app_fd = file.handle;
+                    }
+                }
+
+                // Windows has weird locking rules for file access.
+                // so it's a bad idea to keep a file handle open for a long time on Windows.
+                if (Environment.isWindows and opts.routes.static_dir_handle != null) {
+                    opts.routes.static_dir_handle.?.close();
+                }
+                opts.hot_module_reloading = opts.target.isWebLike();
+
+                if (transform.disable_hmr orelse false)
+                    opts.hot_module_reloading = false;
+
+                opts.serve = true;
+            } else {
+                opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
             }
-
-            // Windows has weird locking rules for file access.
-            // so it's a bad idea to keep a file handle open for a long time on Windows.
-            if (Environment.isWindows and opts.routes.static_dir_handle != null) {
-                opts.routes.static_dir_handle.?.close();
-            }
-            opts.hot_module_reloading = opts.target.isWebLike();
-
-            if (transform.disable_hmr orelse false)
-                opts.hot_module_reloading = false;
-
-            opts.serve = true;
         } else {
             opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
-        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production or is_generating_bundle;
+        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
             opts.minify_syntax = true;
@@ -1825,17 +1846,15 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(opts.output_dir_handle.?.fd);
+            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
         }
 
-        opts.polyfill_node_globals = opts.target != .node;
+        opts.polyfill_node_globals = opts.target == .browser;
 
         Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
         Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
         Analytics.Features.origin = Analytics.Features.origin or transform.origin != null;
         Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
-        Analytics.Features.bun_bun = Analytics.Features.bun_bun or transform.node_modules_bundle_path != null;
-        Analytics.Features.bunjs = Analytics.Features.bunjs or transform.node_modules_bundle_path_server != null;
         Analytics.Features.macros = Analytics.Features.macros or opts.target == .bun_macro;
         Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
         Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;
@@ -1917,10 +1936,17 @@ pub const TransformOptions = struct {
 // This saves us from allocating a buffer
 pub const OutputFile = struct {
     loader: Loader,
-    input: Fs.Path,
+    input_loader: Loader = .js,
+    src_path: Fs.Path,
     value: Value,
     size: usize = 0,
+    size_without_sourcemap: usize = 0,
     mtime: ?i128 = null,
+    hash: u64 = 0,
+    is_executable: bool = false,
+    source_map_index: u32 = std.math.maxInt(u32),
+    output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+    dest_path: []const u8 = "",
 
     // Depending on:
     // - The target
@@ -1929,39 +1955,17 @@ pub const OutputFile = struct {
     // We may use a different system call
     pub const FileOperation = struct {
         pathname: string,
-        fd: FileDescriptorType = 0,
-        dir: FileDescriptorType = 0,
+        fd: FileDescriptorType = bun.invalid_fd,
+        dir: FileDescriptorType = bun.invalid_fd,
         is_tmpdir: bool = false,
         is_outdir: bool = false,
         close_handle_on_complete: bool = false,
         autowatch: bool = true,
 
-        pub fn toJS(this: FileOperation, globalObject: *JSC.JSGlobalObject, loader: Loader) JSC.JSValue {
-            var file_blob = JSC.WebCore.Blob.Store.initFile(
-                if (this.fd != 0) JSC.Node.PathOrFileDescriptor{
-                    .fd = this.fd,
-                } else JSC.Node.PathOrFileDescriptor{
-                    .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, this.pathname) catch unreachable) },
-                },
-                loader.toMimeType(),
-                globalObject.allocator(),
-            ) catch |err| {
-                Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
-            };
-
-            var blob = globalObject.allocator().create(JSC.WebCore.Blob) catch unreachable;
-            blob.* = JSC.WebCore.Blob.initWithStore(file_blob, globalObject);
-            blob.allocator = globalObject.allocator();
-            blob.globalThis = globalObject;
-            blob.content_type = loader.toMimeType().value;
-
-            return blob.toJS(globalObject);
-        }
-
-        pub fn fromFile(fd: FileDescriptorType, pathname: string) FileOperation {
+        pub fn fromFile(fd: anytype, pathname: string) FileOperation {
             return .{
                 .pathname = pathname,
-                .fd = fd,
+                .fd = bun.toFD(fd),
             };
         }
 
@@ -1975,15 +1979,15 @@ pub const OutputFile = struct {
     };
 
     pub const Value = union(Kind) {
+        move: FileOperation,
+        copy: FileOperation,
+        noop: u0,
         buffer: struct {
             allocator: std.mem.Allocator,
             bytes: []const u8,
         },
-        saved: SavedFile,
-        move: FileOperation,
-        copy: FileOperation,
-        noop: u0,
         pending: resolver.Result,
+        saved: SavedFile,
     };
 
     pub const SavedFile = struct {
@@ -2008,7 +2012,7 @@ pub const OutputFile = struct {
             if (mime_type) |mime| {
                 blob.content_type = mime.value;
             }
-            blob.size = @truncate(JSC.WebCore.Blob.SizeType, byte_size);
+            blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(byte_size));
             blob.allocator = bun.default_allocator;
             return blob.toJS(globalThis);
         }
@@ -2019,7 +2023,7 @@ pub const OutputFile = struct {
     pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
         return .{
             .loader = loader,
-            .input = pending.pathConst().?.*,
+            .src_path = pending.pathConst().?.*,
             .size = 0,
             .value = .{ .pending = pending },
         };
@@ -2028,7 +2032,7 @@ pub const OutputFile = struct {
     pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
         return .{
             .loader = .file,
-            .input = Fs.Path.init(pathname),
+            .src_path = Fs.Path.init(pathname),
             .size = size,
             .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
         };
@@ -2036,15 +2040,72 @@ pub const OutputFile = struct {
 
     pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
         var res = initFile(file, pathname, size);
-        res.value.copy.dir_handle = dir.fd;
+        res.value.copy.dir_handle = bun.toFD(dir.fd);
         return res;
     }
 
-    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader) OutputFile {
+    pub const Options = struct {
+        loader: Loader,
+        input_loader: Loader,
+        hash: ?u64 = null,
+        source_map_index: ?u32 = null,
+        output_path: string,
+        size: ?usize = null,
+        input_path: []const u8 = "",
+        display_size: u32 = 0,
+        output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+        is_executable: bool = false,
+        data: union(enum) {
+            buffer: struct {
+                allocator: std.mem.Allocator,
+                data: []const u8,
+            },
+            file: struct {
+                file: std.fs.File,
+                size: usize,
+                dir: std.fs.Dir,
+            },
+            saved: usize,
+        },
+    };
+
+    pub fn init(options: Options) OutputFile {
+        return OutputFile{
+            .loader = options.loader,
+            .input_loader = options.input_loader,
+            .src_path = Fs.Path.init(options.input_path),
+            .dest_path = options.output_path,
+            .size = options.size orelse switch (options.data) {
+                .buffer => |buf| buf.data.len,
+                .file => |file| file.size,
+                .saved => 0,
+            },
+            .size_without_sourcemap = options.display_size,
+            .hash = options.hash orelse 0,
+            .output_kind = options.output_kind,
+            .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
+            .is_executable = options.is_executable,
+            .value = switch (options.data) {
+                .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },
+                .file => |file| Value{
+                    .copy = brk: {
+                        var op = FileOperation.fromFile(file.file.handle, options.output_path);
+                        op.dir = bun.toFD(file.dir.fd);
+                        break :brk op;
+                    },
+                },
+                .saved => Value{ .saved = .{} },
+            },
+        };
+    }
+
+    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader, hash: ?u64, source_map_index: ?u32) OutputFile {
         return .{
             .loader = loader,
-            .input = Fs.Path.init(pathname),
+            .src_path = Fs.Path.init(pathname),
             .size = buf.len,
+            .hash = hash orelse 0,
+            .source_map_index = source_map_index orelse std.math.maxInt(u32),
             .value = .{
                 .buffer = .{
                     .bytes = buf,
@@ -2055,17 +2116,17 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(file.value.move.dir, &(try std.os.toPosixPath(file.value.move.getPathname())), dir, &(try std.os.toPosixPath(rel_path)));
+        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), &(try std.os.toPosixPath(file.value.move.getPathname())), bun.fdcast(dir), &(try std.os.toPosixPath(rel_path)));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var dir_obj = std.fs.Dir{ .fd = dir };
+        var dir_obj = std.fs.Dir{ .fd = bun.fdcast(dir) };
         const file_out = (try dir_obj.createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;
         var do_close = false;
         // TODO: close file_out on error
-        const fd_in = (try std.fs.openFileAbsolute(file.input.text, .{ .mode = .read_only })).handle;
+        const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
 
         if (Environment.isWindows) {
             Fs.FileSystem.setMaxFd(fd_out);
@@ -2085,18 +2146,65 @@ pub const OutputFile = struct {
 
     pub fn toJS(
         this: *OutputFile,
-        owned_pathname: []const u8,
+        owned_pathname: ?[]const u8,
         globalObject: *JSC.JSGlobalObject,
     ) bun.JSC.JSValue {
         return switch (this.value) {
-            .pending => @panic("Unexpected pending output file"),
+            .move, .pending => @panic("Unexpected pending output file"),
             .noop => JSC.JSValue.undefined,
-            .move => this.value.move.toJS(globalObject, this.loader),
-            .copy => this.value.copy.toJS(globalObject, this.loader),
-            .saved => SavedFile.toJS(globalObject, owned_pathname, this.size),
+            .copy => |copy| brk: {
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                    if (copy.fd != 0)
+                        JSC.Node.PathOrFileDescriptor{
+                            .fd = copy.fd,
+                        }
+                    else
+                        JSC.Node.PathOrFileDescriptor{
+                            .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
+                        },
+                    this.loader.toMimeType(),
+                    globalObject.allocator(),
+                ) catch |err| {
+                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+                };
+
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
+                };
+
+                break :brk build_output.toJS(globalObject);
+            },
+            .saved => brk: {
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                const path_to_use = owned_pathname orelse this.src_path.text;
+
+                var file_blob = JSC.WebCore.Blob.Store.initFile(
+                    JSC.Node.PathOrFileDescriptor{
+                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
+                    },
+                    this.loader.toMimeType(),
+                    globalObject.allocator(),
+                ) catch |err| {
+                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
+                };
+
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
+                };
+
+                break :brk build_output.toJS(globalObject);
+            },
             .buffer => |buffer| brk: {
-                var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-                blob.* = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
+                var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
                 if (blob.store) |store| {
                     store.mime_type = this.loader.toMimeType();
                     blob.content_type = store.mime_type.value;
@@ -2104,10 +2212,17 @@ pub const OutputFile = struct {
                     blob.content_type = this.loader.toMimeType().value;
                 }
 
-                blob.allocator = bun.default_allocator;
-                const blob_jsvalue = blob.toJS(globalObject);
-                blob_jsvalue.ensureStillAlive();
-                break :brk blob_jsvalue;
+                blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
+
+                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                build_output.* = JSC.API.BuildArtifact{
+                    .blob = blob,
+                    .hash = this.hash,
+                    .loader = this.input_loader,
+                    .output_kind = this.output_kind,
+                    .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
+                };
+                break :brk build_output.toJS(globalObject);
             },
         };
     }
@@ -2604,7 +2719,7 @@ pub const PathTemplate = struct {
                 };
 
                 if (count == 0) {
-                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
                     std.debug.assert(end_len <= remain.len);
                     break;
                 }
@@ -2619,12 +2734,12 @@ pub const PathTemplate = struct {
             };
 
             switch (field) {
-                .dir => try writer.writeAll(self.placeholder.dir),
+                .dir => try writer.writeAll(if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
                 .name => try writer.writeAll(self.placeholder.name),
                 .ext => try writer.writeAll(self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
+                        try writer.print("{any}", .{(hashFormatter(hash))});
                     }
                 },
             }
@@ -2633,6 +2748,8 @@ pub const PathTemplate = struct {
 
         try writer.writeAll(remain);
     }
+
+    pub const hashFormatter = bun.fmt.hexIntLower;
 
     pub const Placeholder = struct {
         dir: []const u8 = "",
@@ -2661,7 +2778,7 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
-        .data = "./[name].[ext]",
+        .data = "[dir]/[name].[ext]",
         .placeholder = .{},
     };
 

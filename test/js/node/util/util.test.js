@@ -36,6 +36,23 @@ const deepStrictEqual = (...args) => {
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 describe("util", () => {
+  it("toUSVString", () => {
+    const strings = [
+      // Lone high surrogate
+      "ab\uD800",
+      "ab\uD800c",
+      // Lone low surrogate
+      "\uDFFFab",
+      "c\uDFFFab",
+      // Well-formed
+      "abc",
+      "ab\uD83D\uDE04c",
+    ];
+    const outputs = ["ab�", "ab�c", "�ab", "c�ab", "abc", "ab😄c"];
+    for (let i = 0; i < strings.length; i++) {
+      expect(util.toUSVString(strings[i])).toBe(outputs[i]);
+    }
+  });
   describe("isArray", () => {
     it("all cases", () => {
       strictEqual(util.isArray([]), true);
@@ -297,5 +314,15 @@ describe("util", () => {
     it("is same as global TextDecoder", () => {
       expect(util.TextDecoder === globalThis.TextDecoder).toBe(true);
     });
+  });
+
+  it("format", () => {
+    expect(util.format("%s:%s", "foo")).toBe("foo:%s");
+  });
+  it("formatWithOptions", () => {
+    expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
+    expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
+      "wow({ obj: \u001B[33mtrue\u001B[39m })",
+    );
   });
 });

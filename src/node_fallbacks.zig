@@ -3,6 +3,7 @@ const string = @import("./string_types.zig").string;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const logger = @import("root").bun.logger;
 const Fs = @import("./fs.zig");
+const bun = @import("root").bun;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 const assert_code: string = @embedFile("./node-fallbacks/out/assert.js");
@@ -28,11 +29,6 @@ const tty_code: string = @embedFile("./node-fallbacks/out/tty.js");
 const url_code: string = @embedFile("./node-fallbacks/out/url.js");
 const util_code: string = @embedFile("./node-fallbacks/out/util.js");
 const zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
-const supports_color_code: string = @embedFile("./node-fallbacks/out/supports-color.js");
-
-const node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
-const isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
-const vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
 
 const assert_import_path = "/bun-vfs/node_modules/assert/index.js";
 const buffer_import_path = "/bun-vfs/node_modules/buffer/index.js";
@@ -57,17 +53,12 @@ const tty_import_path = "/bun-vfs/node_modules/tty/index.js";
 const url_import_path = "/bun-vfs/node_modules/url/index.js";
 const util_import_path = "/bun-vfs/node_modules/util/index.js";
 const zlib_import_path = "/bun-vfs/node_modules/zlib/index.js";
-const supports_color_import_path = "/bun-vfs/node_modules/supports-color/index.js";
-
-const node_fetch_import_path = "/bun-vfs/node_modules/node-fetch/index.js";
-const isomorphic_fetch_import_path = "/bun-vfs/node_modules/isomorphic-fetch/index.js";
-const vercel_fetch_import_path = "/bun-vfs/node_modules/@vercel/fetch/index.js";
 
 const assert_package_json = PackageJSON{
     .name = "assert",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "assert@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("assert@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/assert/package.json", ""),
@@ -75,8 +66,8 @@ const assert_package_json = PackageJSON{
 const buffer_package_json = PackageJSON{
     .name = "buffer",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "buffer@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("buffer@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/buffer/package.json", ""),
@@ -84,8 +75,8 @@ const buffer_package_json = PackageJSON{
 const console_package_json = PackageJSON{
     .name = "console",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "console@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("console@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/console/package.json", ""),
@@ -93,8 +84,8 @@ const console_package_json = PackageJSON{
 const constants_package_json = PackageJSON{
     .name = "constants",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "constants@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("constants@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/constants/package.json", ""),
@@ -102,8 +93,8 @@ const constants_package_json = PackageJSON{
 const crypto_package_json = PackageJSON{
     .name = "crypto",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "crypto@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("crypto@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/crypto/package.json", ""),
@@ -111,8 +102,8 @@ const crypto_package_json = PackageJSON{
 const domain_package_json = PackageJSON{
     .name = "domain",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "domain@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("domain@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/domain/package.json", ""),
@@ -120,8 +111,8 @@ const domain_package_json = PackageJSON{
 const events_package_json = PackageJSON{
     .name = "events",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "events@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("events@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/events/package.json", ""),
@@ -129,8 +120,8 @@ const events_package_json = PackageJSON{
 const http_package_json = PackageJSON{
     .name = "http",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "http@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("http@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/http/package.json", ""),
@@ -138,8 +129,8 @@ const http_package_json = PackageJSON{
 const https_package_json = PackageJSON{
     .name = "https",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "https@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("https@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/https/package.json", ""),
@@ -147,8 +138,8 @@ const https_package_json = PackageJSON{
 const net_package_json = PackageJSON{
     .name = "net",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "net@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("net@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/net/package.json", ""),
@@ -156,8 +147,8 @@ const net_package_json = PackageJSON{
 const os_package_json = PackageJSON{
     .name = "os",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "os@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("os@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/os/package.json", ""),
@@ -165,8 +156,8 @@ const os_package_json = PackageJSON{
 const path_package_json = PackageJSON{
     .name = "path",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "path@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("path@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/path/package.json", ""),
@@ -174,8 +165,8 @@ const path_package_json = PackageJSON{
 const process_package_json = PackageJSON{
     .name = "process",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "process@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("process@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/process/package.json", ""),
@@ -183,8 +174,8 @@ const process_package_json = PackageJSON{
 const punycode_package_json = PackageJSON{
     .name = "punycode",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "punycode@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("punycode@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/punycode/package.json", ""),
@@ -192,8 +183,8 @@ const punycode_package_json = PackageJSON{
 const querystring_package_json = PackageJSON{
     .name = "querystring",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "querystring@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("querystring@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/querystring/package.json", ""),
@@ -201,8 +192,8 @@ const querystring_package_json = PackageJSON{
 const stream_package_json = PackageJSON{
     .name = "stream",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "stream@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("stream@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/stream/package.json", ""),
@@ -210,10 +201,10 @@ const stream_package_json = PackageJSON{
 const string_decoder_package_json = PackageJSON{
     .name = "string_decoder",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
+    .module_type = .esm,
     .hash = brk: {
         @setEvalBranchQuota(9999);
-        break :brk @truncate(u32, std.hash.Wyhash.hash(0, "string_decoder@0.0.0-polyfill"));
+        break :brk @as(u32, @truncate(bun.hash("string_decoder@0.0.0-polyfill")));
     },
 
     .main_fields = undefined,
@@ -224,8 +215,8 @@ const string_decoder_package_json = PackageJSON{
 const sys_package_json = PackageJSON{
     .name = "sys",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "sys@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("sys@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/sys/package.json", ""),
@@ -233,8 +224,8 @@ const sys_package_json = PackageJSON{
 const timers_package_json = PackageJSON{
     .name = "timers",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "timers@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("timers@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/timers/package.json", ""),
@@ -242,8 +233,8 @@ const timers_package_json = PackageJSON{
 const tty_package_json = PackageJSON{
     .name = "tty",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "tty@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("tty@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/tty/package.json", ""),
@@ -251,8 +242,8 @@ const tty_package_json = PackageJSON{
 const url_package_json = PackageJSON{
     .name = "url",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "url@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("url@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/url/package.json", ""),
@@ -260,8 +251,8 @@ const url_package_json = PackageJSON{
 const util_package_json = PackageJSON{
     .name = "util",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "util@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("util@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/util/package.json", ""),
@@ -269,49 +260,11 @@ const util_package_json = PackageJSON{
 const zlib_package_json = PackageJSON{
     .name = "zlib",
     .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "zlib@0.0.0-polyfill")),
+    .module_type = .esm,
+    .hash = @as(u32, @truncate(bun.hash("zlib@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/zlib/package.json", ""),
-};
-
-const node_fetch_package_json = PackageJSON{
-    .name = "node-fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "node-fetch@0.0.0-polyfill")),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/node-fetch/package.json", ""),
-};
-const isomorphic_fetch_package_json = PackageJSON{
-    .name = "isomorphic-fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "isomorphic-fetch@0.0.0-polyfill")),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/isomorphic-fetch/package.json", ""),
-};
-const supports_color_package_json = PackageJSON{
-    .name = "supports-color",
-    .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "supports-color@0.0.0-polyfill")),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/supports-color/package.json", ""),
-};
-
-const vercel_fetch_package_json = PackageJSON{
-    .name = "@vercel/fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .cjs,
-    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "@vercel/fetch@0.0.0-polyfill")),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/@vercel/fetch/package.json", ""),
 };
 
 pub const FallbackModule = struct {
@@ -434,30 +387,6 @@ pub const FallbackModule = struct {
         .code = zlib_code,
         .package_json = &zlib_package_json,
     };
-
-    pub const @"node-fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(node_fetch_import_path, "node", "node-fetch"),
-        .code = node_fetch_code,
-        .package_json = &node_fetch_package_json,
-    };
-
-    pub const @"isomorphic-fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(isomorphic_fetch_import_path, "node", "isomorphic-fetch"),
-        .code = isomorphic_fetch_code,
-        .package_json = &isomorphic_fetch_package_json,
-    };
-
-    pub const @"@vercel/fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(vercel_fetch_import_path, "node", "@vercel/fetch"),
-        .code = vercel_fetch_code,
-        .package_json = &vercel_fetch_package_json,
-    };
-
-    pub const @"supports-color" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(supports_color_import_path, "node", "supports-color"),
-        .code = supports_color_code,
-        .package_json = &supports_color_package_json,
-    };
 };
 
 pub const Map = ComptimeStringMap(FallbackModule, .{
@@ -484,12 +413,6 @@ pub const Map = ComptimeStringMap(FallbackModule, .{
     &.{ "url", FallbackModule.url },
     &.{ "util", FallbackModule.util },
     &.{ "zlib", FallbackModule.zlib },
-
-    &.{ "supports-color", FallbackModule.@"supports-color" },
-
-    &.{ "node-fetch", FallbackModule.@"node-fetch" },
-    &.{ "isomorphic-fetch", FallbackModule.@"isomorphic-fetch" },
-    &.{ "@vercel/fetch", FallbackModule.@"@vercel/fetch" },
 });
 
 pub fn contentsFromPath(path: string) ?string {

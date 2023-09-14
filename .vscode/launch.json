@@ -1,39 +1,22 @@
 {
+  // The usage of BUN_GARBAGE_COLLECTOR_LEVEL=2 is important for debugging
+  // It will force the garbage collector to run after every test and every call to expect()
+  // it makes our tests very slow
+  // But it helps catch memory bugs
+
   "version": "0.2.0",
   "configurations": [
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test",
+      "name": "bun test [file]",
       "program": "bun-debug",
-      "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test --watch",
-      "program": "bun-debug",
-      "args": ["--watch", "test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test (all)",
-      "program": "bun-debug",
-      "args": ["wiptest"],
+      "args": ["test", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
@@ -41,48 +24,14 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun run current file",
+      "name": "bun test [file] (fast)",
       "program": "bun-debug",
-      "args": ["${file}"],
-      "cwd": "${file}/../../",
+      "args": ["test", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run (watch)",
-      "program": "bun-debug",
-      "args": ["--watch", "${file}"],
-      "cwd": "${file}/../../",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run (hot)",
-      "program": "bun-debug",
-      "args": ["--hot", "${file}"],
-      "cwd": "${file}/../../",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run",
-      "program": "bun-debug",
-      "args": ["check.tsx", "-c"],
-      "cwd": "${env:HOME}/Build/react-ssr",
-      "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "console": "internalConsole"
     },
@@ -90,10 +39,11 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun http example",
+      "name": "bun test [file] (verbose)",
       "program": "bun-debug",
-      "args": ["run", "examples/http.ts"],
-      "cwd": "${workspaceFolder}",
+      "args": ["test", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -102,10 +52,107 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun http file example",
+      "name": "bun test [file] --watch",
       "program": "bun-debug",
-      "args": ["run", "examples/bun/http-file.ts"],
-      "cwd": "${workspaceFolder}",
+      "args": ["test", "--watch", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [file] --only",
+      "program": "bun-debug",
+      "args": ["test", "--only", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [*]",
+      "program": "bun-debug",
+      "args": ["test"],
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [*] (fast)",
+      "program": "bun-debug",
+      "args": ["test"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [*] --only",
+      "program": "bun-debug",
+      "args": ["test", "--only"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file]",
+      "program": "bun-debug",
+      "args": ["run", "${file}", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "NODE_ENV": "development"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] (gc)",
+      "program": "bun-debug",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] (verbose)",
+      "program": "bun-debug",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -114,16 +161,27 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun html-rewriter example",
+      "name": "bun run [file] --watch",
       "program": "bun-debug",
-      "args": ["run", "examples/bun/html-rewriter.ts"],
-      "cwd": "${workspaceFolder}",
+      "args": ["run", "--watch", "${file}"],
+      "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1"
       },
       "console": "internalConsole"
     },
-
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] --hot",
+      "program": "bun-debug",
+      "args": ["run", "--hot", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
     {
       "type": "lldb",
       "request": "launch",
@@ -138,7 +196,7 @@
       "request": "launch",
       "name": "bun build debug",
       "program": "bun-debug",
-      "args": ["bun", "./test/fixtures/bundle/trivial/index.js"],
+      "args": ["bun", "${file}"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "env": {
@@ -167,7 +225,6 @@
       "console": "internalConsole",
       "env": {}
     },
-
     {
       "type": "lldb",
       "request": "launch",
@@ -201,7 +258,7 @@
         "--splitting",
         "bun",
         "/Users/jarred/Code/bun-rsc/components/Message.tsx",
-        "/Users/jarred/Code/bun-rsc/components/Button.tsx",
+        "/Users/jarred/Code/bun-rsc/components/Button.tsx"
       ],
       "cwd": "/Users/jarred/Code/bun-rsc",
       "console": "internalConsole",
@@ -250,7 +307,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"

@@ -71,22 +71,21 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
 
                         if (!mem.eql(u8, name, match))
                             continue;
-                        if (param.takes_value == .none) {
-                            if (maybe_value != null)
-                                return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
 
-                            return ArgType{ .param = param };
+                        if (param.takes_value == .none or param.takes_value == .one_optional) {
+                            if (param.takes_value == .none and maybe_value != null) {
+                                return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
+                            }
+
+                            return ArgType{ .param = param, .value = maybe_value };
                         }
 
                         const value = blk: {
                             if (maybe_value) |v|
                                 break :blk v;
 
-                            break :blk parser.iter.next() orelse brk2: {
-                                if (param.takes_value != .one_optional)
-                                    return parser.err(arg, .{ .long = name }, error.MissingValue);
-
-                                break :brk2 "";
+                            break :blk parser.iter.next() orelse {
+                                return parser.err(arg, .{ .long = name }, error.MissingValue);
                             };
                         };
 

@@ -50,7 +50,7 @@ Running `bun create` performs the following steps:
 - Initialize a fresh Git repo. Opt out with the `--no-git` flag.
 - Run the template's configured `start` script, if defined.
 
-## Official templates
+<!-- ## Official templates
 
 The following official templates are available.
 
@@ -73,7 +73,7 @@ Welcome to bun! Create a new project by pasting any of the following:
 
 {% callout %}
 ⚡️ **Speed** — At the time of writing, `bun create react app` runs ~11x faster on a M1 Macbook Pro than `yarn create react-app app`.
-{% /callout %}
+{% /callout %} -->
 
 ## GitHub repos
 

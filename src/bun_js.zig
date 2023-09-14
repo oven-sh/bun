@@ -25,7 +25,6 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
@@ -37,17 +36,19 @@ const VirtualMachine = JSC.VirtualMachine;
 
 var run: Run = undefined;
 pub const Run = struct {
-    file: std.fs.File,
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
     arena: Arena = undefined,
     any_unhandled: bool = false,
 
-    pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
+    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
+
+        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -58,8 +59,11 @@ pub const Run = struct {
         }
 
         run = .{
-            .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
-            .file = file,
+            .vm = try VirtualMachine.initWithModuleGraph(.{
+                .allocator = arena.allocator(),
+                .log = ctx.log,
+                .graph = graph_ptr,
+            }),
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
@@ -89,8 +93,14 @@ pub const Run = struct {
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
-        if (ctx.debug.macros) |macros| {
-            b.options.macro_remap = macros;
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
         }
 
         b.configureRouter(false) catch {
@@ -122,6 +132,107 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
+    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
+        var ctx = ctx_;
+        JSC.markBinding(@src());
+        bun.JSC.initialize();
+
+        js_ast.Expr.Data.Store.create(default_allocator);
+        js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
+
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
+        run = .{
+            .vm = try VirtualMachine.init(
+                .{
+                    .allocator = arena.allocator(),
+                    .log = ctx.log,
+                    .args = ctx.args,
+                    .store_fd = ctx.debug.hot_reload != .none,
+                    .smol = ctx.runtime_options.smol,
+                    .debugger = ctx.runtime_options.debugger,
+                },
+            ),
+            .arena = arena,
+            .ctx = ctx,
+            .entry_path = entry_path,
+        };
+
+        var vm = run.vm;
+        var b = &vm.bundler;
+        vm.preload = ctx.preloads;
+        vm.argv = ctx.passthrough;
+        vm.arena = &run.arena;
+        vm.allocator = arena.allocator();
+
+        b.options.install = ctx.install;
+        b.resolver.opts.install = ctx.install;
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.options.global_cache = b.resolver.opts.global_cache;
+        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.resolver.env_loader = b.env;
+
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+
+        // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
+
+        switch (ctx.debug.macros) {
+            .disable => {
+                b.options.no_macros = true;
+            },
+            .map => |macros| {
+                b.options.macro_remap = macros;
+            },
+            .unspecified => {},
+        }
+
+        b.configureRouter(false) catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+        b.configureDefines() catch {
+            if (Output.enable_ansi_colors_stderr) {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("\n", .{});
+            Global.exit(1);
+        };
+
+        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+
+        vm.loadExtraEnv();
+        vm.is_main_thread = true;
+        JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Allow setting a custom timezone
+        if (vm.bundler.env.get("TZ")) |tz| {
+            if (tz.len > 0) {
+                _ = vm.global.setTimeZone(&JSC.ZigString.init(tz));
+            }
+        }
+
+        vm.bundler.env.loadTracy();
+
+        var callback = OpaqueWrap(Run, Run.start);
+        vm.global.vm().holdAPILock(&run, callback);
+    }
+
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         this.runErrorHandler(value, null);
         run.any_unhandled = true;
@@ -130,9 +241,18 @@ pub const Run = struct {
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
-        if (this.ctx.debug.hot_reload != .none) {
-            JSC.HotReloader.enableHotModuleReloading(vm);
+        vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        switch (this.ctx.debug.hot_reload) {
+            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            else => {},
         }
+
+        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.bundler.fs.top_level_dir;
+        }
+
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 vm.runErrorHandler(promise.result(vm.global.vm()), null);
@@ -141,6 +261,8 @@ pub const Run = struct {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
+                    vm.exit_handler.exit_code = 1;
+                    vm.onExit();
                     Global.exit(1);
                 }
             }
@@ -153,6 +275,7 @@ pub const Run = struct {
                 } else {
                     vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                vm.log.msgs.items.len = 0;
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }
@@ -172,13 +295,14 @@ pub const Run = struct {
                 vm.eventLoop().tick();
                 vm.eventLoop().tickPossiblyForever();
             } else {
+                vm.exit_handler.exit_code = 1;
+                vm.onExit();
                 Global.exit(1);
             }
         }
 
         // don't run the GC if we don't actually need to
-        if (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or
-            vm.uws_event_loop.?.active > 0 or
+        if (vm.isEventLoopAlive() or
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
@@ -195,7 +319,7 @@ pub const Run = struct {
                 }
 
                 while (true) {
-                    while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
@@ -207,6 +331,8 @@ pub const Run = struct {
 
                         vm.eventLoop().autoTickActive();
                     }
+
+                    vm.onBeforeExit();
 
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
@@ -221,10 +347,12 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }
+
+                vm.onBeforeExit();
             }
 
             if (vm.log.msgs.items.len > 0) {
@@ -240,10 +368,14 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+            this.vm.exit_handler.exit_code = 1;
+        }
+        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(@boolToInt(this.any_unhandled));
+        Global.exit(exit_code);
     }
 };

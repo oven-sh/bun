@@ -65,7 +65,7 @@ pub const String = extern struct {
             if (out.isInline()) {
                 out.assertDefined();
             } else {
-                std.debug.assert(@bitCast(u64, out.slice(buf)[0..8].*) != undefined);
+                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
             }
 
             return out;
@@ -76,8 +76,8 @@ pub const String = extern struct {
 
     pub fn isUndefined(this: *const String) bool {
         var num: u64 = undefined;
-        var bytes = @bitCast(u64, this.bytes);
-        return @truncate(u63, bytes) == @truncate(u63, num);
+        var bytes = @as(u64, @bitCast(this.bytes));
+        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
     }
 
     pub const Formatter = struct {
@@ -153,7 +153,7 @@ pub const String = extern struct {
 
         pub fn hash(ctx: ArrayHashContext, a: String) u32 {
             const str = a.slice(ctx.a_buf);
-            return @truncate(u32, bun.hash(str));
+            return @as(u32, @truncate(bun.hash(str)));
         }
     };
 
@@ -175,44 +175,44 @@ pub const String = extern struct {
             // This should only happen for non-ascii strings that are exactly 8 bytes.
             // so that's an edge-case
             if ((in[max_inline_len - 1]) >= 128)
-                @bitCast(String, (@as(
+                @as(String, @bitCast((@as(
                     u64,
                     0,
                 ) | @as(
                     u64,
-                    @truncate(
+                    @as(
                         max_addressable_space,
-                        @bitCast(
+                        @truncate(@as(
                             u64,
-                            Pointer.init(buf, in),
-                        ),
+                            @bitCast(Pointer.init(buf, in)),
+                        )),
                     ),
-                )) | 1 << 63)
+                )) | 1 << 63))
             else
                 String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
 
-            else => @bitCast(
+            else => @as(
                 String,
-                (@as(
+                @bitCast((@as(
                     u64,
                     0,
                 ) | @as(
                     u64,
-                    @truncate(
+                    @as(
                         max_addressable_space,
-                        @bitCast(
+                        @truncate(@as(
                             u64,
-                            Pointer.init(buf, in),
-                        ),
+                            @bitCast(Pointer.init(buf, in)),
+                        )),
                     ),
-                )) | 1 << 63,
+                )) | 1 << 63),
             ),
         };
     }
 
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {
         if (this.isInline() and that.isInline()) {
-            return @bitCast(u64, this.bytes) == @bitCast(u64, that.bytes);
+            return @as(u64, @bitCast(this.bytes)) == @as(u64, @bitCast(that.bytes));
         } else if (this.isInline() != that.isInline()) {
             return false;
         } else {
@@ -223,7 +223,7 @@ pub const String = extern struct {
     }
 
     pub inline fn isEmpty(this: String) bool {
-        return @bitCast(u64, this.bytes) == @as(u64, 0);
+        return @as(u64, @bitCast(this.bytes)) == @as(u64, 0);
     }
 
     pub fn len(this: String) usize {
@@ -263,14 +263,14 @@ pub const String = extern struct {
             std.debug.assert(bun.isSliceInBuffer(in, buf));
 
             return Pointer{
-                .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
-                .len = @truncate(u32, in.len),
+                .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
+                .len = @as(u32, @truncate(in.len)),
             };
         }
     };
 
     pub inline fn ptr(this: String) Pointer {
-        return @bitCast(Pointer, @as(u64, @truncate(u63, @bitCast(u64, this))));
+        return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
@@ -311,7 +311,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return std.hash.Wyhash.hash(0, buf);
+            return bun.Wyhash.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -483,7 +483,7 @@ test "String works" {
             world,
         );
         try std.testing.expectEqualStrings("hello", str.slice(buf));
-        try std.testing.expectEqual(@bitCast(u64, str), @bitCast(u64, [8]u8{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0 }));
+        try std.testing.expectEqual(@as(u64, @bitCast(str)), @as(u64, @bitCast([8]u8{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0 })));
     }
 
     {
@@ -515,7 +515,7 @@ pub const ExternalString = extern struct {
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
             .value = String.init(in, in),
-            .hash = std.hash.Wyhash.hash(0, in),
+            .hash = bun.Wyhash.hash(0, in),
         };
     }
 
@@ -551,17 +551,17 @@ pub const BigExternalString = extern struct {
     pub fn from(in: string) BigExternalString {
         return BigExternalString{
             .off = 0,
-            .len = @truncate(u32, in.len),
-            .hash = std.hash.Wyhash.hash(0, in),
+            .len = @as(u32, @truncate(in.len)),
+            .hash = bun.Wyhash.hash(0, in),
         };
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
-            .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
-            .len = @truncate(u32, in.len),
+            .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
+            .len = @as(u32, @truncate(in.len)),
             .hash = hash,
         };
     }
@@ -580,19 +580,19 @@ pub const SlicedString = struct {
     }
 
     pub inline fn external(this: SlicedString) ExternalString {
-        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString.init(this.buf, this.slice, std.hash.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
-        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
 
         return String.init(this.buf, this.slice);
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
-        std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.buf.ptr) and ((@ptrToInt(input.ptr) + input.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.buf.ptr) and ((@intFromPtr(input.ptr) + input.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         return SlicedString{ .buf = this.buf, .slice = input };
     }
 };
@@ -602,6 +602,7 @@ pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
+    _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
     // raw: RawType = RawType{},
 
@@ -678,7 +679,7 @@ pub const Version = extern struct {
             .build = this.tag.build.hash,
         };
         const bytes = std.mem.asBytes(&hashable);
-        return std.hash.Wyhash.hash(0, bytes);
+        return bun.Wyhash.hash(0, bytes);
     }
 
     pub const Formatter = struct {
@@ -689,13 +690,13 @@ pub const Version = extern struct {
             const self = formatter.version;
             try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
 
-            if (!self.tag.pre.isEmpty()) {
+            if (self.tag.hasPre()) {
                 const pre = self.tag.pre.slice(formatter.input);
                 try writer.writeAll("-");
                 try writer.writeAll(pre);
             }
 
-            if (!self.tag.build.isEmpty()) {
+            if (self.tag.hasBuild()) {
                 const build = self.tag.build.slice(formatter.input);
                 try writer.writeAll("+");
                 try writer.writeAll(build);
@@ -709,7 +710,7 @@ pub const Version = extern struct {
 
     pub const HashContext = struct {
         pub fn hash(_: @This(), lhs: Version) u32 {
-            return @truncate(u32, lhs.hash());
+            return @as(u32, @truncate(lhs.hash()));
         }
 
         pub fn eql(_: @This(), lhs: Version, rhs: Version) bool {
@@ -814,11 +815,11 @@ pub const Version = extern struct {
         var multi_tag_warn = false;
         // TODO: support multiple tags
 
-        pub fn parse(allocator: Allocator, sliced_string: SlicedString) TagResult {
-            return parseWithPreCount(allocator, sliced_string, 0);
+        pub fn parse(sliced_string: SlicedString) TagResult {
+            return parseWithPreCount(sliced_string, 0);
         }
 
-        pub fn parseWithPreCount(_: Allocator, sliced_string: SlicedString, initial_pre_count: u32) TagResult {
+        pub fn parseWithPreCount(sliced_string: SlicedString, initial_pre_count: u32) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = initial_pre_count;
@@ -871,12 +872,12 @@ pub const Version = extern struct {
                                 state = State.none;
                             },
                         }
-                        result.len = @truncate(u32, i);
+                        result.len = @as(u32, @truncate(i));
                         break;
                     },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
-                        if (state == .pre) {
+                        if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
                             if (comptime Environment.isDebug) {
                                 std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
@@ -901,7 +902,6 @@ pub const Version = extern struct {
             if (state == .none and initial_pre_count > 0) {
                 state = .pre;
                 start = 0;
-                result.tag.pre = sliced_string.sub(input[start..i]).external();
             }
 
             switch (state) {
@@ -919,7 +919,7 @@ pub const Version = extern struct {
                     state = State.none;
                 },
             }
-            result.len = @truncate(u32, i);
+            result.len = @as(u32, @truncate(i));
 
             return result;
         }
@@ -932,7 +932,7 @@ pub const Version = extern struct {
         stopped_at: u32 = 0,
     };
 
-    pub fn parse(sliced_string: SlicedString, allocator: Allocator) ParseResult {
+    pub fn parse(sliced_string: SlicedString) ParseResult {
         var input = sliced_string.slice;
         var result = ParseResult{};
 
@@ -955,7 +955,7 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @intCast(i32, i);
+            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -1024,7 +1024,7 @@ pub const Version = extern struct {
                     }) {
                         i += 1;
                     }
-                    const tag_result = Tag.parse(allocator, sliced_string.sub(input[part_start_i..]));
+                    const tag_result = Tag.parse(sliced_string.sub(input[part_start_i..]));
                     result.version.tag = tag_result.tag;
                     i += tag_result.len;
                     break;
@@ -1071,9 +1071,12 @@ pub const Version = extern struct {
 
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
-                    if (result.wildcard == .none and part_i >= 2 and ((c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z'))) {
+                    if (result.wildcard == .none and part_i >= 2 and switch (c) {
+                        'a'...'z', 'A'...'Z', '_' => true,
+                        else => false,
+                    }) {
                         part_start_i = i;
-                        const tag_result = Tag.parseWithPreCount(allocator, sliced_string.sub(input[part_start_i..]), 1);
+                        const tag_result = Tag.parseWithPreCount(sliced_string.sub(input[part_start_i..]), 1);
                         result.version.tag = tag_result.tag;
                         i += tag_result.len;
                         is_done = true;
@@ -1104,7 +1107,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @intCast(u32, i);
+        result.stopped_at = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();
@@ -1264,7 +1267,7 @@ pub const Range = struct {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
         }
 
-        pub fn satisfies(this: Comparator, version: Version) bool {
+        pub fn satisfies(this: Comparator, version: Version, include_pre: bool) bool {
             const order = version.orderWithoutTag(this.version);
 
             return switch (order) {
@@ -1273,11 +1276,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (this.op) {
-                    .gt, .gte => true,
+                    .gt, .gte => if (!include_pre) false else true,
                     else => false,
                 },
                 .lt => switch (this.op) {
-                    .lt, .lte => true,
+                    .lt, .lte => if (!include_pre) false else true,
                     else => false,
                 },
             };
@@ -1285,15 +1288,46 @@ pub const Range = struct {
     };
 
     pub fn satisfies(this: Range, version: Version) bool {
-        if (!this.hasLeft()) {
+        const has_left = this.hasLeft();
+        const has_right = this.hasRight();
+
+        if (!has_left) {
             return true;
         }
 
-        if (!this.left.satisfies(version)) {
+        // When the boundaries of a range do not include a pre-release tag on either side,
+        // we should not consider that '7.0.0-rc2' < "7.0.0"
+        // ```
+        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
+        // false
+        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
+        // false
+        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
+        // true
+        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
+        // true
+        // ```
+        //
+        // - https://github.com/npm/node-semver#prerelease-tags
+        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
+        var include_pre = true;
+        if (version.tag.hasPre()) {
+            if (!has_right) {
+                if (!this.left.version.tag.hasPre()) {
+                    include_pre = false;
+                }
+            } else {
+                if (!this.left.version.tag.hasPre() and !this.right.version.tag.hasPre()) {
+                    include_pre = false;
+                }
+            }
+        }
+
+        if (!this.left.satisfies(version, include_pre)) {
             return false;
         }
 
-        if (this.hasRight() and !this.right.satisfies(version)) {
+        if (has_right and !this.right.satisfies(version, include_pre)) {
             return false;
         }
 
@@ -1781,7 +1815,7 @@ pub const Query = struct {
             }
 
             if (!skip_round) {
-                const parse_result = Version.parse(sliced.sub(input[i..]), allocator);
+                const parse_result = Version.parse(sliced.sub(input[i..]));
                 const version = parse_result.version.fill();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -1814,10 +1848,10 @@ pub const Query = struct {
                 };
 
                 if (!hyphenate) i = rollback;
-                i += @as(usize, @boolToInt(!hyphenate));
+                i += @as(usize, @intFromBool(!hyphenate));
 
                 if (hyphenate) {
-                    const second_parsed = Version.parse(sliced.sub(input[i..]), allocator);
+                    const second_parsed = Version.parse(sliced.sub(input[i..]));
                     var second_version = second_parsed.version.fill();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
@@ -1905,7 +1939,7 @@ pub const Query = struct {
 const expect = if (Environment.isTest) struct {
     pub var counter: usize = 0;
     pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(SlicedString.init(version_str, version_str), default_allocator);
+        var parsed = Version.parse(SlicedString.init(version_str, version_str));
         std.debug.assert(parsed.valid);
         // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
 
@@ -1956,7 +1990,7 @@ const expect = if (Environment.isTest) struct {
     pub fn version(input: string, v: [3]?u32, src: std.builtin.SourceLocation) void {
         Output.initTest();
         defer counter += 1;
-        const result = Version.parse(SlicedString.init(input, input), default_allocator);
+        const result = Version.parse(SlicedString.init(input, input));
         std.debug.assert(result.valid);
 
         if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
@@ -1980,7 +2014,7 @@ const expect = if (Environment.isTest) struct {
         Output.initTest();
         defer counter += 1;
 
-        var result = Version.parse(SlicedString.init(input, input), default_allocator);
+        var result = Version.parse(SlicedString.init(input, input));
         if (!v.eql(result.version.fill())) {
             Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
                 input,

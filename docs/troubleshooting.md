@@ -57,3 +57,11 @@ $ sudo zypper install unzip
 ### bun install is stuck
 
 Please run `bun install --verbose 2> logs.txt` and send them to me in Bun's discord. If you're on Linux, it would also be helpful if you run `sudo perf trace bun install --silent` and attach the logs.
+
+### Uninstalling
+
+Bun's binary and install cache is located in `~/.bun` by default. To uninstall bun, delete this directory and edit your shell config (`.bashrc`, `.zshrc`, or similar) to remove `~/.bun/bin` from the `$PATH` variable.
+
+```sh
+$ rm -rf ~/.bun # make sure to remove ~/.bun/bin from $PATH
+```

@@ -118,6 +118,32 @@ pub const Bunfig = struct {
             };
         }
 
+        fn loadPreload(
+            this: *Parser,
+            allocator: std.mem.Allocator,
+            expr: js_ast.Expr,
+        ) !void {
+            if (expr.asArray()) |array_| {
+                var array = array_;
+                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                errdefer preloads.deinit();
+                while (array.next()) |item| {
+                    try this.expect(item, .e_string);
+                    if (item.data.e_string.len() > 0)
+                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                }
+                this.ctx.preloads = preloads.items;
+            } else if (expr.data == .e_string) {
+                if (expr.data.e_string.len() > 0) {
+                    var preloads = try allocator.alloc(string, 1);
+                    preloads[0] = try expr.data.e_string.string(allocator);
+                    this.ctx.preloads = preloads;
+                }
+            } else if (expr.data != .e_null) {
+                try this.addError(expr.loc, "Expected preload to be an array");
+            }
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             const json = this.json;
             var allocator = this.allocator;
@@ -171,39 +197,14 @@ pub const Bunfig = struct {
                 }
 
                 if (json.get("preload")) |expr| {
-                    if (expr.asArray()) |array_| {
-                        var array = array_;
-                        var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
-                        errdefer preloads.deinit();
-                        while (array.next()) |item| {
-                            try this.expect(item, .e_string);
-                            if (item.data.e_string.len() > 0)
-                                preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
-                        }
-                        this.ctx.preloads = preloads.items;
-                    } else if (expr.data != .e_null) {
-                        try this.addError(expr.loc, "Expected preload to be an array");
-                    }
+                    try this.loadPreload(allocator, expr);
                 }
             }
 
-            if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
-                if (json.get("dev")) |expr| {
-                    if (expr.get("disableBunJS")) |disable| {
-                        this.ctx.debug.fallback_only = disable.asBool() orelse false;
-                    }
-
-                    if (expr.get("logLevel")) |expr2| {
-                        try this.loadLogLevel(expr2);
-                    }
-
-                    if (expr.get("port")) |port| {
-                        try this.expect(port, .e_number);
-                        this.bunfig.port = port.data.e_number.toU16();
-                        if (this.bunfig.port.? == 0) {
-                            this.bunfig.port = 3000;
-                        }
-                    }
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+                if (json.get("smol")) |expr| {
+                    try this.expect(expr, .e_boolean);
+                    this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                 }
             }
 
@@ -214,19 +215,57 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("preload")) |expr| {
-                        if (expr.asArray()) |array_| {
-                            var array = array_;
-                            var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
-                            errdefer preloads.deinit();
-                            while (array.next()) |item| {
-                                try this.expect(item, .e_string);
-                                if (item.data.e_string.len() > 0)
-                                    preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
-                            }
-                            this.ctx.preloads = preloads.items;
-                        } else if (expr.data != .e_null) {
-                            try this.addError(expr.loc, "Expected preload to be an array");
+                        try this.loadPreload(allocator, expr);
+                    }
+
+                    if (test_.get("smol")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.runtime_options.smol = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverage")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageThreshold")) |expr| outer: {
+                        if (expr.data == .e_number) {
+                            this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                            break :outer;
                         }
+
+                        try this.expect(expr, .e_object);
+                        if (expr.get("functions")) |functions| {
+                            try this.expect(functions, .e_number);
+                            this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+
+                        if (expr.get("lines")) |lines| {
+                            try this.expect(lines, .e_number);
+                            this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+
+                        if (expr.get("statements")) |stmts| {
+                            try this.expect(stmts, .e_number);
+                            this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
+                    }
+
+                    // This mostly exists for debugging.
+                    if (test_.get("coverageIgnoreSourcemaps")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageSkipTestFiles")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
                 }
             }
@@ -254,6 +293,14 @@ pub const Bunfig = struct {
                         } else {
                             try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
                             return;
+                        }
+                    }
+
+                    if (json.get("exact")) |exact_install_expr| {
+                        try this.expect(exact_install_expr, .e_boolean);
+
+                        if (exact_install_expr.asBool().?) {
+                            install.exact = true;
                         }
                     }
 
@@ -320,6 +367,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (_bun.get("frozenLockfile")) |frozen_lockfile| {
+                        if (frozen_lockfile.asBool()) |value| {
+                            install.frozen_lockfile = value;
+                        }
+                    }
+
                     if (_bun.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expect(lockfile, .e_string);
@@ -337,18 +390,6 @@ pub const Bunfig = struct {
                         if (lockfile_expr.get("save")) |lockfile| {
                             if (lockfile.asBool()) |value| {
                                 install.save_lockfile = value;
-                            }
-                        }
-
-                        if (lockfile_expr.get("path")) |lockfile| {
-                            if (lockfile.asString(allocator)) |value| {
-                                install.lockfile_path = value;
-                            }
-                        }
-
-                        if (lockfile_expr.get("savePath")) |lockfile| {
-                            if (lockfile.asString(allocator)) |value| {
-                                install.save_lockfile_path = value;
                             }
                         }
                     }
@@ -428,12 +469,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
-                    if (_bun.get("saveTo")) |file| {
-                        try this.expect(file, .e_string);
-                        this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
-                    }
-
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
@@ -555,7 +591,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand => {
+                .AutoCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{
@@ -577,8 +613,13 @@ pub const Bunfig = struct {
             }
 
             if (json.get("macros")) |expr| {
-                // technical debt
-                this.ctx.debug.macros = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source);
+                if (expr.data == .e_boolean) {
+                    if (expr.data.e_boolean.value == false) {
+                        this.ctx.debug.macros = .{ .disable = {} };
+                    }
+                } else {
+                    this.ctx.debug.macros = .{ .map = PackageJSON.parseMacrosJSON(allocator, expr, this.log, this.source) };
+                }
                 Analytics.Features.macros = true;
             }
 

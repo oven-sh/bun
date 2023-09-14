@@ -61,3 +61,5 @@ Bun.serve({
   },
 });
 ```
+
+React `18.3` and later includes an [SSR optimization](https://github.com/facebook/react/pull/25597) that takes advantage of Bun's "direct" `ReadableStream` implementation.

@@ -38,7 +38,7 @@ const styles = css`
   }
 `;
 
-export default {
+Bun.serve({
   websocket: {
     message(ws, msg) {
       ws.send(styles);
@@ -86,4 +86,4 @@ export default {
       },
     );
   },
-};
+});

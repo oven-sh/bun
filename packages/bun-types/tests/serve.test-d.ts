@@ -39,7 +39,8 @@ type User = {
 
 Bun.serve<User>({
   fetch(req, server) {
-    if (req.url === "/chat") {
+    const url = new URL(req.url);
+    if (url.pathname === "/chat") {
       if (
         server.upgrade(req, {
           data: {
@@ -78,4 +79,84 @@ Bun.serve<User>({
   },
 });
 
+Bun.serve({
+  fetch(req) {
+    throw new Error("woops!");
+  },
+  error(error) {
+    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+  },
+});
+
 export {};
+
+Bun.serve({
+  port: 1234,
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+});
+
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch() {
+    return new Response();
+  },
+});
+
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+});
+
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch() {
+    return new Response();
+  },
+  tls: {},
+});
+
+Bun.serve({
+  unix: "/tmp/bun.sock",
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+  tls: {},
+});
+
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   // @ts-expect-error
+//   port: 1234,
+//   fetch() {
+//     return new Response();
+//   },
+// });
+
+// Bun.serve({
+//   unix: "/tmp/bun.sock",
+//   // @ts-expect-error
+//   port: 1234,
+//   fetch(req, server) {
+//     server.upgrade(req);
+//     if (Math.random() > 0.5) return undefined;
+//     return new Response();
+//   },
+//   websocket: { message() {} },
+// });

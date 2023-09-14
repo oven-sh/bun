@@ -20,6 +20,12 @@ class SourceProvider;
 
 namespace Zig {
 
+class GlobalObject;
+
+void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
+JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
+void* sourceMappingForSourceURL(const WTF::String& sourceURL);
+
 class SourceProvider final : public JSC::SourceProvider {
     WTF_MAKE_FAST_ALLOCATED;
     using Base = JSC::SourceProvider;
@@ -32,7 +38,7 @@ class SourceProvider final : public JSC::SourceProvider {
     using SourceOrigin = JSC::SourceOrigin;
 
 public:
-    static Ref<SourceProvider> create(ResolvedSource resolvedSource);
+    static Ref<SourceProvider> create(Zig::GlobalObject*, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module, bool isBuiltIn = false);
     ~SourceProvider()
     {
         freeSourceCode();
@@ -40,8 +46,8 @@ public:
         commitCachedBytecode();
     }
 
-    unsigned hash() const { return m_hash; };
-    StringView source() const { return StringView(m_source.get()); }
+    unsigned hash() const override;
+    StringView source() const override { return StringView(m_source.get()); }
     RefPtr<JSC::CachedBytecode> cachedBytecode()
     {
         // if (m_resolvedSource.bytecodecache_fd == 0) {
@@ -62,7 +68,7 @@ public:
     void freeSourceCode();
 
 private:
-    SourceProvider(ResolvedSource resolvedSource, WTF::StringImpl& sourceImpl,
+    SourceProvider(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTFMove(sourceURL), String(), startPosition, sourceType)
@@ -70,17 +76,14 @@ private:
     {
 
         m_resolvedSource = resolvedSource;
-
-        m_hash = resolvedSource.hash;
-
-        getHash();
     }
 
-    unsigned m_hash;
-    unsigned getHash();
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     bool did_free_source_code = false;
+    Zig::GlobalObject* m_globalObjectForSourceProviderMap;
+    unsigned m_hash;
+
     // JSC::SourceCodeKey key;
 };
 

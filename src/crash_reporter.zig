@@ -17,11 +17,11 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     setup_sigactions(null) catch unreachable;
 
     const addr = switch (comptime builtin.target.os.tag) {
-        .linux => @ptrToInt(info.fields.sigfault.addr),
-        .macos, .freebsd => @ptrToInt(info.addr),
-        .netbsd => @ptrToInt(info.info.reason.fault.addr),
-        .openbsd => @ptrToInt(info.data.fault.addr),
-        .solaris => @ptrToInt(info.reason.fault.addr),
+        .linux => @intFromPtr(info.fields.sigfault.addr),
+        .macos, .freebsd => @intFromPtr(info.addr),
+        .netbsd => @intFromPtr(info.info.reason.fault.addr),
+        .openbsd => @intFromPtr(info.data.fault.addr),
+        .solaris => @intFromPtr(info.reason.fault.addr),
         else => unreachable,
     };
     if (on_error) |handle| handle(sig, addr);
@@ -33,6 +33,9 @@ noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyop
 }
 
 pub fn reloadHandlers() !void {
+    if (comptime @import("root").bun.Environment.isWindows) {
+        return @import("root").bun.todo(@src(), {});
+    }
     try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
 
@@ -44,17 +47,7 @@ pub fn reloadHandlers() !void {
 
     try setup_sigactions(&act);
 
-    var pipe = os.Sigaction{
-        .handler = .{ .sigaction = sigpipe_handler },
-        .mask = os.empty_sigset,
-        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-    };
-
-    try os.sigaction(
-        os.SIG.PIPE,
-        &pipe,
-        null,
-    );
+    bun_ignore_sigpipe();
 }
 const os = std.os;
 pub fn start() !void {
@@ -65,17 +58,7 @@ pub fn start() !void {
     };
 
     try setup_sigactions(&act);
-    {
-        var pipe = os.Sigaction{
-            .handler = .{ .sigaction = sigpipe_handler },
-            .mask = os.empty_sigset,
-            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-        };
-
-        try os.sigaction(
-            os.SIG.PIPE,
-            &pipe,
-            null,
-        );
-    }
+    bun_ignore_sigpipe();
 }
+
+extern fn bun_ignore_sigpipe() void;

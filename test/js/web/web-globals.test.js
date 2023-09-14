@@ -19,7 +19,59 @@ test("exists", () => {
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);
   expect(typeof FormData !== "undefined").toBe(true);
+  expect(typeof Worker !== "undefined").toBe(true);
+  expect(typeof File !== "undefined").toBe(true);
 });
+
+const globalSetters = [
+  [ErrorEvent, "onerror", "error", "error"],
+  [MessageEvent, "onmessage", "message", "data"],
+];
+
+for (const [Constructor, name, eventName, prop] of globalSetters) {
+  test(`self.${name}`, () => {
+    var called = false;
+
+    const callback = ({ [prop]: data }) => {
+      expect(data).toBe("hello");
+      called = true;
+    };
+
+    try {
+      globalThis[name] = callback;
+      expect(globalThis[name]).toBe(callback);
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(true);
+    } finally {
+      globalThis[name] = null;
+
+      called = false;
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(false);
+    }
+  });
+
+  test(`self.addEventListener(${name})`, () => {
+    var called = false;
+
+    const callback = ({ [prop]: data }) => {
+      expect(data).toBe("hello");
+      called = true;
+    };
+
+    try {
+      addEventListener(eventName, callback);
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(true);
+    } finally {
+      globalThis[name] = null;
+      removeEventListener(eventName, callback);
+      called = false;
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(false);
+    }
+  });
+}
 
 test("CloseEvent", () => {
   var event = new CloseEvent("close", { reason: "world" });
@@ -138,6 +190,25 @@ it("crypto.randomUUID", () => {
   });
 });
 
+it("crypto.randomUUID version, issues#3575", () => {
+  var uuid = crypto.randomUUID();
+
+  function validate(uuid) {
+    const regex =
+      /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000)$/i;
+    return typeof uuid === "string" && regex.test(uuid);
+  }
+  function version(uuid) {
+    if (!validate(uuid)) {
+      throw TypeError("Invalid UUID");
+    }
+
+    return parseInt(uuid.slice(14, 15), 16);
+  }
+
+  expect(version(uuid)).toBe(4);
+});
+
 it("URL.prototype.origin", () => {
   const url = new URL("https://html.spec.whatwg.org/");
   const { origin, host, hostname } = url;
@@ -153,4 +224,11 @@ test("navigator", () => {
   const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
+  if (process.platform === "darwin") {
+    expect(navigator.platform).toBe("MacIntel");
+  } else if (process.platform === "win32") {
+    expect(navigator.platform).toBe("Win32");
+  } else if (process.platform === "linux") {
+    expect(navigator.platform).toBe("Linux x86_64");
+  }
 });

@@ -50,7 +50,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/SyntaxErrorComment", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -73,7 +73,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/SyntaxErrorTrailingComma", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -300,7 +299,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserMapModuleDisabled", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -541,7 +540,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesNoExt", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -576,7 +575,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -679,7 +678,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002A", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -698,7 +697,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002B", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -717,7 +716,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002C", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -770,8 +769,7 @@ describe("bundler", () => {
       stdout: "main",
     },
   });
-  itBundled("packagejson/DualPackageHazardImportAndRequireSameFile", {
-    notImplemented: true,
+  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSameFile", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -790,7 +788,7 @@ describe("bundler", () => {
       stdout: "main main",
     },
   });
-  itBundled("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
+  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -839,7 +837,7 @@ describe("bundler", () => {
       stdout: "module\nmodule",
     },
   });
-  itBundled("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
+  itBundled.skip("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -887,7 +885,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/DualPackageHazardImportAndRequireBrowser", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -915,6 +913,82 @@ describe("bundler", () => {
     },
     run: {
       stdout: "browser main\nbrowser main",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardMainFieldWithoutExtension", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "main": "index"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardModuleFieldAndMainFieldWithoutExtension", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "main": "index",
+          "module": "index.mjs"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardModuleFieldNoMainField", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "module": "index.mjs"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
     },
   });
   itBundled("packagejson/MainFieldsA", {
@@ -1114,7 +1188,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ExportsEntryPointImportOverRequire", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1212,7 +1286,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ExportsNode", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1389,7 +1462,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ExportsMustUseRequire", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1674,7 +1747,6 @@ describe("bundler", () => {
     outfile: "/Users/user/project/out.js",
   });
   itBundled("packagejson/TypeShouldBeTypes", {
-    notImplemented: true,
     files: {
       "/Users/user/project/src/index.js": ``,
       "/Users/user/project/package.json": /* json */ `
@@ -1692,7 +1764,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingRequire", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1722,7 +1794,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingImport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "xyz"
@@ -1751,7 +1823,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingRequireScoped", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1781,7 +1853,7 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingImportScoped", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "@some-scope/xyz"

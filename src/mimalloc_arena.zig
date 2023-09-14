@@ -80,7 +80,7 @@ const ArenaRegistry = struct {
     var registry = ArenaRegistry{};
 
     pub fn register(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             var entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
@@ -100,7 +100,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn assert(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             const expected = registry.arenas.get(arena.heap.?) orelse {
@@ -117,7 +117,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn unregister(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             if (!registry.arenas.swapRemove(arena.heap.?)) {
@@ -217,7 +217,7 @@ pub const Arena = struct {
         }
 
         return if (ptr) |p|
-            @ptrCast([*]u8, p)
+            @as([*]u8, @ptrCast(p))
         else
             null;
     }
@@ -230,7 +230,11 @@ pub const Arena = struct {
         var this = bun.cast(*mimalloc.Heap, arena);
         // if (comptime Environment.allow_assert)
         //     ArenaRegistry.assert(.{ .heap = this });
-        const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
+        if (comptime FeatureFlags.alignment_tweak) {
+            return alignedAlloc(this, len, log2_align);
+        }
+
+        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
 
         return alignedAlloc(
             this,

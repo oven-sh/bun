@@ -22,15 +22,15 @@ pub fn allocate(this: *HeaderBuilder, allocator: std.mem.Allocator) !void {
 }
 pub fn append(this: *HeaderBuilder, name: string, value: string) void {
     const name_ptr = Api.StringPointer{
-        .offset = @truncate(u32, this.content.len),
-        .length = @truncate(u32, name.len),
+        .offset = @as(u32, @truncate(this.content.len)),
+        .length = @as(u32, @truncate(name.len)),
     };
 
     _ = this.content.append(name);
 
     const value_ptr = Api.StringPointer{
-        .offset = @truncate(u32, this.content.len),
-        .length = @truncate(u32, value.len),
+        .offset = @as(u32, @truncate(this.content.len)),
+        .length = @as(u32, @truncate(value.len)),
     };
     _ = this.content.append(value);
     this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
@@ -38,8 +38,8 @@ pub fn append(this: *HeaderBuilder, name: string, value: string) void {
 
 pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args: anytype) void {
     const name_ptr = Api.StringPointer{
-        .offset = @truncate(u32, this.content.len),
-        .length = @truncate(u32, name.len),
+        .offset = @as(u32, @truncate(this.content.len)),
+        .length = @as(u32, @truncate(name.len)),
     };
 
     _ = this.content.append(name);
@@ -47,8 +47,8 @@ pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args:
     const value = this.content.fmt(fmt, args);
 
     const value_ptr = Api.StringPointer{
-        .offset = @truncate(u32, this.content.len - value.len),
-        .length = @truncate(u32, value.len),
+        .offset = @as(u32, @truncate(this.content.len - value.len)),
+        .length = @as(u32, @truncate(value.len)),
     };
 
     this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });

@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSCountQueuingStrategy.h"
 
-#include "CountQueuingStrategyBuiltins.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"

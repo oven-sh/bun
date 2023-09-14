@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   describe as jscDescribe,
   describeArray,
+  serialize,
+  deserialize,
   gcAndSweep,
   fullGC,
   edenGC,
@@ -22,6 +24,7 @@ import {
   reoptimizationRetryCount,
   drainMicrotasks,
   startRemoteDebugger,
+  setTimeZone,
 } from "bun:jsc";
 
 describe("bun:jsc", () => {
@@ -109,5 +112,58 @@ describe("bun:jsc", () => {
   });
   it("getProtectedObjects", () => {
     expect(getProtectedObjects().length).toBeGreaterThan(0);
+  });
+
+  it("setTimeZone", () => {
+    var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const realOrigTimezone = origTimezone;
+    if (origTimezone === "America/Anchorage") {
+      origTimezone = "America/New_York";
+    }
+    const origDate = new Date();
+    origDate.setSeconds(0);
+    origDate.setMilliseconds(0);
+    origDate.setMinutes(0);
+    const origDateString = origDate.toString();
+    expect(origTimezone).toBeDefined();
+    expect(origTimezone).not.toBe("America/Anchorage");
+    expect(setTimeZone("America/Anchorage")).toBe("America/Anchorage");
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("America/Anchorage");
+    if (realOrigTimezone === origTimezone) {
+      const newDate = new Date();
+      newDate.setSeconds(0);
+      newDate.setMilliseconds(0);
+      newDate.setMinutes(0);
+      const newDateString = newDate.toString();
+      expect(newDateString).not.toBe(origDateString);
+    }
+
+    setTimeZone(realOrigTimezone);
+
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(origTimezone);
+  });
+
+  it("serialize", () => {
+    const serialized = serialize({ a: 1 });
+    expect(serialized).toBeInstanceOf(SharedArrayBuffer);
+    expect(deserialize(serialized)).toStrictEqual({ a: 1 });
+    const nested = serialize(serialized);
+    expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
+  });
+
+  it("serialize (binaryType: 'nodebuffer')", () => {
+    const serialized = serialize({ a: 1 }, { binaryType: "nodebuffer" });
+    expect(serialized).toBeInstanceOf(Buffer);
+    expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(deserialize(serialized)).toStrictEqual({ a: 1 });
+    const nested = serialize(serialized);
+    expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
+  });
+
+  it("serialize GC test", () => {
+    for (let i = 0; i < 1000; i++) {
+      serialize({ a: 1 });
+    }
+    Bun.gc(true);
   });
 });

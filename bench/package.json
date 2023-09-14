@@ -1,11 +1,13 @@
 {
   "name": "bench",
   "dependencies": {
-    "mitata": "^0.1.6",
-    "esbuild": "^0.14.12",
-    "@swc/core": "^1.2.133",
     "@babel/core": "^7.16.10",
-    "@babel/preset-react": "^7.16.7"
+    "@babel/preset-react": "^7.16.7",
+    "@swc/core": "^1.2.133",
+    "benchmark": "^2.1.4",
+    "esbuild": "^0.14.12",
+    "eventemitter3": "^5.0.0",
+    "mitata": "^0.1.6"
   },
   "scripts": {
     "ffi": "cd ffi && bun run deps && bun run build && bun run bench",

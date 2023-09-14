@@ -1,4 +1,4 @@
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "./runner.mjs";
 import * as assert from "assert";
 
 bench("deepEqual", () => {

@@ -44,7 +44,7 @@ String identifierToString(JSGlobalObject& lexicalGlobalObject, const Identifier&
 
 static inline bool throwIfInvalidByteString(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& string)
 {
-    if (UNLIKELY(!string.isAllLatin1())) {
+    if (UNLIKELY(!string.containsOnlyLatin1())) {
         throwTypeError(&lexicalGlobalObject, scope);
         return true;
     }

@@ -1,15 +1,20 @@
-import { gc as bunGC, unsafe } from "bun";
-import { heapStats } from "bun:jsc";
+import { gc as bunGC, unsafe, which } from "bun";
 
 export const bunEnv: any = {
   ...process.env,
+  GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
+  TZ: "Etc/UTC",
 };
 
 export function bunExe() {
   return process.execPath;
+}
+
+export function nodeExe(): string | null {
+  return which("node") || null;
 }
 
 export function gc(force = true) {
@@ -35,6 +40,8 @@ export async function expectMaxObjectTypeCount(
   count: number,
   maxWait = 1000,
 ) {
+  var { heapStats } = require("bun:jsc");
+
   gc();
   if (heapStats().objectTypeCounts[type] <= count) return;
   gc(true);
@@ -74,4 +81,76 @@ export function hideFromStackTrace(block: CallableFunction) {
     enumerable: true,
     writable: true,
   });
+}
+
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
+  var fs = require("fs");
+  var path = require("path");
+  var { tmpdir } = require("os");
+
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
+  for (const [name, contents] of Object.entries(files)) {
+    if (typeof contents === "object") {
+      for (const [_name, _contents] of Object.entries(contents)) {
+        fs.mkdirSync(path.dirname(path.join(dir, name, _name)), { recursive: true });
+        fs.writeFileSync(path.join(dir, name, _name), _contents);
+      }
+      continue;
+    }
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), contents);
+  }
+  return dir;
+}
+
+export function bunRun(file: string, env?: Record<string, string>) {
+  var path = require("path");
+  const result = Bun.spawnSync([bunExe(), file], {
+    cwd: path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}
+
+export function bunTest(file: string, env?: Record<string, string>) {
+  var path = require("path");
+  const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {
+    cwd: path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}
+
+export function bunRunAsScript(dir: string, script: string, env?: Record<string, string>) {
+  const result = Bun.spawnSync([bunExe(), `run`, `${script}`], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+
+  return {
+    stdout: result.stdout.toString("utf8").trim(),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
 }

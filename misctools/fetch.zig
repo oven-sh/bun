@@ -91,7 +91,7 @@ pub const Arguments = struct {
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
-            raw_args = .{ .capacity = positionals.len, .items = @intToPtr([*][]const u8, @ptrToInt(positionals.ptr))[0..positionals.len] };
+            raw_args = .{ .capacity = positionals.len, .items = @as([*][]const u8, @ptrFromInt(@intFromPtr(positionals.ptr)))[0..positionals.len] };
         } else {
             raw_args = .{};
         }
@@ -195,8 +195,8 @@ pub fn main() anyerror!void {
             args.headers_buf,
             response_body_string,
             args.body,
-
             0,
+            HTTP.FetchRedirect.follow,
         ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;

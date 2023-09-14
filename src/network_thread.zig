@@ -1,15 +1,16 @@
-const ThreadPool = @import("root").bun.ThreadPool;
+const bun = @import("root").bun;
+const ThreadPool = bun.ThreadPool;
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 const Node = ThreadPool.Node;
 pub const Completion = AsyncIO.Completion;
 const std = @import("std");
-pub const AsyncIO = @import("root").bun.AsyncIO;
-const Output = @import("root").bun.Output;
+pub const AsyncIO = bun.AsyncIO;
+const Output = bun.Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
 const HTTP = @import("./http_client_async.zig");
 const NetworkThread = @This();
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Lock = @import("./lock.zig").Lock;
 
 /// Single-thread in this pool
@@ -143,7 +144,7 @@ fn processEvents_(this: *@This()) !void {
         this.io.wait(this, queueEvents);
         if (comptime Environment.isDebug) {
             var end = std.time.nanoTimestamp();
-            log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@truncate(i64, end - start))});
+            log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start)))});
             Output.flush();
         }
     }
@@ -160,7 +161,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
     }
 
     if (comptime Environment.isLinux) {
-        const one = @bitCast([8]u8, @as(usize, batch.len));
+        const one = @as([8]u8, @bitCast(@as(usize, batch.len)));
         _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
         this.waker.wake() catch @panic("Failed to wake");
@@ -235,7 +236,7 @@ pub fn init() !void {
     } else if (comptime Environment.isMac) {
         global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     } else {
-        @compileLog("TODO: Waker");
+        global.waker = try AsyncIO.Waker.init(@import("root").bun.default_allocator);
     }
 
     global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{

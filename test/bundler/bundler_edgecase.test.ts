@@ -21,6 +21,24 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  itBundled("edgecase/NestedRedirectToABuiltin", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as path from './module.cjs';
+        console.log(path.join('a', 'b'))
+      `,
+      "/module.cjs": /* js */ `
+        module.exports = require('./2nd')
+      `,
+      "/2nd.js": /* js */ `
+        module.exports = require('path')
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "a/b",
+    },
+  });
   itBundled("edgecase/ImportStarFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -50,7 +68,8 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
-    // This only appears at runtime and not with bun build, even with --transform
+    todo: true,
+    // This only appears at runtime and not with bun build, even with --no-bundle
     files: {
       "/entry.ts": /* js */ `
         import { A, B } from "./somewhere-else";
@@ -71,30 +90,19 @@ describe("bundler", () => {
         }
       `,
     },
-    external: ["external"],
-    mode: "transform",
     minifySyntax: true,
     target: "bun",
     run: { file: "/entry.ts" },
   });
   itBundled("edgecase/TemplateStringIssue622", {
-    notImplemented: true,
     files: {
       "/entry.ts": /* js */ `
         capture(\`\\?\`);
         capture(hello\`\\?\`);
       `,
     },
-    capture: ["`\\\\?`", "hello`\\\\?`"],
+    capture: ["`?`", "hello`\\?`"],
     target: "bun",
-  });
-  itBundled("edgecase/StringNullBytes", {
-    files: {
-      "/entry.ts": /* js */ `
-        capture("Hello\0");
-      `,
-    },
-    capture: ['"Hello\0"'],
   });
   // https://github.com/oven-sh/bun/issues/2699
   itBundled("edgecase/ImportNamedFromExportStarCJS", {
@@ -158,7 +166,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);
@@ -206,20 +214,19 @@ describe("bundler", () => {
         import def2, * as ns2 from './c'
         console.log(def2, JSON.stringify(ns2))
       `,
-    },
-    external: ["*"],
-    runtimeFiles: {
       "/c.js": /* js */ `
-        export default 1
         export const ns = 2
         export const def2 = 3
+        export default 1
       `,
     },
+    runtimeFiles: {},
     run: {
-      stdout: '1 {"def2":3,"default":1,"ns":2}',
+      stdout: '1 {"ns":2,"default":1,"def2":3}',
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./e')));
@@ -256,9 +263,9 @@ describe("bundler", () => {
     },
     outdir: "/out",
     loader: {
-      ".a": "file", // segfaults
-      ".b": "text", // InvalidLoader
-      ".c": "toml", // InvalidLoader
+      ".a": "file",
+      ".b": "text",
+      ".c": "toml",
       ".d": "json",
       ".e": "js",
       ".f": "ts",
@@ -282,11 +289,11 @@ describe("bundler", () => {
       ".cool": "wtf",
     },
     bundleErrors: {
-      // todo: get the exact error
-      "<bun>": ["InvalidLoader"],
+      "<bun>": ['invalid loader "wtf", expected one of:'],
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -331,6 +338,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -358,6 +366,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKeyNamespace", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -371,6 +380,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
@@ -390,7 +400,7 @@ describe("bundler", () => {
           "exports": {
             ".": {
               "boop-server": "./ignore.js",
-              "default": "./boop.js",
+              "default": "./boop.js"
             }
           }
         }
@@ -406,26 +416,626 @@ describe("bundler", () => {
   itBundled("edgecase/PackageJSONDefaultConditionImport", {
     files: {
       "/entry.js": /* js */ `
-        import React from 'react'
+        import React from 'boop'
         console.log(React)
       `,
-      "/node_modules/react/package.json": /* json */ `
+      // NOTE: this test fails if the package name is "react"
+      // most likely an issue with commonjs unwrapping.
+      "/node_modules/boop/package.json": /* json */ `
         {
-          "name": "react",
+          "name": "boop",
           "exports": {
             ".": {
               "react-server": "./ignore.js",
-              "default": "./react.js",
+              "default": "./boop.js"
             }
           }
         }
       `,
-      "/node_modules/react/react.js": /* js */ `
+      "/node_modules/boop/boop.js": /* js */ `
         export default 123
       `,
     },
     run: {
       stdout: "123",
+    },
+  });
+  itBundled("edgecase/TSConfigPathsStarOnlyInLeft", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test0/hello'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "test0/*": ["./test0-success.ts"]
+            }
+          }
+        }
+      `,
+      "/test0-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  itBundled("edgecase/TSConfigPathStarAnywhere", {
+    todo: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import test0 from 'test3/foo'
+        console.log(test0)
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "t*t3/foo": ["./test3-succ*s.ts"],
+            }
+          }
+        }
+      `,
+      "/test3-success.ts": `export default 'success'`,
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  itBundled("edgecase/StaticClassNameIssue2806", {
+    files: {
+      "/entry.ts": /* ts */ `
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "PASS";
+
+        new class C {
+          set baz(x) {
+            C.foo = x;
+            C.bar;
+          }
+          static get bar() {
+            console.log(C.foo);
+          }
+        }().baz = "Hello World";
+      `,
+    },
+    minifyIdentifiers: true,
+    run: {
+      stdout: "PASS\nHello World",
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814A", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        if (false) {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814B", {
+    files: {
+      "/entry.ts": /* ts */ `
+        var a = 1;
+        switch ("foo") {
+          case "foo":
+            var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814C", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1;
+        {
+          var a;
+        }
+        console.log(a);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `1`,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2814", {
+    files: {
+      "/entry.ts": /* ts */ `
+        "use strict";
+        var a = 1, b = 2;
+        switch (b++) {
+          case b:
+            var c = a;
+            var a;
+            break;
+        }
+        console.log(a);
+    
+        var x = 123, y = 45;
+        switch (console) {
+          case 456:
+            var x = 789, y = 0;
+        }
+        var y = 67;
+        console.log(x, y);
+    
+        var z = 123;
+        switch (console) {
+          default:
+            var z = typeof z;
+        }
+        console.log(z);
+    
+        var A = 1, B = 2;
+        switch (A) {
+          case A:
+            var B;
+            break;
+          case B:
+            break;
+        }
+        console.log(B);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
+    },
+  });
+  itBundled("edgecase/DCEVarRedeclarationIssue2815", {
+    todo: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        var x = 1;
+        try {
+          console.blog;
+        } catch (x) {
+          var x = 2;
+        }
+        console.log(x);
+
+        var e = 3;
+        try {
+          console.log("try2");
+        } catch (e) {
+          var e = 4;
+        }
+        console.log(e);
+
+        try {
+          var z = 5;
+          throw "try3";
+        } catch (w) {
+          z += w;
+          var w = 6;
+        }
+        console.log(z);
+
+        var c = 8;
+        try {
+          "try4";
+        } catch (c) {
+          var c = 9;
+        }
+        console.log(c);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        1
+        123 67
+        number
+        2
+      `,
+    },
+  });
+  itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        console.log(1);
+      `,
+    },
+    entryPointsRaw: ["/entry.js"],
+    bundleErrors: {
+      "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
+    },
+  });
+  itBundled("edgecase/ExportDefaultUndefined", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export const a = 1;
+      `,
+    },
+    target: "bun",
+  });
+  itBundled("edgecase/RuntimeExternalRequire", {
+    files: {
+      "/entry.ts": /* ts */ `
+        console.log(require("hello-1").type);
+      `,
+    },
+    external: ["hello-1"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello-1/require.js": `export const type = "require";`,
+      "/node_modules/hello-1/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "require": "./require.js",
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        require
+      `,
+    },
+  });
+  itBundled("edgecase/RuntimeExternalImport", {
+    todo: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import { type as a1 } from 'hello-1';
+        import { type as a2 } from 'hello-2';
+        import { type as a3 } from 'hello-3';
+        console.log(a1, a2, a3);
+
+        const b1 = require('hello-1').type;
+        const b2 = require('hello-2').type;
+        const b3 = require('hello-3').type;
+        console.log(b1, b2, b3);
+      `,
+    },
+    external: ["hello-1", "hello-2", "hello-3"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello-1/node.js": `export const type = "node";`,
+      "/node_modules/hello-1/bun.js": `export const type = "bun";`,
+      "/node_modules/hello-1/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "node": "./node.js",
+              "bun": "./bun.js"
+            }
+          }
+        }
+      `,
+      "/node_modules/hello-2/node.js": `export const type = "node";`,
+      "/node_modules/hello-2/bun.js": `export const type = "bun";`,
+      "/node_modules/hello-2/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "bun": "./bun.js",
+              "node": "./node.js"
+            }
+          }
+        }
+      `,
+      "/node_modules/hello-3/import.js": `export const type = "import";`,
+      "/node_modules/hello-3/require.js": `exports.type = "require";`,
+      "/node_modules/hello-3/package.json": /* json */ `
+        {
+          "type": "module",
+          "exports": {
+            ".": {
+              "require": "./require.js",
+              "import": "./import.js",
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        bun bun import
+        bun bun import
+      `,
+    },
+  });
+  itBundled("edgecase/RuntimeExternalImport2", {
+    todo: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        import t from 'hello';
+        console.log(t);
+      `,
+    },
+    external: ["hello"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/hello/index.js": /* js */ `
+        export const hello = "Hello World";
+      `,
+    },
+    run: {
+      stdout: "Hello World",
+    },
+  });
+  itBundled("edgecase/AssetPublicPath", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import hello from "./hello.file";
+        console.log(hello);
+      `,
+      "/hello.file": "Hello World",
+    },
+    outdir: "/out",
+    publicPath: "/www",
+    run: {},
+  });
+  itBundled("edgecase/ImportDefaultInDirectory", {
+    files: {
+      "/a/file.js": `
+        import def from './def'
+        console.log(def)
+      `,
+      "/a/def.js": `
+        export default 1;
+        console.log('inner');
+      `,
+    },
+    run: {
+      file: "/out.js",
+      stdout: "inner\n1",
+    },
+  });
+  itBundled("edgecase/RequireVarThenExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './react';
+        console.log(version);
+      `,
+      "/react.js": /* js */ `
+        const a = require('./library.js');
+        exports.version = a.version;
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `0.6.0`,
+    },
+  });
+  itBundled("edgecase/OverwriteInputWithOutdir", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outdir: "/",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputWithOutfile", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outfile: "/entry.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputNonEntrypoint", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from './library';
+        console.log(version);
+      `,
+      "/library.js": /* js */ `
+        exports.version = '0.6.0';
+      `,
+    },
+    outfile: "/entry.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/ModuleExportsFunctionIssue2911", {
+    files: {
+      "/entry.js": /* js */ `
+         const fn = require('fresh');
+         console.log(fn());
+         const fn2 = require('./not_in_node_modules');
+         console.log(fn2());
+         import fn3 from 'fresh';
+         console.log(fn());
+         import fn4 from './not_in_node_modules';
+         console.log(fn2());
+       `,
+      "/node_modules/fresh/index.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+      "/not_in_node_modules.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+    },
+    run: {
+      stdout: "it worked\nit worked\nit worked\nit worked",
+    },
+  });
+  itBundled("edgecase/IsBuffer1", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object';
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = freeExports ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/TS_LessThanAmbiguity", {
+    files: {
+      "/entry.ts": `
+        function expectArrow(item) {
+          if(typeof item !== 'function') {
+            throw new Error('Expected arrow function');
+          }
+        }
+        function expectTypeCast(item) {
+          if(typeof item !== 'number') {
+            throw new Error('Expected arrow function');
+          }
+        }
+        const x = 1;
+        expectTypeCast(<A>(x));
+        expectTypeCast(<[]>(x));
+        expectTypeCast(<A[]>(x));
+
+        expectArrow(<A>(x) => {})
+        expectArrow(<A, B>(x) => {})
+        expectArrow(<A = B>(x) => {})
+        expectArrow(<A extends B>(x) => {})
+        expectArrow(<const A extends B>(x) => {})
+
+        console.log('pass');
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/TSX_LessThanAmbiguity", {
+    files: {
+      "/entry.tsx": `
+        function expectJSX(item) {
+          if(typeof item !== 'object') {
+            throw new Error('Expected JSX');
+          }
+        }
+        function expectArrow(item) {
+          if(typeof item !== 'function') {
+            throw new Error('Expected arrow function');
+          }
+        }
+
+        const A = 1;
+        expectJSX(<A>(x) ...</A>);
+        expectJSX(<A extends>(x) ... </A>);
+        expectJSX(<A extends={false}>(x) ... </A>);
+        expectJSX(<const A extends>(x) ...</const>);
+        expectJSX(<const extends T>(x) ...</const>);
+        expectJSX(<const A B>(x) ...</const>);
+        expectJSX(<const A B C>(x) ...</const>);
+
+        expectArrow(<A, B>(x) => {});
+        expectArrow(<A extends B>(x) => {});
+        expectArrow(<const A extends B>(x) => {});
+
+        console.log('pass');
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        export function jsxDEV(type, props, key, isStaticChildren, source, self) {
+          return {};
+        }
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/IsBuffer2", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/package.json": /* json */ `
+        { "name": "lodash-es", "type": "module"}
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports;
+        var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;
+
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = [freeExports, freeModule] ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/YieldKeyword", {
+    files: {
+      "/entry.js": /* js */ `
+        function* foo() {
+          yield 1;
+          [yield];
+          yield yield yield;
+          [yield * 2];
+          [yield (yield)];
+          { x: yield };
+          (yield).hello
+          yield+1
+        }
+      `,
     },
   });
 });

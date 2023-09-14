@@ -1,6 +1,18 @@
 // @ts-nocheck
-import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
+import {
+  createServer,
+  request,
+  get,
+  Agent,
+  globalAgent,
+  Server,
+  validateHeaderName,
+  validateHeaderValue,
+} from "node:http";
 import { createTest } from "node-harness";
+import url from "node:url";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server): Promise<URL> {
@@ -137,6 +149,41 @@ describe("node:http", () => {
             res.end("Path correct!\n");
             return;
           }
+          if (reqUrl.pathname === "/customWriteHead") {
+            function createWriteHead(prevWriteHead, listener) {
+              let fired = false;
+              return function writeHead() {
+                if (!fired) {
+                  fired = true;
+                  listener.call(this);
+                }
+                return prevWriteHead.apply(this, arguments);
+              };
+            }
+
+            function addPoweredBy() {
+              if (!this.getHeader("X-Powered-By")) {
+                this.setHeader("X-Powered-By", "Bun");
+              }
+            }
+
+            res.writeHead = createWriteHead(res.writeHead, addPoweredBy);
+            res.setHeader("Content-Type", "text/plain");
+            res.end("Hello World");
+            return;
+          }
+          if (reqUrl.pathname === "/uploadFile") {
+            let requestData = Buffer.alloc(0);
+            req.on("data", chunk => {
+              requestData = Buffer.concat([requestData, chunk]);
+            });
+            req.on("end", () => {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.write(requestData);
+              res.end();
+            });
+            return;
+          }
         }
 
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -194,6 +241,27 @@ describe("node:http", () => {
     //   });
     // });
 
+    it("should not insert extraneous accept-encoding header", async done => {
+      try {
+        let headers;
+        var server = createServer((req, res) => {
+          headers = req.headers;
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.end();
+          });
+        });
+        const url = await listen(server);
+        await fetch(url, { decompress: false });
+        expect(headers["accept-encoding"]).toBeFalsy();
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        server.close();
+      }
+    });
+
     it("should make a standard GET request when passed string as first arg", done => {
       runTest(done, (server, port, done) => {
         const req = request(`http://localhost:${port}`, res => {
@@ -213,7 +281,7 @@ describe("node:http", () => {
     });
 
     it("should make a https:// GET request when passed string as first arg", done => {
-      const req = request("https://example.com", res => {
+      const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -398,8 +466,11 @@ describe("node:http", () => {
           });
           res.on("error", err => done(err));
         });
-        req.end();
         expect(req.getHeader("X-Test")).toBe("test");
+        // node returns undefined
+        // Headers returns null
+        expect(req.getHeader("X-Not-Exists")).toBe(undefined);
+        req.end();
       });
     });
 
@@ -488,10 +559,119 @@ describe("node:http", () => {
     it("should return response with lowercase headers", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/lowerCaseHeaders`, res => {
-          console.log(res.headers);
           expect(res.headers["content-type"]).toBe("text/plain");
           expect(res.headers["x-custom-header"]).toBe("custom_value");
           done();
+        });
+        req.end();
+      });
+    });
+    it("reassign writeHead method, issue#3585", done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
+          expect(res.headers["content-type"]).toBe("text/plain");
+          expect(res.headers["x-powered-by"]).toBe("Bun");
+          done();
+        });
+        req.end();
+      });
+    });
+    it("uploading file by 'formdata/multipart', issue#3116", done => {
+      runTest(done, (server, serverPort, done) => {
+        const boundary = "----FormBoundary" + Date.now();
+
+        const formDataBegin = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="myfile.txt"\r\nContent-Type: application/octet-stream\r\n\r\n`;
+        const fileData = Buffer.from("80818283", "hex");
+        const formDataEnd = `\r\n--${boundary}--`;
+
+        const requestOptions = {
+          hostname: "localhost",
+          port: serverPort,
+          path: "/uploadFile",
+          method: "POST",
+          headers: {
+            "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          },
+        };
+
+        const req = request(requestOptions, res => {
+          let responseData = Buffer.alloc(0);
+          res.on("data", chunk => {
+            responseData = Buffer.concat([responseData, chunk]);
+          });
+          res.on("end", () => {
+            try {
+              expect(responseData).toEqual(
+                Buffer.concat([Buffer.from(formDataBegin), fileData, Buffer.from(formDataEnd)]),
+              );
+            } catch (e) {
+              return done(e);
+            }
+            done();
+          });
+        });
+        req.on("error", err => {
+          done(err);
+        });
+        req.write(formDataBegin); // string
+        req.write(fileData); // Buffer
+        req.write(formDataEnd); // string
+        req.end();
+      });
+    });
+    it("request via http proxy, issue#4295", done => {
+      const proxyServer = createServer(function (req, res) {
+        let option = url.parse(req.url);
+        option.host = req.headers.host;
+        option.headers = req.headers;
+
+        const proxyRequest = request(option, function (proxyResponse) {
+          res.writeHead(proxyResponse.statusCode, proxyResponse.headers);
+          proxyResponse.on("data", function (chunk) {
+            res.write(chunk, "binary");
+          });
+          proxyResponse.on("end", function () {
+            res.end();
+          });
+        });
+        req.on("data", function (chunk) {
+          proxyRequest.write(chunk, "binary");
+        });
+        req.on("end", function () {
+          proxyRequest.end();
+        });
+      });
+
+      proxyServer.listen({ port: 0 }, async (_err, hostname, port) => {
+        const options = {
+          protocol: "http:",
+          hostname: hostname,
+          port: port,
+          path: "http://example.com",
+          headers: {
+            Host: "example.com",
+            "accept-encoding": "identity",
+          },
+        };
+
+        const req = request(options, res => {
+          let data = "";
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            try {
+              expect(res.statusCode).toBe(200);
+              expect(data.length).toBeGreaterThan(0);
+              expect(data).toContain("This domain is for use in illustrative examples in documents");
+              done();
+            } catch (err) {
+              done(err);
+            }
+          });
+        });
+        req.on("error", err => {
+          done(err);
         });
         req.end();
       });
@@ -593,6 +773,7 @@ describe("node:http", () => {
         Bun.sleep(10).then(() => {
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end("Hello World");
+          server.close();
         });
       });
       server.listen({ port: 0 }, (_err, host, port) => {
@@ -619,6 +800,112 @@ describe("node:http", () => {
           done();
         });
       });
+    });
+  });
+
+  test("validateHeaderName", () => {
+    validateHeaderName("Foo");
+    expect(() => validateHeaderName("foo:")).toThrow();
+    expect(() => validateHeaderName("foo:bar")).toThrow();
+  });
+
+  test("validateHeaderValue", () => {
+    validateHeaderValue("Foo", "Bar");
+    expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
+    expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
+  });
+
+  test("req.req = req", done => {
+    const server = createServer((req, res) => {
+      req.req = req;
+      res.write(req.req === req ? "ok" : "fail");
+      res.end();
+    });
+    server.listen({ port: 0 }, async (_err, host, port) => {
+      try {
+        const x = await fetch(`http://${host}:${port}`).then(res => res.text());
+        expect(x).toBe("ok");
+        done();
+      } catch (error) {
+        done(error);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  test("test server internal error, issue#4298", done => {
+    const server = createServer((req, res) => {
+      throw Error("throw an error here.");
+    });
+    server.listen({ port: 0 }, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(500);
+          done();
+        });
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  test("test unix socket server", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {
+      expect(req.method).toStrictEqual("GET");
+      expect(req.url).toStrictEqual("/bun?a=1");
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Connection": "close",
+      });
+      res.write("Bun\n");
+      res.end();
+    });
+
+    test("should not decompress gzip, issue#4397", async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+        res.on("data", function cb(chunk) {
+          resolve(chunk);
+          res.off("data", cb);
+        });
+      }).end();
+      const chunk = await promise;
+      expect(chunk.toString()).not.toContain("<html");
+    });
+
+    server.listen(socketPath, () => {
+      // TODO: unix socket is not implemented in fetch.
+      const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
+      try {
+        expect(output.stdout.toString()).toStrictEqual("Bun\n");
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  test("should listen on port if string, issue#4582", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: "0" }, async (_err, host, port) => {
+      try {
+        await fetch(`http://${host}:${port}`).then(res => {
+          expect(res.status).toBe(200);
+          done();
+        });
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
     });
   });
 });

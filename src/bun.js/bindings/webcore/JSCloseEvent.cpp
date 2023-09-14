@@ -99,7 +99,7 @@ template<> CloseEvent::Init convertDictionary<CloseEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         codeValue = jsUndefined();
     else {
-        codeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "code"_s));
+        codeValue = object->get(&lexicalGlobalObject, WebCore::builtinNames(vm).codePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!codeValue.isUndefined()) {

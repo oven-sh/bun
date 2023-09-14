@@ -148,6 +148,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor:
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (argument0.value())
+        jsCast<JSFetchHeaders*>(jsValue)->computeMemoryCost();
+
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSFetchHeadersDOMConstructorConstruct, JSFetchHeadersDOMConstructor::construct);
@@ -258,28 +262,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobal
         return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
     }
 
-    JSC::JSArray* array = nullptr;
-    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-    if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-             initializationScope, &deferralContext,
-             lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-             count))) {
-        for (unsigned i = 0; i < count; ++i) {
-            array->initializeIndex(initializationScope, i, jsString(vm, values[i]));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        }
-    } else {
-        array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        if (!array) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode(jsUndefined());
-        }
-        for (unsigned i = 0; i < count; ++i) {
-            array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        }
+    JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+    if (UNLIKELY(!array)) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return JSValue::encode(jsUndefined());
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
@@ -301,8 +292,8 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_forEach, 1 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_toJSON, 0 } },
-    { "count"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsFetchHeadersGetterCount, 0 } },
-    // { "getSetCookie"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_getSetCookie, 0 } },
+    { "count"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsFetchHeadersGetterCount, 0 } },
+    { "getSetCookie"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_getSetCookie, 0 } },
 };
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };
@@ -328,6 +319,12 @@ void JSFetchHeaders::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, FetchHeaders>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
+}
+
+void JSFetchHeaders::computeMemoryCost()
+{
+    m_memoryCost = wrapped().memoryCost();
+    globalObject()->vm().heap.reportExtraMemoryAllocated(m_memoryCost);
 }
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -384,77 +381,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_appendBody(JSC
  **/
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto& impl = castedThis->wrapped();
-    size_t size = impl.size();
-    JSObject* obj;
-    if (size == 0) {
-        obj = constructEmptyObject(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
-    } else if (size < 64) {
-        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
-    } else {
-        obj = constructEmptyObject(lexicalGlobalObject);
-    }
-
-    auto& internal = impl.internalHeaders();
-    {
-        auto& vec = internal.commonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, String(WTF::httpHeaderNameStringImpl(name))), jsString(vm, value), 0);
-        }
-    }
-
-    {
-        auto& values = internal.getSetCookieHeaders();
-
-        size_t count = values.size();
-
-        if (count > 0) {
-            JSC::JSArray* array = nullptr;
-            GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-            JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                     initializationScope, &deferralContext,
-                     lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                     count))) {
-                for (unsigned i = 0; i < count; ++i) {
-                    array->initializeIndex(initializationScope, i, jsString(vm, values[i]));
-                    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                }
-            } else {
-                array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-                RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                if (!array) {
-                    throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-                    return JSValue::encode(jsUndefined());
-                }
-                for (unsigned i = 0; i < count; ++i) {
-                    array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-                    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                }
-                RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-            }
-
-            obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
-        }
-    }
-
-    {
-        auto& vec = internal.uncommonHeaders();
-        for (auto it = vec.begin(); it != vec.end(); ++it) {
-            auto& name = it->key;
-            auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, WTFMove(name.convertToASCIILowercase())), jsString(vm, value), 0);
-        }
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+    return JSValue::encode(WebCore::getInternalProperties(lexicalGlobalObject->vm(), lexicalGlobalObject, castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -662,6 +589,64 @@ void JSFetchHeaders::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
+JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObject, JSFetchHeaders* castedThis)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto& impl = castedThis->wrapped();
+    size_t size = impl.size();
+    JSObject* obj;
+    if (size == 0) {
+        obj = constructEmptyObject(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, obj);
+    } else if (size < 64) {
+        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
+    } else {
+        obj = constructEmptyObject(lexicalGlobalObject);
+    }
+
+    auto& internal = impl.internalHeaders();
+    {
+        auto& vec = internal.commonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
+        }
+    }
+
+    {
+        auto& values = internal.getSetCookieHeaders();
+
+        size_t count = values.size();
+
+        if (count > 0) {
+            JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
+            RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+
+            for (size_t i = 0; i < count; ++i) {
+                array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
+                RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+            }
+
+            RETURN_IF_EXCEPTION(throwScope, jsUndefined());
+            obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
+        }
+    }
+
+    {
+        auto& vec = internal.uncommonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, obj);
+}
+
 bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
 {
     UNUSED_PARAM(handle);
@@ -669,6 +654,17 @@ bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
     UNUSED_PARAM(reason);
     return false;
 }
+
+template<typename Visitor>
+void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.reportExtraMemoryVisited(thisObject->m_memoryCost);
+}
+
+DEFINE_VISIT_CHILDREN(JSFetchHeaders);
 
 void JSFetchHeadersOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {

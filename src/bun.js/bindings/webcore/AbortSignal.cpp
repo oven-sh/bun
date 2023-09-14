@@ -131,6 +131,8 @@ void AbortSignal::cleanNativeBindings(void* ref)
         const auto [ctx, func] = callback;
         return ctx == ref;
     });
+
+    std::exchange(m_native_callbacks, WTFMove(callbacks));
 }
 
 // https://dom.spec.whatwg.org/#abortsignal-follow

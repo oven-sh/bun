@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 // yarn v2.3 commands
 const yarn_v2 = [_][]const u8{
@@ -82,7 +83,7 @@ pub const all_yarn_commands = brk: {
     var array: [yarn_v2.len + yarn_v1.len]u64 = undefined;
     var array_i: usize = 0;
     for (yarn_v2) |yarn| {
-        const hash = std.hash.Wyhash.hash(0, yarn);
+        const hash = bun.hash(yarn);
         @setEvalBranchQuota(9999);
         if (std.mem.indexOfScalar(u64, array[0..array_i], hash) == null) {
             @setEvalBranchQuota(9999);
@@ -94,7 +95,7 @@ pub const all_yarn_commands = brk: {
     for (yarn_v1) |yarn| {
         @setEvalBranchQuota(9999);
 
-        const hash = std.hash.Wyhash.hash(0, yarn);
+        const hash = bun.hash(yarn);
         if (std.mem.indexOfScalar(u64, array[0..array_i], hash) == null) {
             @setEvalBranchQuota(9999);
 

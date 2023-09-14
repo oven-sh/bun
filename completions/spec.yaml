@@ -115,12 +115,10 @@ subcommands:
       - yarn -- "Write a yarn.lock file (yarn v1)"
       - production -- "Don't install devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -152,15 +150,13 @@ subcommands:
       - development -- "Add dependency to devDependencies"
       - d -- "Add dependency to devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
       - no-cache -- "Ignore manifest cache entirely"
       - silent -- "Don't output anything"
       - verbose -- "Excessively verbose logging"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -192,12 +188,10 @@ subcommands:
       - yarn -- "Write a yarn.lock file (yarn v1)"
       - production -- "Don't install devDependencies"
       - p -- "Don't install devDependencies"
+      - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
       - force -- "Always request the latest versions from the registry & reinstall all dependenices"
-      - name: lockfile
-        type: string
-        summary: "Store & load a lockfile at a specific filepath"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"

@@ -49,6 +49,12 @@ To install in production mode (i.e. without `devDependencies`):
 $ bun install --production
 ```
 
+To install dependencies without allowing changes to lockfile (useful on CI):
+
+```bash
+$ bun install --frozen-lockfile
+```
+
 To perform a dry run (i.e. don't actually install anything):
 
 ```bash
@@ -63,7 +69,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]
@@ -79,6 +85,9 @@ peer = false
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--frozen-lockfile` flag
+frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
@@ -105,7 +114,7 @@ $ bun add zod@latest
 To add a package as a dev dependency (`"devDependencies"`):
 
 ```bash
-$ bun add --development @types/react
+$ bun add --dev @types/react
 $ bun add -d @types/react
 ```
 
@@ -179,7 +188,7 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 
 ## Tarball dependencies
 
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
+A package name can correspond to a publicly hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
 
 ```json#package.json
 {

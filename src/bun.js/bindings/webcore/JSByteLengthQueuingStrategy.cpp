@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSByteLengthQueuingStrategy.h"
 
-#include "ByteLengthQueuingStrategyBuiltins.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"

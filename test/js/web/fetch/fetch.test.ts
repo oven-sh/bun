@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { join } from "path";
-import { gc, withoutAggressiveGC } from "harness";
+import { gc, withoutAggressiveGC, gcTick } from "harness";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
@@ -29,6 +29,147 @@ afterAll(() => {
 
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
+
+it("new Request(invalid url) throws", () => {
+  expect(() => new Request("http")).toThrow();
+  expect(() => new Request("")).toThrow();
+  expect(() => new Request("http://[::1")).toThrow();
+  expect(() => new Request("https://[::1")).toThrow();
+  expect(() => new Request("!")).toThrow();
+});
+
+describe("fetch data urls", () => {
+  it("basic", async () => {
+    var url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==";
+
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(85);
+    expect(blob.type).toBe("image/png");
+  });
+  it("percent encoded", async () => {
+    var url = "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ%3D%3D";
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(13);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("Hello, World!");
+  });
+  it("percent encoded (invalid)", async () => {
+    var url = "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ%3D%3";
+    expect(async () => {
+      await fetch(url);
+    }).toThrow("failed to fetch the data URL");
+  });
+  it("plain text", async () => {
+    var url = "data:,Hello%2C%20World!";
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(13);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("Hello, World!");
+
+    url = "data:,helloworld!";
+    res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    blob = await res.blob();
+    expect(blob.size).toBe(11);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("helloworld!");
+  });
+  it("unstrict parsing of invalid URL characters", async () => {
+    var url = "data:application/json,{%7B%7D}";
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(4);
+    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.text()).resolves.toBe("{{}}");
+  });
+  it("unstrict parsing of double percent characters", async () => {
+    var url = "data:application/json,{%%7B%7D%%}%%";
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(9);
+    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.text()).resolves.toBe("{%{}%%}%%");
+  });
+  it("data url (invalid)", async () => {
+    var url = "data:Hello%2C%20World!";
+    expect(async () => {
+      await fetch(url);
+    }).toThrow("failed to fetch the data URL");
+  });
+  it("emoji", async () => {
+    var url = "data:,😀";
+
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(4);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("😀");
+  });
+  it("should work with Request", async () => {
+    var req = new Request("data:,Hello%2C%20World!");
+    var res = await fetch(req);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(13);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("Hello, World!");
+
+    req = new Request("data:,😀");
+    res = await fetch(req);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    blob = await res.blob();
+    expect(blob.size).toBe(4);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("😀");
+  });
+  it("should work with Request (invalid)", async () => {
+    var req = new Request("data:Hello%2C%20World!");
+    expect(async () => {
+      await fetch(req);
+    }).toThrow("failed to fetch the data URL");
+    req = new Request("data:Hello%345632");
+    expect(async () => {
+      await fetch(req);
+    }).toThrow("failed to fetch the data URL");
+  });
+});
 
 describe("AbortSignal", () => {
   beforeEach(() => {
@@ -226,11 +367,11 @@ describe("Headers", () => {
     ]);
     const actual = [...headers];
     expect(actual).toEqual([
+      ["x-bun", "abc, def"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "abc, def"],
     ]);
-    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
+    expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
   });
 
   it("Headers append multiple", () => {
@@ -245,9 +386,9 @@ describe("Headers", () => {
     // we do not preserve the order
     // which is kind of bad
     expect(actual).toEqual([
+      ["x-bun", "foo, bar"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "foo, bar"],
     ]);
   });
 
@@ -268,9 +409,17 @@ describe("Headers", () => {
     headers.set("set-Cookie", "foo=baz");
     headers.set("set-cookie", "bar=qat");
     const actual = [...headers];
+    expect(actual).toEqual([["set-cookie", "bar=qat"]]);
+  });
+
+  it("should include set-cookie headers in array", () => {
+    const headers = new Headers();
+    headers.append("Set-Cookie", "foo=bar");
+    headers.append("Content-Type", "text/plain");
+    const actual = [...headers];
     expect(actual).toEqual([
-      ["set-cookie", "foo=baz"],
-      ["set-cookie", "bar=qat"],
+      ["content-type", "text/plain"],
+      ["set-cookie", "foo=bar"],
     ]);
   });
 });
@@ -343,6 +492,27 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
+  it('redirect: "error" #2819', async () => {
+    startServer({
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    try {
+      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+        redirect: "error",
+      });
+      expect(response).toBeUndefined();
+    } catch (err: any) {
+      expect(err.code).toBe("UnexpectedRedirect");
+    }
+  });
+
   it("provide body", async () => {
     startServer({
       fetch(req) {
@@ -366,6 +536,45 @@ describe("fetch", () => {
       }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
     }),
   );
+
+  it("content length is inferred", async () => {
+    startServer({
+      fetch(req) {
+        return new Response(req.headers.get("content-length"));
+      },
+      hostname: "localhost",
+    });
+
+    // POST with body
+    const url = `http://${server.hostname}:${server.port}`;
+    const response = await fetch(url, { method: "POST", body: "buntastic" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("9");
+
+    const response2 = await fetch(url, { method: "POST", body: "" });
+    expect(response2.status).toBe(200);
+    expect(await response2.text()).toBe("0");
+  });
+
+  it("should work with ipv6 localhost", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("Pass!");
+      },
+    });
+
+    let res = await fetch(`http://[::1]:${server.port}`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[::]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0:0:0:0:0:0:0:1]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+    res = await fetch(`http://[0000:0000:0000:0000:0000:0000:0000:0001]:${server.port}/`);
+    expect(await res.text()).toBe("Pass!");
+
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -1125,7 +1334,84 @@ it("should not be able to parse json from empty body", () => {
 });
 
 it("#874", () => {
-  expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
-  expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
-  expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
+  expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com/");
+  expect(new Request(new Request("https://example.com")).url).toBe("https://example.com/");
+  expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com/");
+});
+
+it("#2794", () => {
+  expect(typeof globalThis.fetch.bind).toBe("function");
+  expect(typeof Bun.fetch.bind).toBe("function");
+});
+
+it("#3545", () => {
+  expect(() => fetch("http://example.com?a=b")).not.toThrow();
+});
+
+it("invalid header doesnt crash", () => {
+  expect(() =>
+    fetch("http://example.com", {
+      headers: {
+        ["lol!!!!!" + "emoji" + "😀"]: "hello",
+      },
+    }),
+  ).toThrow();
+});
+
+it("new Request(https://example.com, otherRequest) uses url from left instead of right", () => {
+  const req1 = new Request("http://localhost/abc", {
+    headers: {
+      foo: "bar",
+    },
+  });
+
+  // Want to rewrite the URL with keeping header values
+  const req2 = new Request("http://localhost/def", req1);
+
+  // Should be `http://localhost/def` But actual: http://localhost/abc
+  expect(req2.url).toBe("http://localhost/def");
+  expect(req2.headers.get("foo")).toBe("bar");
+});
+
+it("fetch() file:// works", async () => {
+  expect(await (await fetch(import.meta.url)).text()).toEqual(await Bun.file(import.meta.path).text());
+  expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
+    await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
+  );
+  gc(true);
+  var fileResponse = await fetch(new URL("file with space in the name.txt", import.meta.url));
+  gc(true);
+  var fileResponseText = await fileResponse.text();
+  gc(true);
+  var bunFile = Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url)));
+  gc(true);
+  var bunFileText = await bunFile.text();
+  gc(true);
+  expect(fileResponseText).toEqual(bunFileText);
+  gc(true);
+});
+it("cloned response headers are independent before accessing", () => {
+  const response = new Response("hello", {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const cloned = response.clone();
+  cloned.headers.set("content-type", "text/plain");
+  expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+});
+
+it("cloned response headers are independent after accessing", () => {
+  const response = new Response("hello", {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+
+  // create the headers
+  response.headers;
+
+  const cloned = response.clone();
+  cloned.headers.set("content-type", "text/plain");
+  expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
 });

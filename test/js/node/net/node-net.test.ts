@@ -1,6 +1,6 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
+import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
 import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -178,6 +178,31 @@ describe("net.Socket read", () => {
       );
 
       it(
+        "should work with .createConnection(path)",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const socket = createConnection(server.unix)
+            .on("connect", () => {
+              expect(socket).toBeDefined();
+              expect(socket.connecting).toBe(false);
+            })
+            .setEncoding("utf8")
+            .on("data", chunk => {
+              data += chunk;
+            })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                server.stop();
+                done(e);
+              }
+            })
+            .on("error", done);
+        }, socket_domain),
+      );
+      it(
         "should work with .connect(path)",
         runWithServer((server, drain, done) => {
           var data = "";
@@ -332,14 +357,29 @@ describe("net.Socket write", () => {
 });
 
 it("should handle connection error", done => {
-  var data = {};
+  let errored = false;
+
   // @ts-ignore
-  connect(55555, () => {
+  const socket = connect(55555, () => {
     done(new Error("Should not have connected"));
-  }).on("error", error => {
+  });
+
+  socket.on("error", error => {
+    if (errored) {
+      return done(new Error("Should not have errored twice"));
+    }
+    errored = true;
     expect(error).toBeDefined();
     expect(error.name).toBe("SystemError");
     expect(error.message).toBe("Failed to connect");
+  });
+
+  socket.on("connect", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("close", () => {
+    expect(errored).toBe(true);
     done();
   });
 });

@@ -43,7 +43,7 @@ pub fn main() anyerror!void {
     var position = try std.fmt.parseInt(u32, position_str, 10);
     const filepath = try std.fs.path.resolve(allocator, &.{basepath});
     var file = try std.fs.openFileAbsolute(filepath, .{ .write = true });
-    var ms = @truncate(u64, (try std.fmt.parseInt(u128, args[args.len - 1], 10)) * std.time.ns_per_ms);
+    var ms = @as(u64, @truncate((try std.fmt.parseInt(u128, args[args.len - 1], 10)) * std.time.ns_per_ms));
     std.debug.assert(ms > 0);
     // std.debug.assert(std.math.isFinite(position));
     var prng = std.rand.DefaultPrng.init(0);
@@ -125,30 +125,30 @@ pub fn main() anyerror!void {
             );
         };
 
-        counters[counter].timestamp = @truncate(u64, @intCast(u128, std.time.nanoTimestamp()) / (std.time.ns_per_ms / 10));
+        counters[counter].timestamp = @as(u64, @truncate(@as(u128, @intCast(std.time.nanoTimestamp())) / (std.time.ns_per_ms / 10)));
         counters[counter].rotate = rotate % 360;
         counters[counter].percent = std.math.mod(f64, std.math.round(((progress_bar + 1.0) / destination_count) * 1000) / 1000, 100) catch 0;
-        counters[counter].color_values[0] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[1] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[2] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[0] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[0][0] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[1] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[0][1] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[2] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[0][2] + 1) % 256))) * 0.8)));
         counters[counter].color_values[3] = (colors[0][0] + 1) % 256;
         counters[counter].color_values[4] = (colors[0][1] + 1) % 256;
         counters[counter].color_values[5] = (colors[0][2] + 1) % 256;
-        counters[counter].color_values[6] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[7] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[8] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[6] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[1][0] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[7] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[1][1] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[8] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[1][2] + 1) % 256))) * 0.8)));
         counters[counter].color_values[9] = (colors[1][0] + 1) % 256;
         counters[counter].color_values[10] = (colors[1][1] + 1) % 256;
         counters[counter].color_values[11] = (colors[1][2] + 1) % 256;
-        counters[counter].color_values[12] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[13] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[14] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[12] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[2][0] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[13] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[2][1] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[14] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[2][2] + 1) % 256))) * 0.8)));
         counters[counter].color_values[15] = (colors[2][0] + 1) % 256;
         counters[counter].color_values[16] = (colors[2][1] + 1) % 256;
         counters[counter].color_values[17] = (colors[2][2] + 1) % 256;
-        counters[counter].color_values[18] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[19] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[20] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[18] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[3][0] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[19] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[3][1] + 1) % 256))) * 0.8)));
+        counters[counter].color_values[20] = @as(u32, @intFromFloat(std.math.round(@as(f64, @floatFromInt(((colors[3][2] + 1) % 256))) * 0.8)));
         counters[counter].color_values[21] = (colors[3][0] + 1) % 256;
         counters[counter].color_values[22] = (colors[3][1] + 1) % 256;
         counters[counter].color_values[23] = (colors[3][2] + 1) % 256;
@@ -203,7 +203,7 @@ pub fn main() anyerror!void {
     _ = try recorder.wait();
 
     all_timestamps[0] = wrote.len;
-    for (counters) |count, i| {
+    for (counters, 0..) |count, i| {
         all_timestamps[i + 1] = count.timestamp;
     }
 

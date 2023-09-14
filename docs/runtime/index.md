@@ -2,11 +2,11 @@ Bun is a new JavaScript & TypeScript runtime designed to be a faster, leaner, an
 
 ## Speed
 
-Bun is designed to start fast and run fast. It's transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+Bun is designed to start fast and run fast. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
 
 {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
 
-<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/cli/install#global-cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
+<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
 
 Performance sensitive APIs like `Buffer`, `fetch`, and `Response` are heavily profiled and optimized. Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. It starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers.
 
@@ -27,7 +27,7 @@ Some aspects of Bun's runtime behavior are affected by the contents of your `tsc
 
 <!--
 
-every file before execution. It's transpiler  can directly run TypeScript and JSX `{.js|.jsx|.ts|.tsx}` files directly. During execution, Bun internally transpiles all files (including `.js` files) to vanilla JavaScript with it's fast native transpiler. -->
+every file before execution. Its transpiler  can directly run TypeScript and JSX `{.js|.jsx|.ts|.tsx}` files directly. During execution, Bun internally transpiles all files (including `.js` files) to vanilla JavaScript with its fast native transpiler. -->
 
 <!-- A loader determines how to map imports &amp; file extensions to transforms and output. -->
 
@@ -103,7 +103,11 @@ import bunfig from "./bunfig.toml";
 
 ## WASM
 
-As of v0.5.2, experimental support exists for WASI, the [WebAssembly System Interface](https://github.com/WebAssembly/WASI). To run a `.wasm` binary with Bun:
+{% callout %}
+🚧 **Experimental**
+{% /callout %}
+
+Bun has experimental support for WASI, the [WebAssembly System Interface](https://github.com/WebAssembly/WASI). To run a `.wasm` binary with Bun:
 
 ```bash
 $ bun ./my-wasm-app.wasm
@@ -113,7 +117,7 @@ $ bun run ./my-wasm-app.whatever
 
 {% callout %}
 
-**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
+**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
 {% /callout %}
 
 ## Node.js compatibility
@@ -196,8 +200,7 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Errors
-- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError) [`ResolveError`](https://developer.mozilla.org/en-US/docs/Web/API/ResolveError)
-  [`BuildError`](https://developer.mozilla.org/en-US/docs/Web/API/BuildError)
+- [`reportError`](https://developer.mozilla.org/en-US/docs/Web/API/reportError)
 
 ---
 
@@ -303,4 +306,4 @@ Bun exposes a set of Bun-specific APIs on the `Bun` global object and through a 
 
 ## Plugins
 
-Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/runtime/plugins) for full documentation.
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](/docs/bundler/plugins) for full documentation.

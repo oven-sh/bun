@@ -19,32 +19,19 @@ pub const Bitset = struct {
     pub fn isIdentifierStart(codepoint: i32) bool {
         return codepoint >= (comptime id_start_range[0]) and
             codepoint <= (comptime id_start_range[1]) and
-            id_start.isSet((comptime @intCast(usize, id_start_range[1])) - @intCast(
+            id_start.isSet((comptime @as(usize, @intCast(id_start_range[1]))) - @as(
             usize,
-            codepoint,
+            @intCast(codepoint),
         ));
-    }
-
-    pub fn isIdentifier(str: []const u8) bool {
-        if (str.len == 0)
-            return false;
-        var iter = std.unicode.Utf8Iterator{ .bytes = str, .i = 0 };
-        if (!isIdentifierStart(iter.nextCodepoint() orelse return false)) return false;
-
-        while (iter.nextCodepoint()) |i| {
-            if (!isIdentifierPart(i)) return false;
-        }
-
-        return true;
     }
 
     pub fn isIdentifierPart(codepoint: i32) bool {
         return codepoint >= (comptime id_end_range[0]) and
             codepoint <= (comptime id_end_range[1]) and
             id_continue.isSet(
-            (comptime @intCast(usize, id_end_range[1])) - @intCast(
+            (comptime @as(usize, @intCast(id_end_range[1]))) - @as(
                 usize,
-                codepoint,
+                @intCast(codepoint),
             ),
         );
     }
@@ -59,7 +46,7 @@ pub const JumpTable = struct {
         @setCold(true);
         return switch (codepoint) {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
-            0xaa...0xffd7 => isIdentifierPartSlow16(@intCast(u16, codepoint)),
+            0xaa...0xffd7 => isIdentifierPartSlow16(@as(u16, @intCast(codepoint))),
             (0xffd7 + 1)...0xe01ef => isIdentifierPartSlow32(codepoint),
             else => false,
         };
@@ -100,7 +87,7 @@ pub const JumpTable = struct {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
 
             (max_codepoint + 1)...maxInt(i32), minInt(i32)...127 => unreachable,
-            128...0xfdc7 => isIdentifierStartSlow16(@intCast(u16, codepoint)),
+            128...0xfdc7 => isIdentifierStartSlow16(@as(u16, @intCast(codepoint))),
             0xfdf0...0x3134a => isIdentifierStartSlow32(codepoint),
             else => false,
         };
@@ -1813,7 +1800,7 @@ pub const JumpTableInline = struct {
 //                     iter = std.unicode.Utf8Iterator{ .bytes = code, .i = 0 };
 //                     hash_table_count = 0;
 //                     while (iter.nextCodepoint()) |cp| {
-//                         hash_table_count += @as(usize, @boolToInt(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
+//                         hash_table_count += @as(usize, @intFromBool(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
 //                     }
 //                 }
 //                 hash_table_elapsed += timer.read();
@@ -1829,7 +1816,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         jump_table_count += @as(
 //                             usize,
-//                             @boolToInt(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
+//                             @intFromBool(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
 //                         );
 //                     }
 //                 }
@@ -1846,7 +1833,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         binary_search_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 BinarySearch.isIdentifierStart(
 //                                     cp,
 //                                 ) or BinarySearch.isIdentifierPart(
@@ -1869,7 +1856,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         bitset_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 Bitset.isIdentifierStart(
 //                                     cp,
 //                                 ) or Bitset.isIdentifierPart(
@@ -1943,7 +1930,7 @@ pub const JumpTableInline = struct {
 //                     iter = std.unicode.Utf8Iterator{ .bytes = code, .i = 0 };
 //                     hash_table_count = 0;
 //                     while (iter.nextCodepoint()) |cp| {
-//                         hash_table_count += @as(usize, @boolToInt(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
+//                         hash_table_count += @as(usize, @intFromBool(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
 //                     }
 //                 }
 //                 hash_table_elapsed += timer.read();
@@ -1959,7 +1946,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         jump_table_count += @as(
 //                             usize,
-//                             @boolToInt(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
+//                             @intFromBool(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
 //                         );
 //                     }
 //                 }
@@ -1976,7 +1963,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         binary_search_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 BinarySearch.isIdentifierStart(
 //                                     cp,
 //                                 ) or BinarySearch.isIdentifierPart(
@@ -1999,7 +1986,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         bitset_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 Bitset.isIdentifierStart(
 //                                     cp,
 //                                 ) or Bitset.isIdentifierPart(

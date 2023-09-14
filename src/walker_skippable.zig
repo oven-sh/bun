@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Walker = @This();
+const bun = @import("root").bun;
 const path = std.fs.path;
 
 stack: std.ArrayList(StackItem),
@@ -37,30 +38,30 @@ pub fn next(self: *Walker) !?WalkerEntry {
         var dirname_len = top.dirname_len;
         if (try top.iter.next()) |base| {
             switch (base.kind) {
-                .Directory => {
+                .directory => {
                     if (std.mem.indexOfScalar(
                         u64,
                         self.skip_dirnames,
                         // avoid hashing if there will be 0 results
-                        if (self.skip_dirnames.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                        if (self.skip_dirnames.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
                     ) != null) continue;
                 },
-                .File => {
+                .file => {
                     if (std.mem.indexOfScalar(
                         u64,
                         self.skip_filenames,
                         // avoid hashing if there will be 0 results
-                        if (self.skip_filenames.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                        if (self.skip_filenames.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
                     ) != null) continue;
                 },
 
                 // we don't know what it is for a symlink
-                .SymLink => {
+                .sym_link => {
                     if (std.mem.indexOfScalar(
                         u64,
                         self.skip_all,
                         // avoid hashing if there will be 0 results
-                        if (self.skip_all.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                        if (self.skip_all.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
                     ) != null) continue;
                 },
 
@@ -77,7 +78,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
             try self.name_buffer.append(0);
             self.name_buffer.shrinkRetainingCapacity(cur_len);
 
-            if (base.kind == .Directory) {
+            if (base.kind == .directory) {
                 var new_dir = top.iter.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
                     error.NameTooLong => unreachable, // no path sep in base.name
                     else => |e| return e,
@@ -143,14 +144,14 @@ pub fn walk(
     var skip_name_i: usize = 0;
 
     for (skip_filenames) |name| {
-        skip_names[skip_name_i] = std.hash.Wyhash.hash(seed, name);
+        skip_names[skip_name_i] = bun.hashWithSeed(seed, name);
         skip_name_i += 1;
     }
     var skip_filenames_ = skip_names[0..skip_name_i];
     var skip_dirnames_ = skip_names[skip_name_i..];
 
     for (skip_dirnames, 0..) |name, i| {
-        skip_dirnames_[i] = std.hash.Wyhash.hash(seed, name);
+        skip_dirnames_[i] = bun.hashWithSeed(seed, name);
     }
 
     try stack.append(Walker.StackItem{

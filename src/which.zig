@@ -7,13 +7,13 @@ fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?
     buf[segment.len + 1 + bin.len ..][0] = 0;
     const filepath = buf[0 .. segment.len + 1 + bin.len :0];
     if (!checkPath(filepath)) return null;
-    return @intCast(u16, filepath.len);
+    return @as(u16, @intCast(filepath.len));
 }
 
-extern "C" fn is_executable_file(path: [*:0]const u8) bool;
+pub extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 fn checkPath(filepath: [:0]const u8) bool {
     bun.JSC.markBinding(@src());
-    return is_executable_file(filepath);
+    return bun.sys.isExecutableFilePath(filepath);
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -33,8 +33,10 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
         //   /foo/bar/baz as a path and you're in /home/jarred?
     }
 
-    if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
-        return buf[0..len :0];
+    if (cwd.len > 0) {
+        if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
+            return buf[0..len :0];
+        }
     }
 
     var path_iter = std.mem.tokenize(u8, path, ":");

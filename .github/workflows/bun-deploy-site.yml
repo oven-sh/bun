@@ -12,6 +12,7 @@ jobs:
   deploy:
     name: Deploy site
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
     steps:
       - name: Trigger Vercel build
         run: curl ${{ secrets.VERCEL_DEPLOY_HOOK }}

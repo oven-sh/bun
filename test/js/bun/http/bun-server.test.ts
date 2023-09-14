@@ -1,6 +1,137 @@
 import { describe, expect, test } from "bun:test";
+import { bunExe, bunEnv } from "harness";
 
 describe("Server", () => {
+  test("normlizes incoming request URLs", async () => {
+    const server = Bun.serve({
+      fetch(request) {
+        return new Response(request.url, {
+          headers: {
+            "Connection": "close",
+          },
+        });
+      },
+      port: 0,
+    });
+    const received: string[] = [];
+    const expected: string[] = [];
+    for (let path of [
+      "/",
+      "/../",
+      "/./",
+      "/foo",
+      "/foo/",
+      "/foo/bar",
+      "/foo/bar/",
+      "/foo/bar/..",
+      "/foo/bar/../",
+      "/foo/bar/../?123",
+      "/foo/bar/../?123=456",
+      "/foo/bar/../#123=456",
+      "/",
+      "/../",
+      "/./",
+      "/foo",
+      "/foo/",
+      "/foo/bar",
+      "/foo/bar/",
+      "/foo/bar/..",
+      "/foo/bar/../",
+      "/foo/bar/../?123",
+      "/foo/bar/../?123=456",
+      "/foo/bar/../#123=456",
+      "/../".repeat(128),
+      "/./".repeat(128),
+      "/foo".repeat(128),
+      "/foo/".repeat(128),
+      "/foo/bar".repeat(128),
+      "/foo/bar/".repeat(128),
+      "/foo/bar/..".repeat(128),
+      "/foo/bar/../".repeat(128),
+      "/../".repeat(128),
+      "/./".repeat(128),
+      "/foo".repeat(128),
+      "/foo/".repeat(128),
+      "/foo/bar".repeat(128),
+      "/foo/bar/".repeat(128),
+      "/foo/bar/..".repeat(128),
+      "/foo/bar/../".repeat(128),
+    ]) {
+      expected.push(new URL(path, "http://localhost:" + server.port).href);
+
+      const { promise, resolve } = Promise.withResolvers();
+      Bun.connect({
+        hostname: server.hostname,
+        port: server.port,
+
+        socket: {
+          async open(socket) {
+            socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost:${server.port}\r\n\r\n`);
+            await socket.flush();
+          },
+          async data(socket, data) {
+            const lines = Buffer.from(data).toString("utf8");
+            received.push(lines.split("\r\n\r\n").at(-1)!);
+            await socket.end();
+            resolve();
+          },
+        },
+      });
+      await promise;
+    }
+
+    server.stop(true);
+    expect(received).toEqual(expected);
+  });
+
+  test("should not allow Bun.serve without first argument being a object", () => {
+    expect(() => {
+      //@ts-ignore
+      const server = Bun.serve();
+      server.stop(true);
+    }).toThrow("Bun.serve expects an object");
+
+    [undefined, null, 1, "string", true, false, Symbol("symbol")].forEach(value => {
+      expect(() => {
+        //@ts-ignore
+        const server = Bun.serve(value);
+        server.stop(true);
+      }).toThrow("Bun.serve expects an object");
+    });
+  });
+
+  test("should not allow Bun.serve with invalid tls option", () => {
+    [1, "string", true, Symbol("symbol"), false].forEach(value => {
+      expect(() => {
+        const server = Bun.serve({
+          //@ts-ignore
+          tls: value,
+          fetch() {
+            return new Response("Hello");
+          },
+          port: 0,
+        });
+        server.stop(true);
+      }).toThrow("tls option expects an object");
+    });
+  });
+
+  test("should allow Bun.serve using null or undefined tls option", () => {
+    [null, undefined].forEach(value => {
+      expect(() => {
+        const server = Bun.serve({
+          //@ts-ignore
+          tls: value,
+          fetch() {
+            return new Response("Hello");
+          },
+          port: 0,
+        });
+        server.stop(true);
+      }).not.toThrow("tls option expects an object");
+    });
+  });
+
   test("returns active port when initializing server with 0 port", () => {
     const server = Bun.serve({
       fetch() {
@@ -150,6 +281,39 @@ describe("Server", () => {
     }
   });
 
+  test("server.fetch should work with a string", async () => {
+    const server = Bun.serve({
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    try {
+      const url = `http://${server.hostname}:${server.port}/`;
+      const response = await server.fetch(url);
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("server.fetch should work with a Request object", async () => {
+    const server = Bun.serve({
+      fetch(req) {
+        return new Response("Hello World!");
+      },
+    });
+    try {
+      const url = `http://${server.hostname}:${server.port}/`;
+      const response = await server.fetch(new Request(url));
+      expect(await response.text()).toBe("Hello World!");
+      expect(response.status).toBe(200);
+      expect(response.url).toBe(url);
+    } finally {
+      server.stop(true);
+    }
+  });
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;
@@ -193,5 +357,15 @@ describe("Server", () => {
       expect(signalOnServer).toBe(true);
       server.stop(true);
     }
+  });
+
+  test("should not crash with big formData", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "big-form-data.fixture.js"],
+      cwd: import.meta.dir,
+      env: bunEnv,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
   });
 });

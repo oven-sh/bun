@@ -18,10 +18,38 @@ const bun = @import("root").bun;
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
-    new_package_id: PackageID,
     err: anyerror,
+    new_package_id: PackageID,
 
     pub const Tag = enum { package_id, err, new_package_id };
+
+    pub const PackageWorkspaceSearchPathFormatter = struct {
+        manager: *PackageManager,
+        version: Dependency.Version,
+        quoted: bool = true,
+
+        pub fn format(this: PackageWorkspaceSearchPathFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            var joined: [bun.MAX_PATH_BYTES + 2]u8 = undefined;
+            const str_to_use = this.manager.lockfile.workspace_paths.getPtr(
+                @truncate(String.Builder.stringHash(this.manager.lockfile.str(&this.version.value.workspace))),
+            ) orelse &this.version.value.workspace;
+            var paths = normalizePackageJSONPath(.{ .relative = .workspace }, joined[2..], this.manager.lockfile.str(str_to_use));
+
+            if (!strings.startsWithChar(paths.rel, '.') and !strings.startsWithChar(paths.rel, std.fs.path.sep)) {
+                joined[0..2].* = ("." ++ std.fs.path.sep_str).*;
+                paths.rel = joined[0 .. paths.rel.len + 2];
+            }
+
+            if (this.quoted) {
+                const quoted = strings.QuotedFormatter{
+                    .text = paths.rel,
+                };
+                try quoted.format(fmt, opts, writer);
+            } else {
+                try writer.writeAll(paths.rel);
+            }
+        }
+    };
 
     pub const Map = std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80);
 
@@ -30,7 +58,7 @@ pub const FolderResolution = union(Tag) {
     }
 
     pub fn hash(normalized_path: string) u64 {
-        return std.hash.Wyhash.hash(0, normalized_path);
+        return bun.hash(normalized_path);
     }
 
     fn NewResolver(comptime tag: Resolution.Tag) type {
@@ -95,9 +123,9 @@ pub const FolderResolution = union(Tag) {
                 .global, .cache_folder => {
                     const path = if (global_or_relative == .global) global_or_relative.global else global_or_relative.cache_folder;
                     if (path.len > 0) {
-                        const offset = path.len -| @as(usize, @boolToInt(path[path.len -| 1] == std.fs.path.sep));
+                        const offset = path.len -| @as(usize, @intFromBool(path[path.len -| 1] == std.fs.path.sep));
                         if (offset > 0)
-                            @memcpy(remain.ptr, path.ptr, offset);
+                            @memcpy(remain[0..offset], path[0..offset]);
                         remain = remain[offset..];
                         if (normalized.len > 0) {
                             if ((path[path.len - 1] != std.fs.path.sep) and (normalized[0] != std.fs.path.sep)) {
@@ -157,10 +185,12 @@ pub const FolderResolution = union(Tag) {
         );
 
         if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
+            package.meta.id = existing_id;
+            manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);
         }
 
-        return manager.lockfile.appendPackage(package) catch unreachable;
+        return manager.lockfile.appendPackage(package);
     }
 
     pub const GlobalOrRelative = union(enum) {

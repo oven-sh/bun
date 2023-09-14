@@ -9,6 +9,10 @@
 #include <JavaScriptCore/Yarr.h>
 #include <JavaScriptCore/Strong.h>
 
+typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+
 namespace Bun {
 
 using namespace JSC;
@@ -42,10 +46,13 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, const ZigString* namespaceStr, const ZigString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, const BunString* namespaceStr, const BunString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
-    BundlerPlugin(void* config, BunPluginTarget target)
+    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+        : addError(addError)
+        , onLoadAsync(onLoadAsync)
+        , onResolveAsync(onResolveAsync)
     {
         this->target = target;
         this->config = config;
@@ -54,6 +61,10 @@ public:
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
     BunPluginTarget target { BunPluginTargetBrowser };
+
+    JSBundlerPluginAddErrorCallback addError;
+    JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
+    JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
     void* config { nullptr };
     bool tombstoned { false };
 };

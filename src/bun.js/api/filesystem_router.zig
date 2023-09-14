@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
@@ -21,11 +21,10 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = @import("root").bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
 
-const FetchEvent = WebCore.FetchEvent;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
 const Log = @import("root").bun.logger;
@@ -41,119 +40,11 @@ const default_extensions = &[_][]const u8{
     "js",
 };
 
-const DeprecatedGlobalRouter = struct {
-    pub fn deprecatedBunGlobalMatch(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        if (arguments.len == 0) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request but there were no arguments", .{}, ctx, exception);
-            return null;
-        }
-
-        const arg: JSC.JSValue = brk: {
-            if (FetchEvent.Class.isLoaded()) {
-                if (JSValue.as(JSValue.fromRef(arguments[0]), FetchEvent)) |fetch_event| {
-                    if (fetch_event.request_context != null) {
-                        return deprecatedMatchFetchEvent(ctx, fetch_event, exception);
-                    }
-
-                    // When disconencted, we still have a copy of the request data in here
-                    break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, undefined, null));
-                }
-            }
-            break :brk JSC.JSValue.fromRef(arguments[0]);
-        };
-
-        var router = JavaScript.VirtualMachine.get().bundler.router orelse {
-            JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
-            return null;
-        };
-
-        var path_: ?ZigString.Slice = null;
-        var pathname: string = "";
-        defer {
-            if (path_) |path| {
-                path.deinit();
-            }
-        }
-
-        if (arg.isString()) {
-            var path_string = arg.getZigString(ctx);
-            path_ = path_string.toSlice(bun.default_allocator);
-            var url = URL.parse(path_.?.slice());
-            pathname = url.pathname;
-        } else if (arg.as(Request)) |req| {
-            var url = URL.parse(req.url);
-            pathname = url.pathname;
-        }
-
-        if (path_ == null) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request", .{}, ctx, exception);
-            return null;
-        }
-
-        const url_path = URLPath.parse(path_.?.slice()) catch {
-            JSError(getAllocator(ctx), "Could not parse URL path", .{}, ctx, exception);
-            return null;
-        };
-
-        var match_params_fallback = std.heap.stackFallback(1024, bun.default_allocator);
-        var match_params_allocator = match_params_fallback.get();
-        var match_params = Router.Param.List{};
-        match_params.ensureTotalCapacity(match_params_allocator, 16) catch unreachable;
-        var prev_allocator = router.routes.allocator;
-        router.routes.allocator = match_params_allocator;
-        defer router.routes.allocator = prev_allocator;
-        if (router.routes.matchPage("", url_path, &match_params)) |matched| {
-            return createRouteObjectFromMatch(ctx, &matched);
-        }
-        //    router.routes.matchPage
-
-        return JSC.JSValue.jsNull().asObjectRef();
-    }
-
-    fn deprecatedMatchFetchEvent(
-        ctx: js.JSContextRef,
-        fetch_event: *const FetchEvent,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
-        return createRouteObject(ctx, fetch_event.request_context.?);
-    }
-
-    fn createRouteObject(ctx: js.JSContextRef, req: *const http.RequestContext) js.JSValueRef {
-        const route = &(req.matched_route orelse {
-            return js.JSValueMakeNull(ctx);
-        });
-
-        return createRouteObjectFromMatch(ctx, route);
-    }
-
-    fn createRouteObjectFromMatch(
-        ctx: js.JSContextRef,
-        route: *const Router.Match,
-    ) js.JSValueRef {
-        var matched = MatchedRoute.init(
-            getAllocator(ctx),
-            route.*,
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().origin.href, null, false),
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.options.routes.asset_prefix_path, null, false),
-            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.fs.top_level_dir, null, false),
-        ) catch unreachable;
-
-        return matched.toJS(ctx).asObjectRef();
-    }
-};
-
 pub const FileSystemRouter = struct {
     origin: ?*JSC.RefString = null,
     base_dir: ?*JSC.RefString = null,
     router: Router,
-    arena: *std.heap.ArenaAllocator = undefined,
+    arena: *@import("root").bun.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
     asset_prefix: ?*JSC.RefString = null,
 
@@ -178,6 +69,7 @@ pub const FileSystemRouter = struct {
         var origin_str: ZigString.Slice = .{};
         var asset_prefix_slice: ZigString.Slice = .{};
 
+        var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (argument.get(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
                 globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
@@ -189,13 +81,28 @@ pub const FileSystemRouter = struct {
         }
 
         if (argument.get(globalThis, "dir")) |dir| {
+            if (!dir.isString()) {
+                globalThis.throwInvalidArguments("Expected dir to be a string", .{});
+                return null;
+            }
             const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
-                root_dir_path = root_dir_path_;
+                // resolve relative path if needed
+                const path = root_dir_path_.slice();
+                if (bun.path.Platform.isAbsolute(.auto, path)) {
+                    root_dir_path = root_dir_path_;
+                } else {
+                    var parts = [_][]const u8{path};
+                    root_dir_path = JSC.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
+                }
             }
+        } else {
+            // dir is not optional
+            globalThis.throwInvalidArguments("Expected dir to be a string", .{});
+            return null;
         }
-        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
-        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(@import("root").bun.ArenaAllocator) catch unreachable;
+        arena.* = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
         var allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
         if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
@@ -217,7 +124,7 @@ pub const FileSystemRouter = struct {
                     globalThis.allocator().destroy(arena);
                     return null;
                 }
-                if (val.getLengthOfArray(globalThis) == 0) continue;
+                if (val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
@@ -233,13 +140,13 @@ pub const FileSystemRouter = struct {
 
             asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
         }
-
         var orig_log = vm.bundler.resolver.log;
         var log = Log.Log.init(allocator);
         vm.bundler.resolver.log = &log;
         defer vm.bundler.resolver.log = orig_log;
 
         var path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
+
         var root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
             origin_str.deinit();
@@ -253,11 +160,13 @@ pub const FileSystemRouter = struct {
             globalThis.allocator().destroy(arena);
             return null;
         };
+
         var router = Router.init(vm.bundler.fs, allocator, .{
             .dir = path_to_use,
             .extensions = if (extensions.items.len > 0) extensions.items else default_extensions,
             .asset_prefix_path = asset_prefix_slice.slice(),
         }) catch unreachable;
+
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
@@ -267,6 +176,12 @@ pub const FileSystemRouter = struct {
         };
 
         if (argument.get(globalThis, "origin")) |origin| {
+            if (!origin.isString()) {
+                globalThis.throwInvalidArguments("Expected origin to be a string", .{});
+                arena.deinit();
+                globalThis.allocator().destroy(arena);
+                return null;
+            }
             origin_str = origin.toSlice(globalThis, globalThis.allocator());
         }
 
@@ -290,16 +205,18 @@ pub const FileSystemRouter = struct {
             .arena = arena,
             .allocator = allocator,
         };
+
         router.config.dir = fs_router.base_dir.?.slice();
         fs_router.base_dir.?.ref();
+
         return fs_router;
     }
 
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var this_value = callframe.this();
 
-        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
-        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(@import("root").bun.ArenaAllocator) catch unreachable;
+        arena.* = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
 
         var allocator = arena.allocator();
         var vm = globalThis.bunVM();
@@ -363,11 +280,11 @@ pub const FileSystemRouter = struct {
             if (argument.isCell()) {
                 if (argument.as(JSC.WebCore.Request)) |req| {
                     req.ensureURL() catch unreachable;
-                    break :brk ZigString.Slice.fromUTF8NeverFree(req.url).clone(globalThis.allocator()) catch unreachable;
+                    break :brk req.url.toUTF8(globalThis.allocator());
                 }
 
                 if (argument.as(JSC.WebCore.Response)) |resp| {
-                    break :brk ZigString.Slice.fromUTF8NeverFree(resp.url).clone(globalThis.allocator()) catch unreachable;
+                    break :brk resp.url.toUTF8(globalThis.allocator());
                 }
             }
 
@@ -735,5 +652,3 @@ pub const MatchedRoute = struct {
         return JSValue.createEmptyObject(globalThis, 0);
     }
 };
-
-pub const deprecatedBunGlobalMatch = DeprecatedGlobalRouter.deprecatedBunGlobalMatch;

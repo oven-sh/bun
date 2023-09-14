@@ -25,7 +25,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const ParseJSON = @import("../json_parser.zig").ParseJSON;
@@ -45,6 +45,11 @@ pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
 
     fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 
@@ -133,10 +138,10 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.IterableDir = found: {
-            for (std.os.argv, 0..) |arg, i| {
+            for (bun.argv(), 0..) |arg, i| {
                 if (strings.eqlComptime(std.mem.span(arg), "completions")) {
-                    if (std.os.argv.len > i + 1) {
-                        const input = std.mem.span(std.os.argv[i + 1]);
+                    if (bun.argv().len > i + 1) {
+                        const input = std.mem.span(bun.argv()[i + 1]);
 
                         if (!std.fs.path.isAbsolute(input)) {
                             completions_dir = resolve_path.joinAbs(

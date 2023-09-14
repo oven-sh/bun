@@ -148,7 +148,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @intToEnum(SystemErrno, code);
+        return @as(SystemErrno, @enumFromInt(code));
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -167,7 +167,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENXIO, "No such device or address");
         map.put(.E2BIG, "Argument list too long");
         map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file number");
+        map.put(.EBADF, "Bad file descriptor");
         map.put(.ECHILD, "No child processes");
         map.put(.EAGAIN, "Try again");
         map.put(.ENOMEM, "Out of memory");
@@ -373,7 +373,7 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
     //   './micro 65432000 temp --preallocate' ran
     //     1.18 ± 0.06 times faster than './micro 65432000 temp'
     //
-    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
+    _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
 }
 
 /// splice() moves data between two file descriptors without copying
@@ -384,10 +384,10 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
 pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
     return std.os.linux.syscall6(
         .splice,
-        @bitCast(usize, @as(isize, fd_in)),
-        @ptrToInt(off_in),
-        @bitCast(usize, @as(isize, fd_out)),
-        @ptrToInt(off_out),
+        @as(usize, @bitCast(@as(isize, fd_in))),
+        @intFromPtr(off_in),
+        @as(usize, @bitCast(@as(isize, fd_out))),
+        @intFromPtr(off_out),
         len,
         flags,
     );
@@ -411,42 +411,42 @@ pub const struct_sysinfo = extern struct {
     pub fn _f(self: anytype) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8) {
         const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
         const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
-        return @ptrCast(ReturnType, @alignCast(@alignOf(u8), @ptrCast(Intermediate, self) + 108));
+        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 108)));
     }
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.freeram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.totalram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.uptime);
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.uptime));
     return 0;
 }
 
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
-            std.math.ceil((@intToFloat(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[0])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[1])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[2])) / 65536.0) * 100.0) / 100.0,
         };
     }
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
@@ -454,7 +454,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     return name_buffer[0..result.len];
 }
 
-pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);
@@ -541,6 +541,7 @@ pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
 pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+pub const POSIX_SPAWN_SETSID = @as(c_int, 0x80);
 
 const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
@@ -571,3 +572,10 @@ pub const freeifaddrs = net_c.freeifaddrs;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+
+pub const Mode = u32;
+pub const E = std.os.E;
+
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

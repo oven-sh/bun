@@ -1,21 +1,93 @@
+JSC::Structure* JSAttributeIteratorStructure() { return m_JSAttributeIterator.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSAttributeIteratorConstructor() { return m_JSAttributeIterator.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSAttributeIteratorPrototype() { return m_JSAttributeIterator.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSAttributeIterator;
+  bool hasJSAttributeIteratorSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSAttributeIteratorSetterValue;
+JSC::Structure* JSBigIntStatsStructure() { return m_JSBigIntStats.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBigIntStatsConstructor() { return m_JSBigIntStats.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBigIntStatsPrototype() { return m_JSBigIntStats.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBigIntStats;
+  bool hasJSBigIntStatsSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBigIntStatsSetterValue;
 JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(this); }
         JSC::JSObject* JSBlobConstructor() { return m_JSBlob.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSBlobPrototype() { return m_JSBlob.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSBlob;
   bool hasJSBlobSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSBlobSetterValue;
+JSC::Structure* JSBuildArtifactStructure() { return m_JSBuildArtifact.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBuildArtifactConstructor() { return m_JSBuildArtifact.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBuildArtifactPrototype() { return m_JSBuildArtifact.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBuildArtifact;
+  bool hasJSBuildArtifactSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBuildArtifactSetterValue;
+JSC::Structure* JSBuildMessageStructure() { return m_JSBuildMessage.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBuildMessageConstructor() { return m_JSBuildMessage.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBuildMessagePrototype() { return m_JSBuildMessage.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBuildMessage;
+  bool hasJSBuildMessageSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBuildMessageSetterValue;
+JSC::Structure* JSCommentStructure() { return m_JSComment.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSCommentConstructor() { return m_JSComment.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSCommentPrototype() { return m_JSComment.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSComment;
+  bool hasJSCommentSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSCommentSetterValue;
+JSC::Structure* JSCryptoStructure() { return m_JSCrypto.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSCryptoConstructor() { return m_JSCrypto.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSCryptoPrototype() { return m_JSCrypto.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSCrypto;
+  bool hasJSCryptoSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSCryptoSetterValue;
 JSC::Structure* JSCryptoHasherStructure() { return m_JSCryptoHasher.getInitializedOnMainThread(this); }
         JSC::JSObject* JSCryptoHasherConstructor() { return m_JSCryptoHasher.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSCryptoHasherPrototype() { return m_JSCryptoHasher.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSCryptoHasher;
   bool hasJSCryptoHasherSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSCryptoHasherSetterValue;
+JSC::Structure* JSDebugHTTPSServerStructure() { return m_JSDebugHTTPSServer.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSDebugHTTPSServerConstructor() { return m_JSDebugHTTPSServer.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSDebugHTTPSServerPrototype() { return m_JSDebugHTTPSServer.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSDebugHTTPSServer;
+  bool hasJSDebugHTTPSServerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSDebugHTTPSServerSetterValue;
+JSC::Structure* JSDebugHTTPServerStructure() { return m_JSDebugHTTPServer.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSDebugHTTPServerConstructor() { return m_JSDebugHTTPServer.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSDebugHTTPServerPrototype() { return m_JSDebugHTTPServer.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSDebugHTTPServer;
+  bool hasJSDebugHTTPServerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSDebugHTTPServerSetterValue;
 JSC::Structure* JSDirentStructure() { return m_JSDirent.getInitializedOnMainThread(this); }
         JSC::JSObject* JSDirentConstructor() { return m_JSDirent.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSDirentPrototype() { return m_JSDirent.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSDirent;
   bool hasJSDirentSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSDirentSetterValue;
+JSC::Structure* JSDocEndStructure() { return m_JSDocEnd.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSDocEndConstructor() { return m_JSDocEnd.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSDocEndPrototype() { return m_JSDocEnd.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSDocEnd;
+  bool hasJSDocEndSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSDocEndSetterValue;
+JSC::Structure* JSDocTypeStructure() { return m_JSDocType.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSDocTypeConstructor() { return m_JSDocType.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSDocTypePrototype() { return m_JSDocType.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSDocType;
+  bool hasJSDocTypeSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSDocTypeSetterValue;
+JSC::Structure* JSElementStructure() { return m_JSElement.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSElementConstructor() { return m_JSElement.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSElementPrototype() { return m_JSElement.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSElement;
+  bool hasJSElementSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSElementSetterValue;
+JSC::Structure* JSEndTagStructure() { return m_JSEndTag.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSEndTagConstructor() { return m_JSEndTag.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSEndTagPrototype() { return m_JSEndTag.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSEndTag;
+  bool hasJSEndTagSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSEndTagSetterValue;
 JSC::Structure* JSExpectStructure() { return m_JSExpect.getInitializedOnMainThread(this); }
         JSC::JSObject* JSExpectConstructor() { return m_JSExpect.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSExpectPrototype() { return m_JSExpect.prototypeInitializedOnMainThread(this); }
@@ -28,12 +100,60 @@ JSC::Structure* JSExpectAnyStructure() { return m_JSExpectAny.getInitializedOnMa
   JSC::LazyClassStructure m_JSExpectAny;
   bool hasJSExpectAnySetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectAnySetterValue;
+JSC::Structure* JSExpectAnythingStructure() { return m_JSExpectAnything.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectAnythingConstructor() { return m_JSExpectAnything.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectAnythingPrototype() { return m_JSExpectAnything.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectAnything;
+  bool hasJSExpectAnythingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectAnythingSetterValue;
+JSC::Structure* JSExpectStringContainingStructure() { return m_JSExpectStringContaining.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectStringContainingConstructor() { return m_JSExpectStringContaining.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectStringContainingPrototype() { return m_JSExpectStringContaining.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectStringContaining;
+  bool hasJSExpectStringContainingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringContainingSetterValue;
+JSC::Structure* JSExpectStringMatchingStructure() { return m_JSExpectStringMatching.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectStringMatchingConstructor() { return m_JSExpectStringMatching.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectStringMatchingPrototype() { return m_JSExpectStringMatching.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectStringMatching;
+  bool hasJSExpectStringMatchingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringMatchingSetterValue;
+JSC::Structure* JSFFIStructure() { return m_JSFFI.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSFFIConstructor() { return m_JSFFI.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSFFIPrototype() { return m_JSFFI.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSFFI;
+  bool hasJSFFISetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSFFISetterValue;
+JSC::Structure* JSFSWatcherStructure() { return m_JSFSWatcher.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSFSWatcherConstructor() { return m_JSFSWatcher.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSFSWatcherPrototype() { return m_JSFSWatcher.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSFSWatcher;
+  bool hasJSFSWatcherSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSFSWatcherSetterValue;
 JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
         JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSFileSystemRouter;
   bool hasJSFileSystemRouterSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSFileSystemRouterSetterValue;
+JSC::Structure* JSHTMLRewriterStructure() { return m_JSHTMLRewriter.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSHTMLRewriterConstructor() { return m_JSHTMLRewriter.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSHTMLRewriterPrototype() { return m_JSHTMLRewriter.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSHTMLRewriter;
+  bool hasJSHTMLRewriterSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSHTMLRewriterSetterValue;
+JSC::Structure* JSHTTPSServerStructure() { return m_JSHTTPSServer.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSHTTPSServerConstructor() { return m_JSHTTPSServer.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSHTTPSServerPrototype() { return m_JSHTTPSServer.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSHTTPSServer;
+  bool hasJSHTTPSServerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSHTTPSServerSetterValue;
+JSC::Structure* JSHTTPServerStructure() { return m_JSHTTPServer.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSHTTPServerConstructor() { return m_JSHTTPServer.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSHTTPServerPrototype() { return m_JSHTTPServer.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSHTTPServer;
+  bool hasJSHTTPServerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSHTTPServerSetterValue;
 JSC::Structure* JSListenerStructure() { return m_JSListener.getInitializedOnMainThread(this); }
         JSC::JSObject* JSListenerConstructor() { return m_JSListener.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSListenerPrototype() { return m_JSListener.prototypeInitializedOnMainThread(this); }
@@ -70,6 +190,12 @@ JSC::Structure* JSRequestStructure() { return m_JSRequest.getInitializedOnMainTh
   JSC::LazyClassStructure m_JSRequest;
   bool hasJSRequestSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSRequestSetterValue;
+JSC::Structure* JSResolveMessageStructure() { return m_JSResolveMessage.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSResolveMessageConstructor() { return m_JSResolveMessage.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSResolveMessagePrototype() { return m_JSResolveMessage.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSResolveMessage;
+  bool hasJSResolveMessageSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSResolveMessageSetterValue;
 JSC::Structure* JSResponseStructure() { return m_JSResponse.getInitializedOnMainThread(this); }
         JSC::JSObject* JSResponseConstructor() { return m_JSResponse.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSResponsePrototype() { return m_JSResponse.prototypeInitializedOnMainThread(this); }
@@ -118,6 +244,12 @@ JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getIni
   JSC::LazyClassStructure m_JSServerWebSocket;
   bool hasJSServerWebSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSServerWebSocketSetterValue;
+JSC::Structure* JSStatWatcherStructure() { return m_JSStatWatcher.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSStatWatcherConstructor() { return m_JSStatWatcher.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSStatWatcherPrototype() { return m_JSStatWatcher.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSStatWatcher;
+  bool hasJSStatWatcherSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSStatWatcherSetterValue;
 JSC::Structure* JSStatsStructure() { return m_JSStats.getInitializedOnMainThread(this); }
         JSC::JSObject* JSStatsConstructor() { return m_JSStats.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSStatsPrototype() { return m_JSStats.prototypeInitializedOnMainThread(this); }
@@ -142,6 +274,12 @@ JSC::Structure* JSTLSSocketStructure() { return m_JSTLSSocket.getInitializedOnMa
   JSC::LazyClassStructure m_JSTLSSocket;
   bool hasJSTLSSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSTLSSocketSetterValue;
+JSC::Structure* JSTextChunkStructure() { return m_JSTextChunk.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTextChunkConstructor() { return m_JSTextChunk.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTextChunkPrototype() { return m_JSTextChunk.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTextChunk;
+  bool hasJSTextChunkSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTextChunkSetterValue;
 JSC::Structure* JSTextDecoderStructure() { return m_JSTextDecoder.getInitializedOnMainThread(this); }
         JSC::JSObject* JSTextDecoderConstructor() { return m_JSTextDecoder.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSTextDecoderPrototype() { return m_JSTextDecoder.prototypeInitializedOnMainThread(this); }

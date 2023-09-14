@@ -15,9 +15,11 @@ describe("FormData", () => {
 
   it("should be able to append a Blob", async () => {
     const formData = new FormData();
-    formData.append("foo", new Blob(["bar"]));
+    formData.append("foo", new Blob(["bar"]), "mynameis.txt");
     expect(await ((await formData.get("foo")) as Blob)!.text()).toBe("bar");
     expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
+    expect(formData.getAll("foo")[0] instanceof File).toBe(true);
+    expect((formData.getAll("foo")[0] as File).name).toBe("mynameis.txt");
   });
 
   it("should be able to set a Blob", async () => {
@@ -32,6 +34,36 @@ describe("FormData", () => {
     formData.set("foo", "bar");
     expect(formData.get("foo")).toBe("bar");
     expect(formData.getAll("foo")[0]).toBe("bar");
+  });
+
+  it("should get filename from file", async () => {
+    const blob = new Blob(["bar"]);
+    const formData = new FormData();
+    formData.append("foo", blob);
+    // @ts-expect-error
+    expect(formData.get("foo").name).toBeUndefined();
+    formData.append("foo2", new File([blob], "foo.txt"));
+    // @ts-expect-error
+    expect(formData.get("foo2").name).toBe("foo.txt");
+  });
+
+  it("should use the correct filenames", async () => {
+    const blob = new Blob(["bar"]) as any;
+    const form = new FormData();
+    form.append("foo", blob);
+    expect(blob.name).toBeUndefined();
+
+    let b1 = form.get("foo") as any;
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBeUndefined();
+
+    form.set("foo", b1, "foo.txt");
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBeUndefined();
+
+    b1 = form.get("foo") as Blob;
+    expect(blob.name).toBeUndefined();
+    expect(b1.name).toBe("foo.txt");
   });
 
   const multipartFormDataFixturesRawBody = [
@@ -226,6 +258,21 @@ describe("FormData", () => {
     }
   });
 
+  test("FormData.from (URLSearchParams)", () => {
+    expect(
+      // @ts-expect-error
+      FormData.from(
+        new URLSearchParams({
+          a: "b",
+          c: "d",
+        }).toString(),
+      ).toJSON(),
+    ).toEqual({
+      a: "b",
+      c: "d",
+    });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {
@@ -301,7 +348,125 @@ describe("FormData", () => {
     expect(await (body.get("foo") as Blob).text()).toBe("baz");
     server.stop(true);
   });
+  type FetchReqArgs = [request: Request, init?: RequestInit];
+  type FetchURLArgs = [url: string | URL | Request, init?: FetchRequestInit];
+  for (let useRequestConstructor of [true, false]) {
+    describe(useRequestConstructor ? "Request constructor" : "fetch()", () => {
+      function send(args: FetchReqArgs | FetchURLArgs) {
+        if (useRequestConstructor) {
+          return fetch(new Request(...(args as FetchReqArgs)));
+        } else {
+          return fetch(...(args as FetchURLArgs));
+        }
+      }
+      for (let headers of [{} as {}, undefined, { headers: { X: "Y" } }]) {
+        describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
+          it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
 
+            const form = new FormData();
+            form.append("foo", new Blob(["baz"], { type: "text/plain" }), "bar");
+            form.append("bar", "baz");
+
+            // @ts-ignore
+            const reqBody: FetchURLArgs = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody);
+            const body = await res.formData();
+            expect(await (body.get("foo") as Blob).text()).toBe("baz");
+            expect(body.get("bar")).toBe("baz");
+            server.stop(true);
+          });
+
+          it("send on HTTP server with FormData & Bun.file (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
+
+            const form = new FormData();
+            const file = Bun.file(import.meta.dir + "/form-data-fixture.txt");
+            const text = await file.text();
+            form.append("foo", file);
+            form.append("bar", "baz");
+
+            const reqBody = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody as FetchURLArgs);
+            const body = await res.formData();
+            expect(await (body.get("foo") as Blob).text()).toBe(text);
+            expect(contentType).toContain("multipart/form-data");
+            expect(body.get("bar")).toBe("baz");
+            expect(contentType).toContain("multipart/form-data");
+
+            server.stop(true);
+          });
+
+          it("send on HTTP server with FormData (roundtrip)", async () => {
+            let contentType = "";
+            const server = Bun.serve({
+              port: 0,
+              development: false,
+              async fetch(req) {
+                const formData = await req.formData();
+                contentType = req.headers.get("Content-Type")!;
+                return new Response(formData);
+              },
+            });
+
+            const form = new FormData();
+            form.append("foo", "boop");
+            form.append("bar", "baz");
+
+            // @ts-ignore
+            const reqBody = [
+              `http://${server.hostname}:${server.port}`,
+              {
+                body: form,
+
+                headers,
+                method: "POST",
+              },
+            ];
+            const res = await send(reqBody as FetchURLArgs);
+            const body = await res.formData();
+            expect(contentType).toContain("multipart/form-data");
+            expect(body.get("foo")).toBe("boop");
+            expect(body.get("bar")).toBe("baz");
+            server.stop(true);
+          });
+        });
+      }
+    });
+  }
   describe("Bun.file support", () => {
     describe("roundtrip", () => {
       const path = import.meta.dir + "/form-data-fixture.txt";
@@ -336,6 +501,30 @@ describe("FormData", () => {
     formData.append("bar", "baz");
     formData.append("boop", Bun.file("missing"));
     expect(Bun.inspect(formData).length > 0).toBe(true);
+  });
+
+  describe("non-standard extensions", () => {
+    it("should support .length", () => {
+      const formData = new FormData();
+      formData.append("foo", "bar");
+      formData.append("foo", new Blob(["bar"]));
+      formData.append("bar", "baz");
+      // @ts-ignore
+      expect(formData.length).toBe(3);
+      formData.delete("foo");
+      // @ts-ignore
+      expect(formData.length).toBe(1);
+      formData.append("foo", "bar");
+      // @ts-ignore
+      expect(formData.length).toBe(2);
+      formData.delete("foo");
+      formData.delete("foo");
+      // @ts-ignore
+      expect(formData.length).toBe(1);
+      formData.delete("bar");
+      // @ts-ignore
+      expect(formData.length).toBe(0);
+    });
   });
 
   describe("URLEncoded", () => {

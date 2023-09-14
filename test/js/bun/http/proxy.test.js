@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { gc } from "harness";
+import fs from "fs";
+import path from "path";
 
 let proxy, auth_proxy, server;
-
-// TODO: Proxy with TLS requests
 
 beforeAll(() => {
   proxy = Bun.serve({
@@ -76,6 +76,40 @@ afterAll(() => {
   auth_proxy.stop();
 });
 
+const test = process.env.PROXY_URL ? it : it.skip;
+
+test("should be able to post on TLS", async () => {
+  const data = JSON.stringify({
+    "name": "bun",
+  });
+
+  const result = await fetch("https://httpbin.org/post", {
+    method: "POST",
+    proxy: process.env.PROXY_URL,
+    verbose: true,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: data,
+  }).then(res => res.json());
+
+  expect(result.data).toBe(data);
+});
+
+test("should be able to post bigger on TLS", async () => {
+  const data = fs.readFileSync(path.join(import.meta.dir, "fetch.json")).toString("utf8");
+  const result = await fetch("https://httpbin.org/post", {
+    method: "POST",
+    proxy: process.env.PROXY_URL,
+    verbose: true,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: data,
+  }).then(res => res.json());
+  expect(result.data).toBe(data);
+});
+
 it("proxy non-TLS", async () => {
   const url = `http://localhost:${server.port}`;
   const auth_proxy_url = `http://squid_user:ASD123%40123asd@localhost:${auth_proxy.port}`;
@@ -116,9 +150,9 @@ it("proxy non-TLS auth can fail", async () => {
   {
     try {
       const response = await fetch(url, { verbose: true, proxy: `http://localhost:${auth_proxy.port}` });
-      expect(response.statusText).toBe("Proxy Authentication Required");
+      expect(response.status).toBe(407);
     } catch (err) {
-      expect(err).toBe("Proxy Authentication Required");
+      expect(true).toBeFalsy();
     }
   }
 
@@ -128,9 +162,9 @@ it("proxy non-TLS auth can fail", async () => {
         verbose: true,
         proxy: `http://squid_user:asdf123@localhost:${auth_proxy.port}`,
       });
-      expect(response.statusText).toBe("Forbidden");
+      expect(response.status).toBe(403);
     } catch (err) {
-      expect(err).toBe("Forbidden");
+      expect(true).toBeFalsy();
     }
   }
 });

@@ -2,26 +2,22 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "experimentalDecorators": true,
-    "noEmit": true,
     // "skipLibCheck": true,
     "allowJs": true
   },
-  "include": [
-    ".",
-    "packages/bun-types/index.d.ts"
-  ],
+  "include": [".", "packages/bun-types/index.d.ts"],
   "exclude": [
     "src/test",
+    // "src/js/builtins",
     "packages",
     "bench",
     "examples/*/*",
     "test",
     "src/deps",
     "bun-webkit",
-    // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
-    "src/bun.js/builtins",
     "src/bun.js/WebKit",
     "src/api/demo",
-    "node_modules",
-  ]
+    "node_modules"
+  ],
+  "files": ["src/js/builtins.d.ts"]
 }

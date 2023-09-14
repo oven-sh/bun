@@ -4,29 +4,23 @@
 
 #include "root.h"
 
-#include "ScriptExecutionContext.h"
-
 namespace WebCore {
 
-// TODO:
+class ScriptExecutionContext;
+
 class ContextDestructionObserver {
 
 public:
-    WEBCORE_EXPORT void contextDestroyed() {}
+    WEBCORE_EXPORT virtual void contextDestroyed();
 
     ScriptExecutionContext* scriptExecutionContext() const { return m_context; }
 
-    ContextDestructionObserver(ScriptExecutionContext* context)
-        : m_context(context)
-    {
-    }
-    ContextDestructionObserver(ContextDestructionObserver& context)
-        : m_context(context.m_context)
-    {
-    }
+protected:
+    WEBCORE_EXPORT ContextDestructionObserver(ScriptExecutionContext*);
+    WEBCORE_EXPORT virtual ~ContextDestructionObserver();
+    void observeContext(ScriptExecutionContext*);
 
 private:
-    int m_junk = 0;
     ScriptExecutionContext* m_context;
 };
 

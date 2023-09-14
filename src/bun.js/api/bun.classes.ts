@@ -44,6 +44,11 @@ export default [
         length: 0,
       },
 
+      send: {
+        fn: "doSend",
+        length: 1,
+      },
+
       kill: {
         fn: "kill",
         length: 1,

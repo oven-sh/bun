@@ -22,8 +22,8 @@ JSClass* toJSDOMGlobalObject(JSC::VM& vm, JSC::JSValue value)
     // static_assert(std::is_base_of_v<JSDOMGlobalObject, JSClass>);
 
     if (auto* object = value.getObject()) {
-        if (object->type() == JSC::PureForwardingProxyType)
-            return JSC::jsDynamicCast<JSClass*>(JSC::jsCast<JSC::JSProxy*>(object)->target());
+        if (object->type() == JSC::GlobalProxyType)
+            return JSC::jsDynamicCast<JSClass*>(JSC::jsCast<JSC::JSGlobalProxy*>(object)->target());
         if (object->inherits<JSClass>())
             return JSC::jsCast<JSClass*>(object);
     }

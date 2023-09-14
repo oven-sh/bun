@@ -5,21 +5,60 @@ function generate(name) {
     name,
     proto: {
       fetch: {
-        fn: "fetch",
+        fn: "doFetch",
         length: 1,
       },
+      upgrade: {
+        fn: "doUpgrade",
+        length: 1,
+      },
+      publish: {
+        fn: "doPublish",
+        length: 3,
+      },
+      reload: {
+        fn: "doReload",
+        length: 2,
+      },
+      stop: {
+        fn: "doStop",
+        length: 1,
+      },
+      port: {
+        getter: "getPort",
+      },
+      id: {
+        getter: "getId",
+        cache: true,
+      },
+      pendingRequests: {
+        getter: "getPendingRequests",
+      },
+      pendingWebSockets: {
+        getter: "getPendingWebSockets",
+      },
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+      protocol: {
+        getter: "getProtocol",
+      },
+      development: {
+        getter: "getDevelopment",
+      },
     },
-    values: ["callback"],
     klass: {},
     finalize: true,
     construct: true,
+    noConstructor: true,
   });
 }
 export default [
-  // generate(`HTTPServer`),
-  // generate(`DebugModeHTTPServer`),
-  // generate(`HTTPSServer`),
-  // generate(`DebugModeHTTPSServer`),
+  generate(`HTTPServer`),
+  generate(`DebugHTTPServer`),
+  generate(`HTTPSServer`),
+  generate(`DebugHTTPSServer`),
 
   define({
     name: "ServerWebSocket",
@@ -45,7 +84,6 @@ export default [
           args: ["JSUint8Array", "bool"],
         },
       },
-
       publishText: {
         fn: "publishText",
         length: 2,
@@ -62,10 +100,21 @@ export default [
           args: ["JSString", "JSUint8Array"],
         },
       },
-
+      ping: {
+        fn: "ping",
+        length: 1,
+      },
+      pong: {
+        fn: "pong",
+        length: 1,
+      },
       close: {
         fn: "close",
-        length: 1,
+        length: 3,
+      },
+      terminate: {
+        fn: "terminate",
+        length: 0,
       },
       cork: {
         fn: "cork",
@@ -103,11 +152,6 @@ export default [
         fn: "isSubscribed",
         length: 1,
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
-
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,

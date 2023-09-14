@@ -74,7 +74,7 @@ const server = Bun.listen(
   }),
 );
 
-await Bun.connect({
+const socket = await Bun.connect({
   ...createOptions("[Client]", "request"),
   port: server.port,
 });

@@ -77,6 +77,25 @@ String HTTPHeaderMap::get(const String& name) const
     return getUncommonHeader(name);
 }
 
+size_t HTTPHeaderMap::memoryCost() const
+{
+    size_t cost = m_commonHeaders.size() * sizeof(CommonHeader);
+    cost += m_uncommonHeaders.size() * sizeof(UncommonHeader);
+    cost += m_setCookieHeaders.size() * sizeof(String);
+    for (auto& header : m_commonHeaders)
+        cost += header.value.sizeInBytes();
+
+    for (auto& header : m_uncommonHeaders) {
+        cost += header.key.sizeInBytes();
+        cost += header.value.sizeInBytes();
+    }
+
+    for (auto& header : m_setCookieHeaders)
+        cost += header.sizeInBytes();
+
+    return cost;
+}
+
 String HTTPHeaderMap::getUncommonHeader(const String& name) const
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
@@ -236,15 +255,7 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
 void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
-        auto cookieName = extractCookieName(value);
-        size_t length = m_setCookieHeaders.size();
-        const auto& cookies = m_setCookieHeaders.data();
-        for (size_t i = 0; i < length; ++i) {
-            if (extractCookieName(cookies[i]) == cookieName) {
-                m_setCookieHeaders[i] = value;
-                return;
-            }
-        }
+        m_setCookieHeaders.clear();
         m_setCookieHeaders.append(value);
         return;
     }

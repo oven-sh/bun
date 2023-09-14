@@ -66,7 +66,7 @@ pub const DefineData = struct {
     }
 
     pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: std.mem.Allocator) !void {
-        try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
+        try user_defines.ensureUnusedCapacity(@as(u32, @truncate(defines.count())));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
             var splitter = std.mem.split(u8, entry.key_ptr.*, ".");
@@ -152,6 +152,7 @@ pub const DefineData = struct {
 
             user_defines.putAssumeCapacity(entry.key_ptr.*, DefineData{
                 .value = data,
+                .can_be_removed_if_unused = @as(js_ast.Expr.Tag, data).isPrimitiveLiteral(),
             });
         }
     }
@@ -187,8 +188,8 @@ pub const DotDefine = struct {
 };
 
 // var nan_val = try allocator.create(js_ast.E.Number);
-const nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
-const inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
+const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
+const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),

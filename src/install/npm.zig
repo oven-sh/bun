@@ -11,7 +11,7 @@ const PackageManager = @import("./install.zig").PackageManager;
 const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
-const initializeStore = @import("./install.zig").initializeStore;
+const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = @import("root").bun.logger;
 const Output = @import("root").bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
@@ -80,14 +80,14 @@ pub const Registry = struct {
                             url.path = pathname;
                         }
 
-                        while (std.mem.lastIndexOfScalar(u8, pathname, ':')) |colon| {
+                        while (strings.lastIndexOfChar(pathname, ':')) |colon| {
                             var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
                             if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
                                 pathname = pathname[0 .. pathname.len - 1];
                             }
 
-                            const eql_i = std.mem.indexOfScalar(u8, segment, '=') orelse continue;
+                            const eql_i = strings.indexOfChar(segment, '=') orelse continue;
                             var value = segment[eql_i + 1 ..];
                             segment = segment[0..eql_i];
 
@@ -121,9 +121,9 @@ pub const Registry = struct {
                     if (registry.username.len > 0 and registry.password.len > 0 and auth.len == 0) {
                         var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
                         var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
-                        @memcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
+                        @memcpy(input_buf[0..registry.username.len], registry.username);
                         input_buf[registry.username.len] = ':';
-                        @memcpy(input_buf[registry.username.len + 1 ..].ptr, registry.password.ptr, registry.password.len);
+                        @memcpy(input_buf[registry.username.len + 1 ..][0..registry.password.len], registry.password);
                         output_buf = output_buf[input_buf.len..];
                         auth = std.base64.standard.Encoder.encode(output_buf, input_buf);
                         break :outer;
@@ -204,7 +204,7 @@ pub const Registry = struct {
             package_name,
             newly_last_modified,
             new_etag,
-            @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) + 300,
+            @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
@@ -231,7 +231,7 @@ const ExternVersionMap = extern struct {
     pub fn findKeyIndex(this: ExternVersionMap, buf: []const Semver.Version, find: Semver.Version) ?u32 {
         for (this.keys.get(buf), 0..) |key, i| {
             if (key.eql(find)) {
-                return @truncate(u32, i);
+                return @as(u32, @truncate(i));
             }
         }
 
@@ -259,9 +259,9 @@ pub const OperatingSystem = enum(u16) {
 
     pub fn isMatch(this: OperatingSystem) bool {
         if (comptime Environment.isLinux) {
-            return (@enumToInt(this) & linux) != 0;
+            return (@intFromEnum(this) & linux) != 0;
         } else if (comptime Environment.isMac) {
-            return (@enumToInt(this) & darwin) != 0;
+            return (@intFromEnum(this) & darwin) != 0;
         } else {
             return false;
         }
@@ -282,7 +282,7 @@ pub const OperatingSystem = enum(u16) {
         if (str.len == 0) {
             return this_;
         }
-        const this = @enumToInt(this_);
+        const this = @intFromEnum(this_);
 
         const is_not = str[0] == '!';
         const offset: usize = if (str[0] == '!') 1 else 0;
@@ -290,9 +290,9 @@ pub const OperatingSystem = enum(u16) {
         const field: u16 = NameMap.get(str[offset..]) orelse return this_;
 
         if (is_not) {
-            return @intToEnum(OperatingSystem, this & ~field);
+            return @as(OperatingSystem, @enumFromInt(this & ~field));
         } else {
-            return @intToEnum(OperatingSystem, this | field);
+            return @as(OperatingSystem, @enumFromInt(this | field));
         }
     }
 };
@@ -334,9 +334,9 @@ pub const Architecture = enum(u16) {
 
     pub fn isMatch(this: Architecture) bool {
         if (comptime Environment.isAarch64) {
-            return (@enumToInt(this) & arm64) != 0;
+            return (@intFromEnum(this) & arm64) != 0;
         } else if (comptime Environment.isX64) {
-            return (@enumToInt(this) & x64) != 0;
+            return (@intFromEnum(this) & x64) != 0;
         } else {
             return false;
         }
@@ -346,7 +346,7 @@ pub const Architecture = enum(u16) {
         if (str.len == 0) {
             return this_;
         }
-        const this = @enumToInt(this_);
+        const this = @intFromEnum(this_);
 
         const is_not = str[0] == '!';
         const offset: usize = if (str[0] == '!') 1 else 0;
@@ -355,9 +355,9 @@ pub const Architecture = enum(u16) {
         const field: u16 = NameMap.get(input) orelse return this_;
 
         if (is_not) {
-            return @intToEnum(Architecture, this & ~field);
+            return @as(Architecture, @enumFromInt(this & ~field));
         } else {
-            return @intToEnum(Architecture, this | field);
+            return @as(Architecture, @enumFromInt(this | field));
         }
     }
 };
@@ -496,7 +496,7 @@ pub const PackageManifest = struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.sort(Data, &data, &trash, Sort.lessThan);
+            std.sort.block(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -536,7 +536,7 @@ pub const PackageManifest = struct {
 
             stream.pos += Aligner.skipAmount(Type, stream.pos);
             const result_bytes = stream.buffer[stream.pos..][0..byte_len];
-            const result = @ptrCast([*]const Type, @alignCast(@alignOf([*]const Type), result_bytes.ptr))[0 .. result_bytes.len / @sizeOf(Type)];
+            const result = @as([*]const Type, @ptrCast(@alignCast(result_bytes.ptr)))[0 .. result_bytes.len / @sizeOf(Type)];
             stream.pos += result_bytes.len;
             return result;
         }
@@ -571,13 +571,13 @@ pub const PackageManifest = struct {
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
-            const file_id = std.hash.Wyhash.hash(0, this.name());
+            const file_id = bun.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
             const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const hex_timestamp = @intCast(usize, @max(std.time.milliTimestamp(), 0));
+            const hex_timestamp = @as(usize, @intCast(@max(std.time.milliTimestamp(), 0)));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
@@ -588,7 +588,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
-            const file_id = std.hash.Wyhash.hash(0, package_name);
+            const file_id = bun.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -630,7 +630,7 @@ pub const PackageManifest = struct {
 
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
-                    pkg_stream.pos = std.mem.alignForward(pkg_stream.pos, @alignOf(Npm.NpmPackage));
+                    pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
                     var reader = pkg_stream.reader();
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
                 } else {
@@ -768,15 +768,6 @@ pub const PackageManifest = struct {
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
-    threadlocal var string_pool_: String.Builder.StringPool = undefined;
-    threadlocal var string_pool_loaded: bool = false;
-
-    threadlocal var external_string_maps_: ExternalStringMapDeduper = undefined;
-    threadlocal var external_string_maps_loaded: bool = false;
-
-    threadlocal var optional_peer_dep_names_: std.ArrayList(u64) = undefined;
-    threadlocal var optional_peer_dep_names_loaded: bool = false;
-
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         allocator: std.mem.Allocator,
@@ -789,7 +780,14 @@ pub const PackageManifest = struct {
     ) !?PackageManifest {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
-        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch return null;
+        defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
+        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const json = json_parser.ParseJSONUTF8(
+            &source,
+            log,
+            arena.allocator(),
+        ) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
@@ -800,31 +798,12 @@ pub const PackageManifest = struct {
 
         var result = PackageManifest{};
 
-        if (!string_pool_loaded) {
-            string_pool_ = String.Builder.StringPool.init(default_allocator);
-            string_pool_loaded = true;
-        }
-
-        if (!external_string_maps_loaded) {
-            external_string_maps_ = ExternalStringMapDeduper.initContext(default_allocator, .{});
-            external_string_maps_loaded = true;
-        }
-
-        if (!optional_peer_dep_names_loaded) {
-            optional_peer_dep_names_ = std.ArrayList(u64).init(default_allocator);
-            optional_peer_dep_names_loaded = true;
-        }
-
-        var string_pool = string_pool_;
-        string_pool.clearRetainingCapacity();
-        var external_string_maps = external_string_maps_;
-        external_string_maps.clearRetainingCapacity();
-        var optional_peer_dep_names = optional_peer_dep_names_;
-        optional_peer_dep_names.clearRetainingCapacity();
-
-        defer string_pool_ = string_pool;
-        defer external_string_maps_ = external_string_maps;
-        defer optional_peer_dep_names_ = optional_peer_dep_names;
+        var string_pool = String.Builder.StringPool.init(default_allocator);
+        defer string_pool.deinit();
+        var external_string_maps = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer external_string_maps.deinit();
+        var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
+        defer optional_peer_dep_names.deinit();
 
         var string_builder = String.Builder{
             .string_pool = string_pool,
@@ -867,12 +846,20 @@ pub const PackageManifest = struct {
                 const versions = versions_q.expr.data.e_object.properties.slice();
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
+                    const sliced_version = SlicedString.init(version_name, version_name);
+                    const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (std.mem.indexOfScalar(u8, version_name, '-') != null) {
+                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (!parsed_version.valid) {
+                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        continue;
+                    }
+
+                    if (parsed_version.version.tag.hasPre()) {
                         pre_versions_len += 1;
                         extern_string_count += 1;
                     } else {
-                        extern_string_count += @as(usize, @boolToInt(std.mem.indexOfScalar(u8, version_name, '+') != null));
+                        extern_string_count += @as(usize, @intFromBool(strings.indexOfChar(version_name, '+') != null));
                         release_versions_len += 1;
                     }
 
@@ -883,7 +870,7 @@ pub const PackageManifest = struct {
                             if (tarball_prop.data == .e_string) {
                                 const tarball = tarball_prop.data.e_string.slice(allocator);
                                 string_builder.count(tarball);
-                                tarball_urls_count += @as(usize, @boolToInt(tarball.len > 0));
+                                tarball_urls_count += @as(usize, @intFromBool(tarball.len > 0));
                             }
                         }
                     }
@@ -982,19 +969,19 @@ pub const PackageManifest = struct {
 
         if (versioned_packages.len > 0) {
             var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
-            @memset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
+            @memset(versioned_packages_bytes, 0);
         }
         if (all_semver_versions.len > 0) {
             var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
-            @memset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
+            @memset(all_semver_versions_bytes, 0);
         }
         if (all_extern_strings.len > 0) {
             var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
-            @memset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
+            @memset(all_extern_strings_bytes, 0);
         }
         if (version_extern_strings.len > 0) {
             var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
-            @memset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
+            @memset(version_extern_strings_bytes, 0);
         }
 
         var versioned_package_releases = versioned_packages[0..release_versions_len];
@@ -1019,7 +1006,7 @@ pub const PackageManifest = struct {
         var string_buf: string = "";
         if (string_builder.ptr) |ptr| {
             // 0 it out for better determinism
-            @memset(ptr, 0, string_builder.cap);
+            @memset(ptr[0..string_builder.cap], 0);
 
             string_buf = ptr[0..string_builder.cap];
         }
@@ -1043,25 +1030,23 @@ pub const PackageManifest = struct {
                 var dependency_names = all_dependency_names_and_values;
                 var prev_extern_bin_group = extern_strings_bin_entries;
 
-                var version_string__: String = String{};
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
+                    var sliced_version = SlicedString.init(version_name, version_name);
+                    var parsed_version = Semver.Version.parse(sliced_version);
 
-                    var sliced_string = SlicedString.init(version_name, version_name);
-
-                    // We only need to copy the version tags if it's a pre/post
-                    if (std.mem.indexOfAny(u8, version_name, "-+") != null) {
-                        version_string__ = string_builder.append(String, version_name);
-                        sliced_string = version_string__.sliced(string_buf);
-                    }
-
-                    const parsed_version = Semver.Version.parse(sliced_string, allocator);
                     if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
-
-                    if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
-                        continue;
+                    // We only need to copy the version tags if it contains pre and/or build
+                    if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
+                        const version_string = string_builder.append(String, version_name);
+                        sliced_version = version_string.sliced(string_buf);
+                        parsed_version = Semver.Version.parse(sliced_version);
+                        if (Environment.allow_assert) {
+                            std.debug.assert(parsed_version.valid);
+                            std.debug.assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                        }
                     }
+                    if (!parsed_version.valid) continue;
 
                     var package_version = PackageVersion{};
 
@@ -1274,8 +1259,8 @@ pub const PackageManifest = struct {
                                 var this_names = dependency_names[0..count];
                                 var this_versions = dependency_values[0..count];
 
-                                var name_hasher = std.hash.Wyhash.init(0);
-                                var version_hasher = std.hash.Wyhash.init(0);
+                                var name_hasher = bun.Wyhash.init(0);
+                                var version_hasher = bun.Wyhash.init(0);
 
                                 const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 
@@ -1327,15 +1312,15 @@ pub const PackageManifest = struct {
                                         }
 
                                         if (optional_peer_dep_names.items.len == 0) {
-                                            const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                            const names_hash_bytes = @as([8]u8, @bitCast(this_names[i].hash));
                                             name_hasher.update(&names_hash_bytes);
-                                            const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                            const versions_hash_bytes = @as([8]u8, @bitCast(this_versions[i].hash));
                                             version_hasher.update(&versions_hash_bytes);
                                         }
                                     } else {
-                                        const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                        const names_hash_bytes = @as([8]u8, @bitCast(this_names[i].hash));
                                         name_hasher.update(&names_hash_bytes);
-                                        const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                        const versions_hash_bytes = @as([8]u8, @bitCast(this_versions[i].hash));
                                         version_hasher.update(&versions_hash_bytes);
                                     }
 
@@ -1348,7 +1333,7 @@ pub const PackageManifest = struct {
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                                 if (comptime is_peer) {
-                                    package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
+                                    package_version.optional_peer_dependencies_len = @as(u32, @truncate(peer_dependency_len));
                                 }
 
                                 if (count > 0 and
@@ -1472,7 +1457,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version.fill();
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.fill();
                         dist_tag_i += 1;
                     }
                 }
@@ -1516,17 +1501,17 @@ pub const PackageManifest = struct {
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
                 std.debug.assert(dst.len >= src.len);
-                @memcpy(dst.ptr, src.ptr, src.len);
+                @memcpy(dst[0..src.len], src);
             }
 
             all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];
         }
 
         result.pkg.string_lists_buf.off = 0;
-        result.pkg.string_lists_buf.len = @truncate(u32, all_extern_strings.len);
+        result.pkg.string_lists_buf.len = @as(u32, @truncate(all_extern_strings.len));
 
         result.pkg.versions_buf.off = 0;
-        result.pkg.versions_buf.len = @truncate(u32, all_semver_versions.len);
+        result.pkg.versions_buf.len = @as(u32, @truncate(all_semver_versions.len));
 
         result.versions = all_semver_versions;
         result.external_strings = all_extern_strings;
@@ -1539,7 +1524,7 @@ pub const PackageManifest = struct {
             result.string_buf = ptr[0..string_builder.len];
             result.pkg.string_buf = BigExternalString{
                 .off = 0,
-                .len = @truncate(u32, string_builder.len),
+                .len = @as(u32, @truncate(string_builder.len)),
                 .hash = 0,
             };
         }

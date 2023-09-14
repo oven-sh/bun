@@ -23,6 +23,8 @@ pub const bundle_node_modules = true;
 
 pub const tracing = true;
 
+pub const minify_javascript_string_length = false;
+
 pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
@@ -104,7 +106,7 @@ pub const disable_lolhtml = false;
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
 /// "localhost" fails to connect.
-pub const hardcode_localhost_to_127_0_0_1 = true;
+pub const hardcode_localhost_to_127_0_0_1 = false;
 
 /// React doesn't do anything with jsxs
 /// If the "jsxs" import is development, "jsxs" isn't supported
@@ -112,7 +114,7 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
 
-pub const use_simdutf = !@import("root").bun.JSC.is_bindgen;
+pub const use_simdutf = @import("root").bun.Environment.isNative and !@import("root").bun.JSC.is_bindgen;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -166,3 +168,11 @@ pub const boundary_based_chunking = true;
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const source_map_debug_id = true;
+
+pub const alignment_tweak = false;
+
+pub const export_star_redirect = false;
+
+pub const streaming_file_uploads_for_http_client = true;
+
+pub const concurrent_transpiler = true;

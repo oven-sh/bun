@@ -110,12 +110,25 @@ pub const InitCommand = struct {
         initializeStore();
         read_package_json: {
             if (package_json_file) |pkg| {
-                const stat = pkg.stat() catch break :read_package_json;
+                const size = brk: {
+                    if (comptime bun.Environment.isWindows) {
+                        const end = pkg.getEndPos() catch break :read_package_json;
+                        if (end == 0) {
+                            break :read_package_json;
+                        }
 
-                if (stat.kind != .File or stat.size == 0) {
-                    break :read_package_json;
-                }
-                package_json_contents = try MutableString.init(alloc, stat.size);
+                        break :brk end;
+                    }
+                    const stat = pkg.stat() catch break :read_package_json;
+
+                    if (stat.kind != .file or stat.size == 0) {
+                        break :read_package_json;
+                    }
+
+                    break :brk stat.size;
+                };
+
+                package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {
@@ -208,23 +221,27 @@ pub const InitCommand = struct {
         };
 
         if (!auto_yes) {
-            Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
-            Output.flush();
+            if (!did_load_package_json) {
+                Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
+                Output.flush();
 
-            fields.name = try normalizePackageName(alloc, try prompt(
-                alloc,
-                "<r><cyan>package name<r> ",
-                fields.name,
-                Output.enable_ansi_colors_stdout,
-            ));
-            fields.entry_point = try prompt(
-                alloc,
-                "<r><cyan>entry point<r> ",
-                fields.entry_point,
-                Output.enable_ansi_colors_stdout,
-            );
-            try Output.writer().writeAll("\n");
-            Output.flush();
+                fields.name = try normalizePackageName(alloc, try prompt(
+                    alloc,
+                    "<r><cyan>package name<r> ",
+                    fields.name,
+                    Output.enable_ansi_colors_stdout,
+                ));
+                fields.entry_point = try prompt(
+                    alloc,
+                    "<r><cyan>entry point<r> ",
+                    fields.entry_point,
+                    Output.enable_ansi_colors_stdout,
+                );
+                try Output.writer().writeAll("\n");
+                Output.flush();
+            } else {
+                Output.prettyln("A package.json was found here. Would you like to configure", .{});
+            }
         }
 
         const Steps = struct {
@@ -236,13 +253,7 @@ pub const InitCommand = struct {
 
         var steps = Steps{};
 
-        steps.write_gitignore = brk: {
-            if (exists(".gitignore")) {
-                break :brk false;
-            }
-
-            break :brk true;
-        };
+        steps.write_gitignore = !exists(".gitignore");
 
         steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
 
@@ -300,13 +311,7 @@ pub const InitCommand = struct {
 
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                const version = comptime brk: {
-                    var base = Global.version;
-                    base.patch = 0;
-                    break :brk base;
-                };
-
-                try dev_dependencies.data.e_object.putString(alloc, "bun-types", comptime std.fmt.comptimePrint("^{any}", .{version.fmt("")}));
+                try dev_dependencies.data.e_object.putString(alloc, "bun-types", "latest");
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
             }
 
@@ -343,7 +348,14 @@ pub const InitCommand = struct {
         }
 
         if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
-            var entry = try std.fs.cwd().createFile(fields.entry_point, .{ .truncate = true });
+            const cwd = std.fs.cwd();
+            if (std.fs.path.dirname(fields.entry_point)) |dirname| {
+                if (!strings.eqlComptime(dirname, ".")) {
+                    cwd.makePath(dirname) catch {};
+                }
+            }
+
+            var entry = try cwd.createFile(fields.entry_point, .{ .truncate = true });
             entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
             entry.close();
             Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});

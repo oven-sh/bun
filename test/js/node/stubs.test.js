@@ -88,33 +88,8 @@ for (let specifier of specifiers) {
     const mod = await import(specifier);
     if ("default" in mod) {
       expect(mod).toHaveProperty("default");
-      const cjs = mod.default[Symbol.for("CommonJS")];
-      if (typeof cjs !== "undefined") {
-        if (cjs === 1) {
-          expect(typeof mod.default).toBe("function");
-        } else if (cjs === true) {
-          expect(cjs).toBe(true);
-          if (typeof mod.default !== "undefined") {
-            expect(typeof mod.default).toBe("function");
-          }
-        }
-      }
+    } else {
+      throw new Error(`Module ${specifier} has no default export`);
     }
   });
 }
-
-// TODO: when node:vm is implemented, delete this test.
-test("node:vm", () => {
-  const { Script } = import.meta.require("node:vm");
-  try {
-    // **This line should appear in the stack trace**
-    // That way it shows the "real" line causing the issue
-    // Instead of several layers of wrapping
-    new Script("1 + 1");
-    throw new Error("unreacahble");
-  } catch (e) {
-    const msg = Bun.inspect(e);
-    expect(msg).not.toContain("node:vm:");
-    expect(msg).toContain("**This line should appear in the stack trace**");
-  }
-});

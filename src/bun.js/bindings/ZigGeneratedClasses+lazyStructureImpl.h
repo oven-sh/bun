@@ -1,9 +1,45 @@
 void GlobalObject::initGeneratedLazyClasses() {
+    m_JSAttributeIterator.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSAttributeIterator::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSAttributeIterator::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSBigIntStats.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSBigIntStats::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSBigIntStats::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSBigIntStats::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSBlob.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSBlob::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSBlob::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSBlob::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSBuildArtifact.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSBuildArtifact::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSBuildArtifact::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSBuildMessage.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSBuildMessage::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSBuildMessage::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSBuildMessage::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSComment.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSComment::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSComment::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSCrypto.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSCrypto::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSCrypto::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSCrypto::createConstructor(init.vm, init.global, init.prototype));
               });
     m_JSCryptoHasher.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -11,11 +47,47 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSCryptoHasher::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSCryptoHasher::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSDebugHTTPSServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDebugHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugHTTPSServer::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSDebugHTTPServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDebugHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugHTTPServer::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSDirent.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSDirent::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSDirent::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSDirent::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSDocEnd.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDocEnd::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDocEnd::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSDocType.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDocType::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDocType::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSElement.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSElement::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSElement::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSEndTag.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSEndTag::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSEndTag::createStructure(init.vm, init.global, init.prototype));
+                 
               });
     m_JSExpect.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -29,11 +101,59 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSExpectAny::createStructure(init.vm, init.global, init.prototype));
                  
               });
+    m_JSExpectAnything.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSExpectAnything::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSExpectAnything::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSExpectStringContaining.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSExpectStringContaining::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSExpectStringContaining::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSExpectStringMatching.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSExpectStringMatching::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSExpectStringMatching::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSFFI.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSFFI::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSFFI::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSFSWatcher.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSFSWatcher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSFSWatcher::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSFileSystemRouter.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSFileSystemRouter::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSFileSystemRouter::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSFileSystemRouter::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSHTMLRewriter.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSHTMLRewriter::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSHTMLRewriter::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSHTMLRewriter::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSHTTPSServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSHTTPSServer::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSHTTPServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSHTTPServer::createStructure(init.vm, init.global, init.prototype));
+                 
               });
     m_JSListener.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -70,6 +190,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setPrototype(WebCore::JSRequest::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSRequest::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSRequest::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSResolveMessage.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSResolveMessage::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSResolveMessage::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSResolveMessage::createConstructor(init.vm, init.global, init.prototype));
               });
     m_JSResponse.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -119,6 +245,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSServerWebSocket::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSServerWebSocket::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSStatWatcher.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSStatWatcher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSStatWatcher::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSStats.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSStats::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -143,6 +275,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSTLSSocket::createStructure(init.vm, init.global, init.prototype));
                  
               });
+    m_JSTextChunk.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSTextChunk::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSTextChunk::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSTextDecoder.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSTextDecoder::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -165,18 +303,39 @@ void GlobalObject::initGeneratedLazyClasses() {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
+      thisObject->m_JSAttributeIterator.visit(visitor);  visitor.append(thisObject->m_JSAttributeIteratorSetterValue);
+      thisObject->m_JSBigIntStats.visit(visitor);  visitor.append(thisObject->m_JSBigIntStatsSetterValue);
       thisObject->m_JSBlob.visit(visitor);  visitor.append(thisObject->m_JSBlobSetterValue);
+      thisObject->m_JSBuildArtifact.visit(visitor);  visitor.append(thisObject->m_JSBuildArtifactSetterValue);
+      thisObject->m_JSBuildMessage.visit(visitor);  visitor.append(thisObject->m_JSBuildMessageSetterValue);
+      thisObject->m_JSComment.visit(visitor);  visitor.append(thisObject->m_JSCommentSetterValue);
+      thisObject->m_JSCrypto.visit(visitor);  visitor.append(thisObject->m_JSCryptoSetterValue);
       thisObject->m_JSCryptoHasher.visit(visitor);  visitor.append(thisObject->m_JSCryptoHasherSetterValue);
+      thisObject->m_JSDebugHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPSServerSetterValue);
+      thisObject->m_JSDebugHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPServerSetterValue);
       thisObject->m_JSDirent.visit(visitor);  visitor.append(thisObject->m_JSDirentSetterValue);
+      thisObject->m_JSDocEnd.visit(visitor);  visitor.append(thisObject->m_JSDocEndSetterValue);
+      thisObject->m_JSDocType.visit(visitor);  visitor.append(thisObject->m_JSDocTypeSetterValue);
+      thisObject->m_JSElement.visit(visitor);  visitor.append(thisObject->m_JSElementSetterValue);
+      thisObject->m_JSEndTag.visit(visitor);  visitor.append(thisObject->m_JSEndTagSetterValue);
       thisObject->m_JSExpect.visit(visitor);  visitor.append(thisObject->m_JSExpectSetterValue);
       thisObject->m_JSExpectAny.visit(visitor);  visitor.append(thisObject->m_JSExpectAnySetterValue);
+      thisObject->m_JSExpectAnything.visit(visitor);  visitor.append(thisObject->m_JSExpectAnythingSetterValue);
+      thisObject->m_JSExpectStringContaining.visit(visitor);  visitor.append(thisObject->m_JSExpectStringContainingSetterValue);
+      thisObject->m_JSExpectStringMatching.visit(visitor);  visitor.append(thisObject->m_JSExpectStringMatchingSetterValue);
+      thisObject->m_JSFFI.visit(visitor);  visitor.append(thisObject->m_JSFFISetterValue);
+      thisObject->m_JSFSWatcher.visit(visitor);  visitor.append(thisObject->m_JSFSWatcherSetterValue);
       thisObject->m_JSFileSystemRouter.visit(visitor);  visitor.append(thisObject->m_JSFileSystemRouterSetterValue);
+      thisObject->m_JSHTMLRewriter.visit(visitor);  visitor.append(thisObject->m_JSHTMLRewriterSetterValue);
+      thisObject->m_JSHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPSServerSetterValue);
+      thisObject->m_JSHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPServerSetterValue);
       thisObject->m_JSListener.visit(visitor);  visitor.append(thisObject->m_JSListenerSetterValue);
       thisObject->m_JSMD4.visit(visitor);  visitor.append(thisObject->m_JSMD4SetterValue);
       thisObject->m_JSMD5.visit(visitor);  visitor.append(thisObject->m_JSMD5SetterValue);
       thisObject->m_JSMatchedRoute.visit(visitor);  visitor.append(thisObject->m_JSMatchedRouteSetterValue);
       thisObject->m_JSNodeJSFS.visit(visitor);  visitor.append(thisObject->m_JSNodeJSFSSetterValue);
       thisObject->m_JSRequest.visit(visitor);  visitor.append(thisObject->m_JSRequestSetterValue);
+      thisObject->m_JSResolveMessage.visit(visitor);  visitor.append(thisObject->m_JSResolveMessageSetterValue);
       thisObject->m_JSResponse.visit(visitor);  visitor.append(thisObject->m_JSResponseSetterValue);
       thisObject->m_JSSHA1.visit(visitor);  visitor.append(thisObject->m_JSSHA1SetterValue);
       thisObject->m_JSSHA224.visit(visitor);  visitor.append(thisObject->m_JSSHA224SetterValue);
@@ -185,10 +344,12 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSSHA512.visit(visitor);  visitor.append(thisObject->m_JSSHA512SetterValue);
       thisObject->m_JSSHA512_256.visit(visitor);  visitor.append(thisObject->m_JSSHA512_256SetterValue);
       thisObject->m_JSServerWebSocket.visit(visitor);  visitor.append(thisObject->m_JSServerWebSocketSetterValue);
+      thisObject->m_JSStatWatcher.visit(visitor);  visitor.append(thisObject->m_JSStatWatcherSetterValue);
       thisObject->m_JSStats.visit(visitor);  visitor.append(thisObject->m_JSStatsSetterValue);
       thisObject->m_JSSubprocess.visit(visitor);  visitor.append(thisObject->m_JSSubprocessSetterValue);
       thisObject->m_JSTCPSocket.visit(visitor);  visitor.append(thisObject->m_JSTCPSocketSetterValue);
       thisObject->m_JSTLSSocket.visit(visitor);  visitor.append(thisObject->m_JSTLSSocketSetterValue);
+      thisObject->m_JSTextChunk.visit(visitor);  visitor.append(thisObject->m_JSTextChunkSetterValue);
       thisObject->m_JSTextDecoder.visit(visitor);  visitor.append(thisObject->m_JSTextDecoderSetterValue);
       thisObject->m_JSTimeout.visit(visitor);  visitor.append(thisObject->m_JSTimeoutSetterValue);
       thisObject->m_JSTranspiler.visit(visitor);  visitor.append(thisObject->m_JSTranspilerSetterValue);

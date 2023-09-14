@@ -1,8 +1,7 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
-const RequestContext = @import("../../http.zig").RequestContext;
-const MimeType = @import("../../http.zig").MimeType;
+const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -22,11 +21,10 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-const NewClass = @import("../base.zig").NewClass;
-const d = @import("../base.zig").d;
+
 const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
+
 const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
@@ -79,7 +77,7 @@ pub const Body = struct {
         const Writer = @TypeOf(writer);
 
         try formatter.writeIndent(Writer, writer);
-        try writer.writeAll("bodyUsed: ");
+        try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
         formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
         formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
@@ -92,15 +90,14 @@ pub const Body = struct {
         // }
 
         try formatter.writeIndent(Writer, writer);
-        try writer.writeAll("status: ");
+        try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
             try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-        } else if (this.value == .InternalBlob) {
-            // } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
+        } else if (this.value == .InternalBlob or this.value == .WTFStringImpl) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
@@ -177,7 +174,7 @@ pub const Body = struct {
             if (response_init.fastGet(ctx, .status)) |status_value| {
                 const number = status_value.coerceToInt64(ctx);
                 if ((200 <= number and number < 600) or number == 101) {
-                    result.status_code = @truncate(u16, @intCast(u32, number));
+                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
                 } else {
                     const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
                     ctx.throwValue(err);
@@ -212,9 +209,24 @@ pub const Body = struct {
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void = null,
+        size_hint: Blob.SizeType = 0,
 
         deinit: bool = false,
         action: Action = Action{ .none = {} },
+
+        /// For Http Client requests
+        /// when Content-Length is provided this represents the whole size of the request
+        /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
+        /// If the size is unknown will be 0
+        fn sizeHint(this: *const PendingValue) Blob.SizeType {
+            if (this.readable) |readable| {
+                if (readable.ptr == .Bytes) {
+                    return readable.ptr.Bytes.size_hint;
+                }
+            }
+            return this.size_hint;
+        }
 
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
@@ -237,17 +249,39 @@ pub const Body = struct {
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
 
-            if (value.readable) |readable| {
-                // switch (readable.ptr) {
-                //     .JavaScript
-                // }
+            if (value.readable) |readable| handle_stream: {
                 switch (action) {
-                    .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                    .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
+                            .getFormData => |form_data| brk: {
+                                if (value.onStartBuffering != null) {
+                                    if (readable.isDisturbed(globalThis)) {
+                                        form_data.?.deinit();
+                                        readable.value.unprotect();
+                                        value.readable = null;
+                                        value.action = .{ .none = {} };
+                                        return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
+                                    } else {
+                                        readable.detachIfPossible(globalThis);
+                                        value.readable = null;
+                                    }
+
+                                    break :handle_stream;
+                                }
+                                defer {
+                                    form_data.?.deinit();
+                                    value.action.getFormData = null;
+                                }
+
+                                break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
+                                    .Multipart => |multipart| bun.String.init(multipart).toJSConst(globalThis),
+                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                });
+                            },
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
@@ -258,8 +292,6 @@ pub const Body = struct {
 
                         return value.promise.?;
                     },
-                    // TODO:
-                    .getFormData => {},
 
                     .none => {},
                 }
@@ -269,6 +301,7 @@ pub const Body = struct {
                 var promise = JSC.JSPromise.create(globalThis);
                 const promise_value = promise.asValue(globalThis);
                 value.promise = promise_value;
+                promise_value.protect();
 
                 if (value.onStartBuffering) |onStartBuffering| {
                     value.onStartBuffering = null;
@@ -290,7 +323,40 @@ pub const Body = struct {
 
     /// This is a duplex stream!
     pub const Value = union(Tag) {
+        const log = Output.scoped(.BodyValue, false);
         Blob: Blob,
+
+        /// This is the String type from WebKit
+        /// It is reference counted, so we must always deref it (which this does automatically)
+        /// Be careful where it can directly be used.
+        ///
+        /// If it is a latin1 string with only ascii, we can use it directly.
+        /// Otherwise, we must convert it to utf8.
+        ///
+        /// Unless we are sending it directly to JavaScript, for example:
+        ///
+        ///   var str = "hello world 🤭"
+        ///   var response = new Response(str);
+        ///   /* Body.Value stays WTFStringImpl */
+        ///   var body = await response.text();
+        ///
+        /// In this case, even though there's an emoji, we can use the StringImpl directly.
+        /// BUT, if we were instead using it in the HTTP server, this cannot be used directly.
+        ///
+        /// When the server calls .toBlobIfPossible(), we will automatically
+        /// convert this Value to an InternalBlob
+        ///
+        /// Example code:
+        ///
+        ///     Bun.serve({
+        ///         fetch(req) {
+        ///              /* Body.Value becomes InternalBlob */
+        ///              return new Response("hello world 🤭");
+        ///         }
+        ///     })
+        ///
+        /// This works for .json(), too.
+        WTFStringImpl: bun.WTF.StringImpl,
         /// Single-use Blob
         /// Avoids a heap allocation.
         InternalBlob: InternalBlob,
@@ -303,6 +369,19 @@ pub const Body = struct {
         Null: void,
 
         pub fn toBlobIfPossible(this: *Value) void {
+            if (this.* == .WTFStringImpl) {
+                if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                    var str = this.WTFStringImpl;
+                    defer str.deref();
+                    this.* = .{
+                        .InternalBlob = InternalBlob{
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .was_string = true,
+                        },
+                    };
+                }
+            }
+
             if (this.* != .Locked)
                 return;
 
@@ -310,6 +389,7 @@ pub const Body = struct {
                 this.* = switch (blob) {
                     .Blob => .{ .Blob = blob.Blob },
                     .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
+                    .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
                     // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
                 };
             }
@@ -318,7 +398,19 @@ pub const Body = struct {
         pub fn size(this: *const Value) Blob.SizeType {
             return switch (this.*) {
                 .Blob => this.Blob.size,
-                .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
+                .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
+                .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
+                .Locked => this.Locked.sizeHint(),
+                // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
+                else => 0,
+            };
+        }
+
+        pub fn fastSize(this: *const Value) Blob.SizeType {
+            return switch (this.*) {
+                .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
+                .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
+                .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -327,6 +419,8 @@ pub const Body = struct {
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,
+                .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
+                .Locked => this.Locked.sizeHint(),
                 // .InlineBlob => this.InlineBlob.sliceConst().len,
                 else => 0,
             };
@@ -356,6 +450,7 @@ pub const Body = struct {
 
         pub const Tag = enum {
             Blob,
+            WTFStringImpl,
             InternalBlob,
             // InlineBlob,
             Locked,
@@ -377,10 +472,7 @@ pub const Body = struct {
                 .Null => {
                     return JSValue.null;
                 },
-                .InternalBlob,
-                .Blob,
-                // .InlineBlob,
-                => {
+                .InternalBlob, .Blob, .WTFStringImpl => {
                     var blob = this.use();
                     defer blob.detach();
                     blob.resolveSize();
@@ -424,23 +516,29 @@ pub const Body = struct {
                     reader.context.setup();
 
                     if (drain_result == .estimated_size) {
-                        reader.context.highWaterMark = @truncate(Blob.SizeType, drain_result.estimated_size);
-                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.estimated_size);
+                        reader.context.highWaterMark = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
+                        reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
                     } else if (drain_result == .owned) {
                         reader.context.buffer = drain_result.owned.list;
-                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.owned.size_hint);
+                        reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
                     }
 
                     locked.readable = .{
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toJS(globalThis),
                     };
-
                     locked.readable.?.value.protect();
+
+                    if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
+                        onReadableStreamAvailable(locked.task.?, locked.readable.?);
+                    }
+
                     return locked.readable.?.value;
                 },
-
-                else => unreachable,
+                .Error => {
+                    // TODO: handle error properly
+                    return JSC.WebCore.ReadableStream.empty(globalThis);
+                },
             }
         }
 
@@ -459,76 +557,18 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = value.getZigString(globalThis);
-                if (str.len == 0) {
+                var str = value.toBunString(globalThis);
+                if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},
                     };
                 }
 
-                // if (str.is16Bit()) {
-                //     if (str.maxUTF8ByteLength() < InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
-
-                //         const result = strings.copyUTF16IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u16,
-                //             str.utf16SliceAligned(),
-                //             true,
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
-
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // } else {
-                //     if (str.maxUTF8ByteLength() <= InlineBlob.available_bytes or
-                //         (str.len <= InlineBlob.available_bytes and str.utf8ByteLength() <= InlineBlob.available_bytes))
-                //     {
-                //         var blob = InlineBlob{
-                //             .was_string = true,
-                //             .bytes = undefined,
-                //             .len = 0,
-                //         };
-                //         if (comptime Environment.allow_assert) {
-                //             std.debug.assert(str.utf8ByteLength() <= InlineBlob.available_bytes);
-                //         }
-                //         const result = strings.copyLatin1IntoUTF8(
-                //             blob.bytes[0..blob.bytes.len],
-                //             []const u8,
-                //             str.slice(),
-                //         );
-                //         blob.len = @intCast(InlineBlob.IntSize, result.written);
-                //         std.debug.assert(@as(usize, result.read) == str.len);
-                //         std.debug.assert(@as(usize, result.written) <= InlineBlob.available_bytes);
-                //         return Body.Value{
-                //             .InlineBlob = blob,
-                //         };
-                //     }
-                // }
-
-                var buffer = str.toOwnedSlice(bun.default_allocator) catch {
-                    globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone string").toErrorInstance(globalThis));
-                    return null;
-                };
+                str.ref();
+                std.debug.assert(str.tag == .WTFStringImpl);
 
                 return Body.Value{
-                    .InternalBlob = .{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, buffer),
-                        .was_string = true,
-                    },
+                    .WTFStringImpl = str.value.WTFStringImpl,
                 };
             }
 
@@ -636,6 +676,7 @@ pub const Body = struct {
         }
 
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
+            log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
                 if (locked.readable) |readable| {
@@ -656,10 +697,11 @@ pub const Body = struct {
                     switch (locked.action) {
                         .getText => {
                             switch (new.*) {
+                                .WTFStringImpl,
                                 .InternalBlob,
                                 // .InlineBlob,
                                 => {
-                                    var blob = new.useAsAnyBlob();
+                                    var blob = new.useAsAnyBlobAllowNonUTF8String();
                                     promise.resolve(global, blob.toString(global, .transfer));
                                 },
                                 else => {
@@ -669,7 +711,7 @@ pub const Body = struct {
                             }
                         },
                         .getJSON => {
-                            var blob = new.useAsAnyBlob();
+                            var blob = new.useAsAnyBlobAllowNonUTF8String();
                             const json_value = blob.toJSON(global, .share);
                             blob.detach();
 
@@ -680,7 +722,8 @@ pub const Body = struct {
                             }
                         },
                         .getArrayBuffer => {
-                            var blob = new.useAsAnyBlob();
+                            var blob = new.useAsAnyBlobAllowNonUTF8String();
+                            // toArrayBuffer checks for non-UTF8 strings
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
                         },
                         .getFormData => inner: {
@@ -708,6 +751,7 @@ pub const Body = struct {
             return switch (this.*) {
                 .Blob => this.Blob.sharedView(),
                 .InternalBlob => this.InternalBlob.sliceConst(),
+                .WTFStringImpl => if (this.WTFStringImpl.canUseAsUTF8()) this.WTFStringImpl.latin1Slice() else "",
                 // .InlineBlob => this.InlineBlob.sliceConst(),
                 else => "",
             };
@@ -736,6 +780,27 @@ pub const Body = struct {
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
+                .WTFStringImpl => {
+                    var new_blob: Blob = undefined;
+                    var wtf = this.WTFStringImpl;
+                    defer wtf.deref();
+                    if (wtf.toUTF8IfNeeded(bun.default_allocator)) |allocated_slice| {
+                        new_blob = Blob.init(
+                            @constCast(allocated_slice.slice()),
+                            bun.default_allocator,
+                            JSC.VirtualMachine.get().global,
+                        );
+                    } else {
+                        new_blob = Blob.init(
+                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
+                            bun.default_allocator,
+                            JSC.VirtualMachine.get().global,
+                        );
+                    }
+
+                    this.* = .{ .Used = {} };
+                    return new_blob;
+                },
                 // .InlineBlob => {
                 //     const cloned = this.InlineBlob.bytes;
                 //     // keep same behavior as InternalBlob but clone the data
@@ -756,6 +821,12 @@ pub const Body = struct {
         }
 
         pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
+            if (this.* == .WTFStringImpl) {
+                if (this.WTFStringImpl.canUseAsUTF8()) {
+                    return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
+                }
+            }
+
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => AnyBlob{ .Blob = this.Blob },
                 .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
@@ -772,6 +843,38 @@ pub const Body = struct {
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => .{ .Blob = this.Blob },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+                .WTFStringImpl => |str| brk: {
+                    if (str.toUTF8IfNeeded(bun.default_allocator)) |utf8| {
+                        defer str.deref();
+                        break :brk .{
+                            .InternalBlob = InternalBlob{
+                                .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
+                                .was_string = true,
+                            },
+                        };
+                    } else {
+                        break :brk .{
+                            .WTFStringImpl = str,
+                        };
+                    }
+                },
+                // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
+                .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+                else => .{ .Blob = Blob.initEmpty(undefined) },
+            };
+
+            this.* = if (this.* == .Null)
+                .{ .Null = {} }
+            else
+                .{ .Used = {} };
+            return any_blob;
+        }
+
+        pub fn useAsAnyBlobAllowNonUTF8String(this: *Value) AnyBlob {
+            const any_blob: AnyBlob = switch (this.*) {
+                .Blob => .{ .Blob = this.Blob },
+                .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+                .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
                 // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
                 .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
                 else => .{ .Blob = Blob.initEmpty(undefined) },
@@ -853,6 +956,11 @@ pub const Body = struct {
                 this.* = Value{ .Null = {} };
             }
 
+            if (tag == .WTFStringImpl) {
+                this.WTFStringImpl.deref();
+                this.* = Value{ .Null = {} };
+            }
+
             if (tag == .Error) {
                 JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
@@ -875,6 +983,11 @@ pub const Body = struct {
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };
+            }
+
+            if (this.* == .WTFStringImpl) {
+                this.WTFStringImpl.ref();
+                return Value{ .WTFStringImpl = this.WTFStringImpl };
             }
 
             if (this.* == .Null) {
@@ -980,7 +1093,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getText = {} });
             }
 
-            var blob = value.useAsAnyBlob();
+            var blob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
         }
 
@@ -1022,7 +1135,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
             }
 
-            var blob = value.useAsAnyBlob();
+            var blob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toJSON(globalObject, .share));
         }
 
@@ -1051,7 +1164,8 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
             }
 
-            var blob: AnyBlob = value.useAsAnyBlob();
+            // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+            var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
             return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
         }
 
@@ -1138,7 +1252,7 @@ pub fn BodyMixin(comptime Type: type) type {
             if (blob.content_type.len == 0 and blob.store != null) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        blob.store.?.mime_type = MimeType.init(content_type.slice());
+                        blob.store.?.mime_type = MimeType.init(content_type.slice(), null, null);
                     }
                 } else {
                     blob.store.?.mime_type = MimeType.text;
@@ -1149,3 +1263,347 @@ pub fn BodyMixin(comptime Type: type) type {
         }
     };
 }
+
+pub const BodyValueBufferer = struct {
+    const log = bun.Output.scoped(.BodyValueBufferer, false);
+
+    const ArrayBufferSink = JSC.WebCore.ArrayBufferSink;
+    const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?JSC.JSValue, is_async: bool) void;
+
+    ctx: *anyopaque,
+    onFinishedBuffering: Callback,
+
+    js_sink: ?*ArrayBufferSink.JSSink = null,
+    byte_stream: ?*JSC.WebCore.ByteStream = null,
+    // readable stream strong ref to keep byte stream alive
+    readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+    stream_buffer: bun.MutableString,
+    allocator: std.mem.Allocator,
+    global: *JSGlobalObject,
+
+    pub fn deinit(this: *@This()) void {
+        this.stream_buffer.deinit();
+        if (this.byte_stream) |byte_stream| {
+            byte_stream.unpipe();
+        }
+        this.readable_stream_ref.deinit();
+
+        if (this.js_sink) |buffer_stream| {
+            buffer_stream.detach();
+            buffer_stream.sink.destroy();
+            this.js_sink = null;
+        }
+    }
+
+    pub fn init(
+        ctx: *anyopaque,
+        onFinish: Callback,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) @This() {
+        const this = .{
+            .ctx = ctx,
+            .onFinishedBuffering = onFinish,
+            .allocator = allocator,
+            .global = global,
+            .stream_buffer = .{
+                .allocator = allocator,
+                .list = .{
+                    .items = &.{},
+                    .capacity = 0,
+                },
+            },
+        };
+        return this;
+    }
+
+    pub fn run(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
+        value.toBlobIfPossible();
+
+        switch (value.*) {
+            .Used => {
+                log("Used", .{});
+                return error.StreamAlreadyUsed;
+            },
+            .Empty, .Null => {
+                log("Empty", .{});
+                return sink.onFinishedBuffering(sink.ctx, "", null, false);
+            },
+
+            .Error => |err| {
+                log("Error", .{});
+                return sink.onFinishedBuffering(sink.ctx, "", err, false);
+            },
+            // .InlineBlob,
+            .WTFStringImpl,
+            .InternalBlob,
+            .Blob,
+            => {
+                // toBlobIfPossible checks for WTFString needing a conversion.
+                var input = value.useAsAnyBlobAllowNonUTF8String();
+                const is_pending = input.needsToReadFile();
+                defer if (!is_pending) input.detach();
+
+                if (is_pending) {
+                    input.Blob.doReadFileInternal(*@This(), sink, onFinishedLoadingFile, sink.global);
+                } else {
+                    const bytes = input.slice();
+                    log("Blob {}", .{bytes.len});
+                    sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                }
+                return;
+            },
+            .Locked => {
+                try sink.bufferLockedBodyValue(value);
+            },
+        }
+    }
+
+    fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
+        switch (bytes) {
+            .err => |err| {
+                log("onFinishedLoadingFile Error", .{});
+                sink.onFinishedBuffering(sink.ctx, "", err.toErrorInstance(sink.global), true);
+                return;
+            },
+            .result => |data| {
+                log("onFinishedLoadingFile Data {}", .{data.buf.len});
+                sink.onFinishedBuffering(sink.ctx, data.buf, null, true);
+                if (data.is_temporary) {
+                    bun.default_allocator.free(bun.constStrToU8(data.buf));
+                }
+            },
+        }
+    }
+    fn onStreamPipe(sink: *@This(), stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
+        var stream_needs_deinit = stream == .owned or stream == .owned_and_done;
+
+        defer {
+            if (stream_needs_deinit) {
+                if (stream == .owned_and_done) {
+                    stream.owned_and_done.listManaged(allocator).deinit();
+                } else {
+                    stream.owned.listManaged(allocator).deinit();
+                }
+            }
+        }
+
+        const chunk = stream.slice();
+        log("onStreamPipe chunk {}", .{chunk.len});
+        _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
+        if (stream.isDone()) {
+            const bytes = sink.stream_buffer.list.items;
+            log("onStreamPipe done {}", .{bytes.len});
+            sink.onFinishedBuffering(sink.ctx, bytes, null, true);
+            return;
+        }
+    }
+
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        var args = callframe.arguments(2);
+        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        sink.handleResolveStream(true);
+        return JSValue.jsUndefined();
+    }
+
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        var err = args.ptr[0];
+        sink.handleRejectStream(err, true);
+        return JSValue.jsUndefined();
+    }
+
+    fn handleRejectStream(sink: *@This(), err: JSValue, is_async: bool) void {
+        if (sink.js_sink) |wrapper| {
+            wrapper.detach();
+            sink.js_sink = null;
+            wrapper.sink.destroy();
+        }
+        sink.onFinishedBuffering(sink.ctx, "", err, is_async);
+    }
+
+    fn handleResolveStream(sink: *@This(), is_async: bool) void {
+        if (sink.js_sink) |wrapper| {
+            const bytes = wrapper.sink.bytes.slice();
+            log("handleResolveStream {}", .{bytes.len});
+            sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
+        } else {
+            log("handleResolveStream no sink", .{});
+            sink.onFinishedBuffering(sink.ctx, "", null, is_async);
+        }
+    }
+
+    fn createJSSink(sink: *@This(), stream: JSC.WebCore.ReadableStream) !void {
+        stream.value.ensureStillAlive();
+        var allocator = sink.allocator;
+        var buffer_stream = try allocator.create(ArrayBufferSink.JSSink);
+        var globalThis = sink.global;
+        buffer_stream.* = ArrayBufferSink.JSSink{
+            .sink = ArrayBufferSink{
+                .bytes = bun.ByteList.init(&.{}),
+                .allocator = allocator,
+                .next = null,
+            },
+        };
+        var signal = &buffer_stream.sink.signal;
+        sink.js_sink = buffer_stream;
+
+        signal.* = ArrayBufferSink.JSSink.SinkSignal.init(JSValue.zero);
+
+        // explicitly set it to a dead pointer
+        // we use this memory address to disable signals being sent
+        signal.clear();
+        std.debug.assert(signal.isDead());
+
+        const assignment_result: JSValue = ArrayBufferSink.JSSink.assignToStream(
+            globalThis,
+            stream.value,
+            buffer_stream,
+            @as(**anyopaque, @ptrCast(&signal.ptr)),
+        );
+
+        assignment_result.ensureStillAlive();
+
+        // assert that it was updated
+        std.debug.assert(!signal.isDead());
+
+        if (assignment_result.isError()) {
+            return error.PipeFailed;
+        }
+
+        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+            assignment_result.ensureStillAlive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if (assignment_result.asAnyPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .Pending => {
+                        assignment_result.then(
+                            globalThis,
+                            sink,
+                            onResolveStream,
+                            onRejectStream,
+                        );
+                    },
+                    .Fulfilled => {
+                        defer stream.value.unprotect();
+
+                        sink.handleResolveStream(false);
+                    },
+                    .Rejected => {
+                        defer stream.value.unprotect();
+
+                        sink.handleRejectStream(promise.result(globalThis.vm()), false);
+                    },
+                }
+                return;
+            }
+        }
+
+        return error.PipeFailed;
+    }
+
+    fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
+        std.debug.assert(value.* == .Locked);
+        const locked = &value.Locked;
+        if (locked.readable) |stream_| {
+            const stream: JSC.WebCore.ReadableStream = stream_;
+            stream.value.ensureStillAlive();
+
+            value.* = .{ .Used = {} };
+
+            if (stream.isLocked(sink.global)) {
+                return error.StreamAlreadyUsed;
+            }
+
+            switch (stream.ptr) {
+                .Invalid => {
+                    return error.InvalidStream;
+                },
+                // toBlobIfPossible should've caught this
+                .Blob, .File => unreachable,
+                .JavaScript, .Direct => {
+                    // this is broken right now
+                    // return sink.createJSSink(stream);
+                    return error.UnsupportedStreamType;
+                },
+                .Bytes => |byte_stream| {
+                    std.debug.assert(byte_stream.pipe.ctx == null);
+                    std.debug.assert(sink.byte_stream == null);
+
+                    const bytes = byte_stream.buffer.items;
+                    // If we've received the complete body by the time this function is called
+                    // we can avoid streaming it and just send it all at once.
+                    if (byte_stream.has_received_last_chunk) {
+                        log("byte stream has_received_last_chunk {}", .{bytes.len});
+                        sink.onFinishedBuffering(sink.ctx, bytes, null, false);
+                        // is safe to detach here because we're not going to receive any more data
+                        stream.detachIfPossible(sink.global);
+                        return;
+                    }
+                    // keep the stream alive until we're done with it
+                    sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
+                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
+                    stream.detachIfPossible(sink.global);
+
+                    byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
+                    sink.byte_stream = byte_stream;
+                    log("byte stream pre-buffered {}", .{bytes.len});
+
+                    _ = sink.stream_buffer.write(bytes) catch @panic("OOM");
+                    return;
+                },
+            }
+        }
+
+        if (locked.onReceiveValue != null or locked.task != null) {
+            // someone else is waiting for the stream or waiting for `onStartStreaming`
+            const readable = value.toReadableStream(sink.global);
+            readable.ensureStillAlive();
+            readable.protect();
+            return try sink.bufferLockedBodyValue(value);
+        }
+        // is safe to wait it buffer
+        locked.task = @ptrCast(sink);
+        locked.onReceiveValue = @This().onReceiveValue;
+    }
+
+    fn onReceiveValue(ctx: *anyopaque, value: *JSC.WebCore.Body.Value) void {
+        const sink = bun.cast(*@This(), ctx);
+        switch (value.*) {
+            .Error => {
+                log("onReceiveValue Error", .{});
+                sink.onFinishedBuffering(sink.ctx, "", value.Error, true);
+                return;
+            },
+            else => {
+                value.toBlobIfPossible();
+                var input = value.useAsAnyBlobAllowNonUTF8String();
+                const bytes = input.slice();
+                log("onReceiveValue {}", .{bytes.len});
+                sink.onFinishedBuffering(sink.ctx, bytes, value.Error, true);
+            },
+        }
+    }
+
+    pub const shim = JSC.Shimmer("Bun", "BodyValueBufferer", @This());
+    pub const name = "Bun__BodyValueBufferer";
+    pub const include = "";
+    pub const namespace = shim.namespace;
+
+    pub const Export = shim.exportFunctions(.{
+        .onResolveStream = onResolveStream,
+        .onRejectStream = onRejectStream,
+    });
+
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(onResolveStream, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(onRejectStream, .{
+                .name = Export[1].symbol_name,
+            });
+        }
+    }
+};

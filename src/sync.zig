@@ -1,5 +1,5 @@
 const std = @import("std");
-const system = std.system;
+const system = if (bun.Environment.isWindows) std.os.windows else std.os.system;
 const bun = @import("root").bun;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
@@ -28,7 +28,7 @@ pub const ThreadPool = struct {
 
         errdefer self.deinit();
 
-        const num_workers = std.math.max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
+        const num_workers = @max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
         self.workers = try self.allocator.alloc(Worker, num_workers);
 
         for (&self.workers) |*worker| {
@@ -69,7 +69,7 @@ pub const ThreadPool = struct {
 
         const allocator = self.allocator;
         const closure = try allocator.create(Closure);
-        errdefer allocator.free(closure);
+        errdefer allocator.destroy(closure);
         closure.* = Closure{
             .func_args = args,
             .allocator = allocator,
@@ -91,8 +91,8 @@ pub const ThreadPool = struct {
         idle_workers: usize = 0,
 
         fn pack(self: State) usize {
-            return ((@as(usize, @boolToInt(self.is_shutdown)) << 0) |
-                (@as(usize, @boolToInt(self.is_notified)) << 1) |
+            return ((@as(usize, @intFromBool(self.is_shutdown)) << 0) |
+                (@as(usize, @intFromBool(self.is_notified)) << 1) |
                 (self.idle_workers << 2));
         }
 
@@ -225,7 +225,7 @@ pub const ThreadPool = struct {
             current = self;
             defer current = old_current;
 
-            var tick = @ptrToInt(self);
+            var tick = @intFromPtr(self);
             var prng = std.rand.DefaultPrng.init(tick);
 
             while (true) {
@@ -571,7 +571,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
-        const pthread_rwlock_t = switch (@import("builtin").os.tag) {
+        pub const pthread_rwlock_t = switch (@import("builtin").os.tag) {
             .macos, .ios, .watchos, .tvos => extern struct {
                 __sig: c_long = 0x2DA8B3B4,
                 __opaque: [192]u8 = [_]u8{0} ** 192,
@@ -977,8 +977,8 @@ else if (@import("builtin").os.tag == .linux)
                 }
 
                 Futex.wait(
-                    @ptrCast(*const i32, &self.state),
-                    @enumToInt(new_state),
+                    @as(*const i32, @ptrCast(&self.state)),
+                    @intFromEnum(new_state),
                 );
             }
         }
@@ -994,7 +994,7 @@ else if (@import("builtin").os.tag == .linux)
         fn unlockSlow(self: *Mutex) void {
             @setCold(true);
 
-            Futex.wake(@ptrCast(*const i32, &self.state));
+            Futex.wake(@as(*const i32, @ptrCast(&self.state)));
         }
     }
 else

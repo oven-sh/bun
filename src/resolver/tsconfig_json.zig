@@ -104,9 +104,7 @@ pub const TSConfigJSON = struct {
         log: *logger.Log,
         source: logger.Source,
         json_cache: *cache.Json,
-        is_jsx_development_: bool,
     ) anyerror!?*TSConfigJSON {
-        var is_jsx_development = is_jsx_development_;
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -155,17 +153,18 @@ pub const TSConfigJSON = struct {
                 }
             }
 
+            // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    // we don't support "preserve" yet
-                    if (options.JSX.RuntimeMap.get(str)) |runtime| {
+                    var str_lower = allocator.alloc(u8, str.len) catch unreachable;
+                    defer allocator.free(str_lower);
+                    _ = strings.copyLowercase(str, str_lower);
+                    // - We don't support "preserve" yet
+                    // - We rely on NODE_ENV for "jsx" or "jsxDEV"
+                    // - We treat "react-jsx" and "react-jsxDEV" identically
+                    //   because it is too easy to auto-import the wrong one.
+                    if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime;
-                        if (runtime == .automatic) {
-                            result.jsx.setProduction(!strings.contains(str, "jsxDEV"));
-                            is_jsx_development = result.jsx.development;
-                            result.jsx_flags.insert(.development);
-                        }
-
                         result.jsx_flags.insert(.runtime);
                     }
                 }
@@ -179,7 +178,7 @@ pub const TSConfigJSON = struct {
                         result.jsx_flags.insert(.runtime);
                     }
 
-                    result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
+                    result.jsx.package_name = str;
                     result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
                 }
@@ -345,7 +344,7 @@ pub const TSConfigJSON = struct {
         // foo == 1
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
-        const parts_count = std.mem.count(u8, text, ".") + @as(usize, @boolToInt(text[text.len - 1] != '.'));
+        const parts_count = std.mem.count(u8, text, ".") + @as(usize, @intFromBool(text[text.len - 1] != '.'));
         var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
 
         if (parts_count == 1) {
@@ -418,6 +417,11 @@ pub const TSConfigJSON = struct {
                 },
                 else => {},
             }
+        }
+
+        // Absolute unix "/"
+        if (TSConfigJSON.isSlash(c0)) {
+            return true;
         }
 
         const r = source.rangeOfString(loc);

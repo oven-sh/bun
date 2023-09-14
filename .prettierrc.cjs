@@ -6,7 +6,7 @@ module.exports = {
   quoteProps: "preserve",
   overrides: [
     {
-      files: "README.md",
+      files: ["*.md"],
       options: {
         printWidth: 80,
       },

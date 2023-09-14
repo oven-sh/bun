@@ -2,6 +2,17 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "ExpectAnything",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "ExpectAny",
     construct: false,
     noConstructor: true,
@@ -9,6 +20,30 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     values: ["constructorValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectStringContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["stringValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectStringMatching",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["testValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -73,9 +108,21 @@ export default [
       },
     },
     proto: {
+      pass: {
+        fn: "_pass",
+        length: 1,
+      },
+      fail: {
+        fn: "fail",
+        length: 1,
+      },
       toBe: {
         fn: "toBe",
         length: 1,
+      },
+      toHaveBeenCalled: {
+        fn: "toHaveBeenCalled",
+        length: 0,
       },
       toHaveBeenCalledTimes: {
         fn: "toHaveBeenCalledTimes",
@@ -121,10 +168,6 @@ export default [
         fn: "toBeCloseTo",
         length: 1,
       },
-      toBeEven: {
-        fn: "toBeEven",
-        length: 0,
-      },
       toBeGreaterThan: {
         fn: "toBeGreaterThan",
         length: 1,
@@ -140,10 +183,6 @@ export default [
       toBeLessThanOrEqual: {
         fn: "toBeLessThanOrEqual",
         length: 1,
-      },
-      toBeOdd: {
-        fn: "toBeOdd",
-        length: 0,
       },
       toBeInstanceOf: {
         fn: "toBeInstanceOf",
@@ -228,6 +267,107 @@ export default [
       rejects: {
         getter: "getRejects",
         this: true,
+      },
+      // jest-extended
+      toBeEmpty: {
+        fn: "toBeEmpty",
+        length: 0,
+      },
+      toBeEven: {
+        fn: "toBeEven",
+        length: 0,
+      },
+      toBeOdd: {
+        fn: "toBeOdd",
+        length: 0,
+      },
+      toBeNil: {
+        fn: "toBeNil",
+        length: 0,
+      },
+      toBeArray: {
+        fn: "toBeArray",
+        length: 0,
+      },
+      toBeArrayOfSize: {
+        fn: "toBeArrayOfSize",
+        length: 1,
+      },
+      toBeBoolean: {
+        fn: "toBeBoolean",
+        length: 0,
+      },
+      toBeTrue: {
+        fn: "toBeTrue",
+        length: 0,
+      },
+      toBeTypeOf: {
+        fn: "toBeTypeOf",
+        length: 1,
+      },
+      toBeFalse: {
+        fn: "toBeFalse",
+        length: 0,
+      },
+      toBeNumber: {
+        fn: "toBeNumber",
+        length: 0,
+      },
+      toBeInteger: {
+        fn: "toBeInteger",
+        length: 0,
+      },
+      toBeFinite: {
+        fn: "toBeFinite",
+        length: 0,
+      },
+      toBePositive: {
+        fn: "toBePositive",
+        length: 0,
+      },
+      toBeNegative: {
+        fn: "toBeNegative",
+        length: 0,
+      },
+      toBeWithin: {
+        fn: "toBeWithin",
+        length: 2,
+      },
+      toBeSymbol: {
+        fn: "toBeSymbol",
+        length: 0,
+      },
+      toBeFunction: {
+        fn: "toBeFunction",
+        length: 0,
+      },
+      toBeDate: {
+        fn: "toBeDate",
+        length: 0,
+      },
+      toBeString: {
+        fn: "toBeString",
+        length: 0,
+      },
+      toInclude: {
+        fn: "toInclude",
+        length: 1,
+      },
+      toIncludeRepeated: {
+        fn: "toIncludeRepeated",
+        length: 2,
+      },
+      toSatisfy: {
+        fn: "toSatisfy",
+        length: 1,
+      },
+      toStartWith: {
+        fn: "toStartWith",
+        length: 1,
+      },
+      toEndWith: {
+        fn: "toEndWith",
+        length: 1,
       },
     },
   }),

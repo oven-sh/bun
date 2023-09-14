@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const http = @import("../../http.zig");
+const http = @import("../../bun_dev_http_server.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
@@ -11,6 +11,7 @@ const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Bundler = bun.bundler;
 const options = @import("../../options.zig");
+const resolve_path = @import("../../resolver/resolve_path.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
@@ -22,10 +23,10 @@ const JSError = Base.JSError;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
-
+const String = bun.String;
 const FetchEvent = WebCore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
@@ -50,17 +51,19 @@ pub const JSBundler = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
-        define: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
+        define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
+        loaders: ?Api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
+        no_macros: bool = false,
 
         names: Names = .{},
-        label: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -73,8 +76,8 @@ pub const JSBundler = struct {
                 .external = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
-                .label = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
+                .rootdir = OwnedString.initEmpty(allocator),
                 .names = .{
                     .owned_entry_point = OwnedString.initEmpty(allocator),
                     .owned_chunk = OwnedString.initEmpty(allocator),
@@ -84,120 +87,7 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-            }
-
-            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
-            //     this.hot = hot;
-            // }
-
-            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
-                this.code_splitting = hot;
-            }
-
-            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.outdir.appendSliceExact(slice.slice()) catch unreachable;
-            }
-
-            if (config.getTruthy(globalThis, "minify")) |hot| {
-                if (hot.isBoolean()) {
-                    const value = hot.coerce(bool, globalThis);
-                    this.minify.whitespace = value;
-                    this.minify.syntax = value;
-                    this.minify.identifiers = value;
-                } else if (hot.isObject()) {
-                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
-                        this.minify.whitespace = whitespace;
-                    }
-                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
-                        this.minify.syntax = syntax;
-                    }
-                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
-                        this.minify.identifiers = syntax;
-                    }
-                } else {
-                    globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
-                    return error.JSException;
-                }
-            }
-
-            if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
-                var iter = entry_points.arrayIterator(globalThis);
-                while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                        return error.JSException;
-                    };
-                    defer slice.deinit();
-                    try this.entry_points.insert(slice.slice());
-                }
-            } else {
-                globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
-                return error.JSException;
-            }
-
-            if (try config.getArray(globalThis, "external")) |externals| {
-                var iter = externals.arrayIterator(globalThis);
-                while (iter.next()) |entry_point| {
-                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
-                        globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
-                        return error.JSException;
-                    };
-                    defer slice.deinit();
-                    try this.external.insert(slice.slice());
-                }
-            }
-
-            if (try config.getOptional(globalThis, "label", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.label.appendSliceExact(slice.slice()) catch unreachable;
-            }
-
-            if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.dir.appendSliceExact(slice.slice()) catch unreachable;
-            } else {
-                this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
-            }
-
-            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
-            }
-
-            if (config.getTruthy(globalThis, "naming")) |naming| {
-                if (naming.isString()) {
-                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
-                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
-                    }
-                } else if (naming.isObject()) {
-                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
-                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
-                    }
-
-                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
-                        this.names.chunk.data = this.names.owned_chunk.list.items;
-                    }
-
-                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
-                        this.names.asset.data = this.names.owned_asset.list.items;
-                    }
-                } else {
-                    globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
-                    return error.JSException;
-                }
-            }
-
+            // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);
                 while (iter.next()) |plugin| {
@@ -283,7 +173,7 @@ pub const JSBundler = struct {
                         break :brk plugins.*.?;
                     };
 
-                    var plugin_result = bun_plugins.addPlugin(function);
+                    var plugin_result = bun_plugins.addPlugin(function, config);
 
                     if (!plugin_result.isEmptyOrUndefinedOrNull()) {
                         if (plugin_result.asAnyPromise()) |promise| {
@@ -297,6 +187,245 @@ pub const JSBundler = struct {
                         return error.JSError;
                     }
                 }
+            }
+
+            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
+                if (!macros_flag.coerce(bool, globalThis)) {
+                    this.no_macros = true;
+                }
+            }
+
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                this.target = target;
+            }
+
+            if (try config.getOptionalEnum(globalThis, "sourcemap", options.SourceMapOption)) |source_map| {
+                this.source_map = source_map;
+            }
+
+            if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
+                switch (format) {
+                    .esm => {},
+                    else => {
+                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
+                        return error.JSException;
+                    },
+                }
+            }
+
+            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
+            //     this.hot = hot;
+            // }
+
+            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
+                this.code_splitting = hot;
+            }
+
+            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                this.outdir.appendSliceExact(slice.slice()) catch unreachable;
+            }
+
+            if (config.getTruthy(globalThis, "minify")) |hot| {
+                if (hot.isBoolean()) {
+                    const value = hot.coerce(bool, globalThis);
+                    this.minify.whitespace = value;
+                    this.minify.syntax = value;
+                    this.minify.identifiers = value;
+                } else if (hot.isObject()) {
+                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+                        this.minify.whitespace = whitespace;
+                    }
+                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+                        this.minify.syntax = syntax;
+                    }
+                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+                        this.minify.identifiers = syntax;
+                    }
+                } else {
+                    globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
+                    return error.JSException;
+                }
+            }
+
+            if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
+                var iter = entry_points.arrayIterator(globalThis);
+                while (iter.next()) |entry_point| {
+                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    try this.entry_points.insert(slice.slice());
+                }
+            } else {
+                globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
+                return error.JSException;
+            }
+
+            {
+                const path: ZigString.Slice = brk: {
+                    if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
+                        break :brk slice;
+                    }
+
+                    const entry_points = this.entry_points.keys();
+
+                    if (entry_points.len == 1) {
+                        break :brk ZigString.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
+                    }
+
+                    break :brk ZigString.Slice.fromUTF8NeverFree(resolve_path.getIfExistsLongestCommonPath(entry_points) orelse ".");
+                };
+
+                defer path.deinit();
+
+                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                    globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
+                    return error.JSException;
+                };
+                defer dir.close();
+
+                var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
+            }
+
+            if (try config.getArray(globalThis, "external")) |externals| {
+                var iter = externals.arrayIterator(globalThis);
+                while (iter.next()) |entry_point| {
+                    var slice = entry_point.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected external to be an array of strings", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    try this.external.insert(slice.slice());
+                }
+            }
+
+            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            //     defer slice.deinit();
+            //     this.dir.appendSliceExact(slice.slice()) catch unreachable;
+            // } else {
+            //     this.dir.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            // }
+
+            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                this.public_path.appendSliceExact(slice.slice()) catch unreachable;
+            }
+
+            if (config.getTruthy(globalThis, "naming")) |naming| {
+                if (naming.isString()) {
+                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                        }
+                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
+                    }
+                } else if (naming.isObject()) {
+                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_entry_point.appendSliceExact("./") catch unreachable;
+                        }
+                        this.names.owned_entry_point.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.entry_point.data = this.names.owned_entry_point.list.items;
+                    }
+
+                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_chunk.appendSliceExact("./") catch unreachable;
+                        }
+                        this.names.owned_chunk.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.chunk.data = this.names.owned_chunk.list.items;
+                    }
+
+                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        if (!strings.hasPrefixComptime(slice.slice(), "./")) {
+                            this.names.owned_asset.appendSliceExact("./") catch unreachable;
+                        }
+                        this.names.owned_asset.appendSliceExact(slice.slice()) catch unreachable;
+                        this.names.asset.data = this.names.owned_asset.list.items;
+                    }
+                } else {
+                    globalThis.throwInvalidArguments("Expected naming to be a string or an object", .{});
+                    return error.JSException;
+                }
+            }
+
+            if (try config.getObject(globalThis, "define")) |define| {
+                if (!define.isObject()) {
+                    globalThis.throwInvalidArguments("define must be an object", .{});
+                    return error.JSException;
+                }
+
+                var define_iter = JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, define.asObjectRef());
+                defer define_iter.deinit();
+
+                while (define_iter.next()) |prop| {
+                    const property_value = define_iter.value;
+                    const value_type = property_value.jsType();
+
+                    if (!value_type.isStringLike()) {
+                        globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return error.JSException;
+                    }
+
+                    var val = JSC.ZigString.init("");
+                    property_value.toZigString(&val, globalThis);
+                    if (val.len == 0) {
+                        val = JSC.ZigString.fromUTF8("\"\"");
+                    }
+
+                    const key = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+
+                    // value is always cloned
+                    const value = val.toSlice(bun.default_allocator);
+                    defer value.deinit();
+
+                    // .insert clones the value, but not the key
+                    try this.define.insert(key, value.slice());
+                }
+            }
+
+            if (try config.getObject(globalThis, "loader")) |loaders| {
+                var loader_iter = JSC.JSPropertyIterator(.{
+                    .skip_empty_name = true,
+                    .include_value = true,
+                }).init(globalThis, loaders.asObjectRef());
+                defer loader_iter.deinit();
+
+                var loader_names = try allocator.alloc(string, loader_iter.len);
+                errdefer allocator.free(loader_names);
+                var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
+                errdefer allocator.free(loader_values);
+
+                while (loader_iter.next()) |prop| {
+                    if (!prop.hasPrefixChar('.') or prop.len < 2) {
+                        globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
+                        return error.JSException;
+                    }
+
+                    loader_values[loader_iter.i] = try loader_iter.value.toEnumFromMap(
+                        globalThis,
+                        "loader",
+                        Api.Loader,
+                        options.Loader.api_names,
+                    );
+                    loader_names[loader_iter.i] = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+                }
+
+                this.loaders = Api.LoaderMap{
+                    .extensions = loader_names,
+                    .loaders = loader_values,
+                };
             }
 
             return this;
@@ -354,9 +483,16 @@ pub const JSBundler = struct {
             self.dir.deinit();
             self.serve.deinit(allocator);
             self.server_components.deinit(allocator);
+            if (self.loaders) |loaders| {
+                for (loaders.extensions) |ext| {
+                    bun.default_allocator.free(ext);
+                }
+                bun.default_allocator.free(loaders.loaders);
+                bun.default_allocator.free(loaders.extensions);
+            }
             self.names.deinit();
-            self.label.deinit();
             self.outdir.deinit();
+            self.rootdir.deinit();
             self.public_path.deinit();
         }
     };
@@ -365,6 +501,11 @@ pub const JSBundler = struct {
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) JSC.JSValue {
+        if (arguments.len == 0 or !arguments[0].isObject()) {
+            globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
+            return JSC.JSValue.jsUndefined();
+        }
+
         var plugins: ?*Plugin = null;
         const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
             return JSC.JSValue.jsUndefined();
@@ -382,17 +523,11 @@ pub const JSBundler = struct {
     }
 
     pub fn buildFn(
-        // this
-        _: void,
         globalThis: *JSC.JSGlobalObject,
-        // function
-        _: js.JSObjectRef,
-        // thisObject
-        _: js.JSObjectRef,
-        arguments_: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return build(globalThis, @ptrCast([]const JSC.JSValue, arguments_)).asObjectRef();
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1);
+        return build(globalThis, arguments.slice());
     }
 
     pub const Resolve = struct {
@@ -459,8 +594,8 @@ pub const JSBundler = struct {
                 external: bool = false,
 
                 pub fn deinit(this: *@This()) void {
-                    bun.default_allocator.destroy(this.path);
-                    bun.default_allocator.destroy(this.namespace);
+                    bun.default_allocator.free(this.path);
+                    bun.default_allocator.free(this.namespace);
                 }
             },
             no_match: void,
@@ -491,6 +626,7 @@ pub const JSBundler = struct {
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();
+            bun.default_allocator.destroy(this);
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
@@ -611,7 +747,7 @@ pub const JSBundler = struct {
             pub fn deinit(this: *Value) void {
                 switch (this.*) {
                     .success => |success| {
-                        bun.default_allocator.destroy(success.source_code);
+                        bun.default_allocator.free(success.source_code);
                     },
                     .err => |*err| {
                         err.deinit(bun.default_allocator);
@@ -677,6 +813,7 @@ pub const JSBundler = struct {
             source_code_value: JSValue,
             loader_as_int: JSValue,
         ) void {
+            JSC.markBinding(@src());
             var completion = this.completion orelse {
                 this.deinit();
                 return;
@@ -701,7 +838,7 @@ pub const JSBundler = struct {
 
                 this.value = .{
                     .success = .{
-                        .loader = @intToEnum(options.Loader, @intCast(u8, loader_as_int.to(i32))),
+                        .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
                         .source_code = source_code,
                     },
                 };
@@ -718,6 +855,7 @@ pub const JSBundler = struct {
     pub const Plugin = opaque {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+            JSC.markBinding(@src());
             var plugin = JSBundlerPlugin__create(globalObject, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
@@ -727,16 +865,16 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
             bool,
         ) bool;
 
         extern fn JSBundlerPlugin__matchOnLoad(
             *JSC.JSGlobalObject,
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
             context: *anyopaque,
             u8,
         ) void;
@@ -744,9 +882,9 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__matchOnResolve(
             *JSC.JSGlobalObject,
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
-            importer: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
+            importer: *const String,
             context: *anyopaque,
             u8,
         ) void;
@@ -756,11 +894,15 @@ pub const JSBundler = struct {
             path: *const Fs.Path,
             is_onLoad: bool,
         ) bool {
-            const namespace_string = if (strings.eqlComptime(path.namespace, "file"))
-                ZigString.Empty
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.hasAnyMatches");
+            defer tracer.end();
+
+            const namespace_string = if (path.isFile())
+                bun.String.empty
             else
-                ZigString.fromUTF8(path.namespace);
-            const path_string = ZigString.fromUTF8(path.text);
+                bun.String.create(path.namespace);
+            const path_string = bun.String.create(path.text);
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
@@ -772,12 +914,17 @@ pub const JSBundler = struct {
             context: *anyopaque,
             default_loader: options.Loader,
         ) void {
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
+            defer tracer.end();
             const namespace_string = if (namespace.len == 0)
-                ZigString.init("file")
+                bun.String.static("file")
             else
-                ZigString.fromUTF8(namespace);
-            const path_string = ZigString.fromUTF8(path);
-            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @enumToInt(default_loader));
+                bun.String.create(namespace);
+            const path_string = bun.String.create(path);
+            defer namespace_string.deref();
+            defer path_string.deref();
+            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
         }
 
         pub fn matchOnResolve(
@@ -789,28 +936,40 @@ pub const JSBundler = struct {
             context: *anyopaque,
             import_record_kind: bun.ImportKind,
         ) void {
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
+            defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
-                ZigString.Empty
+                bun.String.empty
             else
-                ZigString.fromUTF8(namespace);
-            const path_string = ZigString.fromUTF8(path);
-            const importer_string = ZigString.fromUTF8(importer);
-            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @enumToInt(import_record_kind));
+                bun.String.create(namespace);
+            const path_string = bun.String.create(path);
+            const importer_string = bun.String.create(importer);
+            defer namespace_string.deref();
+            defer path_string.deref();
+            defer importer_string.deref();
+            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @intFromEnum(import_record_kind));
         }
 
         pub fn addPlugin(
             this: *Plugin,
             object: JSC.JSValue,
+            config: JSC.JSValue,
         ) JSValue {
-            return JSBundlerPlugin__runSetupFunction(this, object);
+            JSC.markBinding(@src());
+            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
+            defer tracer.end();
+            return JSBundlerPlugin__runSetupFunction(this, object, config);
         }
 
         pub fn deinit(this: *Plugin) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__tombestone(this);
             JSC.JSValue.fromCell(this).unprotect();
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
+            JSC.markBinding(@src());
             JSBundlerPlugin__setConfig(this, config);
         }
 
@@ -818,6 +977,7 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__runSetupFunction(
             *Plugin,
+            JSC.JSValue,
             JSC.JSValue,
         ) JSValue;
 
@@ -849,3 +1009,234 @@ pub const JSBundler = struct {
         }
     };
 };
+
+const Blob = JSC.WebCore.Blob;
+pub const BuildArtifact = struct {
+    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+
+    blob: JSC.WebCore.Blob,
+    loader: options.Loader = .file,
+    path: []const u8 = "",
+    hash: u64 = std.math.maxInt(u64),
+    output_kind: OutputKind,
+    sourcemap: JSC.Strong = .{},
+
+    pub const OutputKind = enum {
+        chunk,
+        asset,
+        @"entry-point",
+        @"component-manifest",
+        @"use client",
+        @"use server",
+        sourcemap,
+    };
+
+    pub fn deinit(this: *BuildArtifact) void {
+        this.blob.deinit();
+        this.sourcemap.deinit();
+
+        bun.default_allocator.free(this.path);
+    }
+
+    pub fn getText(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
+    }
+
+    pub fn getJSON(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getArrayBuffer(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getSlice(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return @call(.always_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
+    }
+    pub fn getType(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getType, .{ &this.blob, globalThis });
+    }
+
+    pub fn getStream(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getStream, .{
+            &this.blob,
+            globalThis,
+            callframe,
+        });
+    }
+
+    pub fn getPath(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return ZigString.fromUTF8(this.path).toValueGC(globalThis);
+    }
+
+    pub fn getLoader(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return ZigString.fromUTF8(@tagName(this.loader)).toValueGC(globalThis);
+    }
+
+    pub fn getHash(
+        this: *BuildArtifact,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        var buf: [512]u8 = undefined;
+        const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
+        return ZigString.init(out).toValueGC(globalThis);
+    }
+
+    pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getSize, .{ &this.blob, globalObject });
+    }
+
+    pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return @call(.always_inline, Blob.getType, .{ &this.blob, globalObject });
+    }
+
+    pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return ZigString.init(@tagName(this.output_kind)).toValueGC(globalObject);
+    }
+
+    pub fn getSourceMap(this: *BuildArtifact, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        if (this.sourcemap.get()) |value| {
+            return value;
+        }
+
+        return JSC.JSValue.jsNull();
+    }
+
+    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+        this.deinit();
+
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn writeFormat(this: *BuildArtifact, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        const Writer = @TypeOf(writer);
+
+        try writer.writeAll(comptime Output.prettyFmt("<r>BuildArtifact ", enable_ansi_colors));
+
+        try writer.print(comptime Output.prettyFmt("(<blue>{s}<r>) {{\n", enable_ansi_colors), .{@tagName(this.output_kind)});
+
+        {
+            formatter.indent += 1;
+
+            defer formatter.indent -= 1;
+            try formatter.writeIndent(Writer, writer);
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>path<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{this.path},
+            );
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>loader<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{@tagName(this.loader)},
+            );
+
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "<r>kind<r>: <green>\"{s}\"<r>",
+                    enable_ansi_colors,
+                ),
+                .{@tagName(this.output_kind)},
+            );
+
+            if (this.hash != 0) {
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+
+                try formatter.writeIndent(Writer, writer);
+                try writer.print(
+                    comptime Output.prettyFmt(
+                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        enable_ansi_colors,
+                    ),
+                    .{options.PathTemplate.hashFormatter(this.hash)},
+                );
+            }
+
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            formatter.resetLine();
+            try this.blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+
+            if (this.output_kind != .sourcemap) {
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(
+                    comptime Output.prettyFmt(
+                        "<r>sourcemap<r>: ",
+                        enable_ansi_colors,
+                    ),
+                );
+
+                if (this.sourcemap.get()) |sourcemap_value| {
+                    if (sourcemap_value.as(BuildArtifact)) |sourcemap| {
+                        try sourcemap.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+                    } else {
+                        try writer.writeAll(
+                            comptime Output.prettyFmt(
+                                "<yellow>null<r>",
+                                enable_ansi_colors,
+                            ),
+                        );
+                    }
+                } else {
+                    try writer.writeAll(
+                        comptime Output.prettyFmt(
+                            "<yellow>null<r>",
+                            enable_ansi_colors,
+                        ),
+                    );
+                }
+            }
+        }
+        try writer.writeAll("\n");
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll("}");
+        formatter.resetLine();
+    }
+};
+
+const Output = bun.Output;

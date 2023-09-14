@@ -241,3 +241,22 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder]) {
     });
   });
 }
+
+it("invalid utf-8 input, pr #3562", () => {
+  const decoder = new RealStringDecoder("utf-8");
+  let output = "";
+  output += decoder.write(Buffer.from("B9", "hex"));
+  output += decoder.write(Buffer.from("A9", "hex"));
+  output += decoder.end();
+  expect(output).toStrictEqual("\uFFFD\uFFFD");
+});
+
+it("decoding latin1, issue #3738", () => {
+  const decoder = new RealStringDecoder("latin1");
+  let output = "";
+  output += decoder.write(Buffer.from("DD", "hex"));
+  output += decoder.write(Buffer.from("59", "hex"));
+  output += decoder.write(Buffer.from("DE", "hex"));
+  output += decoder.end();
+  expect(output).toStrictEqual("ÝYÞ");
+});

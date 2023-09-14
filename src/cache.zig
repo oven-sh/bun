@@ -54,6 +54,7 @@ pub const Set = struct {
         };
     }
 };
+const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
     const Entry = FsCacheEntry;
 
@@ -157,7 +158,7 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = __file } else undefined;
+        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = bun.fdcast(__file) } else undefined;
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd > 0) {
@@ -179,9 +180,12 @@ pub const Fs = struct {
             }
         }
 
+        debug("openat({d}, {s}) = {d}", .{ dirname_fd, path, file_handle.handle });
+
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (will_close) {
+                debug("close({d})", .{file_handle.handle});
                 file_handle.close();
             }
         }
@@ -290,6 +294,13 @@ pub const Json = struct {
         };
     }
     pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
+        // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
+        // They are JSON files with comments and trailing commas.
+        // Sometimes tooling expects this to work.
+        if (source.path.isJSONCFile()) {
+            return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
+        }
+
         return try parse(cache, log, source, allocator, json_parser.ParseJSON);
     }
 

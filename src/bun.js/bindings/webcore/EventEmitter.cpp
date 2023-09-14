@@ -35,6 +35,8 @@ bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&&
     }
 
     eventListenersDidChange();
+    if (this->onDidChangeListener)
+        this->onDidChangeListener(*this, eventType, true);
     return true;
 }
 
@@ -62,6 +64,9 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
 
     if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
         return true;
     }
     return false;
@@ -93,6 +98,8 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
 
     if (data->eventListenerMap.removeAll(eventType)) {
         eventListenersDidChange();
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
         return true;
     }
     return false;
@@ -171,7 +178,6 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
 
     auto* data = eventTargetData();
     if (!data)
@@ -228,7 +234,7 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        JSC::call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
+        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
         if (UNLIKELY(exception)) {

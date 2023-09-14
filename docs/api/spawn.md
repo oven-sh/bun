@@ -12,7 +12,7 @@ The second argument to `Bun.spawn` is a parameters object that can be used to co
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"], {
-  cwd: "./path/to/subdir", // specify a working direcory
+  cwd: "./path/to/subdir", // specify a working directory
   env: { ...process.env, FOO: "bar" }, // specify environment variables
   onExit(proc, exitCode, signalCode, error) {
     // exit handler
@@ -28,7 +28,9 @@ By default, the input stream of the subprocess is undefined; it can be configure
 
 ```ts
 const proc = Bun.spawn(["cat"], {
-  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
+  stdin: await fetch(
+    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
+  ),
 });
 
 const text = await new Response(proc.stdout).text();
@@ -209,7 +211,7 @@ Bun's `spawnSync` spawns processes 60% faster than the Node.js `child_process` m
 ```bash
 $ bun spawn.mjs
 cpu: Apple M1 Max
-runtime: bun 0.2.0 (arm64-darwin)
+runtime: bun 1.x (arm64-darwin)
 
 benchmark              time (avg)             (min … max)       p75       p99      p995
 --------------------------------------------------------- -----------------------------
@@ -230,10 +232,15 @@ A simple reference of the Spawn API and types are shown below. The real types ha
 ```ts
 interface Bun {
   spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;
-  spawnSync(command: string[], options?: SpawnOptions.OptionsObject): SyncSubprocess;
+  spawnSync(
+    command: string[],
+    options?: SpawnOptions.OptionsObject,
+  ): SyncSubprocess;
 
   spawn(options: { cmd: string[] } & SpawnOptions.OptionsObject): Subprocess;
-  spawnSync(options: { cmd: string[] } & SpawnOptions.OptionsObject): SyncSubprocess;
+  spawnSync(
+    options: { cmd: string[] } & SpawnOptions.OptionsObject,
+  ): SyncSubprocess;
 }
 
 namespace SpawnOptions {
@@ -243,7 +250,12 @@ namespace SpawnOptions {
     stdin?: SpawnOptions.Readable;
     stdout?: SpawnOptions.Writable;
     stderr?: SpawnOptions.Writable;
-    onExit?: (proc: Subprocess, exitCode: number | null, signalCode: string | null, error: Error | null) => void;
+    onExit?: (
+      proc: Subprocess,
+      exitCode: number | null,
+      signalCode: string | null,
+      error: Error | null,
+    ) => void;
   }
 
   type Readable =

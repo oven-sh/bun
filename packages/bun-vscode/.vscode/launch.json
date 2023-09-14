@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/example"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "Build"
+    },
+    {
+      "name": "Extension (web)",
+      "type": "extensionHost",
+      "debugWebWorkerHost": true,
+      "request": "launch",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--extensionDevelopmentKind=web",
+        "${workspaceFolder}/example"
+      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "Build"
+    }
+  ]
+}

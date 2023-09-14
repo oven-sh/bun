@@ -16,8 +16,8 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
-            this.len = @truncate(u32, slice_.len);
-            this.cap = @truncate(u32, slice_.len);
+            this.len = @as(u32, @truncate(slice_.len));
+            this.cap = @as(u32, @truncate(slice_.len));
         }
 
         pub fn available(this: *@This()) []Type {
@@ -30,7 +30,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn contains(this: @This(), item: []const Type) bool {
-            return this.len > 0 and @ptrToInt(item.ptr) >= @ptrToInt(this.ptr) and @ptrToInt(item.ptr) < @ptrToInt(this.ptr) + this.len;
+            return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }
 
         pub inline fn initConst(items: []const Type) ListType {
@@ -38,8 +38,8 @@ pub fn BabyList(comptime Type: type) type {
             return ListType{
                 // Remove the const qualifier from the items
                 .ptr = @constCast(items.ptr),
-                .len = @truncate(u32, items.len),
-                .cap = @truncate(u32, items.len),
+                .len = @as(u32, @truncate(items.len)),
+                .cap = @as(u32, @truncate(items.len)),
             };
         }
 
@@ -60,12 +60,12 @@ pub fn BabyList(comptime Type: type) type {
             var copy = try list_.clone();
             return ListType{
                 .ptr = copy.items.ptr,
-                .len = @truncate(u32, copy.items.len),
-                .cap = @truncate(u32, copy.capacity),
+                .len = @as(u32, @truncate(copy.items.len)),
+                .cap = @as(u32, @truncate(copy.capacity)),
             };
         }
 
-        pub inline fn appendAssumeCapacity(this: *@This(), value: Type) void {
+        pub fn appendAssumeCapacity(this: *@This(), value: Type) void {
             this.ptr[this.len] = value;
             this.len += 1;
             std.debug.assert(this.cap >= this.len);
@@ -74,39 +74,42 @@ pub fn BabyList(comptime Type: type) type {
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
-            var writable = list_.items.ptr[this.len .. this.len + @truncate(u32, cap)];
+            var writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
             list_.items.len += cap;
             this.update(list_);
             return writable;
         }
 
-        pub inline fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
+        pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
             var tail = this.ptr[this.len .. this.len + values.len];
-            std.debug.assert(this.cap >= this.len + @truncate(u32, values.len));
+            std.debug.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
             bun.copy(Type, tail, values);
-            this.len += @truncate(u32, values.len);
+            this.len += @as(u32, @truncate(values.len));
             std.debug.assert(this.cap >= this.len);
         }
 
-        pub inline fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
-            var items = try allocator.alloc(Type, len);
+        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
+            return initWithBuffer(try allocator.alloc(Type, len));
+        }
+
+        pub fn initWithBuffer(buffer: []Type) ListType {
             return ListType{
-                .ptr = @ptrCast([*]Type, items.ptr),
+                .ptr = buffer.ptr,
                 .len = 0,
-                .cap = @truncate(u32, len),
+                .cap = @as(u32, @truncate(buffer.len)),
             };
         }
 
-        pub inline fn init(items: []const Type) ListType {
+        pub fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{
                 .ptr = @constCast(items.ptr),
-                .len = @truncate(u32, items.len),
-                .cap = @truncate(u32, items.len),
+                .len = @as(u32, @truncate(items.len)),
+                .cap = @as(u32, @truncate(items.len)),
             };
         }
 
-        pub inline fn fromList(list_: anytype) ListType {
+        pub fn fromList(list_: anytype) ListType {
             if (comptime @TypeOf(list_) == ListType) {
                 return list_;
             }
@@ -121,27 +124,27 @@ pub fn BabyList(comptime Type: type) type {
 
             return ListType{
                 .ptr = list_.items.ptr,
-                .len = @truncate(u32, list_.items.len),
-                .cap = @truncate(u32, list_.capacity),
+                .len = @as(u32, @truncate(list_.items.len)),
+                .cap = @as(u32, @truncate(list_.capacity)),
             };
         }
 
-        pub inline fn fromSlice(allocator: std.mem.Allocator, items: []const Elem) !ListType {
+        pub fn fromSlice(allocator: std.mem.Allocator, items: []const Elem) !ListType {
             var allocated = try allocator.alloc(Elem, items.len);
             bun.copy(Elem, allocated, items);
 
             return ListType{
                 .ptr = allocated.ptr,
-                .len = @truncate(u32, allocated.len),
-                .cap = @truncate(u32, allocated.len),
+                .len = @as(u32, @truncate(allocated.len)),
+                .cap = @as(u32, @truncate(allocated.len)),
             };
         }
 
         pub fn update(this: *ListType, list_: anytype) void {
             this.* = .{
                 .ptr = list_.items.ptr,
-                .len = @truncate(u32, list_.items.len),
-                .cap = @truncate(u32, list_.capacity),
+                .len = @as(u32, @truncate(list_.items.len)),
+                .cap = @as(u32, @truncate(list_.capacity)),
             };
 
             if (comptime Environment.allow_assert) {
@@ -190,7 +193,7 @@ pub fn BabyList(comptime Type: type) type {
             var items = try allocator.alloc(Type, 1);
             items[0] = value;
             return ListType{
-                .ptr = @ptrCast([*]Type, items.ptr),
+                .ptr = @as([*]Type, @ptrCast(items.ptr)),
                 .len = 1,
                 .cap = 1,
             };

@@ -12,12 +12,72 @@ function generate(ssl) {
         fn: "getAuthorizationError",
         length: 0,
       },
+
+      getTLSFinishedMessage: {
+        fn: "getTLSFinishedMessage",
+        length: 0,
+      },
+      getTLSPeerFinishedMessage: {
+        fn: "getTLSPeerFinishedMessage",
+        length: 0,
+      },
+      getEphemeralKeyInfo: {
+        fn: "getEphemeralKeyInfo",
+        length: 0,
+      },
+      getCipher: {
+        fn: "getCipher",
+        length: 0,
+      },
+      getSession: {
+        fn: "getSession",
+        length: 0,
+      },
+      setSession: {
+        fn: "setSession",
+        length: 0,
+      },
+      getTLSTicket: {
+        fn: "getTLSTicket",
+        length: 0,
+      },
+      exportKeyingMaterial: {
+        fn: "exportKeyingMaterial",
+        length: 3,
+      },
+      setMaxSendFragment: {
+        fn: "setMaxSendFragment",
+        length: 1,
+      },
+      getSharedSigalgs: {
+        fn: "getSharedSigalgs",
+        length: 0,
+      },
+      getTLSVersion: {
+        fn: "getTLSVersion",
+        length: 0,
+      },
+      getPeerCertificate: {
+        fn: "getPeerCertificate",
+        length: 1,
+      },
+      getCertificate: {
+        fn: "getCertificate",
+        length: 0,
+      },
       authorized: {
         getter: "getAuthorized",
+      },
+      alpnProtocol: {
+        getter: "getALPNProtocol",
       },
       write: {
         fn: "write",
         length: 3,
+      },
+      upgradeTLS: {
+        fn: "upgradeTLS",
+        length: 1,
       },
       end: {
         fn: "end",
@@ -80,6 +140,11 @@ function generate(ssl) {
 
       reload: {
         fn: "reload",
+        length: 1,
+      },
+
+      setServername: {
+        fn: "setServername",
         length: 1,
       },
     },

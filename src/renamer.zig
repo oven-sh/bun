@@ -96,7 +96,7 @@ pub const SymbolSlot = struct {
 
         pub fn init(str: []const u8) InlineString {
             var this: InlineString = .{};
-            this.len = @intCast(u8, @min(str.len, 15));
+            this.len = @as(u8, @intCast(@min(str.len, 15)));
             for (this.bytes[0..this.len], str[0..this.len]) |*b, c| {
                 b.* = c;
             }
@@ -156,7 +156,7 @@ pub const MinifyRenamer = struct {
         for (first_top_level_slots.slots.values, 0..) |count, ns| {
             slots.values[ns] = try std.ArrayList(SymbolSlot).initCapacity(allocator, count);
             slots.values[ns].items.len = count;
-            std.mem.set(SymbolSlot, slots.values[ns].items[0..count], SymbolSlot{});
+            @memset(slots.values[ns].items[0..count], SymbolSlot{});
         }
 
         renamer.* = MinifyRenamer{
@@ -214,7 +214,6 @@ pub const MinifyRenamer = struct {
         symbol_uses: js_ast.Part.SymbolUseMap,
         stable_source_indices: []const u32,
     ) !void {
-        // NOTE: This function is run in parallel. Make sure to avoid data races.
         var iter = symbol_uses.iterator();
         while (iter.next()) |value| {
             try this.accumulateSymbolUseCount(top_level_symbols, value.key_ptr.*, value.value_ptr.*.count_estimate, stable_source_indices);
@@ -292,13 +291,13 @@ pub const MinifyRenamer = struct {
             try sorted.ensureUnusedCapacity(slots.items.len);
             sorted.items.len = slots.items.len;
 
-            for (sorted.items, 0..) |*slot, i| {
-                slot.* = SlotAndCount{
-                    .slot = @intCast(u32, i),
+            for (sorted.items, slots.items, 0..) |*elem, slot, i| {
+                elem.* = SlotAndCount{
+                    .slot = @as(u32, @intCast(i)),
                     .count = slot.count,
                 };
             }
-            std.sort.sort(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
+            std.sort.block(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 
             var next_name: isize = 0;
 
@@ -396,7 +395,7 @@ pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: 
             sorted_members_buf[i] = member.ref.innerIndex();
             i += 1;
         }
-        std.sort.sort(u32, sorted_members_buf, {}, std.sort.asc(u32));
+        std.sort.block(u32, sorted_members_buf, {}, std.sort.asc(u32));
 
         // Assign slots for this scope's symbols. Only do this if the slot is
         // not already assigned. Nested scopes have copies of symbols from parent
@@ -471,7 +470,7 @@ pub const NumberRenamer = struct {
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
-    arena: std.heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     root: NumberScope = .{},
     name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
     name_temp_allocator: std.mem.Allocator = undefined,
@@ -520,7 +519,7 @@ pub const NumberRenamer = struct {
             const prev_cap = inner.len;
             inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
             const to_write = inner.ptr[prev_cap..inner.cap];
-            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
+            @memset(std.mem.sliceAsBytes(to_write), 0);
         }
         inner.len = new_len;
         inner.mut(ref.innerIndex()).* = name;
@@ -539,7 +538,7 @@ pub const NumberRenamer = struct {
             .temp_allocator = temp_allocator,
             .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
-            .arena = std.heap.ArenaAllocator.init(temp_allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(temp_allocator),
         };
         renamer.name_stack_fallback = .{
             .buffer = undefined,
@@ -554,7 +553,7 @@ pub const NumberRenamer = struct {
                 symbols.dump();
         }
 
-        @memset(std.mem.sliceAsBytes(renamer.names).ptr, 0, std.mem.sliceAsBytes(renamer.names).len);
+        @memset(std.mem.sliceAsBytes(renamer.names), 0);
 
         return renamer;
     }
@@ -594,10 +593,10 @@ pub const NumberRenamer = struct {
                 remaining = remaining[1..];
             }
             std.debug.assert(remaining.len == 0);
-            std.sort.sort(u32, sorted.items, {}, std.sort.asc(u32));
+            std.sort.block(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
-                r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));
+                r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
             }
         }
 
@@ -876,6 +875,10 @@ pub const ExportRenamer = struct {
 pub fn computeInitialReservedNames(
     allocator: std.mem.Allocator,
 ) !bun.StringHashMapUnmanaged(u32) {
+    if (comptime bun.Environment.isWasm) {
+        unreachable;
+    }
+
     var names = bun.StringHashMapUnmanaged(u32){};
 
     const extras = .{
@@ -885,7 +888,7 @@ pub fn computeInitialReservedNames(
 
     try names.ensureTotalCapacityContext(
         allocator,
-        @truncate(u32, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len),
+        @as(u32, @truncate(JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len)),
         bun.StringHashMapContext{},
     );
 

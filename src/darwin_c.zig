@@ -67,11 +67,11 @@ pub const COPYFILE_SKIP = @as(c_int, 1);
 pub const COPYFILE_QUIT = @as(c_int, 2);
 
 // int clonefileat(int src_dirfd, const char * src, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn clonefileat(c_int, [*c]const u8, c_int, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn clonefileat(c_int, [*:0]const u8, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int fclonefileat(int srcfd, int dst_dirfd, const char * dst, int flags);
-pub extern "c" fn fclonefileat(c_int, c_int, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn fclonefileat(c_int, c_int, [*:0]const u8, uint32_t: c_int) c_int;
 // int clonefile(const char * src, const char * dst, int flags);
-pub extern "c" fn clonefile([*c]const u8, [*c]const u8, uint32_t: c_int) c_int;
+pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_int) c_int;
 
 // pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
 //     if (builtin.os.tag == .windows) {
@@ -294,7 +294,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @intToEnum(SystemErrno, code);
+        return @as(SystemErrno, @enumFromInt(code));
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -307,7 +307,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.E2BIG, "Argument list too long");
         map.put(.EACCES, "Permission denied");
         map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Can’t assign requested address");
+        map.put(.EADDRNOTAVAIL, "Can't assign requested address");
         map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
         map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
         map.put(.EALREADY, "Operation already in progress");
@@ -350,7 +350,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EMULTIHOP, "Reserved");
         map.put(.ENAMETOOLONG, "File name too long");
         map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software – operational errors Network is down");
+        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
         map.put(.ENETRESET, "Network dropped connection on reset");
         map.put(.ENETUNREACH, "Network is unreachable");
         map.put(.ENFILE, "Too many open files in system");
@@ -375,7 +375,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOTDIR, "Not a directory");
         map.put(.ENOTEMPTY, "Directory not empty");
         map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software – argument errors. Socket operation on non-socket");
+        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
         map.put(.ENOTSUP, "Operation not supported");
         map.put(.ENOTTY, "Inappropriate ioctl for device");
         map.put(.ENXIO, "Device not configured");
@@ -405,7 +405,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ESTALE, "Network File System. Stale NFS file handle");
         map.put(.ETIME, "STREAM ioctl timeout");
         map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can’t splice");
+        map.put(.ETOOMANYREFS, "Too many references: can't splice");
         map.put(.ETXTBSY, "Text file busy");
         map.put(.EUSERS, "Too many users");
         // map.put(.EWOULDBLOCK, "Operation would block");
@@ -460,9 +460,9 @@ pub const io_object_t = c_uint;
 pub const io_service_t = c_uint;
 pub const io_registry_entry_t = c_uint;
 pub const FSEventStreamCallback = ?*const fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
-pub const kCFStringEncodingUTF8: CFStringEncoding = @bitCast(CFStringEncoding, @as(c_int, 134217984));
+pub const kCFStringEncodingUTF8: CFStringEncoding = @as(CFStringEncoding, @bitCast(@as(c_int, 134217984)));
 pub const noErr: OSStatus = 0;
-pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @bitCast(FSEventStreamEventId, @as(c_longlong, -@as(c_int, 1)));
+pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @as(FSEventStreamEventId, @bitCast(@as(c_longlong, -@as(c_int, 1))));
 pub const kFSEventStreamCreateFlagNoDefer: c_int = 2;
 pub const kFSEventStreamCreateFlagFileEvents: c_int = 16;
 pub const kFSEventStreamEventFlagEventIdsWrapped: c_int = 8;
@@ -482,12 +482,12 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     // NOT IMPLEMENTED YET
     return 1024 * 1024;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
@@ -507,7 +507,7 @@ pub fn get_total_memory() u64 {
 pub const struct_BootTime = struct {
     sec: u32,
 };
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
@@ -521,14 +521,14 @@ pub fn get_system_uptime() u64 {
         else => return 0,
     };
 
-    return @bitCast(u64, std.time.timestamp() - uptime_[0].sec);
+    return @as(u64, @bitCast(std.time.timestamp() - uptime_[0].sec));
 }
 
 pub const struct_LoadAvg = struct {
     ldavg: [3]u32,
     fscale: c_long,
 };
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
@@ -543,11 +543,11 @@ pub fn get_system_loadavg() [3]f64 {
     };
 
     const loadavg = loadavg_[0];
-    const scale = @intToFloat(f64, loadavg.fscale);
+    const scale = @as(f64, @floatFromInt(loadavg.fscale));
     return [3]f64{
-        @intToFloat(f64, loadavg.ldavg[0]) / scale,
-        @intToFloat(f64, loadavg.ldavg[1]) / scale,
-        @intToFloat(f64, loadavg.ldavg[2]) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
     };
 }
 
@@ -573,7 +573,7 @@ pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    @memset(buf, 0);
 
     var size: usize = buf.len;
 
@@ -589,7 +589,7 @@ pub fn get_version(buf: []u8) []const u8 {
 }
 
 pub fn get_release(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    @memset(buf, 0);
 
     var size: usize = buf.len;
 
@@ -793,3 +793,10 @@ pub usingnamespace @cImport({
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
+
+pub const Mode = std.os.mode_t;
+
+pub const E = std.os.E;
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

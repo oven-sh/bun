@@ -251,8 +251,7 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => cookies.getAll("not-set-cookie")).toThrow(TypeError);
     });
-    const it1 = "getSetCookie" in cookies ? test : test.skip;
-    it1("can get header with set-cookie using getSetCookie()", () => {
+    test("can get header with set-cookie using getSetCookie()", () => {
       // @ts-expect-error
       expect(cookies.getSetCookie()).toEqual([
         "__Secure-ID=123; Secure; Domain=example.com",
@@ -412,8 +411,44 @@ describe("Headers", () => {
       ]);
     });
   });
-  describe("toJSON()", () => {
+  describe("Bun.inspect()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;
+    it("can convert to json when empty", () => {
+      const headers = new Headers();
+      expect(Bun.inspect(headers)).toStrictEqual(`Headers {}`);
+    });
+    it("can convert to json", () => {
+      const headers = new Headers({
+        "cache-control": "public, immutable",
+      });
+      expect(Bun.inspect(headers)).toStrictEqual(
+        "Headers {" + "\n  " + `"cache-control": "public, immutable"` + "\n" + "}",
+      );
+    });
+    it("can convert to json normalized", () => {
+      const headers = new Headers({
+        "user-agent": "bun",
+        "X-Custom-Header": "1",
+        "cache-control": "public, immutable",
+      });
+      expect(Bun.inspect(headers)).toStrictEqual(
+        "Headers " +
+          JSON.stringify(
+            {
+              "user-agent": "bun",
+              "cache-control": "public, immutable",
+              "x-custom-header": "1",
+            },
+            null,
+            2,
+          ),
+      );
+    });
+  });
+  describe("toJSON()", () => {
+    // @ts-ignore
+    const it = new Headers()?.toJSON ? test : test.skip;
+
     it("can convert to json when empty", () => {
       const headers = new Headers();
       expect(headers.toJSON()).toStrictEqual({});
@@ -440,7 +475,8 @@ describe("Headers", () => {
     });
   });
   describe("count", () => {
-    const it = "count" in new Headers() ? test : test.skip;
+    // @ts-ignore
+    const it = typeof new Headers()?.count !== "undefined" ? test : test.skip;
     it("can count headers when empty", () => {
       const headers = new Headers();
       expect(headers.count).toBe(0);

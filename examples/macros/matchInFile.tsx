@@ -1,12 +1,12 @@
 // macro code
-export function matchInFile(callExpression: BunAST.CallExpression) {
+export async function matchInFile(callExpression: BunAST.CallExpression) {
   const [filePathNode, matcherNode] = callExpression.arguments;
   let filePath: string;
   filePath = filePathNode.get();
 
   let matcher: RegExp;
   matcher = matcherNode.get();
-  const file: string = Bun.readFile(Bun.cwd + filePath);
+  const file: string = await Bun.file(Bun.cwd + filePath).text();
 
   return (
     <array>

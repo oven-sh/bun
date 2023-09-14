@@ -14,7 +14,7 @@ pub const MutableString = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(u8),
 
-    pub fn init2048(allocator: std.mem.Allocator) !MutableString {
+    pub fn init2048(allocator: std.mem.Allocator) std.mem.Allocator.Error!MutableString {
         return MutableString.init(allocator, 2048);
     }
 
@@ -53,7 +53,7 @@ pub const MutableString = struct {
         return BufferedWriter{ .context = self };
     }
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) !MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) std.mem.Allocator.Error!MutableString {
         return MutableString{ .allocator = allocator, .list = if (capacity > 0)
             try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
         else
@@ -109,7 +109,12 @@ pub const MutableString = struct {
         }
 
         if (needs_gap) {
-            var mutable = try MutableString.initCopy(allocator, str[0..start_i]);
+            var mutable = try MutableString.initCopy(allocator, if (start_i == 0)
+                // the first letter can be a non-identifier start
+                // https://github.com/oven-sh/bun/issues/2946
+                "_"
+            else
+                str[0..start_i]);
             needs_gap = false;
 
             var slice = str[start_i..];
@@ -135,6 +140,10 @@ pub const MutableString = struct {
                 try mutable.appendChar('_');
                 needs_gap = false;
                 has_needed_gap = true;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                std.debug.assert(js_lexer.isIdentifier(mutable.list.items));
             }
 
             return try mutable.list.toOwnedSlice(allocator);
@@ -171,7 +180,7 @@ pub const MutableString = struct {
         try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
         var end = self.list.items.ptr + self.list.items.len;
         self.list.items.len += slice.len;
-        @memcpy(end, slice.ptr, slice.len);
+        @memcpy(end[0..slice.len], slice);
     }
 
     pub inline fn reset(
@@ -215,15 +224,22 @@ pub const MutableString = struct {
         );
     }
     pub inline fn lenI(self: *MutableString) i32 {
-        return @intCast(i32, self.list.items.len);
+        return @as(i32, @intCast(self.list.items.len));
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
         return self.list.items;
+    }
+
+    /// Clear the existing value without freeing the memory or shrinking the capacity.
+    pub fn move(self: *MutableString) []u8 {
+        const out = self.list.items;
+        self.list = .{};
+        return out;
     }
 
     pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
@@ -239,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -250,7 +266,7 @@ pub const MutableString = struct {
         return self.indexOfChar(char) != null;
     }
 
-    pub fn indexOfChar(self: *const MutableString, char: u8) ?usize {
+    pub fn indexOfChar(self: *const MutableString, char: u8) ?u32 {
         return strings.indexOfChar(self.list.items, char);
     }
 
@@ -313,7 +329,7 @@ pub const MutableString = struct {
                 if (pending.len + this.pos > max) {
                     try this.flush();
                 }
-                @memcpy(this.remain().ptr, pending.ptr, pending.len);
+                @memcpy(this.remain()[0..pending.len], pending);
                 this.pos += pending.len;
             }
 

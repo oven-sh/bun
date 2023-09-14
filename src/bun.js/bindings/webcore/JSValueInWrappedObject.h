@@ -61,6 +61,7 @@ private:
     JSC::Weak<JSC::JSCell> m_cell {};
 };
 
+JSC::JSValue cachedPropertyValue(JSC::ThrowScope&, JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue(JSC::ThrowScope&)>&);
 JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue()>&);
 
 inline JSValueInWrappedObject::JSValueInWrappedObject(JSC::JSValue value)
@@ -127,6 +128,19 @@ inline JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject& lexicalGlobalObject
     if (cachedValue && isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()))
         return cachedValue.getValue();
     auto value = function();
+    cachedValue.set(lexicalGlobalObject.vm(), &owner, cloneAcrossWorlds(lexicalGlobalObject, owner, value));
+    ASSERT(isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()));
+    return cachedValue.getValue();
+}
+
+inline JSC::JSValue cachedPropertyValue(JSC::ThrowScope& throwScope, JSC::JSGlobalObject& lexicalGlobalObject, const JSDOMObject& owner, JSValueInWrappedObject& cachedValue, const Function<JSC::JSValue(JSC::ThrowScope&)>& function)
+{
+    if (cachedValue && isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()))
+        return cachedValue.getValue();
+
+    auto value = function(throwScope);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     cachedValue.set(lexicalGlobalObject.vm(), &owner, cloneAcrossWorlds(lexicalGlobalObject, owner, value));
     ASSERT(isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()));
     return cachedValue.getValue();

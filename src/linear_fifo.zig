@@ -100,7 +100,7 @@ pub fn LinearFifo(
                 var tmp: [mem.page_size / 2 / @sizeOf(T)]T = undefined;
 
                 while (self.head != 0) {
-                    const n = math.min(self.head, tmp.len);
+                    const n = @min(self.head, tmp.len);
                     const m = self.buf.len - n;
                     bun.copy(T, tmp[0..n], self.buf[0..n]);
                     // this middle copy overlaps; the others here don't
@@ -111,7 +111,7 @@ pub fn LinearFifo(
             }
             { // set unused area to undefined
                 const unused = mem.sliceAsBytes(self.buf[self.count..]);
-                @memset(unused.ptr, undefined, unused.len);
+                @memset(unused, undefined);
             }
         }
 
@@ -137,7 +137,7 @@ pub fn LinearFifo(
                 if (self.count > 0) {
                     var new_bytes = std.mem.sliceAsBytes(buf);
                     var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
-                    @memcpy(new_bytes.ptr, old_bytes.ptr, old_bytes.len);
+                    @memcpy(new_bytes[0..old_bytes.len], old_bytes);
                     self.allocator.free(self.buf);
                 }
                 self.head = 0;
@@ -168,7 +168,7 @@ pub fn LinearFifo(
                 start -= self.buf.len;
                 return self.buf[start .. start + (self.count - offset)];
             } else {
-                const end = math.min(self.head + self.count, self.buf.len);
+                const end = @min(self.head + self.count, self.buf.len);
                 return self.buf[start..end];
             }
         }
@@ -187,12 +187,12 @@ pub fn LinearFifo(
                 const slice = self.readableSliceMut(0);
                 if (slice.len >= count) {
                     const unused = mem.sliceAsBytes(slice[0..count]);
-                    @memset(unused.ptr, undefined, unused.len);
+                    @memset(unused, undefined);
                 } else {
                     const unused = mem.sliceAsBytes(slice[0..]);
-                    @memset(unused.ptr, undefined, unused.len);
+                    @memset(unused, undefined);
                     const unused2 = mem.sliceAsBytes(self.readableSliceMut(slice.len)[0 .. count - slice.len]);
-                    @memset(unused2.ptr, undefined, unused2.len);
+                    @memset(unused2, undefined);
                 }
             }
 
@@ -224,7 +224,7 @@ pub fn LinearFifo(
             while (dst_left.len > 0) {
                 const slice = self.readableSlice(0);
                 if (slice.len == 0) break;
-                const n = math.min(slice.len, dst_left.len);
+                const n = @min(slice.len, dst_left.len);
                 bun.copy(T, dst_left, slice[0..n]);
                 self.discard(n);
                 dst_left = dst_left[n..];
@@ -293,7 +293,7 @@ pub fn LinearFifo(
             while (src_left.len > 0) {
                 const writable_slice = self.writableSlice(0);
                 assert(writable_slice.len != 0);
-                const n = math.min(writable_slice.len, src_left.len);
+                const n = @min(writable_slice.len, src_left.len);
                 bun.copy(T, writable_slice, src_left[0..n]);
                 self.update(n);
                 src_left = src_left[n..];

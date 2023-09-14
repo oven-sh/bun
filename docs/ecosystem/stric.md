@@ -1,20 +1,20 @@
 [Stric](https://github.com/bunsvr) is a minimalist, fast web framework for Bun.
 
 ```ts#index.ts
-import { App } from "@stricjs/core";
+import { Router } from '@stricjs/router';
 
 // Export the fetch handler and serve with Bun
-export default new App()
-  // Return "Hi!" on every request
-  .use(() => new Response("Hi!"));
+export default new Router()
+  // Return 'Hi' on every request
+  .get('/', () => new Response('Hi'));
 ```
 
-Stric provides support for [ArrowJS](https://www.arrow-js.com), a library for building reactive interfaces in **native** JavaScript. 
+Stric provides support for [ArrowJS](https://www.arrow-js.com), a library for building reactive interfaces. 
 
 {% codetabs %}
 
 ```ts#src/App.ts
-import { html } from "@stricjs/arrow/utils";
+import { html } from '@stricjs/arrow/utils';
 
 // Code inside this function can use web APIs
 export function render() {
@@ -23,10 +23,10 @@ export function render() {
 };
 
 // Set the path to handle
-export const path = "/";
+export const path = '/';
 ```
 ```ts#index.ts
-import { PageRouter } from "@stricjs/arrow";
+import { PageRouter } from '@stricjs/arrow';
 
 // Create a page router, build and serve directly
 new PageRouter().serve();

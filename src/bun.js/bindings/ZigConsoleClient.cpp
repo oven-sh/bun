@@ -8,6 +8,12 @@
 #include "ZigConsoleClient.h"
 #include "wtf/text/WTFString.h"
 
+#undef ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS
+
+#include "JavaScriptCore/JSGlobalObjectInspectorController.h"
+#include "JavaScriptCore/JSGlobalObjectDebuggable.h"
+#include "JavaScriptCore/ConsoleClient.h"
+
 #include "GCDefferalContext.h"
 
 using ScriptArguments = Inspector::ScriptArguments;
@@ -24,6 +30,11 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
     JSC::JSGlobalObject* globalObject,
     Ref<ScriptArguments>&& arguments)
 {
+    if (globalObject->inspectable()) {
+        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+            client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
+        }
+    }
     JSC::VM& vm = globalObject->vm();
     auto args = arguments.ptr();
     JSC__JSValue jsArgs[255];

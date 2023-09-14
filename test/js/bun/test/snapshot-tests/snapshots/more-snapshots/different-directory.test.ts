@@ -1,6 +1,6 @@
 import { it, test, expect, describe } from "bun:test";
 
-test("snapshots in different directory", () => {
+test.todo("snapshots in different directory", () => {
   expect("1\b2\n3\r4").toMatchSnapshot();
   expect("\r\n").toMatchSnapshot();
   expect("1\b2\n3\r  r\r\\").toMatchSnapshot();

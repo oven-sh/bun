@@ -36,6 +36,9 @@ pub const ImportKind = enum(u8) {
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
+        // If these are changed, make sure to update
+        // - src/js/builtins/codegen/replacements.ts
+        // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
         labels.set(ImportKind.entry_point, "entry-point");
         labels.set(ImportKind.stmt, "import-statement");
@@ -59,8 +62,8 @@ pub const ImportKind = enum(u8) {
         };
     }
 
-    pub fn jsonStringify(self: @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(@tagName(self), options, writer);
+    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+        return try writer.write(@tagName(self));
     }
 
     pub fn isFromCSS(k: ImportKind) bool {
@@ -107,10 +110,6 @@ pub const ImportRecord = struct {
     is_internal: bool = false,
 
     calls_runtime_require: bool = false,
-
-    /// This tells the printer that we should print as export var $moduleID = ...
-    /// Instead of using the path.
-    is_legacy_bundled: bool = false,
 
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
@@ -204,7 +203,7 @@ pub const ImportRecord = struct {
         }
 
         pub inline fn isInternal(this: Tag) bool {
-            return @enumToInt(this) >= @enumToInt(Tag.runtime);
+            return @intFromEnum(this) >= @intFromEnum(Tag.runtime);
         }
 
         pub fn useDirective(this: Tag) bun.JSAst.UseDirective {

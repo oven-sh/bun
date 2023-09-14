@@ -584,7 +584,7 @@ pub const Subprocess = struct {
         fn closeFDIfOpen(this: *BufferedInput) void {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
-                poll.deinit();
+                poll.deinit(false);
             }
 
             if (this.fd != bun.invalid_fd) {
@@ -1743,7 +1743,7 @@ pub const Subprocess = struct {
             // prevent duplicate notifications
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
-                poll.deinitWithVM(vm);
+                poll.deinitWithVM(vm, false);
             }
 
             this.onExit(this.globalThis, this_jsvalue);

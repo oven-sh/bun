@@ -897,7 +897,7 @@ pub const GetAddrInfoRequest = struct {
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
-            if (this.backend.libinfo.file_poll) |poll| poll.deinit();
+            if (this.backend.libinfo.file_poll) |poll| poll.deinit(false);
         }
 
         if (this.resolver_for_caching) |resolver| {
@@ -1617,7 +1617,7 @@ pub const DNSResolver = struct {
 
         var channel = this.channel orelse {
             _ = this.polls.orderedRemove(@as(i32, @intCast(poll.fd)));
-            poll.deinit();
+            poll.deinit(false);
             return;
         };
 
@@ -1642,7 +1642,7 @@ pub const DNSResolver = struct {
             // socket.
             if (this.polls.fetchOrderedRemove(fd)) |entry| {
                 if (entry.value) |val| {
-                    val.deinitWithVM(vm);
+                    val.deinitWithVM(vm, false);
                 }
             }
 

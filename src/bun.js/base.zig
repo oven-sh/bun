@@ -1785,14 +1785,14 @@ pub const FilePoll = struct {
         return readable;
     }
 
-    pub fn deinit(this: *FilePoll) void {
+    pub fn deinit(this: *FilePoll, force_unregister: bool) void {
         var vm = JSC.VirtualMachine.get();
-        this.deinitWithVM(vm);
+        this.deinitWithVM(vm, force_unregister);
     }
 
-    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *uws.Loop, polls: *JSC.FilePoll.Store) void {
+    fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *uws.Loop, polls: *JSC.FilePoll.Store, force_unregister: bool) void {
         if (this.isRegistered()) {
-            _ = this.unregister(loop);
+            _ = this.unregister(loop, force_unregister);
         }
 
         this.owner = Deactivated.owner;
@@ -1802,9 +1802,9 @@ pub const FilePoll = struct {
         polls.put(this, vm, was_ever_registered);
     }
 
-    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine, force_unregister: bool) void {
         var loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), force_unregister);
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
@@ -2287,11 +2287,11 @@ pub const FilePoll = struct {
 
     const invalid_fd = bun.invalid_fd;
 
-    pub fn unregister(this: *FilePoll, loop: *uws.Loop) JSC.Maybe(void) {
-        return this.unregisterWithFd(loop, this.fd);
+    pub fn unregister(this: *FilePoll, loop: *uws.Loop, force_unregister: bool) JSC.Maybe(void) {
+        return this.unregisterWithFd(loop, this.fd, force_unregister);
     }
 
-    pub fn unregisterWithFd(this: *FilePoll, loop: *uws.Loop, fd: bun.UFileDescriptor) JSC.Maybe(void) {
+    pub fn unregisterWithFd(this: *FilePoll, loop: *uws.Loop, fd: bun.UFileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
             // no-op
             return JSC.Maybe(void).success;
@@ -2312,7 +2312,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
-        if (this.flags.contains(.needs_rearm)) {
+        if (this.flags.contains(.needs_rearm) and !force_unregister) {
             log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);

@@ -212,9 +212,7 @@ $ bun --hot server.ts
 To stream a file, return a `Response` object with a `BunFile` object as the body.
 
 ```ts
-import { serve, file } from "bun";
-
-serve({
+Bun.serve({
   fetch(req) {
     return new Response(Bun.file("./hello.txt"));
   },

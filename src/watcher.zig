@@ -373,6 +373,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         close_descriptors: bool = false,
 
         pub const HashType = u32;
+        pub const WatchListArray = Watchlist;
 
         var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 

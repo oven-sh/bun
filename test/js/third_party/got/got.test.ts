@@ -5,6 +5,7 @@ import { Readable } from "stream";
 describe("got", () => {
   test("should work", async () => {
     const server = Bun.serve({
+      port: 0,
       fetch(request, server) {
         return new Response("Hello World!");
       },
@@ -21,12 +22,13 @@ describe("got", () => {
 
   test("json response", async () => {
     const server = Bun.serve({
+      port: 0,
       async fetch(request, server) {
         expect(request.method).toBe("POST");
         const data = await request.json();
         expect(data).toEqual({ hello: "world" });
 
-        return new Response("Hello world");
+        return new Response("Hello World!");
       },
     });
 

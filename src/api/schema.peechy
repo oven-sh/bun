@@ -588,6 +588,7 @@ message BunInstall {
   string global_bin_dir = 18;
   bool frozen_lockfile = 19;
   bool exact = 20;
+  string backend = 21;
 }
 
 struct ClientServerModule {

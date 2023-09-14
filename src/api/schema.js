@@ -3038,6 +3038,10 @@ function decodeBunInstall(bb) {
         result["exact"] = !!bb.readByte();
         break;
 
+      case 21:
+        result["backend"] = bb.readString();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3169,6 +3173,12 @@ function encodeBunInstall(message, bb) {
   if (value != null) {
     bb.writeByte(20);
     bb.writeByte(value);
+  }
+
+  var value = message["backend"];
+  if (value != null) {
+    bb.writeByte(21);
+    bb.writeString(value);
   }
   bb.writeByte(0);
 }

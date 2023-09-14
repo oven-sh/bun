@@ -40,7 +40,7 @@ Since Bun uses hardlinks to "copy" a module into a project's `node_modules` dire
 This benefit does not extend to macOS, which uses `clonefile` for performance reasons.
 
 {% details summary="Installation strategies" %}
-This behavior is configurable with the `--backend` flag, which is respected by all of Bun's package management commands.
+This behavior is configurable with the `--backend` flag or in [`bunfig.toml`](/docs/runtime/configuration) file, which is respected by all of Bun's package management commands.
 
 - **`hardlink`**: Default on Linux.
 - **`clonefile`** Default on macOS.

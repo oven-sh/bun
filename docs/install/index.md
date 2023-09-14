@@ -83,6 +83,9 @@ dev = true
 # whether to install peerDependencies
 peer = false
 
+# equivalent to `--backend` flag
+backend = ""
+
 # equivalent to `--production` flag
 production = false
 

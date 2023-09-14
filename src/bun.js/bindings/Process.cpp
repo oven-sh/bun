@@ -1137,17 +1137,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
 inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
 {
     auto& builtinNames = WebCore::builtinNames(vm);
-    auto fn = globalObject->getDirect(builtinNames.requireNativeModulePrivateName());
-    auto callData = JSC::getCallData(vm, fn);
+    auto fn = globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName());
+    auto callData = JSC::getCallData(fn);
     JSC::MarkedArgumentBuffer args;
-    args.append(jsString(vm, "util/types"));
+    args.append(jsString(vm, String("util/types"_s)));
     return JSC::call(globalObject, fn, callData, globalObject, args);
 }
 
 inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)
 {
     auto config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
+#ifdef BUN_DEBUG
+    config->putDirect(vm, Identifier::fromString(vm, "isDebugBuild"_s), jsBoolean(true), 0);
+#else
     config->putDirect(vm, Identifier::fromString(vm, "isDebugBuild"_s), jsBoolean(false), 0);
+#endif
     config->putDirect(vm, Identifier::fromString(vm, "hasOpenSSL"_s), jsBoolean(true), 0);
     config->putDirect(vm, Identifier::fromString(vm, "fipsMode"_s), jsBoolean(true), 0);
     config->putDirect(vm, Identifier::fromString(vm, "hasIntl"_s), jsBoolean(true), 0);
@@ -1171,7 +1175,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "async_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("async_wrap");
     if (moduleName == "buffer"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("buffer", "2020");
     if (moduleName == "cares_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("cares_wrap");
-    if (moduleName == "config"_s) return JSValue::encode(processBindingConfig());
+    if (moduleName == "config"_s) return JSValue::encode(processBindingConfig(globalObject, vm));
     if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
     if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
     if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
@@ -1181,7 +1185,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");
     if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
-    if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED("natives");
     if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("natives", "2254");
     if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
     if (moduleName == "pipe_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("pipe_wrap");

@@ -662,7 +662,7 @@ class IncomingMessage extends Readable {
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        this.destroy();
+        process.nextTick(destroyBodyStreamNT, this);
         break;
       }
       for (var v of value) {

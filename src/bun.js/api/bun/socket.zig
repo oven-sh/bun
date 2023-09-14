@@ -997,9 +997,9 @@ pub const Listener = struct {
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tls);
                 const err = JSC.SystemError{
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                     .message = bun.String.static("Failed to connect"),
                     .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 };
                 exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
@@ -1028,9 +1028,9 @@ pub const Listener = struct {
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tcp);
                 const err = JSC.SystemError{
-                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                     .message = bun.String.static("Failed to connect"),
                     .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 };
                 exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
@@ -1215,6 +1215,12 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
+
+                // For some reason errno is 0 which causes this to be success.
+                // Unix socket case wont hit this callback because it instantly errors.
+                .code = bun.String.static("ECONNREFUSED"),
+                // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
+                // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
 
             if (callback == .zero) {

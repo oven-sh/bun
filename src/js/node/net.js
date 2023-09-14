@@ -526,7 +526,7 @@ const Socket = (function (InternalSocket) {
           });
         }
       } catch (error) {
-        process.nextTick(emitErrorNextTick, this, error);
+        process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
       return this;
     }
@@ -871,6 +871,11 @@ class Server extends EventEmitter {
 
 function emitErrorNextTick(self, error) {
   self.emit("error", error);
+}
+
+function emitErrorAndCloseNextTick(self, error) {
+  self.emit("error", error);
+  self.emit("close");
 }
 
 function emitListeningNextTick(self, onListen) {

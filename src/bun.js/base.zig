@@ -1785,9 +1785,16 @@ pub const FilePoll = struct {
         return readable;
     }
 
-    pub fn deinit(this: *FilePoll, force_unregister: bool) void {
+    pub fn deinit(this: *FilePoll) void {
         var vm = JSC.VirtualMachine.get();
-        this.deinitWithVM(vm, force_unregister);
+        var loop = vm.event_loop_handle.?;
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), false);
+    }
+
+    pub fn deinitForceUnregister(this: *FilePoll) void {
+        var vm = JSC.VirtualMachine.get();
+        var loop = vm.event_loop_handle.?;
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), true);
     }
 
     fn deinitPossiblyDefer(this: *FilePoll, vm: *JSC.VirtualMachine, loop: *uws.Loop, polls: *JSC.FilePoll.Store, force_unregister: bool) void {
@@ -1802,9 +1809,9 @@ pub const FilePoll = struct {
         polls.put(this, vm, was_ever_registered);
     }
 
-    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine, force_unregister: bool) void {
+    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         var loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), force_unregister);
+        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm), false);
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {

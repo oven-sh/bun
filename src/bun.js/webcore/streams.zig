@@ -1565,7 +1565,7 @@ pub const FileSink = struct {
 
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
-            poll.deinit(false);
+            poll.deinit();
         }
 
         if (this.auto_close) {
@@ -1736,7 +1736,7 @@ pub const FileSink = struct {
         if (signal_close) {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
-                poll.deinit(false);
+                poll.deinit();
             }
 
             this.fd = bun.invalid_fd;
@@ -3808,9 +3808,9 @@ pub const FIFO = struct {
             this.poll_ref = null;
             if (comptime Environment.isLinux) {
                 // force target fd to be removed from epoll
-                poll.deinit(true);
+                poll.deinitForceUnregister();
             } else {
-                poll.deinit(false);
+                poll.deinit();
             }
         }
 

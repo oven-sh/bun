@@ -21,6 +21,7 @@
 #include <sys/ioctl.h>
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
+#include "ProcessBindingNatives.h"
 
 #pragma mark - Node.js Process
 
@@ -1185,7 +1186,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");
     if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
-    if (moduleName == "natives"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("natives", "2254");
+    if (moduleName == "natives"_s) return JSValue::encode(process->bindingNatives());
     if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
     if (moduleName == "pipe_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("pipe_wrap");
     if (moduleName == "process_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("process_wrap");
@@ -1937,6 +1938,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     m_bindingUV.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingUV::create(init.vm, init.owner->globalObject()));
+    });
+    m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
+        init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

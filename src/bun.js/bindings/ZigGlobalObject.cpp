@@ -3731,7 +3731,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), 0),
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        // GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));

@@ -5,9 +5,10 @@ import path from "../node/path";
 
 const STATIC_HASH_TABLES = [
   //
+  "src/bun.js/bindings/BunObject.cpp",
   "src/bun.js/bindings/Process.cpp",
   "src/bun.js/bindings/ProcessBindingConstants.cpp",
-  "src/bun.js/bindings/BunObject.cpp",
+  "src/bun.js/bindings/ProcessBindingNatives.cpp",
 ];
 
 console.time("Creating static hash tables...");

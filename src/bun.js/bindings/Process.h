@@ -5,7 +5,6 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
-#include "ProcessBindingConstants.h"
 
 namespace Bun {
 
@@ -20,6 +19,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_cpuUsageStructure;
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
+    LazyProperty<Process, JSObject> m_bindingNatives;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -75,6 +75,7 @@ public:
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
+    inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
 } // namespace Bun

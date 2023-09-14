@@ -22,7 +22,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 describe("v8 date parser", () => {
-  test("test/mjsunit/regress/regress-4640.js", () => {
+  test("test/webkit/date-parse-comments-test.js", () => {
     var timeZoneOffset = Date.parse(" Dec 25 1995 1:30 ") - Date.parse(" Dec 25 1995 1:30 GMT ");
     function testDateParse(date, numericResult) {
       if (numericResult === "NaN") {
@@ -431,6 +431,21 @@ describe("v8 date parser", () => {
     testCasesNegative.forEach(function (s) {
       expect(new Date(s).getMilliseconds()).toBeNaN();
     });
+  });
+
+  test("test/intl/regress-1451943.js", () => {
+    let beforeOct1582GregorianTransition = new Date("1582-01-01T00:00Z");
+    let afterOct1582GregorianTransition = new Date("1583-01-01T00:00Z");
+
+    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "gregory" })).toBe(
+      "1/1/1582",
+    );
+    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
+      "1/1/1582",
+    );
+    expect(afterOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
+      "1/1/1583",
+    );
   });
 
   test("random invalid dates in JSC", () => {

@@ -4201,7 +4201,12 @@ pub const File = struct {
         var auto_close = file.pathlike == .path;
 
         var fd = if (!auto_close)
-            file.pathlike.fd
+            switch (bun.sys.dup(@intCast(file.pathlike.fd))) {
+                .result => |_fd| _fd,
+                .err => |err| {
+                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                },
+            }
         else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
             .result => |_fd| _fd,
             .err => |err| {

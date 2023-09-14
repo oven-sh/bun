@@ -36,7 +36,7 @@ Template a new Bun project with `bun create`. This is a flexible command that ca
 $ bun create <template> [<destination>]
 ```
 
-Assuming you don't have a [local template](#local-templates) with the same name, this command will download and execute the `create-<template>` package from npm. The following two commands will behave identically:
+Assuming you don't have a [local template](#from-a-local-template) with the same name, this command will download and execute the `create-<template>` package from npm. The following two commands will behave identically:
 
 ```sh
 $ bun create remix

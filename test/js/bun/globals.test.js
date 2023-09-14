@@ -1,4 +1,6 @@
 import { expect, it, describe } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import path from "path";
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
@@ -124,21 +126,15 @@ describe("File", () => {
   });
 });
 
-it("deletable", () => {
-  const globals = ["Blob", "fetch", "Headers", "Request", "Response", "setTimeout", "clearTimeout", "setInterval"];
-  for (let name of globals) {
-    it(name, () => {
-      const prev = globalThis[name];
-      try {
-        expect(delete globalThis[name]).toBe(true);
-        expect(globalThis[name]).toBe(undefined);
-        globalThis[name] = 123;
-        expect(globalThis[name]).toBe(123);
-      } finally {
-        globalThis[name] = prev;
-      }
-    });
-  }
+it("globals are deletable", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "deletable-globals-fixture.js")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 it("self is a getter", () => {

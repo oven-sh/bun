@@ -184,16 +184,36 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
 
 Whichever one of these conditions occurs _first_ in the `package.json` is used to determine the package's entrypoint.
 
-Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-exports) and [`"imports"`](https://nodejs.org/api/packages.html#imports). Specifying any subpath in the `"exports"` map will prevent other subpaths from being importable.
+Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-exports) and [`"imports"`](https://nodejs.org/api/packages.html#imports).
 
 ```jsonc#package.json
 {
   "name": "foo",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json" // subpath
+    ".": "./index.js"
   }
 }
+```
+
+Subpath imports and conditional imports work in conjunction with each other.
+
+```
+{
+  "name": "foo",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.js"
+    }
+  }
+}
+```
+
+As in Node.js, Specifying any subpath in the `"exports"` map will prevent other subpaths from being importable; you can only import files that are explicitly exported. Given the `package.json` above:
+
+```ts
+import stuff from "foo"; // this works
+import stuff from "foo/index.mjs"; // this doesn't
 ```
 
 {% callout %}

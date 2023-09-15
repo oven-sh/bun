@@ -74,7 +74,7 @@ Then run it with `bun run start`.
 ```bash
 $ bun run start
   $ bun run index.ts
-  Listening on http://localhost:4000...
+  Listening on http://localhost:3000...
 ```
 
 {% callout %}

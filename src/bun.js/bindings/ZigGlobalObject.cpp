@@ -3679,7 +3679,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
 {
     auto& vm = globalObject->vm();
     auto console = JSValue::decode(thisValue).getObject();
-    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
+    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, consoleObjectCreateConsoleConstructorCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);

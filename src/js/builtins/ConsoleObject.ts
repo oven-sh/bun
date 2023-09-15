@@ -125,6 +125,9 @@ export function write(this: Console, input) {
 
 // This is the `console.Console` constructor. It is mostly copied from Node.
 // https://github.com/nodejs/node/blob/d2c7c367741bdcb6f7f77f55ce95a745f0b29fef/lib/internal/console/constructor.js
+// Some parts are copied from imported files and inlined here. Not too much of a performance issue
+// to do extra work at startup, since most people do not need `console.Console`.
+// TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
@@ -138,6 +141,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypePadStart = String.prototype.padStart;
   const StringPrototypeSplit = String.prototype.split;
   const NumberPrototypeToFixed = Number.prototype.toFixed;
+  const StringPrototypeNormalize = String.prototype.normalize;
+  const StringPrototypeCodePointAt = String.prototype.codePointAt;
+  const ArrayPrototypeMap = Array.prototype.map;
+  const ArrayPrototypeJoin = Array.prototype.join;
+  const ArrayPrototypePush = Array.prototype.push;
 
   const kCounts = Symbol("counts");
 
@@ -145,15 +153,169 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kMinute = 60 * kSecond;
   const kHour = 60 * kMinute;
 
-  // Lazy loaded for startup performance.
-  let cliTable;
+  // Regex used for ansi escape code splitting
+  // Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
+  // License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
+  // Matches all ansi escape code sequences in a string
+  var ansiPattern =
+    "[\\u001B\\u009B][[\\]()#;?]*" +
+    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
+    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
+    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
+  var ansi = new RegExp(ansiPattern, "g");
 
-  let utilColors;
-  function lazyUtilColors() {
-    // utilColors ??= require("internal/util/colors");
-    throw new Error("TODO: copy paste internal/util/colors");
-    return utilColors;
+  /**
+   * Returns true if the character represented by a given
+   * Unicode code point is full-width. Otherwise returns false.
+   */
+  var isFullWidthCodePoint = code => {
+    // Code points are partially derived from:
+    // https://www.unicode.org/Public/UNIDATA/EastAsianWidth.txt
+    return (
+      code >= 0x1100 &&
+      (code <= 0x115f || // Hangul Jamo
+        code === 0x2329 || // LEFT-POINTING ANGLE BRACKET
+        code === 0x232a || // RIGHT-POINTING ANGLE BRACKET
+        // CJK Radicals Supplement .. Enclosed CJK Letters and Months
+        (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
+        // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
+        (code >= 0x3250 && code <= 0x4dbf) ||
+        // CJK Unified Ideographs .. Yi Radicals
+        (code >= 0x4e00 && code <= 0xa4c6) ||
+        // Hangul Jamo Extended-A
+        (code >= 0xa960 && code <= 0xa97c) ||
+        // Hangul Syllables
+        (code >= 0xac00 && code <= 0xd7a3) ||
+        // CJK Compatibility Ideographs
+        (code >= 0xf900 && code <= 0xfaff) ||
+        // Vertical Forms
+        (code >= 0xfe10 && code <= 0xfe19) ||
+        // CJK Compatibility Forms .. Small Form Variants
+        (code >= 0xfe30 && code <= 0xfe6b) ||
+        // Halfwidth and Fullwidth Forms
+        (code >= 0xff01 && code <= 0xff60) ||
+        (code >= 0xffe0 && code <= 0xffe6) ||
+        // Kana Supplement
+        (code >= 0x1b000 && code <= 0x1b001) ||
+        // Enclosed Ideographic Supplement
+        (code >= 0x1f200 && code <= 0x1f251) ||
+        // Miscellaneous Symbols and Pictographs 0x1f300 - 0x1f5ff
+        // Emoticons 0x1f600 - 0x1f64f
+        (code >= 0x1f300 && code <= 0x1f64f) ||
+        // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
+        (code >= 0x20000 && code <= 0x3fffd))
+    );
+  };
+
+  var isZeroWidthCodePoint = code => {
+    return (
+      code <= 0x1f || // C0 control codes
+      (code >= 0x7f && code <= 0x9f) || // C1 control codes
+      (code >= 0x300 && code <= 0x36f) || // Combining Diacritical Marks
+      (code >= 0x200b && code <= 0x200f) || // Modifying Invisible Characters
+      // Combining Diacritical Marks for Symbols
+      (code >= 0x20d0 && code <= 0x20ff) ||
+      (code >= 0xfe00 && code <= 0xfe0f) || // Variation Selectors
+      (code >= 0xfe20 && code <= 0xfe2f) || // Combining Half Marks
+      (code >= 0xe0100 && code <= 0xe01ef)
+    ); // Variation Selectors
+  };
+
+  function stripVTControlCharacters(str) {
+    return (RegExpPrototypeSymbolReplace as any).$call(ansi, str, "");
   }
+
+  /**
+   * Returns the number of columns required to display the given string.
+   */
+  var getStringWidth = function getStringWidth(str, removeControlChars = true) {
+    var width = 0;
+
+    if (removeControlChars) str = stripVTControlCharacters(str);
+    str = StringPrototypeNormalize.$call(str, "NFC");
+    for (var char of str) {
+      var code = StringPrototypeCodePointAt.$call(char, 0);
+      if (isFullWidthCodePoint(code)) {
+        width += 2;
+      } else if (!isZeroWidthCodePoint(code)) {
+        width++;
+      }
+    }
+
+    return width;
+  };
+
+  const tableChars = {
+    middleMiddle: "─",
+    rowMiddle: "┼",
+    topRight: "┐",
+    topLeft: "┌",
+    leftMiddle: "├",
+    topMiddle: "┬",
+    bottomRight: "┘",
+    bottomLeft: "└",
+    bottomMiddle: "┴",
+    rightMiddle: "┤",
+    left: "│ ",
+    right: " │",
+    middle: " │ ",
+  };
+
+  const renderRow = (row, columnWidths) => {
+    let out = tableChars.left;
+    for (let i = 0; i < row.length; i++) {
+      const cell = row[i];
+      const len = getStringWidth(cell);
+      const needed = (columnWidths[i] - len) / 2;
+      // round(needed) + ceil(needed) will always add up to the amount
+      // of spaces we need while also left justifying the output.
+      out +=
+        (StringPrototypeRepeat as any).$call(" ", needed) + cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
+      if (i !== row.length - 1) out += tableChars.middle;
+    }
+    out += tableChars.right;
+    return out;
+  };
+
+  const table = (head, columns) => {
+    const columnWidths = ArrayPrototypeMap.call(head, h => getStringWidth(h)) as number[];
+    const longestColumn = Math.max(...(ArrayPrototypeMap as any).$call(columns, a => a.length));
+    const rows: any = $newArrayWithSize(longestColumn);
+
+    for (let i = 0; i < head.length; i++) {
+      const column = columns[i];
+      for (let j = 0; j < longestColumn; j++) {
+        if (rows[j] === undefined) rows[j] = [];
+        const value = (rows[j][i] = ObjectPrototypeHasOwnProperty.$call(column, j) ? column[j] : "");
+        const width = columnWidths[i] || 0;
+        const counted = getStringWidth(value);
+        columnWidths[i] = Math.max(width, counted);
+      }
+    }
+
+    const divider = ArrayPrototypeMap.$call(columnWidths, i =>
+      StringPrototypeRepeat.$call(tableChars.middleMiddle, i + 2),
+    );
+
+    let result =
+      tableChars.topLeft +
+      ArrayPrototypeJoin.$call(divider, tableChars.topMiddle) +
+      tableChars.topRight +
+      "\n" +
+      renderRow(head, columnWidths) +
+      "\n" +
+      tableChars.leftMiddle +
+      ArrayPrototypeJoin.$call(divider, tableChars.rowMiddle) +
+      tableChars.rightMiddle +
+      "\n";
+
+    for (const row of rows) result += `${renderRow(row, columnWidths)}\n`;
+
+    result +=
+      tableChars.bottomLeft + ArrayPrototypeJoin.$call(divider, tableChars.bottomMiddle) + tableChars.bottomRight;
+
+    return result;
+  };
 
   // Track amount of indentation required via `console.group()`.
   const kGroupIndent = Symbol("kGroupIndent");
@@ -254,7 +416,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kColorInspectOptions = { colors: true };
   const kNoColorInspectOptions = {};
 
-  Object.defineProperties(Console.prototype, {
+  Object.defineProperties((Console.prototype = {}), {
     [kBindStreamsEager]: {
       ...consolePropAttributes,
       // Eager version for the Console constructor
@@ -380,7 +542,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       value: function (stream) {
         let color = this[kColorMode];
         if (color === "auto") {
-          color = lazyUtilColors().shouldColorize(stream);
+          if (process.env.FORCE_COLOR !== undefined) {
+            color = Bun.enableANSIColors;
+          } else {
+            color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
+          }
         }
 
         const options = optionsMap.get(this);
@@ -549,15 +715,15 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     // https://console.spec.whatwg.org/#table
     table(tabularData, properties) {
-      // if (properties !== undefined) validateArray(properties, "properties");
+      if (properties !== undefined) {
+        // validateArray(properties, "properties");
+      }
 
       if (tabularData === null || typeof tabularData !== "object") return this.log(tabularData);
-      throw new Error("TODO: copy paste internal/cli_table");
-      // cliTable ??= require("internal/cli_table");
-      const final = (k, v) => this.log(cliTable(k, v));
+      const final = (k, v) => this.log(table(k, v));
 
       const _inspect = v => {
-        const depth = v !== null && typeof v === "object" && !isArray(v) && ObjectKeys(v).length > 2 ? -1 : 0;
+        const depth = v !== null && typeof v === "object" && !isArray(v) && Object.keys(v).length > 2 ? -1 : 0;
         const opt = {
           depth,
           maxArrayLength: 3,
@@ -566,18 +732,18 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         };
         return inspect(v, opt);
       };
-      const getIndexArray = length => ArrayFrom({ length }, (_, i) => _inspect(i));
+      const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
-      const mapIter = isMapIterator(tabularData);
+      const mapIter = $isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
-      if (mapIter) {
-        const res = previewEntries(tabularData, true);
-        tabularData = res[0];
-        isKeyValue = res[1];
-      }
+      // if (mapIter) {
+      //   const res = previewEntries(tabularData, true);
+      //   tabularData = res[0];
+      //   isKeyValue = res[1];
+      // }
 
-      if (isKeyValue || isMap(tabularData)) {
+      if (isKeyValue || $isMap(tabularData)) {
         const keys = [];
         const values = [];
         let length = 0;
@@ -598,13 +764,13 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       }
 
       const setIter = $isSetIterator(tabularData);
-      if (setIter) tabularData = previewEntries(tabularData);
+      // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {
         const values = [];
         let length = 0;
-        for (const v of tabularData) {
+        for (const v of tabularData as Set<any>) {
           ArrayPrototypePush.$call(values, _inspect(v));
           length++;
         }
@@ -613,7 +779,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
       const map = { __proto__: null };
       let hasPrimitives = false;
-      const valuesKeyArray = [];
+      const valuesKeyArray: any = [];
       const indexKeyArray = Object.keys(tabularData);
 
       for (; i < indexKeyArray.length; i++) {
@@ -626,7 +792,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           const keys = properties || Object.keys(item);
           for (const key of keys) {
             map[key] ??= [];
-            if ((primitive && properties) || !ObjectPrototypeHasOwnProperty(item, key)) map[key][i] = "";
+            if ((primitive && properties) || !ObjectPrototypeHasOwnProperty.$call(item, key)) map[key][i] = "";
             else map[key][i] = _inspect(item[key]);
           }
         }
@@ -638,8 +804,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         ArrayPrototypePush.$call(keys, valuesKey);
         ArrayPrototypePush.$call(values, valuesKeyArray);
       }
-      ArrayPrototypeUnshift(keys, indexKey);
-      ArrayPrototypeUnshift(values, indexKeyArray);
+      ArrayPrototypeUnshift.$call(keys, indexKey);
+      ArrayPrototypeUnshift.$call(values, indexKeyArray);
 
       return final(keys, values);
     },

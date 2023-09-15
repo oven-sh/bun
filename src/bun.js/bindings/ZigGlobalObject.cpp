@@ -3674,18 +3674,23 @@ JSC_DEFINE_CUSTOM_GETTER(
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
-JSValue getConsoleConstructor(VM& vm, JSObject* console)
+// JSValue getConsoleConstructor(VM& vm, JSObject* console)
+JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
     JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(vm, createConsoleConstructor, callData, console, args, returnedException);
+    auto result = JSC::call(globalObject, createConsoleConstructor, callData, console, args, returnedException);
     if (returnedException) {
-        throwException(vm, nullptr, returnedException.get());
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, returnedException.get());
     }
-    return result;
+    console->putDirect(vm, property, result, 0);
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,

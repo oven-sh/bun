@@ -60,15 +60,11 @@ $ bun index.js
 
 To run a file in watch mode, use the `--watch` flag.
 
-> `--watch` won't work if you place it anywhere in the command other than directly after 'bun'.
+> **Notice:** `--watch` won't work if you place it anywhere in the command other than directly after 'bun'.
 
 ```bash
-$ bun --watch run index.tsx // ✅  will watch for changes
+$ bun --watch run index.tsx
 ```
-
-```bash
-$ bun run index.tsx --watch // ❌ will not watch for changes
-``````
 
 ### `--smol`
 

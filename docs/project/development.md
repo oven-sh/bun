@@ -292,7 +292,7 @@ ZLS is the language server for Zig. The latest binary that the extension auto-up
 ```bash
 $ git clone https://github.com/zigtools/zls
 $ cd zls
-$ git checkout f91ff831f4959efcb7e648dba4f0132c296d26c0
+$ git checkout 0.11.0
 $ zig build
 ```
 

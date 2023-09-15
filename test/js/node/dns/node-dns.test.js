@@ -327,4 +327,44 @@ describe("test invalid arguments", () => {
       }
     });
   });
+
+  it("dns.lookupService", async () => {
+    const t = () => {
+      dns.lookupService("google.com", 443, (err, hostname, service) => {});
+    };
+    expect(t).toThrow("Expected address to be a invalid address for 'lookupService'.");
+  });
+});
+
+describe("dns.lookupService", () => {
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("lookupService(%s, %d)", (address, port, expected, done) => {
+    dns.lookupService(address, port, (err, hostname, service) => {
+      try {
+        expect(err).toBeNull();
+        expect(hostname).toStrictEqual(expected[0]);
+        expect(service).toStrictEqual(expected[1]);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("promises.lookupService(%s, %d)", async (address, port, expected) => {
+    const [hostname, service] = await dns.promises.lookupService(address, port);
+    expect(hostname).toStrictEqual(expected[0]);
+    expect(service).toStrictEqual(expected[1]);
+  });
 });

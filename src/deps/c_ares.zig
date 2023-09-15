@@ -284,6 +284,54 @@ pub const struct_hostent = extern struct {
         ares_free_hostent(this);
     }
 };
+
+pub const struct_nameinfo = extern struct {
+    node: [*c]u8,
+    service: [*c]u8,
+
+    pub fn toJSReponse(this: *struct_nameinfo, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, 2); // [node, service]
+
+        if (this.node != null) {
+            const node_len = bun.len(this.node);
+            const node_slice = this.node[0..node_len];
+            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toValueGC(globalThis));
+        } else {
+            array.putIndex(globalThis, 0, JSC.JSValue.jsUndefined());
+        }
+
+        if (this.service != null) {
+            const service_len = bun.len(this.service);
+            const service_slice = this.service[0..service_len];
+            array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toValueGC(globalThis));
+        } else {
+            array.putIndex(globalThis, 1, JSC.JSValue.jsUndefined());
+        }
+
+        return array;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, node: ?struct_nameinfo) void;
+    }
+
+    pub fn CallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_nameinfo_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, .{ node, service });
+            }
+        }.handle;
+    }
+};
+
 pub const struct_timeval = opaque {};
 pub const struct_Channeldata = opaque {};
 pub const AddrInfo_cname = extern struct {
@@ -570,6 +618,18 @@ pub const Channel = opaque {
             }
         }
         struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);
+    }
+
+    // https://c-ares.org/ares_getnameinfo.html
+    pub fn getNameInfo(this: *Channel, addr: std.net.Address, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
+        return ares_getnameinfo(
+            this,
+            &addr.any,
+            addr.getOsSockLen(),
+            ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE | ARES_NI_TCP | ARES_NI_UDP,
+            struct_nameinfo.CallbackWrapper(Type, callback),
+            ctx,
+        );
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {

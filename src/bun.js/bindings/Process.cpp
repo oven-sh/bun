@@ -228,7 +228,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -1247,6 +1247,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
+    thisObject->m_bindingUV.visit(visitor);
+    thisObject->m_bindingNatives.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);

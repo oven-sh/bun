@@ -2,7 +2,11 @@
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { resolve } from "path";
-
+import { isIPv6 } from "net";
+import type { Server, TCPSocketListener } from "bun";
+function getServerUrl(server: Server | TCPSocketListener) {
+  return isIPv6(server.hostname) ? `http://[${server.hostname}]:${server.port}` : `http://${server.hostname}:${server.port}`;
+}
 declare global {
   var failingObject: any;
   var objectModuleResult: any;
@@ -397,7 +401,7 @@ describe("errors", () => {
         return new Response(result);
       },
     });
-    const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
+    const { default: text } = await import(`${getServerUrl(server)}/hey.txt`);
     expect(text).toBe(result);
   });
 });

@@ -1,8 +1,13 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import type { Server, Subprocess, WebSocketHandler } from "bun";
+import type { Server, Subprocess, WebSocketHandler, TCPSocketListener } from "bun";
 import { serve, spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { isIP } from "node:net";
+import { isIPv6 } from "net";
+function getServerUrl(server: Server | TCPSocketListener) {
+  return isIPv6(server.hostname) ? `ws://[${server.hostname}]:${server.port}` : `ws://${server.hostname}:${server.port}`;
+}
+
 const strings = [
   {
     label: "string (ascii)",
@@ -588,7 +593,7 @@ function test(
 }
 
 async function connect(server: Server): Promise<void> {
-  const url = new URL(`ws://${server.hostname}:${server.port}/`);
+  const url = new URL(getServerUrl(server));
   const { pathname } = new URL("./websocket-client-echo.mjs", import.meta.url);
   // @ts-ignore
   const client = spawn({

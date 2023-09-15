@@ -2,7 +2,11 @@ import { expect, test, describe } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-
+import { isIPv6 } from "net";
+import type { Server, TCPSocketListener } from "bun";
+function getServerUrl(server: Server | TCPSocketListener) {
+  return isIPv6(server.hostname) ? `http://[${server.hostname}]:${server.port}` : `http://${server.hostname}:${server.port}`;
+}
 test("uploads roundtrip", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();
@@ -19,7 +23,7 @@ test("uploads roundtrip", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(getServerUrl(server), {
     body,
     method: "POST",
   });
@@ -51,7 +55,7 @@ test("formData uploads roundtrip, with a call to .body", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(getServerUrl(server), {
     body,
     method: "POST",
   });
@@ -91,7 +95,7 @@ test("req.formData throws error when stream is in use", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(getServerUrl(server), {
     body,
     method: "POST",
   });
@@ -117,7 +121,7 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(getServerUrl(server), {
     body,
     method: "POST",
   });
@@ -148,7 +152,7 @@ test("uploads roundtrip with sendfile()", async () => {
     },
   });
 
-  const resp = await fetch("http://" + server.hostname + ":" + server.port, {
+  const resp = await fetch(getServerUrl(server), {
     body: Bun.file(path),
     method: "PUT",
   });

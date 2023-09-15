@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
-
+import { isIPv6 } from "net";
+import type { Server, TCPSocketListener } from "bun";
+function getServerUrl(server: Server | TCPSocketListener) {
+  return isIPv6(server.hostname) ? `http://[${server.hostname}]:${server.port}` : `http://${server.hostname}:${server.port}`;
+}
 describe("Server", () => {
   test("normlizes incoming request URLs", async () => {
     const server = Bun.serve({
@@ -153,8 +157,7 @@ describe("Server", () => {
       },
       port: 0,
     });
-
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
+    const response = await fetch(getServerUrl(server));
     expect(await response.text()).toBe("Hello");
     server.stop(true);
   });
@@ -206,7 +209,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(getServerUrl(server), { signal: abortController.signal });
       } catch {}
       expect(signalOnServer).toBe(true);
       server.stop(true);
@@ -229,7 +232,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(getServerUrl(server), { signal: abortController.signal });
       } catch {}
       expect(signalOnServer).toBe(false);
       server.stop(true);
@@ -274,7 +277,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(getServerUrl(server), { signal: abortController.signal });
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
@@ -289,7 +292,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = getServerUrl(server);
       const response = await server.fetch(url);
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
@@ -306,7 +309,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = getServerUrl(server);
       const response = await server.fetch(new Request(url));
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
@@ -352,7 +355,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(getServerUrl(server), { signal: abortController.signal });
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);

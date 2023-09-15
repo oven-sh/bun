@@ -24,15 +24,13 @@ ARG BUN_BASE_VERSION=1.0
 
 FROM bitnami/minideb:bullseye as bun-base
 
-RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
-
-RUN wget https://apt.llvm.org/llvm.sh && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 16
-
-RUN install_packages \
+RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2 &&  \
+    echo "deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" > /etc/apt/sources.list.d/llvm.list && \
+    echo "deb-src http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-16 main" >> /etc/apt/sources.list.d/llvm.list && \
+    wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    install_packages \
     cmake \
-    curl \
     file \
     git \
     gnupg \
@@ -47,15 +45,11 @@ RUN install_packages \
     ruby \
     unzip \
     xz-utils \
-    bash tar gzip ccache
+    bash tar gzip ccache nodejs && \
+    npm install -g esbuild
 
 ENV CXX=clang++-16
 ENV CC=clang-16
-
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
-    install_packages nodejs && \
-    npm install -g esbuild
-
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE

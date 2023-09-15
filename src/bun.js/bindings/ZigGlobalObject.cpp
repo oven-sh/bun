@@ -715,9 +715,6 @@ namespace Zig {
 
 using namespace WebCore;
 
-const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
-    CREATE_METHOD_TABLE(GlobalObject) };
-
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
@@ -3687,6 +3684,19 @@ extern "C" EncodedJSValue WebCore__alert(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue WebCore__prompt(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" EncodedJSValue WebCore__confirm(JSC::JSGlobalObject*, JSC::CallFrame*);
 
+JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
+{
+    return static_cast<Zig::GlobalObject*>(globalObject)->performanceObject();
+}
+
+JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
+{
+    return static_cast<Zig::GlobalObject*>(globalObject)->globalThis();
+}
+
+// This is like `putDirectBuiltinFunction` but for the global static list.
+#define globalBuiltinFunction(vm, globalObject, identifier, function, attributes) JSC::JSGlobalObject::GlobalPropertyInfo(identifier, JSFunction::create(vm, function, globalObject), attributes)
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -3696,12 +3706,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Private/Static Properties -----
 
-    JSValue bunObject = Bun::createBunObject(this);
     auto $lazy = JSC::JSFunction::create(vm, this, 0, "$lazy"_s, functionLazyLoad, ImplementationVisibility::Public);
 
     GlobalPropertyInfo staticGlobals[] = {
-        GlobalPropertyInfo { builtinNames.BunPublicName(), bunObject, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 },
-
         GlobalPropertyInfo { builtinNames.startDirectStreamPrivateName(),
             JSC::JSFunction::create(vm, this, 1,
                 String(), functionStartDirectStream, ImplementationVisibility::Public),
@@ -3794,101 +3801,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
         0);
 
-    putDirect(vm, JSC::Identifier::fromString(vm, "global"_s), this->globalThis(), JSC::PropertyAttribute::DontEnum | 0);
-
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "fetch"_s),
-        JSC::JSFunction::create(vm, this, 2, "fetch"_s, Bun__fetch, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "queueMicrotask"_s),
-        JSC::JSFunction::create(vm, this, 2, "queueMicrotask"_s, functionQueueMicrotask, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "setImmediate"_s),
-        JSC::JSFunction::create(vm, this, 1, "setImmediate"_s, functionSetImmediate, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "clearImmediate"_s),
-        JSC::JSFunction::create(vm, this, 1, "clearImmediate"_s, functionClearTimeout, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "structuredClone"_s),
-        JSC::JSFunction::create(vm, this, 2, "structuredClone"_s, functionStructuredClone, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "setTimeout"_s),
-        JSC::JSFunction::create(vm, this, 1, "setTimeout"_s, functionSetTimeout, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "clearTimeout"_s),
-        JSC::JSFunction::create(vm, this, 1, "clearTimeout"_s, functionClearTimeout, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "setInterval"_s),
-        JSC::JSFunction::create(vm, this, 1, "setInterval"_s, functionSetInterval, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "clearInterval"_s),
-        JSC::JSFunction::create(vm, this, 1, "clearInterval"_s, functionClearInterval, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "atob"_s),
-        JSC::JSFunction::create(vm, this, 1, "atob"_s, functionATOB, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "btoa"_s),
-        JSC::JSFunction::create(vm, this, 1, "btoa"_s, functionBTOA, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "reportError"_s),
-        JSC::JSFunction::create(vm, this, 1, "reportError"_s, functionReportError, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "postMessage"_s),
-        JSC::JSFunction::create(vm, this, 1, "postMessage"_s, jsFunctionPostMessage, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "alert"_s),
-        JSC::JSFunction::create(vm, this, 1, "alert"_s, WebCore__alert, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "confirm"_s),
-        JSC::JSFunction::create(vm, this, 1,
-            "confirm"_s, WebCore__confirm, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-
-    putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "prompt"_s),
-        JSC::JSFunction::create(vm, this, 1,
-            "prompt"_s, WebCore__prompt, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | 0);
-
     // This is not meant to be used publicly, but it has to be a public symbol or else commonjs modules will not load
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "$_BunCommonJSModule_$"_s), JSC::CustomGetterSetter::create(vm, BunCommonJSModule_getter, nullptr),
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
-
-    putDirect(vm, JSC::Identifier::fromString(vm, "performance"_s), this->performanceObject(), 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr), 0);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "navigator"_s), JSC::CustomGetterSetter::create(vm, functionLazyNavigatorGetter, nullptr), 0);
@@ -3947,30 +3865,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("URLSearchParams"_s, JSURLSearchParams);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Worker"_s, JSWorker);
-
-    putDirectNativeFunction(vm, this,
-        Identifier::fromString(vm, "addEventListener"_s),
-        2,
-        jsFunctionAddEventListener,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | 0);
-
-    putDirectNativeFunction(vm, this,
-        Identifier::fromString(vm, "dispatchEvent"_s),
-        1,
-        jsFunctionDispatchEvent,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | 0);
-
-    putDirectNativeFunction(vm, this,
-        Identifier::fromString(vm, "removeEventListener"_s),
-        2,
-        jsFunctionRemoveEventListener,
-        ImplementationVisibility::Public,
-        NoIntrinsic,
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | 0);
 
     // ----- Extensions to Built-in objects -----
 
@@ -4487,5 +4381,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*h
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
+
+#include "ZigGlobalObject.lut.h"
+
+const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,
+    CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig

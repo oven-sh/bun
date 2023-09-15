@@ -6,6 +6,7 @@ import path from "../node/path";
 const STATIC_HASH_TABLES = [
   //
   "src/bun.js/bindings/BunObject.cpp",
+  "src/bun.js/bindings/ZigGlobalObject.lut.txt",
   "src/bun.js/bindings/Process.cpp",
   "src/bun.js/bindings/ProcessBindingConstants.cpp",
   "src/bun.js/bindings/ProcessBindingNatives.cpp",
@@ -33,7 +34,8 @@ await Promise.all(
     str = str.replaceAll(`namespace JSC {`, "");
     str = str.replaceAll(`} // namespace JSC`, "");
     str = "// File generated via `make static-hash-table` / `make cpp`\n" + str.trim() + "\n";
-    await Bun.write(cpp.replace(/\.cpp$/, ".lut.h"), str);
+    await Bun.write(cpp.replace(/\.cpp$/, ".lut.h").replace(/(\.lut)?\.txt$/, ".lut.h"), str);
+    console.log("Wrote", path.relative(process.cwd(), cpp.replace(/\.cpp$/, ".lut.h")));
   }),
 );
 

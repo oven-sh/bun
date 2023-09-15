@@ -278,15 +278,11 @@ public:
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
-    JSC::JSObject* processObject()
-    {
-        return m_processObject.getInitializedOnMainThread(this);
-    }
+    JSC::JSObject* processObject() { return m_processObject.getInitializedOnMainThread(this); }
 
-    JSC::JSObject* processEnvObject()
-    {
-        return m_processEnvObject.getInitializedOnMainThread(this);
-    }
+    JSC::JSObject* processEnvObject() { return m_processEnvObject.getInitializedOnMainThread(this); }
+
+    JSC::JSObject* bunObject() { return m_bunObject.getInitializedOnMainThread(this); }
 
     void drainMicrotasks();
 
@@ -532,6 +528,7 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;
@@ -539,7 +536,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
-
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
@@ -547,14 +543,12 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
-
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
-
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

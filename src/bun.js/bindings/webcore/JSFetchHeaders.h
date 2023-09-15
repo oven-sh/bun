@@ -97,4 +97,6 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
     using ToWrappedReturnType = FetchHeaders*;
 };
 
+JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
+
 } // namespace WebCore

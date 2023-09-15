@@ -1016,19 +1016,22 @@ describe("rmdir", () => {
       done();
     });
   });
-  it("does not remove a dir with a file in it", done => {
+  it("does not remove a dir with a file in it", async () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
       writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
     } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, err => {
+    try {
+      await promises.rmdir(path);
+    } catch (err) {
       expect("ENOTEMPTY EPERM").toContain(err!.code);
-      done();
-    });
+    }
+
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, { recursive: true }, () => {});
+
+    await promises.rmdir(path, { recursive: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
   it("removes a dir recursively", done => {

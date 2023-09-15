@@ -1977,11 +1977,6 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        if (name_str.length() == 0) {
-            globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "non-empty string");
-            return .zero;
-        }
-
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
@@ -2038,11 +2033,6 @@ pub const DNSResolver = struct {
         const name_str = name_value.toStringOrNull(globalThis) orelse {
             return .zero;
         };
-
-        if (name_str.length() == 0) {
-            globalThis.throwInvalidArgumentType("resolveNs", "hostname", "non-empty string");
-            return .zero;
-        }
 
         const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 

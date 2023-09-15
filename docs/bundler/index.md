@@ -132,6 +132,14 @@ Visit `http://localhost:5000` to see your bundled app in action.
 
 {% /details %}
 
+## Watch mode
+
+Like the runtime and test runner, the bundler supports watch mode natively.
+
+```sh
+$ bun build ./index.tsx --outdir ./out --watch
+```
+
 ## Content types
 
 Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](/docs/runtime/loaders) for full documentation.

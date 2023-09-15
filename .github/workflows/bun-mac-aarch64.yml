@@ -117,7 +117,7 @@ jobs:
           #   obj: bun-obj-darwin-x64-baseline
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
           # - cpu: haswell
@@ -126,7 +126,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
           # - cpu: nehalem
@@ -135,7 +135,7 @@ jobs:
           #   obj: bun-obj-darwin-x64-baseline
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           # - cpu: haswell
@@ -144,7 +144,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           - cpu: native
@@ -152,14 +152,14 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
             dependencies: true
             compile_obj: true
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu) --force
       - name: Install dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -172,11 +172,11 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install ccache rust llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -247,6 +247,7 @@ jobs:
     if: github.repository_owner == 'oven-sh'
     needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
+    permissions: write-all
     strategy:
       matrix:
         include:
@@ -257,7 +258,7 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64-baseline
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: haswell
           #   arch: x86_64
           #   tag: bun-darwin-x64
@@ -265,19 +266,19 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: native
             arch: aarch64
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-5/bun-webkit-macos-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-aug3-6/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu) --force
       - name: Install dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -290,10 +291,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install rust ccache llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@15
+          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@16
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:

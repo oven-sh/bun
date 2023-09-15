@@ -11,7 +11,7 @@ SolidStart currently relies on Node.js APIs that Bun does not yet implement. The
 Initialize a SolidStart app with `create-solid`.
 
 ```sh
-$ bunx create-solid my-app
+$ bun create solid my-app
 create-solid version 0.2.31
 
 Welcome to the SolidStart setup wizard!

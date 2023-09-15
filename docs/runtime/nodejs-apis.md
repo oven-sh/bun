@@ -94,7 +94,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
-🟡 See `Globals > process`.
+🟡 See [`process`](#process) Global.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
@@ -122,7 +122,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
-🟡 See `node:util`.
+🟡 See [`node:util`](#node-util).
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
@@ -589,7 +589,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.constrainedMemory()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`.
+🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.constrainedMemory()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

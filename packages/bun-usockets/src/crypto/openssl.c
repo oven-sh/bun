@@ -45,7 +45,7 @@ void *sni_find(void *sni, const char *hostname);
 
 #include "./root_certs.h"
 #include <stdatomic.h>
-static const root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
+static const size_t root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 static X509* root_cert_instances[root_certs_size]  = {NULL};
 static atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
 static atomic_bool root_cert_instances_initialized = 0;

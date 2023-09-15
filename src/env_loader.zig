@@ -102,18 +102,24 @@ pub const Loader = struct {
 
         if (url.isHTTP()) {
             if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
-                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
+                    http_proxy = URL.parse(proxy);
+                }
             }
         } else {
             if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
-                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
+                    http_proxy = URL.parse(proxy);
+                }
             }
         }
 
         // NO_PROXY filter
         if (http_proxy != null) {
             if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
-                if (no_proxy_text.len == 0) return http_proxy;
+                if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
+                    return http_proxy;
+                }
 
                 var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();

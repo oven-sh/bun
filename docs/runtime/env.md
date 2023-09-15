@@ -25,6 +25,10 @@ Or programmatically by assigning a property to `process.env`.
 process.env.FOO = "hello";
 ```
 
+### `dotenv`
+
+Generally speaking, you won't need `dotenv` anymore, because Bun reads `.env` files automatically.
+
 ## Reading environment variables
 
 The current environment variables can be accessed via `process.env`.

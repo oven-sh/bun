@@ -3886,10 +3886,7 @@ pub const Resolver = struct {
                         var ts_dir_name = Dirname.dirname(current.abs_path);
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
                         var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch |err| {
-                            r.log.addWarningFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{ @errorName(err), strings.QuotedFormatter{
-                                .text = abs_path,
-                            } }) catch {};
+                        var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch {
                             break;
                         };
                         if (parent_config_maybe) |parent_config| {

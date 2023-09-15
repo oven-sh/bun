@@ -2,7 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const getHeader = $lazy("http");
+const { getHeader, setHeader } = $lazy("http");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -76,14 +76,9 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const StringPrototypeToLowerCase = String.prototype.toLowerCase;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-const StringPrototypeIndexOf = String.prototype.indexOf;
 const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
@@ -1157,12 +1152,7 @@ class ServerResponse extends Writable {
   getHeaders() {
     var headers = this.#headers;
     if (!headers) return kEmptyObject;
-    let ret = { __proto__: null };
-    for (const key of headers.keys()) {
-      ret[key] = getHeader(headers, key);
-    }
-
-    return ret;
+    return headers.toJSON();
   }
 
   getHeaderNames() {
@@ -1178,14 +1168,7 @@ class ServerResponse extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    if (ArrayIsArray(value)) {
-      headers.set(name, value[0]);
-      for (var i = 1; i < value.length; i++) {
-        headers.append(name, value[i]);
-      }
-    } else {
-      headers.set(name, value);
-    }
+    setHeader(headers, name, value);
     return this;
   }
 

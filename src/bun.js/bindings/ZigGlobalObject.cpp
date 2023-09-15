@@ -1586,6 +1586,55 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue headersValue = callFrame->argument(0);
+
+    if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+        JSValue nameValue = callFrame->argument(1);
+        if (nameValue.isString()) {
+            String name = nameValue.toWTFString(globalObject).convertToASCIILowercase();
+            FetchHeaders* impl = &headers->wrapped();
+
+            JSValue valueValue = callFrame->argument(2);
+            if (valueValue.isUndefined())
+                return JSValue::encode(jsUndefined());
+
+            if (isArray(globalObject, valueValue)) {
+                auto* array = jsCast<JSArray*>(valueValue);
+                unsigned length = array->length();
+                if (length > 0) {
+                    JSValue item = array->getIndex(globalObject, 0);
+                    if (UNLIKELY(scope.exception()))
+                        return JSValue::encode(jsUndefined());
+                    impl->set(name, item.getString(globalObject));
+                    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+                }
+                for (unsigned i = 1; i < length; ++i) {
+                    JSValue value = array->getIndex(globalObject, i);
+                    if (UNLIKELY(scope.exception()))
+                        return JSValue::encode(jsUndefined());
+                    if (!value.isString())
+                        continue;
+                    impl->append(name, value.getString(globalObject));
+                    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+                }
+                RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+                return JSValue::encode(jsUndefined());
+            }
+
+            impl->set(name, valueValue.getString(globalObject));
+            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1721,7 +1770,14 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "http"_s) {
-            return JSC::JSValue::encode(JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public, NoIntrinsic));
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
+                JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), NoIntrinsic);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
+                JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
+            return JSC::JSValue::encode(obj);
         }
 
         if (string == "worker_threads"_s) {

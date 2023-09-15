@@ -230,14 +230,16 @@ describe("node:http", () => {
         });
         let sum = data.length;
         const url = await listen(server);
-        await new Promise(resolve => {
+        await new Promise((resolve, reject) => {
           request(url, async res => {
             try {
               for await (const c of res) {
                 sum -= c.length;
               }
               resolve();
-            } catch (e) {}
+            } catch (e) {
+              reject(e);
+            }
           }).end();
         });
         expect(sum).toBe(0);

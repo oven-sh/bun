@@ -6,7 +6,7 @@ test("non-ascii regexp literals", () => {
   expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
 });
 
-test("regex", () => {
+test("ascii regex with escapes", () => {
   expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
 });
 

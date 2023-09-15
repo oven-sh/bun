@@ -1805,8 +1805,25 @@ pub const Subprocess = struct {
             }
         }
 
-        if (this.hasExited())
-            this.unref();
+        if (this.hasExited()) {
+            const Holder = struct {
+                process: *Subprocess,
+                task: JSC.AnyTask,
+
+                pub fn unref(self: *@This()) void {
+                  self.process.unref();
+                  bun.default_allocator.destroy(self);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+            holder.* = .{
+                .process = this,
+                .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+            };
+
+            this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+        }
     }
 
     const os = std.os;

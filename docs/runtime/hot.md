@@ -1,6 +1,6 @@
 Bun supports two kinds of automatic reloading via CLI flags:
 
-- `--watch` mode, which hard restarts Bun's process when imported files change/
+- `--watch` mode, which hard restarts Bun's process when imported files change.
 - `--hot` mode, which soft reloads the code (without restarting the process) when imported files change.
 
 ## `--watch` mode

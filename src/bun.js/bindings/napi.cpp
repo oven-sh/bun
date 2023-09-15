@@ -1036,7 +1036,7 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
     napi_value err)
 {
     auto globalObject = toJS(env);
-    JSC::JSValue value = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(err));
+    JSC::JSValue value = toJS(err);
     JSC::JSObject* obj = value.getObject();
     if (UNLIKELY(obj == nullptr || !obj->isErrorInstance())) {
         return napi_invalid_arg;
@@ -1053,7 +1053,7 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue value = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(error));
+    JSC::JSValue value = toJS(error);
     if (value) {
         JSC::throwException(globalObject, throwScope, value);
     } else {
@@ -1139,8 +1139,8 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSValue codeValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(code));
-    JSC::JSValue messageValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(msg));
+    JSC::JSValue codeValue = toJS(code);
+    JSC::JSValue messageValue = toJS(msg);
 
     auto error = JSC::createTypeError(globalObject, messageValue.toWTFString(globalObject));
     if (codeValue) {
@@ -1158,10 +1158,11 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSValue codeValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(code));
-    JSC::JSValue messageValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(msg));
+    JSC::JSValue codeValue = toJS(code);
+    JSC::JSValue messageValue = toJS(msg);
 
-    auto error = JSC::createError(globalObject, messageValue.toWTFString(globalObject));
+    WTF::String message = messageValue.toWTFString(globalObject);
+    auto* error = JSC::createError(globalObject, message);
     if (codeValue) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
     }
@@ -1596,7 +1597,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(object));
+    JSC::JSValue jsValue = toJS(object);
     if (!jsValue || !jsValue.isObject()) {
         return napi_invalid_arg;
     }

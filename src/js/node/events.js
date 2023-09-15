@@ -92,9 +92,11 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-
-  for (var handler of [...handlers]) {
-    handler.apply(this, args);
+  // iterate in reverse so the handlers array does not need to be cloned
+  for (let i = handlers.length - 1; i >= 0; --i) {
+    // for performance reason Function.call(...) is used if only one arg needs to be passed
+    if (args.length === 1) handlers[i].call(this, args[0]);
+    else handlers[i].apply(this, args);
   }
   return true;
 };
@@ -107,12 +109,17 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  for (var handler of [...handlers]) {
-    var result = handler.apply(this, args);
+  // iterate in reverse so the handlers array does not need to be cloned
+  for (let i = handlers.length - 1; i >= 0; --i) {
+    let result;
+    // for performance reason Function.call(...) is used if only one arg needs to be passed
+    if (args.length === 1) result = handlers[i].call(this, args[0]);
+    else result = handlers[i].apply(this, args);
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
   }
+
   return true;
 };
 
@@ -132,7 +139,9 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
     events[type] = [fn];
     this._eventsCount++;
   } else {
-    handlers.push(fn);
+    // for performance reasons the handlers are stored in reverse
+    // -> adding = unshifting
+    handlers.unshift(fn);
     var m = this._maxListeners ?? defaultMaxListeners;
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
@@ -157,7 +166,9 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
     events[type] = [fn];
     this._eventsCount++;
   } else {
-    handlers.unshift(fn);
+    // for performance reasons the handlers are stored in reverse
+    // -> prepending = pushing
+    handlers.push(fn);
     var m = this._maxListeners ?? defaultMaxListeners;
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
@@ -247,7 +258,8 @@ EventEmitterPrototype.listeners = function listeners(type) {
   if (!events) return [];
   var handlers = events[type];
   if (!handlers) return [];
-  return handlers.map(x => x.listener ?? x);
+  // reverse array since handlers are stored in reverse internally
+  return handlers.reverse().map(x => x.listener ?? x);
 };
 
 EventEmitterPrototype.rawListeners = function rawListeners(type) {

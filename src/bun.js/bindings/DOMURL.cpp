@@ -42,6 +42,17 @@ inline DOMURL::DOMURL(URL&& completeURL, const URL& baseURL)
 {
 }
 
+DOMURL::~DOMURL() = default;
+
+bool DOMURL::canParse(const String& url, const String& base)
+{
+    URL baseURL { base };
+    if (!base.isNull() && !baseURL.isValid())
+        return false;
+    URL completeURL { baseURL, url };
+    return completeURL.isValid();
+}
+
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 {
     ASSERT(base.isValid() || base.isNull());
@@ -63,8 +74,6 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const DOMURL& base)
 {
     return create(url, base.href());
 }
-
-DOMURL::~DOMURL() = default;
 
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {

@@ -2447,6 +2447,14 @@ declare var URL: {
   createObjectURL(obj: Blob): string;
   /** Not implemented yet */
   revokeObjectURL(url: string): void;
+
+  /**
+   * Check if `url` is a valid URL string
+   *
+   * @param url URL string to parse
+   * @param base URL to resolve against
+   */
+  canParse(url: string, base?: string): boolean;
 };
 
 type TimerHandler = (...args: any[]) => void;

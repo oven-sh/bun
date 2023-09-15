@@ -252,9 +252,17 @@ const NetworkTask = struct {
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
+            var encoded_name = name;
+            // Not all registries support scoped package names when fetching the manifest.
+            // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
+            // Other registries like AWS codeartifact only support the former.
+            // The NPM client reguests the the manifest with the encoded name.
+            if (strings.indexOfChar(encoded_name, '/')) |i| {
+                encoded_name = try strings.cat(allocator, try strings.cat(allocator, encoded_name[0..i], "%2F"), encoded_name[i + 1 ..]);
+            }
             const tmp = bun.JSC.URL.join(
                 bun.String.fromUTF8(scope.url.href),
-                bun.String.fromUTF8(name),
+                bun.String.fromUTF8(encoded_name),
             );
             defer tmp.deref();
 

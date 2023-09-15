@@ -3,6 +3,8 @@ declare var laterCode: any;
 
 declare module "beep:*";
 declare module "async:*";
+declare module "resolve:*";
+declare module "async-resolve:*";
 declare module "asyncret:*";
 declare module "asyncfail:*";
 declare module "async-obj:*";

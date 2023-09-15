@@ -96,6 +96,39 @@ plugin({
 });
 
 plugin({
+  name: "resolve",
+  setup(builder) {
+    builder.onResolve({ filter: /original/, namespace: "resolve" }, () => ({
+      path: "changed",
+      namespace: "resolve",
+    }));
+
+    builder.onLoad({ filter: /changed/, namespace: "resolve" }, () => ({
+      contents: `export default "changed";`,
+      loader: "js",
+    }));
+  },
+});
+
+plugin({
+  name: "async resolve",
+  setup(builder) {
+    builder.onResolve({ filter: /original/, namespace: "async-resolve" }, async () => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return {
+        path: "changed",
+        namespace: "async-resolve",
+      };
+    });
+
+    builder.onLoad({ filter: /changed/, namespace: "async-resolve" }, () => ({
+      contents: `export default "changed";`,
+      loader: "js",
+    }));
+  },
+});
+
+plugin({
   name: "async onLoad",
   setup(builder) {
     globalThis.asyncOnLoad = "";
@@ -199,6 +232,16 @@ describe("require", () => {
     expect(result.default).toBe(42);
   });
 
+  it("should change resolved import when onResolve is not async", async () => {
+    const result = require("resolve:original");
+    expect(result.default).toBe("changed");
+  });
+
+  it("should change resolved import when onResolve is async", async () => {
+    const result = require("async-resolve:original");
+    expect(result.default).toBe("changed");
+  });
+
   it("object module works", () => {
     const result = require("obj:boop");
     expect(result.hello).toBe(objectModuleResult.hello);
@@ -228,6 +271,16 @@ describe("dynamic import", () => {
     globalThis.asyncOnLoad = "export default 42;";
     const result = await import("async:hello42");
     expect(result.default).toBe(42);
+  });
+
+  it("should change resolved import when onResolve is not async", async () => {
+    const result = await import("resolve:original");
+    expect(result.default).toBe("changed");
+  });
+
+  it("should change resolved import when onResolve is async", async () => {
+    const result = require("async-resolve:original");
+    expect(result.default).toBe("changed");
   });
 
   it("async object loader returns 42", async () => {

@@ -26,8 +26,6 @@
   EventSource                     getEventSourceConstructor                            PropertyCallback
   
   $_BunCommonJSModule_$           BunCommonJSModule_getter                             CustomAccessor|DontDelete|ReadOnly
-  onmessage                       globalOnMessage                                      CustomAccessor|DontDelete
-  onerror                         globalOnError                                        CustomAccessor|DontDelete
 
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
   File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty

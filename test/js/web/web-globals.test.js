@@ -31,6 +31,7 @@ const globalSetters = [
 for (const [Constructor, name, eventName, prop] of globalSetters) {
   test(`self.${name}`, () => {
     var called = false;
+    console.log("name", name);
 
     const callback = ({ [prop]: data }) => {
       expect(data).toBe("hello");

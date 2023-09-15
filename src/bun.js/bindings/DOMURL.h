@@ -43,6 +43,7 @@ public:
     static ExceptionOr<Ref<DOMURL>> create(const String& url, const DOMURL& base);
     ~DOMURL();
 
+    static bool canParse(const String& url, const String& base);
     const URL& href() const { return m_url; }
     ExceptionOr<void> setHref(const String&);
     void setQuery(const String&);

@@ -1429,7 +1429,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
         JSValue nameValue = callFrame->argument(1);
         if (nameValue.isString()) {
-            String name = nameValue.toWTFString(globalObject).convertToASCIILowercase();
+            String name = nameValue.toWTFString(globalObject);
             FetchHeaders* impl = &headers->wrapped();
 
             JSValue valueValue = callFrame->argument(2);

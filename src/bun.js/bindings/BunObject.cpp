@@ -701,7 +701,7 @@ public:
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &JSNonFinalObject::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
-JSC::JSValue createBunObject(VM& vm, JSObject* globalObject)
+JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
     return JSBunObject::create(vm, static_cast<Zig::GlobalObject*>(globalObject));
 }

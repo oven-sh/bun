@@ -118,6 +118,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
     JSValue empty = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), thisObject, exception);
+
+    globalObject->m_BunCommonJSModuleValue.clear();
     moduleObject->sourceCode.clear();
 
     return exception.get() == nullptr;

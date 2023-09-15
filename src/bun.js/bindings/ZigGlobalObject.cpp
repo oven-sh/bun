@@ -634,69 +634,17 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     return true;
 }
 
-#define BUN_LAZY_GETTER_FN_NAME(GetterName) BunLazyGetter##GetterName##_getter
-
-#define DEFINE_BUN_LAZY_GETTER(GetterName, __propertyName)                                    \
-    JSC_DEFINE_CUSTOM_GETTER(GetterName,                                                      \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,            \
-            JSC::PropertyName))                                                               \
-    {                                                                                         \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
-        return JSC::JSValue::encode(thisObject->__propertyName());                            \
+#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                       \
+    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                                                             \
+    {                                                                                                                                                               \
+        return WebCore::JS##ConstructorName::getConstructor(vm, JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject));                                              \
+    }                                                                                                                                                               \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                                              \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                                  \
+            JSC::PropertyName))                                                                                                                                     \
+    {                                                                                                                                                               \
+        return JSC::JSValue::encode(WebCore::JS##ConstructorName::getConstructor(lexicalGlobalObject->vm(), JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject))); \
     }
-
-#define GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                         \
-    JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                      \
-    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                        \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,            \
-            JSC::PropertyName))                                                               \
-    {                                                                                         \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
-        if (JSValue override = thisObject->m_##ConstructorName##SetterValue.get()) {          \
-            return JSC::JSValue::encode(override);                                            \
-        }                                                                                     \
-        return JSC::JSValue::encode(                                                          \
-            thisObject->ConstructorName##Constructor());                                      \
-    }
-
-#define GENERATED_CONSTRUCTOR_SETTER(ConstructorName)                                                           \
-    JSC_DECLARE_CUSTOM_SETTER(ConstructorName##_setter);                                                        \
-    JSC_DEFINE_CUSTOM_SETTER(ConstructorName##_setter,                                                          \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                              \
-            EncodedJSValue value, JSC::PropertyName))                                                           \
-    {                                                                                                           \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);                   \
-        thisObject->m_##ConstructorName##SetterValue.set(thisObject->vm(), thisObject, JSValue::decode(value)); \
-        return true;                                                                                            \
-    }
-
-#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                       \
-    JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                            \
-    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                              \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                  \
-            JSC::PropertyName))                                                                     \
-    {                                                                                               \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);       \
-        if (JSValue override = thisObject->m_##ConstructorName##SetterValue.get()) {                \
-            return JSC::JSValue::encode(override);                                                  \
-        }                                                                                           \
-        return JSC::JSValue::encode(                                                                \
-            WebCore::ConstructorName::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject)); \
-    }
-
-#define WEBCORE_GENERATED_CONSTRUCTOR_SETTER(ConstructorName)                                                   \
-    JSC_DECLARE_CUSTOM_SETTER(ConstructorName##_setter);                                                        \
-    JSC_DEFINE_CUSTOM_SETTER(ConstructorName##_setter,                                                          \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                              \
-            EncodedJSValue value, JSC::PropertyName))                                                           \
-    {                                                                                                           \
-        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);                   \
-        thisObject->m_##ConstructorName##SetterValue.set(thisObject->vm(), thisObject, JSValue::decode(value)); \
-        return true;                                                                                            \
-    }
-
-#define PUT_WEBCORE_GENERATED_CONSTRUCTOR(name, ConstructorName) \
-    putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, name)), JSC::CustomGetterSetter::create(vm, ConstructorName##_getter, ConstructorName##_setter), 0)
 
 String GlobalObject::defaultAgentClusterID()
 {
@@ -857,7 +805,7 @@ void GlobalObject::setConsole(void* console)
 
 #pragma mark - Globals
 
-JSC_DEFINE_CUSTOM_GETTER(globalGetterOnMessage,
+JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
@@ -865,7 +813,7 @@ JSC_DEFINE_CUSTOM_GETTER(globalGetterOnMessage,
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().messageEvent, thisObject->world()));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(globalGetterOnError,
+JSC_DEFINE_CUSTOM_GETTER(globalOnError,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
@@ -873,7 +821,7 @@ JSC_DEFINE_CUSTOM_GETTER(globalGetterOnError,
     return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().errorEvent, thisObject->world()));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(globalSetterOnMessage,
+JSC_DEFINE_CUSTOM_SETTER(setGlobalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
 {
@@ -886,7 +834,7 @@ JSC_DEFINE_CUSTOM_SETTER(globalSetterOnMessage,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(globalSetterOnError,
+JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
 {
@@ -904,8 +852,6 @@ WebCore::EventTarget& GlobalObject::eventTarget()
     return globalEventScope;
 }
 
-JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter);
-
 JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -915,156 +861,50 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter,
         thisObject->readableStreamNativeMap());
 }
 
-JSC_DECLARE_CUSTOM_GETTER(JSDOMURL_getter);
-
-JSC_DEFINE_CUSTOM_GETTER(JSDOMURL_getter,
+JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        WebCore::JSDOMURL::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+    return JSC::JSValue::encode(JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferConstructor());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSBuffer_privateGetter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        thisObject->JSBufferConstructor());
-}
-
-GENERATED_CONSTRUCTOR_GETTER(JSBuffer);
-GENERATED_CONSTRUCTOR_SETTER(JSBuffer);
-
-GENERATED_CONSTRUCTOR_GETTER(JSTextDecoder);
-GENERATED_CONSTRUCTOR_SETTER(JSTextDecoder);
-
-GENERATED_CONSTRUCTOR_GETTER(JSResponse);
-GENERATED_CONSTRUCTOR_SETTER(JSResponse);
-
-GENERATED_CONSTRUCTOR_GETTER(JSRequest);
-GENERATED_CONSTRUCTOR_SETTER(JSRequest);
-
-GENERATED_CONSTRUCTOR_GETTER(JSBlob);
-GENERATED_CONSTRUCTOR_SETTER(JSBlob);
-
-GENERATED_CONSTRUCTOR_GETTER(JSHTMLRewriter);
-GENERATED_CONSTRUCTOR_SETTER(JSHTMLRewriter);
-
-GENERATED_CONSTRUCTOR_GETTER(JSCrypto);
-GENERATED_CONSTRUCTOR_SETTER(JSCrypto);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageEvent);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageEvent);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSWebSocket);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSWebSocket);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSFetchHeaders);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSFetchHeaders);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSTextEncoder);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSTextEncoder);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSURLSearchParams);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSURLSearchParams);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMFormData);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMFormData);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSWorker);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSWorker);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageChannel);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageChannel);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessagePort);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessagePort);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSBroadcastChannel);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSEvent);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSEvent);
-
-JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMException);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMException);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSEventTarget);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSEventTarget);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSCustomEvent);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSCustomEvent);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSErrorEvent);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSErrorEvent);
-
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSCloseEvent);
-WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSCloseEvent);
-
-JSC_DECLARE_CUSTOM_GETTER(JSDOMAbortController_getter);
-
-JSC_DEFINE_CUSTOM_GETTER(JSDOMAbortController_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        WebCore::JSAbortController::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
-}
-
-JSC_DECLARE_CUSTOM_GETTER(JSDOMAbortSignal_getter);
-
-JSC_DEFINE_CUSTOM_GETTER(JSDOMAbortSignal_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        WebCore::JSAbortSignal::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
-}
-
-static JSC_DECLARE_CUSTOM_SETTER(property_lazyProcessSetter);
-static JSC_DECLARE_CUSTOM_GETTER(property_lazyProcessGetter);
-
-JSC_DEFINE_CUSTOM_SETTER(property_lazyProcessSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName))
-{
-    return false;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
-    (JSC::JSGlobalObject * _globalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(_globalObject);
-
-    JSC::VM& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    return JSC::JSValue::encode(globalObject->processObject());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(property_lazyCryptoGetter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName property))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(JSValue::decode(thisValue));
-    JSValue cryptoObject = thisObject->cryptoObject();
-    thisObject->putDirect(thisObject->vm(), property, cryptoObject, 0);
-    return JSValue::encode(cryptoObject);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(lazyProcessEnvSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName))
-{
-    return false;
-}
+// This macro defines the getter needed for ZigGlobalObject.lut.h
+// "<ClassName>ConstructorCallback" is a PropertyCallback
+// it also defines "<ClassName>_getter" which is the getter for a JSC::CustomGetterSetter
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortController);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortSignal);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ByteLengthQueuingStrategy)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CloseEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CountQueuingStrategy)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CryptoKey);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CustomEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMException);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMFormData);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMURL);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ErrorEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Event);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(EventTarget);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(FetchHeaders);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageChannel);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessageEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(MessagePort);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBRequest)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultController)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultReader)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(SubtleCrypto);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoder);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
 
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1076,15 +916,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSC::JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(lazyProcessEnvGetter,
-    (JSC::JSGlobalObject * _globalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(_globalObject);
-    return JSC::JSValue::encode(
-        globalObject->processEnvObject());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
@@ -1592,15 +1423,6 @@ enum ReadableStreamTag : int32_t {
     Bytes = 4,
 };
 
-JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwTypeError(globalObject, scope, "Not implemented yet in Bun :("_s);
-    return JSC::JSValue::encode(JSC::JSValue {});
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -1772,10 +1594,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSValue::encode(obj);
         }
 
-        if (string == "masqueradesAsUndefined"_s) {
-            return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
-        }
-
         if (string == "vm"_s) {
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
@@ -1916,163 +1734,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGloba
     return jsFunctionDispatchEventBody(lexicalGlobalObject, callFrame, jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject));
 }
 
-static inline JSValue jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSByteLengthQueuingStrategy::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_CountQueuingStrategyConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSCountQueuingStrategy::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_CountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_CountQueuingStrategyConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableByteStreamControllerConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableByteStreamController::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableByteStreamControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableByteStreamControllerConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableStreamConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableStream::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableStreamConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableStreamBYOBReaderConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableStreamBYOBReader::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableStreamBYOBReaderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableStreamBYOBReaderConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableStreamBYOBRequestConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableStreamBYOBRequest::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableStreamBYOBRequestConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableStreamDefaultControllerConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableStreamDefaultController::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableStreamDefaultControllerConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_ReadableStreamDefaultReaderConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSReadableStreamDefaultReader::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_ReadableStreamDefaultReaderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_ReadableStreamDefaultReaderConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_TransformStreamConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSTransformStream::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_TransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_TransformStreamConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSTransformStreamDefaultController::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_WritableStreamConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSWritableStream::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_WritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_WritableStreamConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_WritableStreamDefaultControllerConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSWritableStreamDefaultController::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_WritableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_WritableStreamDefaultControllerConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSWritableStreamDefaultWriter::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(getterSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSValue::encode(
-        JSSubtleCrypto::getConstructor(thisObject->vm(), thisObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(getterCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSValue::encode(
-        JSCryptoKey::getConstructor(thisObject->vm(), thisObject));
-}
-
 static inline JSValue getterSubtleCryptoBody(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
 {
     UNUSED_PARAM(lexicalGlobalObject);
@@ -2092,6 +1753,7 @@ JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(whenSignalAborted);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
+
 JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
@@ -2820,7 +2482,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     // Create the call sites (one per frame)
     GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
 
-    /* Foramt the stack trace.
+    /* Format the stack trace.
      * Note that v8 won't actually format the stack trace here, but will create a "stack" accessor
      * on the error object, which will format the stack trace on the first access. For now, since
      * we're not being used internally by JSC, we can assume callers of Error.captureStackTrace in
@@ -3104,13 +2766,17 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
             obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
-            init.set(
-                obj);
+            init.set(obj);
         });
 
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_bunObject.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(Bun::createBunObject(init.vm, init.owner));
         });
 
     this->initGeneratedLazyClasses();
@@ -3529,30 +3195,10 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(jsNumber(0)), JSValue::encode(arguments));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSModuleLoader_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
 {
-    return JSValue::encode(globalObject->moduleLoader());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(functionResolveMessageGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSResolveMessageConstructor());
-}
-JSC_DEFINE_CUSTOM_GETTER(functionBuildMessageGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBuildMessageConstructor());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(
-    EventSource_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
-{
-    auto& vm = globalObject->vm();
+    auto globalObject = jsCast<Zig::GlobalObject*>(thisObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // If "this" is not the Global object, just return undefined
-    // you should not be able to reset the global object's EventSource if you muck around with prototypes
-    if (JSValue::decode(thisValue) != globalObject)
-        return JSValue::encode(JSC::jsUndefined());
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3570,26 +3216,7 @@ JSC_DEFINE_CUSTOM_GETTER(
         throwException(globalObject, scope, returnedException.get());
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (LIKELY(result)) {
-        globalObject->putDirect(vm, property, result, 0);
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = globalObject->vm();
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
+    RELEASE_AND_RETURN(scope, result);
 }
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
@@ -3744,6 +3371,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 
     // TODO: most/all of these private properties can be made as static globals.
+    // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -3772,25 +3400,25 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
 
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_privateGetter, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-
+    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
-    putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableByteStreamControllerConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamBYOBReaderConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamBYOBRequestConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamDefaultControllerConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamDefaultReaderConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamDefaultControllerConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructor, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
-    putDirectCustomAccessor(vm, builtinNames.AbortSignalPrivateName(), CustomGetterSetter::create(vm, JSDOMAbortSignal_getter, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, TransformStream_getter, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
+    putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, TransformStreamDefaultController_getter, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
+    putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPrivateName(), CustomGetterSetter::create(vm, ReadableByteStreamController_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.ReadableStreamPrivateName(), CustomGetterSetter::create(vm, ReadableStream_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBReader_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBRequest_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultController_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultReader_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.WritableStreamPrivateName(), CustomGetterSetter::create(vm, WritableStream_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultController_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultWriter_getter, nullptr), attributesForStructure(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly));
+    putDirectCustomAccessor(vm, builtinNames.AbortSignalPrivateName(), CustomGetterSetter::create(vm, AbortSignal_getter, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     // ----- Public Properties -----
 
+    // a direct accessor (uses js functions for get and set) cannot be on the static hash table. i think.
     putDirectAccessor(
         this,
         builtinNames.selfPublicName(),
@@ -3800,71 +3428,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
             JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
         0);
-
-    // This is not meant to be used publicly, but it has to be a public symbol or else commonjs modules will not load
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "$_BunCommonJSModule_$"_s), JSC::CustomGetterSetter::create(vm, BunCommonJSModule_getter, nullptr),
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
-        JSC::PropertyAttribute::CustomAccessor | 0);
-
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "navigator"_s), JSC::CustomGetterSetter::create(vm, functionLazyNavigatorGetter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ResolveError"_s), JSC::CustomGetterSetter::create(vm, functionResolveMessageGetter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ResolveMessage"_s), JSC::CustomGetterSetter::create(vm, functionResolveMessageGetter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "BuildError"_s), JSC::CustomGetterSetter::create(vm, functionBuildMessageGetter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "BuildMessage"_s), JSC::CustomGetterSetter::create(vm, functionBuildMessageGetter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Request"_s), JSC::CustomGetterSetter::create(vm, JSRequest_getter, JSRequest_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, JSResponse_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, JSTextDecoder_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Blob"_s), JSC::CustomGetterSetter::create(vm, JSBlob_getter, JSBlob_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "HTMLRewriter"_s), JSC::CustomGetterSetter::create(vm, JSHTMLRewriter_getter, JSHTMLRewriter_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Crypto"_s), JSC::CustomGetterSetter::create(vm, JSCrypto_getter, JSCrypto_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "File"_s), JSC::CustomGetterSetter::create(vm, JSDOMFileConstructor_getter, JSDOMFileConstructor_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"_s), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"_s), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortSignal"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortSignal_getter, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventSource"_s), JSC::CustomGetterSetter::create(vm, EventSource_getter, EventSource_setter), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalGetterOnMessage, globalSetterOnMessage), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalGetterOnError, globalSetterOnError), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "crypto"_s), JSC::CustomGetterSetter::create(vm, property_lazyCryptoGetter, JSDOMFileConstructor_setter), 0);
-
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ByteLengthQueuingStrategy"_s), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructor, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CountQueuingStrategy"_s), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_CountQueuingStrategyConstructor, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SubtleCrypto"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCryptoConstructor, nullptr), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CryptoKey"_s), JSC::CustomGetterSetter::create(vm, getterCryptoKeyConstructor, nullptr), 0);
-
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPublicName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, JSBuffer_setter), 0);
-
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(0));
-    putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableByteStreamControllerConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamBYOBReaderConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamBYOBRequestConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamDefaultControllerConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ReadableStreamDefaultReaderConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamDefaultControllerConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("BroadcastChannel"_s, JSBroadcastChannel);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("CloseEvent"_s, JSCloseEvent);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("CustomEvent"_s, JSCustomEvent);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("DOMException"_s, JSDOMException);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("ErrorEvent"_s, JSErrorEvent);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("Event"_s, JSEvent);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("EventTarget"_s, JSEventTarget);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("FormData"_s, JSDOMFormData);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageChannel"_s, JSMessageChannel);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageEvent"_s, JSMessageEvent);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessagePort"_s, JSMessagePort);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("URLSearchParams"_s, JSURLSearchParams);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("Worker"_s, JSWorker);
 
     // ----- Extensions to Built-in objects -----
 
@@ -3937,28 +3500,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_readableStreamToFormData);
     visitor.append(thisObject->m_nodeModuleOverriddenResolveFilename);
 
-    visitor.append(thisObject->m_JSBlobSetterValue);
-    visitor.append(thisObject->m_JSBroadcastChannelSetterValue);
-    visitor.append(thisObject->m_JSBufferSetterValue);
-    visitor.append(thisObject->m_JSCloseEventSetterValue);
-    visitor.append(thisObject->m_JSCustomEventSetterValue);
-    visitor.append(thisObject->m_JSDOMExceptionSetterValue);
-    visitor.append(thisObject->m_JSDOMFormDataSetterValue);
-    visitor.append(thisObject->m_JSErrorEventSetterValue);
-    visitor.append(thisObject->m_JSEventSetterValue);
-    visitor.append(thisObject->m_JSEventTargetSetterValue);
-    visitor.append(thisObject->m_JSFetchHeadersSetterValue);
-    visitor.append(thisObject->m_JSMessageChannelSetterValue);
-    visitor.append(thisObject->m_JSMessageEventSetterValue);
-    visitor.append(thisObject->m_JSMessagePortSetterValue);
-    visitor.append(thisObject->m_JSRequestSetterValue);
-    visitor.append(thisObject->m_JSResponseSetterValue);
-    visitor.append(thisObject->m_JSTextDecoderSetterValue);
-    visitor.append(thisObject->m_JSTextEncoderSetterValue);
-    visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
-    visitor.append(thisObject->m_JSWebSocketSetterValue);
-    visitor.append(thisObject->m_JSWorkerSetterValue);
-
     visitor.append(thisObject->m_nextTickQueue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
@@ -3990,6 +3531,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_performanceObject.visit(visitor);
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
+    thisObject->m_bunObject.visit(visitor);
     thisObject->m_subtleCryptoObject.visit(visitor);
     thisObject->m_JSHTTPResponseController.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
@@ -4381,7 +3923,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*h
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
-
 #include "ZigGlobalObject.lut.h"
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,

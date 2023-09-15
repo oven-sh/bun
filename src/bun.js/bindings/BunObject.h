@@ -13,5 +13,5 @@ JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 JSC_DECLARE_HOST_FUNCTION(functionPathToFileURL);
 JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
 
-JSC::JSValue createBunObject(VM& vm, JSObject* globalObject);
+JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject);
 }

@@ -3807,3 +3807,11 @@ interface PromiseConstructor {
     reject: (reason?: any) => void;
   };
 }
+
+interface Navigator {
+  readonly userAgent: string;
+  readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
+  readonly hardwareConcurrency: number;
+}
+
+declare var navigator: Navigator;

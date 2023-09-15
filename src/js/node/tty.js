@@ -216,7 +216,7 @@ Object.defineProperty(WriteStream, "prototype", {
       }
 
       if ("TEAMCITY_VERSION" in env) {
-        return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) !== null ? COLORS_16 : COLORS_2;
+        return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
       }
 
       switch (env.TERM_PROGRAM) {

@@ -392,6 +392,18 @@ pub const Bunfig = struct {
                                 install.save_lockfile = value;
                             }
                         }
+
+                        if (lockfile_expr.get("path")) |lockfile| {
+                            if (lockfile.asString(allocator)) |value| {
+                                install.lockfile_path = value;
+                            }
+                        }
+
+                        if (lockfile_expr.get("savePath")) |lockfile| {
+                            if (lockfile.asString(allocator)) |value| {
+                                install.save_lockfile_path = value;
+                            }
+                        }
                     }
 
                     if (_bun.get("optional")) |optional| {

@@ -315,6 +315,68 @@ pub const StringOrBunStringOrBuffer = union(enum) {
     }
 };
 
+pub const SliceWithUnderlyingStringOrBuffer = union(enum) {
+    SliceWithUnderlyingString: bun.SliceWithUnderlyingString,
+    buffer: Buffer,
+
+    pub fn toThreadSafe(this: *@This()) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.toThreadSafe(),
+            else => {},
+        }
+    }
+
+    pub fn toJS(this: *SliceWithUnderlyingStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .SliceWithUnderlyingStringOrBuffer => {
+                defer {
+                    this.SliceWithUnderlyingString.deinit();
+                    this.SliceWithUnderlyingString.underlying = bun.String.empty;
+                    this.SliceWithUnderlyingString.utf8 = .{};
+                }
+
+                return this.SliceWithUnderlyingString.underlying.toJS(ctx);
+            },
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+        };
+    }
+
+    pub fn slice(this: *const SliceWithUnderlyingStringOrBuffer) []const u8 {
+        return switch (this.*) {
+            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.slice(),
+            .buffer => this.buffer.slice(),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SliceWithUnderlyingStringOrBuffer {
+        _ = exception;
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var str = bun.String.tryFromJS(value, global) orelse return null;
+                return SliceWithUnderlyingStringOrBuffer{ .SliceWithUnderlyingString = str.toSlice(allocator) };
+            },
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => SliceWithUnderlyingStringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value),
+            },
+            else => null,
+        };
+    }
+};
+
 /// Like StringOrBuffer but actually returns a Node.js Buffer
 pub const StringOrNodeBuffer = union(Tag) {
     string: string,
@@ -399,6 +461,20 @@ pub const SliceOrBuffer = union(Tag) {
             },
             .buffer => {},
         }
+    }
+
+    pub fn toThreadSafe(this: *SliceOrBuffer) void {
+        var buffer: ?Buffer = null;
+        if (this.* == .buffer) {
+            buffer = this.buffer;
+            this.buffer.buffer.value.ensureStillAlive();
+        }
+        defer {
+            if (buffer) |buf| {
+                buf.buffer.value.unprotect();
+            }
+        }
+        this.ensureCloned(bun.default_allocator) catch unreachable;
     }
 
     pub const Tag = enum { string, buffer };
@@ -649,6 +725,10 @@ pub const PathLike = union(Tag) {
     pub fn toThreadSafe(this: *PathLike) void {
         if (this.* == .slice_with_underlying_string) {
             this.slice_with_underlying_string.toThreadSafe();
+        }
+
+        if (this.* == .buffer) {
+            this.buffer.buffer.value.protect();
         }
     }
 

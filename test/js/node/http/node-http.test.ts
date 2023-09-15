@@ -8,6 +8,7 @@ import {
   Server,
   validateHeaderName,
   validateHeaderValue,
+  ServerResponse,
 } from "node:http";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -110,6 +111,23 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+  });
+
+  describe("response", () => {
+    test("set-cookie works with getHeader", () => {
+      const res = new ServerResponse({});
+      res.setHeader("set-cookie", ["swag=true", "yolo=true"]);
+      expect(res.getHeader("set-cookie")).toEqual(["swag=true", "yolo=true"]);
+    });
+    test("set-cookie works with getHeaders", () => {
+      const res = new ServerResponse({});
+      res.setHeader("set-cookie", ["swag=true", "yolo=true"]);
+      res.setHeader("test", "test");
+      expect(res.getHeaders()).toEqual({
+        "set-cookie": ["swag=true", "yolo=true"],
+        "test": "test",
+      });
     });
   });
 

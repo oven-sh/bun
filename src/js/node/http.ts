@@ -75,6 +75,7 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeIndexOf = String.prototype.indexOf;
@@ -128,8 +129,13 @@ function validateFunction(callable: any, field: string) {
 
 function getHeader(headers, name) {
   if (!headers) return;
-  const result = headers.get(name);
-  return result == null ? undefined : result;
+  let res;
+  if (StringPrototypeToLowerCase.call(name) === "set-cookie") {
+    res = headers.getSetCookie();
+  } else {
+    res = headers.get(name);
+  }
+  return res == null ? undefined : res;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
@@ -960,8 +966,9 @@ class ServerResponse extends Writable {
 
   constructor(c) {
     super();
+    if (!c) c = {};
     var req = c.req || {};
-    var reply = c.reply || {};
+    var reply = c.reply;
     this.req = req;
     this._reply = reply;
     this.sendDate = true;

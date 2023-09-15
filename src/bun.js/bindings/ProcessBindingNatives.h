@@ -4,8 +4,8 @@
 namespace Bun {
 using namespace JSC;
 
-// The object returned from process.binding('constants')
-class ProcessBindingConstants final : public JSC::JSNonFinalObject {
+// The object returned from process.binding('natives')
+class ProcessBindingNatives final : public JSC::JSNonFinalObject {
 public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -14,7 +14,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
-    static ProcessBindingConstants* create(JSC::VM& vm, JSC::Structure* structure);
+    static ProcessBindingNatives* create(JSC::VM& vm, JSC::Structure* structure);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -26,7 +26,7 @@ public:
 private:
     void finishCreation(JSC::VM& vm);
 
-    ProcessBindingConstants(JSC::VM& vm, JSC::Structure* structure)
+    ProcessBindingNatives(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }

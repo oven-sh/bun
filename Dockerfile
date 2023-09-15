@@ -28,7 +28,7 @@ RUN install_packages ca-certificates curl wget lsb-release software-properties-c
 
 RUN wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh 15
+    ./llvm.sh 16
 
 RUN install_packages \
     cmake \
@@ -49,8 +49,8 @@ RUN install_packages \
     xz-utils \
     bash tar gzip ccache
 
-ENV CXX=clang++-15
-ENV CC=clang-15
+ENV CXX=clang++-16
+ENV CC=clang-16
 
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     install_packages nodejs && \
@@ -72,10 +72,10 @@ ARG ZIG_FILENAME
 
 ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
 ENV BUILDARCH=${BUILDARCH}
-ENV AR=/usr/bin/llvm-ar-15
+ENV AR=/usr/bin/llvm-ar-16
 ENV ZIG "${ZIG_PATH}/zig"
 ENV PATH="$ZIG/bin:$PATH"
-ENV LD=lld-15
+ENV LD=lld-16
 
 RUN mkdir -p $BUN_DIR $BUN_DEPS_OUT_DIR 
 
@@ -157,7 +157,7 @@ COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
 
 ENV CCACHE_DIR=/ccache
 
-RUN --mount=type=cache,target=/ccache export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-15) && cd ${BUN_DIR} && \
+RUN --mount=type=cache,target=/ccache export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-16) && cd ${BUN_DIR} && \
     make lolhtml && rm -rf src/deps/lol-html Makefile
 
 FROM bun-base as mimalloc

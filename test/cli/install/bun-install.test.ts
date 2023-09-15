@@ -3703,6 +3703,7 @@ cache = false
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
@@ -3756,6 +3757,7 @@ cache = false
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -3794,21 +3796,9 @@ cache = false
   await access(join(package_dir, "bun.lockb"));
   // Perform `bun install` again but with cache & lockfile from before
   await Promise.all(
-    [
-      ".bin",
-      "camel-case",
-      "clean-css",
-      "commander",
-      "he",
-      "html-minifier",
-      "lower-case",
-      "no-case",
-      "param-case",
-      "relateurl",
-      "source-map",
-      "uglify-js",
-      "upper-case",
-    ].map(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true })),
+    await (await readdirSorted(join(package_dir, "node_modules")))
+      .filter(dir => dir != ".cache")
+      .map(async dir => await rm(join(package_dir, "node_modules", dir), { force: true, recursive: true })),
   );
 
   urls.length = 0;
@@ -3826,6 +3816,7 @@ cache = false
   });
   expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
   expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();

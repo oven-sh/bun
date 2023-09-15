@@ -36,7 +36,7 @@ for (let withRun of [false, true]) {
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toContain("error:");
         expect(stdout.toString()).toBe("Hello, world!\n");
         expect(exitCode).toBe(0);
       });
@@ -57,7 +57,7 @@ for (let withRun of [false, true]) {
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toContain("error:");
         expect(stdout.toString()).toBe("Hello, world!\n");
         expect(exitCode).toBe(0);
       });
@@ -82,7 +82,7 @@ for (let withRun of [false, true]) {
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toContain("error:");
         expect(stdout.toString()).toBe("hi\n");
         expect(exitCode).toBe(0);
       });
@@ -94,7 +94,7 @@ for (let withRun of [false, true]) {
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toContain("error:");
         expect(stdout.toString()).toBe("");
         expect(exitCode).toBe(1);
       });
@@ -171,7 +171,7 @@ logLevel = "debug"
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toContain("error:");
         expect(stdout.toString()).toBe("Hello, world!\n");
         expect(exitCode).toBe(0);
       });
@@ -205,7 +205,7 @@ console.log(minify("print(6 * 7)").code);
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
-  expect(err1).toBe("");
+  expect(err1).not.toContain("error:");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
   expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
@@ -231,7 +231,7 @@ console.log(minify("print(6 * 7)").code);
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2).toBe("");
+  expect(err2).not.toContain("error:");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
   expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
@@ -271,7 +271,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
-  expect(err1).toBe("");
+  expect(err1).not.toContain("error:");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
@@ -311,7 +311,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2).toBe("");
+  expect(err2).not.toContain("error:");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);

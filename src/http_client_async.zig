@@ -1241,6 +1241,7 @@ fn writeRequest(
 pub const HTTPStage = enum {
     pending,
     headers,
+    received_continue,
     body,
     body_chunk,
     fail,
@@ -2675,7 +2676,15 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
-
+            // receiveed 100 Continue so we wait for the next response
+            if (this.state.response_stage == .received_continue) {
+                this.state.response_stage = .headers;
+                // we still can have the 200 OK in the same buffer sometimes
+                if (body_buf.len > 0) {
+                    this.onData(is_ssl, body_buf, ctx, socket);
+                }
+                return;
+            }
             if (this.state.content_encoding_i < response.headers.len) {
                 // if it compressed with this header, it is no longer because we will decompress it
                 var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
@@ -3399,6 +3408,12 @@ pub fn handleResponseMetadata(
         this.proxy_tunneling = false;
     }
 
+    // if is no redirect or if is redirect == "manual" just proceed
+    if (response.status_code == 100) {
+        this.state.response_stage = .received_continue;
+        return true;
+    }
+
     const is_redirect = response.status_code >= 300 and response.status_code <= 399;
     if (is_redirect) {
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
@@ -3513,7 +3528,6 @@ pub fn handleResponseMetadata(
         }
     }
 
-    // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
     const content_length = this.state.content_length orelse 0;
     // if no body is expected we should stop processing

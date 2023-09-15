@@ -609,17 +609,18 @@ pub const Request = struct {
 
             if (!fields.contains(.signal)) {
                 if (value.get(globalThis, "signal")) |signal_| {
-                    fields.insert(.signal);
-
-                    if (AbortSignal.fromJS(signal_)) |signal| {
-                        //Keep it alive
-                        signal_.ensureStillAlive();
-                        req.signal = signal.ref();
-                    } else {
-                        globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
-                        req.finalizeWithoutDeinit();
-                        _ = req.body.unref();
-                        return null;
+                    if(!signal_.isEmptyOrUndefinedOrNull()) {
+                        fields.insert(.signal);
+                        if (AbortSignal.fromJS(signal_)) |signal| {
+                            //Keep it alive
+                            signal_.ensureStillAlive();
+                            req.signal = signal.ref();
+                        } else {
+                            globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                            req.finalizeWithoutDeinit();
+                            _ = req.body.unref();
+                            return null;
+                        }
                     }
                 }
             }

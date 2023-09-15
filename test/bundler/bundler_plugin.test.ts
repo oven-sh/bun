@@ -28,12 +28,25 @@ describe("bundler", () => {
   };
 
   itBundled("plugin/Resolve", {
-    todo: true,
     files: resolveFixture,
     // The bundler testing api has a shorthand where the plugins array can be
     // the `setup` function of one plugin.
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
+        return {
+          path: path.resolve(path.dirname(args.importer), args.path.replace(/\.magic$/, ".ts")),
+        };
+      });
+    },
+    run: {
+      stdout: "foo",
+    },
+  });
+  itBundled("plugin/ResolveAsync", {
+    files: resolveFixture,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, async args => {
+        await new Promise(resolve => setTimeout(resolve, 10));
         return {
           path: path.resolve(path.dirname(args.importer), args.path.replace(/\.magic$/, ".ts")),
         };

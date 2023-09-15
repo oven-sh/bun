@@ -10,7 +10,8 @@ RUN apk --no-cache add unzip
 
 ARG GLIBC_RELEASE
 RUN wget https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
-wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_RELEASE}/glibc-${GLIBC_RELEASE}.apk
+wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_RELEASE}/glibc-${GLIBC_RELEASE}.apk && \
+wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_RELEASE}/glibc-bin-${GLIBC_RELEASE}.apk
 
 ADD https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip bun-linux-x64.zip
 RUN unzip bun-linux-x64.zip
@@ -20,10 +21,14 @@ FROM alpine:latest
 ARG GLIBC_RELEASE
 COPY --from=build /tmp/sgerrand.rsa.pub /etc/apk/keys
 COPY --from=build /tmp/glibc-${GLIBC_RELEASE}.apk /tmp
+COPY --from=build /tmp/glibc-bin-${GLIBC_RELEASE}.apk /tmp
 COPY --from=build /tmp/bun-linux-x64/bun /usr/local/bin
 
-RUN apk --no-cache --force-overwrite add /tmp/glibc-${GLIBC_RELEASE}.apk \
+RUN apk --no-cache --force-overwrite add /tmp/glibc-${GLIBC_RELEASE}.apk /tmp/glibc-bin-${GLIBC_RELEASE}.apk gcompat \
 && rm /etc/apk/keys/sgerrand.rsa.pub \
 && rm /tmp/glibc-${GLIBC_RELEASE}.apk
 
+# just to make sure there are no errors in loading bun related libraries
+# this line can be omitted
+RUN /usr/glibc-compat/bin/ldd /usr/local/bin/bun
 RUN bun --version

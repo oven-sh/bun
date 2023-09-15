@@ -1159,11 +1159,7 @@ class ServerResponse extends Writable {
     if (!headers) return kEmptyObject;
     let ret = { __proto__: null };
     for (const key of headers.keys()) {
-      if (key === "set-cookie") {
-        ret[key] = headers.getSetCookie();
-      } else {
-        ret[key] = headers.get(key);
-      }
+      ret[key] = getHeader(headers, key);
     }
 
     return ret;

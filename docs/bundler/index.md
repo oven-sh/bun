@@ -29,6 +29,10 @@ The bundler is a key piece of infrastructure in the JavaScript ecosystem. As a b
 
 Let's jump into the bundler API.
 
+{% callout %}
+Note that the Bun bundler is not intended to replace `tsc` for typechecking or generating type declarations.
+{% /callout %}
+
 ## Basic example
 
 Let's build our first bundle. You have the following two files, which implement a simple client-side rendered React app.

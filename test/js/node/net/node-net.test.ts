@@ -370,8 +370,36 @@ it("should handle connection error", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.name).toBe("SystemError");
     expect(error.message).toBe("Failed to connect");
+    expect((error as any).code).toBe("ECONNREFUSED");
+  });
+
+  socket.on("connect", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("close", () => {
+    expect(errored).toBe(true);
+    done();
+  });
+});
+
+it("should handle connection error (unix)", done => {
+  let errored = false;
+
+  // @ts-ignore
+  const socket = connect("loser", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("error", error => {
+    if (errored) {
+      return done(new Error("Should not have errored twice"));
+    }
+    errored = true;
+    expect(error).toBeDefined();
+    expect(error.message).toBe("Failed to connect");
+    expect((error as any).code).toBe("ENOENT");
   });
 
   socket.on("connect", () => {

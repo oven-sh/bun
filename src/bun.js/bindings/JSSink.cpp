@@ -799,15 +799,13 @@ void JSReadableArrayBufferSinkController::detach()
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
 
-    if (readableStream && onClose) {
+    if (readableStream && onClose && onClose.isCallable()) {
         JSC::JSGlobalObject* globalObject = this->globalObject();
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_onClose.clear();
@@ -1055,15 +1053,13 @@ void JSReadableFileSinkController::detach()
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
 
-    if (readableStream && onClose) {
+    if (readableStream && onClose && onClose.isCallable()) {
         JSC::JSGlobalObject* globalObject = this->globalObject();
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_onClose.clear();
@@ -1311,15 +1307,13 @@ void JSReadableHTTPResponseSinkController::detach()
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
 
-    if (readableStream && onClose) {
+    if (readableStream && onClose && onClose.isCallable()) {
         JSC::JSGlobalObject* globalObject = this->globalObject();
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_onClose.clear();
@@ -1567,15 +1561,13 @@ void JSReadableHTTPSResponseSinkController::detach()
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
 
-    if (readableStream && onClose) {
+    if (readableStream && onClose && onClose.isCallable()) {
         JSC::JSGlobalObject* globalObject = this->globalObject();
         auto callData = JSC::getCallData(onClose);
-        if (callData.type != CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_onClose.clear();

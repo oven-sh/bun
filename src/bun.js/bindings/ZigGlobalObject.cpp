@@ -3674,6 +3674,20 @@ JSC_DEFINE_CUSTOM_GETTER(
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
+JSValue getConsoleConstructor(VM& vm, JSObject* console)
+{
+    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(console);
+    JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(vm, createConsoleConstructor, callData, console, args, returnedException);
+    if (returnedException) {
+        throwException(vm, nullptr, returnedException.get());
+    }
+    return result;
+}
+
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName property))
@@ -4072,7 +4086,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | 0);
+    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)

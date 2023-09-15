@@ -121,7 +121,7 @@ const stuff = require("./stuff");
 module.exports = { stuff };
 ```
 
-The biggest difference between CommonJS and ES Modules is that CommonJS modules are synchronous, while ES Modules are asynchronous. There are other differences too.
+The biggest difference between CommonJS and ES Modules is that CommonJS modules are synchronous, while ES Modules are asynchronous (only with [dynamic `import()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import)). There are other differences too.
 
 - ES Modules support top-level `await` and CommonJS modules don't.
 - ES Modules are always in [strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode), while CommonJS modules are not.

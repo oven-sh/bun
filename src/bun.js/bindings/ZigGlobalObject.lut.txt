@@ -79,5 +79,6 @@
   WritableStream                  WritableStreamConstructorCallback                    PropertyCallback
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
+  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
 @end
 */

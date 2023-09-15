@@ -154,7 +154,7 @@ static const struct CompactHashIndex bunGlobalObjectTableIndex[260] = {
     { -1, -1 },
     { -1, -1 },
     { 36, -1 },
-    { -1, -1 },
+    { 72, -1 },
     { -1, -1 },
     { -1, -1 },
     { -1, -1 },
@@ -262,7 +262,7 @@ static const struct CompactHashIndex bunGlobalObjectTableIndex[260] = {
     { 68, -1 },
 };
 
-static const struct HashTableValue bunGlobalObjectTableValues[72] = {
+static const struct HashTableValue bunGlobalObjectTableValues[73] = {
    { "addEventListener"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFunctionAddEventListener, 2 } },
    { "alert"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, WebCore__alert, 1 } },
    { "atob"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionATOB, 1 } },
@@ -335,7 +335,8 @@ static const struct HashTableValue bunGlobalObjectTableValues[72] = {
    { "WritableStream"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, WritableStreamConstructorCallback } },
    { "WritableStreamDefaultController"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, WritableStreamDefaultControllerConstructorCallback } },
    { "WritableStreamDefaultWriter"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, WritableStreamDefaultWriterConstructorCallback } },
+   { "TransformStreamDefaultController"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, TransformStreamDefaultControllerConstructorCallback } },
 };
 
 static const struct HashTable bunGlobalObjectTable =
-    { 72, 255, true, nullptr, bunGlobalObjectTableValues, bunGlobalObjectTableIndex };
+    { 73, 255, true, nullptr, bunGlobalObjectTableValues, bunGlobalObjectTableIndex };

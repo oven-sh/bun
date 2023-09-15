@@ -482,14 +482,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
             switch (promise->status(vm)) {
+            case JSPromise::Status::Rejected:
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, throwScope, "onResolve() doesn't support pending promises yet"_s);
-                return JSValue::encode({});
-            }
-            case JSPromise::Status::Rejected: {
-                promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-                result = promise->result(vm);
-                return JSValue::encode(result);
+                return JSValue::encode(promise);
             }
             case JSPromise::Status::Fulfilled: {
                 result = promise->result(vm);

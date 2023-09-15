@@ -130,12 +130,18 @@ pub const PluginRunner = struct {
             bun.String.init(namespace_slice)
         else
             bun.String.empty;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        var on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
             bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
             bun.String.init(importer),
             target,
         ) orelse return null;
+
+        if (on_resolve_plugin.asAnyPromise()) |promise| {
+            global.bunVM().waitForPromise(promise);
+            on_resolve_plugin = promise.result(global.vm());
+        }
+
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
@@ -220,7 +226,7 @@ pub const PluginRunner = struct {
         target: JSC.JSGlobalObject.BunPluginTarget,
     ) ?JSC.ErrorableString {
         var global = this.global_object;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        var on_resolve_plugin = global.runOnResolvePlugins(
             if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
@@ -229,6 +235,12 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
+
+        if (on_resolve_plugin.asAnyPromise()) |promise| {
+            global.bunVM().waitForPromise(promise);
+            on_resolve_plugin = promise.result(global.vm());
+        }
+
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {

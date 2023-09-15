@@ -13,6 +13,7 @@ on:
 jobs:
   sign:
     name: Sign Release
+    permissions: write-all
     runs-on: ubuntu-latest
     if: github.repository_owner == 'oven-sh'
     defaults:
@@ -53,6 +54,7 @@ jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
+    permissions: write-all
     needs: sign
     if: github.repository_owner == 'oven-sh'
     defaults:
@@ -179,6 +181,7 @@ jobs:
             BUN_VERSION=${{ env.TAG }}
   homebrew:
     name: Release to Homebrew
+    permissions: write-all
     runs-on: ubuntu-latest
     needs: sign
     if: github.repository_owner == 'oven-sh'
@@ -222,6 +225,7 @@ jobs:
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
+    permissions: write-all
     needs: sign
     if: github.repository_owner == 'oven-sh'
     defaults:

@@ -940,7 +940,7 @@ pub const LineOffsetTable = struct {
                         contents.ptr,
                     )) - line_byte_offset),
                 );
-                byte_offset_to_first_non_ascii = line_byte_offset;
+                byte_offset_to_first_non_ascii = column_byte_offset;
             }
 
             // Update the per-byte column offsets

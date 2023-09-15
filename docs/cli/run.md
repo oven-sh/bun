@@ -1,5 +1,28 @@
 The `bun` CLI can be used to execute JavaScript/TypeScript files, `package.json` scripts, and [executable packages](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#bin).
 
+## Performance
+
+Bun is designed to start fast and run fast.
+
+Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. In most cases, the startup and running performance is faster than V8, the engine used by Node.js and Chromium-based browsers. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+
+{% table %}
+
+---
+
+- `bun hello.js`
+- `5.2ms`
+
+---
+
+- `node hello.js`
+- `25.1ms`
+
+{% /table %}
+{% caption content="Running a simple Hello World script on Linux" /%}
+
+<!-- {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%} -->
+
 <!-- ## Speed -->
 
 <!--
@@ -126,23 +149,3 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 ```bash
 $ bun run --bun vite
 ```
-
-## Environment variables
-
-Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:
-
-1. `.env.local` (first)
-2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
-3. `.env`
-
-To debug environment variables, run `bun run env` to view a list of resolved environment variables.
-
-## Performance
-
-Bun is designed to start fast and run fast.
-
-Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. In most cases, the startup and running performance is faster than V8, the engine used by Node.js and Chromium-based browsers. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
-
-{% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
-
-<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->

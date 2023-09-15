@@ -43,7 +43,7 @@ Running `bun install` will:
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
-To install in production mode (i.e. without `devDependencies`):
+To install in production mode (i.e. without `devDependencies` or `optionalDependencies`):
 
 ```bash
 $ bun install --production
@@ -69,7 +69,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]

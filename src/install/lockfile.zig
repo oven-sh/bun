@@ -672,7 +672,7 @@ pub fn cleanWithLogger(
     // If yes, choose that version instead.
     // Why lower?
     //
-    // Normally, the problem is looks like this:
+    // Normally, the problem looks like this:
     //   Package A: "react@^17"
     //   Package B: "react@17.0.1
     //

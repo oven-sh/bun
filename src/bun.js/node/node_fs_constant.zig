@@ -6,8 +6,9 @@ fn get(comptime name: []const u8) comptime_int {
     return if (@hasDecl(std.os.O, name))
         return @field(std.os.O, name)
     else
-        return 0;
+        @compileError("Unknown Constant: " ++ name);
 }
+
 pub const Constants = struct {
     // File Access Constants
     /// Constant for fs.access(). File is visible to the calling process.
@@ -142,64 +143,3 @@ pub const Constants = struct {
     /// this flag is ignored.
     pub const UV_FS_O_FILEMAP = 49152;
 };
-
-// Due to zig's format support max 32 arguments, we need to split
-// here.
-const constants_string_format1 =
-    \\var constants = {{
-    \\  F_OK: {d},
-    \\  R_OK: {d},
-    \\  W_OK: {d},
-    \\  X_OK: {d},
-    \\  COPYFILE_EXCL: {d},
-    \\  COPYFILE_FICLONE: {d},
-    \\  COPYFILE_FICLONE_FORCE: {d},
-    \\  O_RDONLY: {d},
-    \\  O_WRONLY: {d},
-    \\  O_RDWR: {d},
-    \\  O_CREAT: {d},
-    \\  O_EXCL: {d},
-    \\  O_NOCTTY: {d},
-    \\  O_TRUNC: {d},
-    \\  O_APPEND: {d},
-    \\  O_DIRECTORY: {d},
-    \\  O_NOATIME: {d},
-    \\  O_NOFOLLOW: {d},
-    \\  O_SYNC: {d},
-    \\  O_DSYNC: {d},
-;
-const constants_string_format2 =
-    \\  O_SYMLINK: {s},
-    \\  O_DIRECT: {d},
-    \\  O_NONBLOCK: {d},
-    \\  S_IFMT: {d},
-    \\  S_IFREG: {d},
-    \\  S_IFDIR: {d},
-    \\  S_IFCHR: {d},
-    \\  S_IFBLK: {d},
-    \\  S_IFIFO: {d},
-    \\  S_IFLNK: {d},
-    \\  S_IFSOCK: {d},
-    \\  S_IRWXU: {d},
-    \\  S_IRUSR: {d},
-    \\  S_IWUSR: {d},
-    \\  S_IXUSR: {d},
-    \\  S_IRWXG: {d},
-    \\  S_IRGRP: {d},
-    \\  S_IWGRP: {d},
-    \\  S_IXGRP: {d},
-    \\  S_IRWXO: {d},
-    \\  S_IROTH: {d},
-    \\  S_IWOTH: {d},
-    \\  S_IXOTH: {d},
-    \\  UV_FS_O_FILEMAP: {d}
-    \\}};
-    \\
-;
-
-const constants_string1 = std.fmt.comptimePrint(constants_string_format1, .{ Constants.F_OK, Constants.R_OK, Constants.W_OK, Constants.X_OK, Constants.COPYFILE_EXCL, Constants.COPYFILE_FICLONE, Constants.COPYFILE_FICLONE_FORCE, Constants.O_RDONLY, Constants.O_WRONLY, Constants.O_RDWR, Constants.O_CREAT, Constants.O_EXCL, Constants.O_NOCTTY, Constants.O_TRUNC, Constants.O_APPEND, Constants.O_DIRECTORY, Constants.O_NOATIME, Constants.O_NOFOLLOW, Constants.O_SYNC, Constants.O_DSYNC });
-
-const constants_string2 =
-    std.fmt.comptimePrint(constants_string_format2, .{ if (@TypeOf(Constants.O_SYMLINK) == void) "undefined" else std.fmt.comptimePrint("{}", .{Constants.O_SYMLINK}), Constants.O_DIRECT, Constants.O_NONBLOCK, Constants.S_IFMT, Constants.S_IFREG, Constants.S_IFDIR, Constants.S_IFCHR, Constants.S_IFBLK, Constants.S_IFIFO, Constants.S_IFLNK, Constants.S_IFSOCK, Constants.S_IRWXU, Constants.S_IRUSR, Constants.S_IWUSR, Constants.S_IXUSR, Constants.S_IRWXG, Constants.S_IRGRP, Constants.S_IWGRP, Constants.S_IXGRP, Constants.S_IRWXO, Constants.S_IROTH, Constants.S_IWOTH, Constants.S_IXOTH, Constants.UV_FS_O_FILEMAP });
-
-pub const constants_string = constants_string1 ++ constants_string2;

@@ -2122,7 +2122,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!override_accept_encoding) {
+    if (!override_accept_encoding and !this.disable_decompression) {
         request_headers_buf[header_count] = accept_encoding_header;
         header_count += 1;
     }

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import Module from "module";
+import path from "path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
@@ -56,4 +58,15 @@ test("Module.wrap", () => {
   expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
   expect(mod.exports.foo).toBe(1);
   expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
+});
+
+test("Overwriting _resolveFilename", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "resolveFilenameOverwrite.cjs")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(exitCode).toBe(0);
 });

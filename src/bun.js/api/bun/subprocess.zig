@@ -1811,8 +1811,8 @@ pub const Subprocess = struct {
                 task: JSC.AnyTask,
 
                 pub fn unref(self: *@This()) void {
-                  self.process.unref();
-                  bun.default_allocator.destroy(self);
+                    self.process.unref();
+                    bun.default_allocator.destroy(self);
                 }
             };
 

@@ -958,8 +958,10 @@ let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 class ServerResponse extends Writable {
   declare _writableState: any;
 
-  constructor({ req, reply }) {
+  constructor(c) {
     super();
+    var req = c.req || {};
+    var reply = c.reply || {};
     this.req = req;
     this._reply = reply;
     this.sendDate = true;
@@ -1158,7 +1160,16 @@ class ServerResponse extends Writable {
   getHeaders() {
     var headers = this.#headers;
     if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    let ret = { __proto__: null };
+    for (const key of headers.keys()) {
+      if (key === "set-cookie") {
+        ret[key] = headers.getSetCookie();
+      } else {
+        ret[key] = headers.get(key);
+      }
+    }
+
+    return ret;
   }
 
   getHeaderNames() {
@@ -1174,7 +1185,14 @@ class ServerResponse extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    headers.set(name, value);
+    if (ArrayIsArray(value)) {
+      headers.set(name, value[0]);
+      for (var i = 1; i < value.length; i++) {
+        headers.append(name, value[i]);
+      }
+    } else {
+      headers.set(name, value);
+    }
     return this;
   }
 

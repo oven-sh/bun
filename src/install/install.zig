@@ -4332,7 +4332,6 @@ pub const PackageManager = struct {
         bin_path: stringZ = "node_modules/.bin",
 
         lockfile_path: stringZ = Lockfile.default_filename,
-        save_lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
         scope: Npm.Registry.Scope = undefined,
 
@@ -4481,8 +4480,6 @@ pub const PackageManager = struct {
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
         ) !void {
-            this.save_lockfile_path = this.lockfile_path;
-
             var base = Api.NpmRegistry{
                 .url = "",
                 .username = "",
@@ -4570,19 +4567,6 @@ pub const PackageManager = struct {
                     this.local_package_features.optional_dependencies = save;
                 }
 
-                if (bun_install.lockfile_path) |save| {
-                    if (save.len > 0) {
-                        this.lockfile_path = try allocator.dupeZ(u8, save);
-                        this.save_lockfile_path = this.lockfile_path;
-                    }
-                }
-
-                if (bun_install.save_lockfile_path) |save| {
-                    if (save.len > 0) {
-                        this.save_lockfile_path = try allocator.dupeZ(u8, save);
-                    }
-                }
-
                 this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
             }
 
@@ -4663,14 +4647,6 @@ pub const PackageManager = struct {
                 if (cli.token.len > 0) {
                     this.scope.token = cli.token;
                 }
-
-                if (cli.lockfile.len > 0) {
-                    this.lockfile_path = try allocator.dupeZ(u8, cli.lockfile);
-                }
-            }
-
-            if (env.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
-                this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
             }
 
             if (env.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
@@ -5765,7 +5741,6 @@ pub const PackageManager = struct {
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
         clap.parseParam("--save                            Save to package.json") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
-        clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
         clap.parseParam("--frozen-lockfile                 Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
         clap.parseParam("--cache-dir <PATH>                 Store & load cached data from a specific directory path") catch unreachable,
@@ -5954,10 +5929,6 @@ pub const PackageManager = struct {
             //         Global.crash();
             //     }
             // }
-
-            if (args.option("--lockfile")) |lockfile| {
-                cli.lockfile = lockfile;
-            }
 
             if (args.option("--cwd")) |cwd_| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -7756,7 +7727,7 @@ pub const PackageManager = struct {
         save: {
             if (manager.lockfile.isEmpty()) {
                 if (!manager.options.dry_run) {
-                    std.fs.cwd().deleteFileZ(manager.options.save_lockfile_path) catch |err| brk: {
+                    std.fs.cwd().deleteFileZ(manager.options.lockfile_path) catch |err| brk: {
                         // we don't care
                         if (err == error.FileNotFound) {
                             if (had_any_diffs) break :save;
@@ -7784,7 +7755,7 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
             }
 
-            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+            manager.lockfile.saveToDisk(manager.options.lockfile_path);
             if (comptime log_level.showProgress()) {
                 node.end();
                 manager.progress.refresh();

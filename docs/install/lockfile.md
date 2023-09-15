@@ -79,12 +79,6 @@ print = "yarn"
 ```toml
 [install.lockfile]
 
-# path to read bun.lockb from
-path = "bun.lockb"
-
-# path to save bun.lockb to
-savePath = "bun.lockb"
-
 # whether to save the lockfile to disk
 save = true
 

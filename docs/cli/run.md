@@ -26,10 +26,11 @@ $ bun run index.ts
 $ bun run index.tsx
 ```
 
-The "naked" `bun` command is equivalent to `bun run`.
+Alternatively, you can omit the `run` keyword and use the "naked" command; it behaves identically.
 
 ```bash
 $ bun index.tsx
+$ bun index.js
 ```
 
 ### `--watch`
@@ -66,7 +67,7 @@ Your `package.json` can define a number of named `"scripts"` that correspond to 
 }
 ```
 
-Use `bun <script>` to execute these scripts.
+Use `bun <script>` or `bun run <script>` to execute these scripts.
 
 ```bash
 $ bun clean
@@ -103,6 +104,22 @@ quickstart scripts:
 ```
 
 Bun respects lifecycle hooks. For instance, `bun run clean` will execute `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun will not execute the script itself.
+
+### `--bun`
+
+It's common for `package.json` scripts to reference locally-installed CLIs like `vite` or `next`. These CLIs are often JavaScript files marked with a [shebang](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate that they should be executed with `node`.
+
+```js
+#!/usr/bin/env node
+
+// do stuff
+```
+
+By default, Bun respects this shebang and executes the script with `node`. However, you can override this behavior with the `--bun` flag. For Node.js-based CLIs, this will run the CLI with Bun instead of Node.js.
+
+```bash
+$ bun run --bun vite
+```
 
 ## Environment variables
 

@@ -98,7 +98,7 @@ Many other flags become irrelevant or obsolete when using `bun test`.
 - `extensionsToTreatAsEsm`
 - `haste` — Bun uses it's own internal source maps
 - `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode
-- `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](/docs/runtime/configuration.md#runtime)
+- `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](/docs/runtime/bunfig#loglevel)
 
 ---
 

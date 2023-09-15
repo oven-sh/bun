@@ -1241,7 +1241,6 @@ fn writeRequest(
 pub const HTTPStage = enum {
     pending,
     headers,
-    received_continue,
     body,
     body_chunk,
     fail,
@@ -2638,7 +2637,15 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.state.pending_response = response;
 
             var body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
-
+            // handle the case where we have a 100 Continue
+            if (response.status_code == 100) {
+                // we still can have the 200 OK in the same buffer sometimes
+                if (body_buf.len > 0) {
+                    this.onData(is_ssl, body_buf, ctx, socket);
+                }
+                return;
+            }
+            
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
                 &response,
@@ -2676,15 +2683,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
-            // receiveed 100 Continue so we wait for the next response
-            if (this.state.response_stage == .received_continue) {
-                this.state.response_stage = .headers;
-                // we still can have the 200 OK in the same buffer sometimes
-                if (body_buf.len > 0) {
-                    this.onData(is_ssl, body_buf, ctx, socket);
-                }
-                return;
-            }
+
             if (this.state.content_encoding_i < response.headers.len) {
                 // if it compressed with this header, it is no longer because we will decompress it
                 var mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
@@ -3408,11 +3407,6 @@ pub fn handleResponseMetadata(
         this.proxy_tunneling = false;
     }
 
-    if (response.status_code == 100) {
-        this.state.response_stage = .received_continue;
-        return true;
-    }
-    
     // if is no redirect or if is redirect == "manual" just proceed
     const is_redirect = response.status_code >= 300 and response.status_code <= 399;
     if (is_redirect) {

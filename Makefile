@@ -338,7 +338,7 @@ SHARED_INCLUDE_DIR = -I$(realpath src/bun.js/bindings)/ \
 		-I$(realpath src/bun.js/bindings/sqlite) \
 		-I$(realpath src/bun.js/bindings/node_os) \
 		-I$(realpath src/bun.js/modules) \
-		-I$(JSC_INCLUDE_DIR)
+		-I$(realpath $(JSC_INCLUDE_DIR))
 
 MAC_INCLUDE_DIRS :=  $(ALL_JSC_INCLUDE_DIRS) \
 		$(SHARED_INCLUDE_DIR) \

@@ -159,6 +159,7 @@ coverageThreshold = 0.9
 Different thresholds can be specified for line-wise, function-wise, and statement-wise coverage.
 
 ```toml
+[test]
 coverageThreshold = { line = 0.7, function = 0.8, statement = 0.9 }
 ```
 
@@ -308,6 +309,25 @@ Whether to install optional dependencies. Default `false`. When true, it's equiv
 dryRun = false
 ```
 
+### `install.globalDir`
+
+To configure the directory where Bun puts globally installed packages.
+
+```toml
+[install]
+# where `bun install --global` installs packages
+globalDir = "~/.bun/install/global"
+```
+
+### `install.globalBinDir`
+
+To configure the directory where Bun installs globally installed binaries and CLIs.
+
+```toml
+# where globally-installed package bins are linked
+globalBinDir = "~/.bun/bin"
+```
+
 ### `install.registry`
 
 The default registry is `https://registry.npmjs.org/`. This can be globally configured in `bunfig.toml`:
@@ -337,25 +357,6 @@ myorg = { username = "myusername", password = "$npm_password", url = "https://re
 
 # registry with token
 myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
-```
-
-### `install.globalDir`
-
-To configure the directory where Bun puts globally installed packages.
-
-```toml
-[install]
-# where `bun install --global` installs packages
-globalDir = "~/.bun/install/global"
-```
-
-### `install.globalBinDir`
-
-To configure the directory where Bun installs globally installed binaries and CLIs.
-
-```toml
-# where globally-installed package bins are linked
-globalBinDir = "~/.bun/bin"
 ```
 
 ### `install.cache`
@@ -390,6 +391,7 @@ save = true
 Whether to generate a non-Bun lockfile alongside `bun.lockb`. (A `bun.lockb` will always be created.) Currently `"yarn"` is the only supported value.
 
 ```toml
+[install.lockfile]
 print = "yarn"
 ```
 

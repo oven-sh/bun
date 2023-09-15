@@ -6018,16 +6018,17 @@ describe("Registry URLs", () => {
     ["example", true],
     ["https://example.com:demo", true],
     ["http://[www.example.com]/", true],
-    ["c:", true],
     ["c:a", true],
     ["https://registry.npmjs.org/", false],
     ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
-    ["", false],
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
+    ["", true],
     ["https:example.org", false],
     ["https://////example.com///", false],
     ["https://example.com/https:example.org", false],
     ["https://example.com/[]?[]#[]", false],
     ["https://example/%?%#%", false],
+    ["c:", false],
     ["c:/", false],
     ["https://點看", false], // gets converted to punycode
     ["https://xn--c1yn36f/", false],
@@ -6066,7 +6067,8 @@ describe("Registry URLs", () => {
       const err = await new Response(stderr).text();
 
       if (fails) {
-        expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+        const url = regURL.at(-1) === "/" ? regURL : regURL + "/";
+        expect(err.includes(`Failed to join registry \"${url}\" and package \"notapackage\" URLs`)).toBeTrue();
         expect(err.includes("error: InvalidURL")).toBeTrue();
       } else {
         expect(err.includes("error: notapackage@0.0.2 failed to resolve")).toBeTrue();
@@ -6106,7 +6108,7 @@ describe("Registry URLs", () => {
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
 
-    expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+    expect(err.includes(`Failed to join registry \"${regURL}/\" and package \"notapackage\" URLs`)).toBeTrue();
     expect(err.includes("warn: InvalidURL")).toBeTrue();
 
     expect(await exited).toBe(0);

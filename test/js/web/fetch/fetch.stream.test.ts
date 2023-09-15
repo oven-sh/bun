@@ -76,7 +76,7 @@ describe("fetch() with streaming", () => {
     }
   });
 
-  it(`should be able to fail properly after readable stream is active`, async () => {
+  it(`should be locked after start buffering`, async () => {
     let server: Server | null = null;
     try {
       server = Bun.serve({
@@ -114,8 +114,8 @@ describe("fetch() with streaming", () => {
         const result = await promise; // should throw the right error
         expect(result).toBe("unreachable");
       } catch (err: any) {
-        if (err.name !== "TimeoutError") throw err;
-        expect(err.message).toBe("The operation timed out.");
+        if (err.name !== "TypeError") throw err;
+        expect(err.message).toBe("ReadableStream is locked");
       }
     } finally {
       server?.stop();

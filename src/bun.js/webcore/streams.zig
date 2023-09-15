@@ -225,6 +225,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
+    extern fn ReadableStream__used(*JSGlobalObject) JSC.JSValue;
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
@@ -365,6 +366,12 @@ pub const ReadableStream = struct {
         JSC.markBinding(@src());
 
         return ReadableStream__empty(globalThis);
+    }
+
+    pub fn used(globalThis: *JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return ReadableStream__used(globalThis);
     }
 
     const Base = @import("../../ast/base.zig");

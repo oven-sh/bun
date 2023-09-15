@@ -68,6 +68,7 @@ using namespace JSC;
     macro(cork) \
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
+    macro(createUsedReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
     macro(createNativeReadableStream) \

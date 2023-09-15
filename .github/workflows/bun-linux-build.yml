@@ -37,6 +37,7 @@ jobs:
     runs-on: ${{matrix.runner}}
     if: github.repository_owner == 'oven-sh'
     timeout-minutes: 90
+    permissions: write-all
     strategy:
       fail-fast: false
       matrix:

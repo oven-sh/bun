@@ -247,6 +247,7 @@ jobs:
     if: github.repository_owner == 'oven-sh'
     needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
+    permissions: write-all
     strategy:
       matrix:
         include:

@@ -1551,6 +1551,40 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     return JSValue::encode(jsNumber(err));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue headersValue = callFrame->argument(0);
+
+    if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
+        JSValue nameValue = callFrame->argument(1);
+        if (nameValue.isString()) {
+            FetchHeaders* impl = &headers->wrapped();
+            String name = nameValue.toWTFString(globalObject);
+            if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
+                return fetchHeadersGetSetCookie(globalObject, vm, impl);
+            }
+
+            WebCore::ExceptionOr<String> res = impl->get(name);
+            if (res.hasException()) {
+                WebCore::propagateException(globalObject, scope, res.releaseException());
+                return JSValue::encode(jsUndefined());
+            }
+
+            String value = res.returnValue();
+            if (value.isEmpty()) {
+                return JSValue::encode(jsUndefined());
+            }
+
+            return JSC::JSValue::encode(jsString(vm, value));
+        }
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1683,6 +1717,10 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 
         if (string == "sqlite"_s) {
             return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+        }
+
+        if (string == "http"_s) {
+            return JSC::JSValue::encode(JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public, NoIntrinsic));
         }
 
         if (string == "worker_threads"_s) {

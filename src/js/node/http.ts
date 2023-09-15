@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const getHeader = $lazy("http");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -125,17 +126,6 @@ function validateFunction(callable: any, field: string) {
   }
 
   return callable;
-}
-
-function getHeader(headers, name) {
-  if (!headers) return;
-  let res;
-  if (StringPrototypeToLowerCase.call(name) === "set-cookie") {
-    res = headers.getSetCookie();
-  } else {
-    res = headers.get(name);
-  }
-  return res == null ? undefined : res;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;

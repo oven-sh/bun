@@ -1437,7 +1437,7 @@ fn NewPrinter(
             ) catch unreachable;
         }
 
-        fn printUTF16(e: *Printer, text: []const u16, comptime quoted: bool, quote: u8) void {
+        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
             var i: usize = 0;
             const n: usize = text.len;
 
@@ -1471,42 +1471,26 @@ fn NewPrinter(
                         e.print("\\x07");
                     },
                     0x08 => {
-                        if (comptime quoted) {
-                            if (quote == '`')
-                                e.print(0x08)
-                            else
-                                e.print("\\b");
-                        } else {
+                        if (quote == '`')
+                            e.print(0x08)
+                        else
                             e.print("\\b");
-                        }
                     },
                     0x0C => {
-                        if (comptime quoted) {
-                            if (quote == '`')
-                                e.print(0x000C)
-                            else
-                                e.print("\\f");
-                        } else {
+                        if (quote == '`')
+                            e.print(0x000C)
+                        else
                             e.print("\\f");
-                        }
                     },
                     '\t' => {
-                        if (comptime quoted) {
-                            if (quote == '`')
-                                e.print("\t")
-                            else
-                                e.print("\\t");
-                        } else {
+                        if (quote == '`')
+                            e.print("\t")
+                        else
                             e.print("\\t");
-                        }
                     },
                     '\n' => {
-                        if (comptime quoted) {
-                            if (quote == '`') {
-                                e.print('\n');
-                            } else {
-                                e.print("\\n");
-                            }
+                        if (quote == '`') {
+                            e.print('\n');
                         } else {
                             e.print("\\n");
                         }
@@ -1517,12 +1501,8 @@ fn NewPrinter(
                     },
                     // \v
                     std.ascii.control_code.vt => {
-                        if (comptime quoted) {
-                            if (quote == '`') {
-                                e.print(std.ascii.control_code.vt);
-                            } else {
-                                e.print("\\v");
-                            }
+                        if (quote == '`') {
+                            e.print(std.ascii.control_code.vt);
                         } else {
                             e.print("\\v");
                         }
@@ -1533,37 +1513,29 @@ fn NewPrinter(
                     },
 
                     '\'' => {
-                        if (comptime quoted) {
-                            if (quote == '\'') {
-                                e.print('\\');
-                            }
+                        if (quote == '\'') {
+                            e.print('\\');
                         }
                         e.print("'");
                     },
 
                     '"' => {
-                        if (comptime quoted) {
-                            if (quote == '"') {
-                                e.print('\\');
-                            }
+                        if (quote == '"') {
+                            e.print('\\');
                         }
 
                         e.print("\"");
                     },
                     '`' => {
-                        if (comptime quoted) {
-                            if (quote == '`') {
-                                e.print('\\');
-                            }
+                        if (quote == '`') {
+                            e.print('\\');
                         }
 
                         e.print("`");
                     },
                     '$' => {
-                        if (comptime quoted) {
-                            if (quote == '`' and i < n and text[i] == '{') {
-                                e.print('\\');
-                            }
+                        if (quote == '`' and i < n and text[i] == '{') {
+                            e.print('\\');
                         }
 
                         e.print('$');
@@ -1587,34 +1559,32 @@ fn NewPrinter(
                                 // this only applies to template literal strings
                                 // but we print a template literal if there is a \n or a \r
                                 // which is often if the string is long and UTF-16
-                                if (comptime quoted) {
-                                    if (quote == '`') {
-                                        const remain = text[i..];
-                                        if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
-                                            remain[0] != '$' and
-                                            remain[0] != '\\' and
-                                            remain[0] != '`')
-                                        {
-                                            if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
-                                                if (count_ == 0)
-                                                    unreachable; // conditional above checks this
+                                if (quote == '`') {
+                                    const remain = text[i..];
+                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
+                                        remain[0] != '$' and
+                                        remain[0] != '\\' and
+                                        remain[0] != '`')
+                                    {
+                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
+                                            if (count_ == 0)
+                                                unreachable; // conditional above checks this
 
-                                                const len = count_ - 1;
-                                                i += len;
-                                                var ptr = e.writer.reserve(len) catch unreachable;
-                                                var to_copy = ptr[0..len];
+                                            const len = count_ - 1;
+                                            i += len;
+                                            var ptr = e.writer.reserve(len) catch unreachable;
+                                            var to_copy = ptr[0..len];
 
-                                                strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                                                e.writer.advance(len);
-                                                continue :outer;
-                                            } else {
-                                                const count = @as(u32, @truncate(remain.len));
-                                                var ptr = e.writer.reserve(count) catch unreachable;
-                                                var to_copy = ptr[0..count];
-                                                strings.copyU16IntoU8(to_copy, []const u16, remain);
-                                                e.writer.advance(count);
-                                                i += count;
-                                            }
+                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
+                                            e.writer.advance(len);
+                                            continue :outer;
+                                        } else {
+                                            const count = @as(u32, @truncate(remain.len));
+                                            var ptr = e.writer.reserve(count) catch unreachable;
+                                            var to_copy = ptr[0..count];
+                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
+                                            e.writer.advance(count);
+                                            i += count;
                                         }
                                     }
                                 }
@@ -1692,14 +1662,6 @@ fn NewPrinter(
                     },
                 }
             }
-        }
-
-        pub fn printUnquotedUTF16(p: *Printer, text: []const u16) void {
-            p.printUTF16(text, false, 0);
-        }
-
-        pub fn printQuotedUTF16(p: *Printer, text: []const u16, quote: u8) void {
-            p.printUTF16(text, true, quote);
         }
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
@@ -3187,13 +3149,53 @@ fn NewPrinter(
                 p.print(" ");
             }
 
-            switch (e.data) {
-                .raw => |raw| {
-                    p.print(raw);
-                },
-                .decoded => |decoded| {
-                    p.printUnquotedUTF16(decoded.slice());
-                },
+            if (comptime is_bun_platform) {
+                // Translate any non-ASCII to unicode escape sequences
+                var ascii_start: usize = 0;
+                var is_ascii = false;
+                var iter = CodepointIterator.init(e.value);
+                var cursor = CodepointIterator.Cursor{};
+                while (iter.next(&cursor)) {
+                    switch (cursor.c) {
+                        first_ascii...last_ascii => {
+                            if (!is_ascii) {
+                                ascii_start = cursor.i;
+                                is_ascii = true;
+                            }
+                        },
+                        else => {
+                            if (is_ascii) {
+                                p.print(e.value[ascii_start..cursor.i]);
+                                is_ascii = false;
+                            }
+
+                            switch (cursor.c) {
+                                0...0xFFFF => {
+                                    p.print([_]u8{
+                                        '\\',
+                                        'u',
+                                        hex_chars[cursor.c >> 12],
+                                        hex_chars[(cursor.c >> 8) & 15],
+                                        hex_chars[(cursor.c >> 4) & 15],
+                                        hex_chars[cursor.c & 15],
+                                    });
+                                },
+                                else => {
+                                    p.print("\\u{");
+                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                    p.print("}");
+                                },
+                            }
+                        },
+                    }
+                }
+
+                if (is_ascii) {
+                    p.print(e.value[ascii_start..]);
+                }
+            } else {
+                // UTF8 sequence is fine
+                p.print(e.value);
             }
 
             // Need a space before the next identifier to avoid it turning into flags

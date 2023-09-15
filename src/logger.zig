@@ -703,12 +703,12 @@ pub const Log = struct {
         };
     }
 
-    pub fn addVerboseFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-        if (!Kind.shouldPrint(.verbose, log.level)) return;
+    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
 
         @setCold(true);
         try log.addMsg(.{
-            .kind = .verbose,
+            .kind = .debug,
             .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }

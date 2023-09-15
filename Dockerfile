@@ -44,6 +44,10 @@ RUN install_packages ca-certificates curl wget lsb-release software-properties-c
     rsync \
     ruby \
     unzip \
+    clang-16 \
+    lld-16 \
+    lldb-16 \
+    clangd-16 \
     xz-utils \
     bash tar gzip ccache nodejs && \
     npm install -g esbuild

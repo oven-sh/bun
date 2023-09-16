@@ -2179,6 +2179,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {
@@ -2188,6 +2189,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {

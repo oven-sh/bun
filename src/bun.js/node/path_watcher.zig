@@ -286,17 +286,8 @@ pub const PathWatcherManager = struct {
                                 if (!(path.len == 1 and entry_point[0] == '/')) {
                                     path = path[entry_point.len..];
 
-                                    if (path.len == 0) {
-                                        while (path.len > 0) {
-                                            if (bun.strings.startsWithChar(path, '/')) {
-                                                path = path[1..];
-                                                break;
-                                            } else {
-                                                path = path[1..];
-                                            }
-                                        }
-                                    } else {
-                                        // Skip forward slash
+                                    // Skip leading slash
+                                    if (bun.strings.startsWithChar(path, '/')) {
                                         path = path[1..];
                                     }
                                 }

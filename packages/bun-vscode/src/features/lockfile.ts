@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 import { spawn } from "node:child_process";
+import { styleLockfile } from "./lockfile.style";
 
 export type BunLockfile = vscode.CustomDocument & {
   readonly preview: string;
 };
 
 export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorProvider {
-  constructor(context: vscode.ExtensionContext) {}
+  constructor(private context: vscode.ExtensionContext) {}
 
   async openCustomDocument(
     uri: vscode.Uri,
@@ -27,13 +28,43 @@ export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorPro
     token: vscode.CancellationToken,
   ): Promise<void> {
     const { preview } = document;
-    renderLockfile(webviewPanel, preview);
+    webviewPanel.webview.options = {
+      localResourceRoots: [this.context.extensionUri],
+    };
+    renderLockfile(webviewPanel, preview, this.context.extensionUri);
   }
 }
 
-function renderLockfile(webviewPanel: vscode.WebviewPanel, preview: string): void {
-  // TODO: Improve syntax highlighting to match that of yarn.lock
-  webviewPanel.webview.html = `<pre><code class="language-yaml">${preview}</code></pre>`;
+function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, extensionUri: vscode.Uri): void {
+  const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "vscode.css"));
+  const lockfileContent = styleLockfile(preview);
+  
+  const lineNumbers: string[] = []
+  for(let i = 0; i < lockfileContent.split('\n').length; i++){
+    lineNumbers.push(`<span class="line-number">${i + 1}</span>`)
+  }
+
+  webview.html = `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource};">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <link href="${styleVSCodeUri}" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="bunlock">
+      <div class="lines">
+        ${lineNumbers.join('\n')}
+      </div>
+      <code>${lockfileContent}</code>
+    </div>
+  </body>
+</html>`;
 }
 
 function previewLockfile(uri: vscode.Uri, token?: vscode.CancellationToken): Promise<string> {

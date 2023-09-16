@@ -42,17 +42,17 @@ $ brew install llvm@16
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm15 clang15 lld
+$ sudo pacman -S llvm16 clang16 lld
 
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
 Make sure LLVM 16 is in your path:
 
@@ -73,9 +73,9 @@ $ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@16)/include"
 
 ```bash#Arch
 
-$ export PATH="$PATH:/usr/lib/llvm15/bin"
-$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm15/lib"
-$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm15/include"
+$ export PATH="$PATH:/usr/lib/llvm16/bin"
+$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm16/lib"
+$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm16/include"
 
 ```
 

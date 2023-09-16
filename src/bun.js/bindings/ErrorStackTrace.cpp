@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/NativeCallee.h>
 #include <wtf/IterationStatus.h>
 
 using namespace JSC;
@@ -139,9 +140,18 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     m_callFrame = visitor->callFrame();
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (visitor->isWasmFrame()) {
-        m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
-        m_isWasmFrame = true;
+    if (visitor->isNativeCalleeFrame()) {
+        auto* nativeCallee = visitor->callee().asNativeCallee();
+        switch (nativeCallee->category()) {
+        case NativeCallee::Category::Wasm: {
+            m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
+            m_isWasmFrame = true;
+            break;
+        }
+        case NativeCallee::Category::InlineCache: {
+            break;
+        }
+        }
     } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
         m_codeBlock = visitor->codeBlock();
         m_bytecodeIndex = visitor->bytecodeIndex();

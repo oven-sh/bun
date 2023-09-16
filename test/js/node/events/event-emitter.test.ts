@@ -288,18 +288,26 @@ describe("EventEmitter", () => {
     expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
     expect(myEmitter.listeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    expect(myEmitter.listeners("foo")).toEqual([fn, fn3]);
   });
 
   test("rawListeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
     myEmitter.on("foo", fn);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
     const fn2 = () => {};
     myEmitter.on("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    const rawListeners: (Function & { listener?: Function })[] = myEmitter.rawListeners("foo");
+    // rawListeners() returns onceWrappers as well
+    expect([rawListeners[0], rawListeners[1].listener]).toEqual([fn, fn3]);
   });
 
   test("eventNames", () => {

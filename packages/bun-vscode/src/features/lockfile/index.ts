@@ -96,11 +96,13 @@ export default function (context: vscode.ExtensionContext): void {
   const viewType = "bun.lockb";
   const provider = new BunLockfileEditorProvider(context);
 
-  vscode.window.registerCustomEditorProvider(viewType, provider, {
+  const disposable = vscode.window.registerCustomEditorProvider(viewType, provider, {
     supportsMultipleEditorsPerDocument: true,
     webviewOptions: {
       enableFindWidget: true,
       retainContextWhenHidden: true,
     },
   });
+
+  context.subscriptions.push(disposable);
 }

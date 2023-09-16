@@ -54,14 +54,7 @@
     "../bun-inspector-protocol"
   ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:javascriptreact",
-    "onLanguage:typescript",
-    "onLanguage:typescriptreact",
-    "workspaceContains:**/.lockb",
-    "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun",
-    "onCommand:workbench.action.tasks.runTask"
+    "onStartupFinished"
   ],
   "browser": "dist/web-extension.js",
   "bugs": {
@@ -118,6 +111,10 @@
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "extension.bun.codelens.debug",
+        "title": "Debug Task"
       }
     ],
     "menus": {
@@ -299,7 +296,9 @@
     "taskDefinitions": [
       {
         "type": "bun",
-        "required": ["script"],
+        "required": [
+          "script"
+        ],
         "properties": {
           "script": {
             "type": "string",

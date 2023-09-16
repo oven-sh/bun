@@ -285,26 +285,6 @@ The above will probably also need Zig and/or C++ code rebuilt.
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-### ZLS
-
-ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
-
-```bash
-$ git clone https://github.com/zigtools/zls
-$ cd zls
-$ git checkout 0.11.0
-$ zig build
-```
-
-Then add absolute paths to Zig and ZLS in your vscode config:
-
-```json
-{
-  "zig.zigPath": "/path/to/zig/install/zig",
-  "zig.zls.path": "/path/to/zls/zig-out/bin/zls"
-}
-```
-
 ## JavaScript builtins
 
 When you change anything in `src/js/builtins/*` or switch branches, run this:

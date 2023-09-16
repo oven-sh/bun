@@ -279,7 +279,7 @@ describe("dynamic import", () => {
   });
 
   it("should change resolved import when onResolve is async", async () => {
-    const result = require("async-resolve:original");
+    const result = await import("async-resolve:original");
     expect(result.default).toBe("changed");
   });
 

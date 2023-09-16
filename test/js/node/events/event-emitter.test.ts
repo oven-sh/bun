@@ -183,6 +183,21 @@ describe("EventEmitter", () => {
       emitter.on("wow", () => done());
       setTimeout(() => emitter.emit("wow"), 1);
     });
+
+    test("emit multiple values", () => {
+      var emitter = new EventEmitter();
+
+      const receivedVals: number[] = [];
+      emitter.on("multiple-vals", (val1, val2, val3) => {
+        receivedVals[0] = val1;
+        receivedVals[1] = val2;
+        receivedVals[2] = val3;
+      });
+
+      emitter.emit("multiple-vals", 1, 2, 3);
+
+      expect(receivedVals).toEqual([1, 2, 3]);
+    });
   });
 
   test("addListener return type", () => {

@@ -68,6 +68,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc_buffer: bun.ByteList,
 
+    ref_count: u32 = 0,
     pub const SignalCode = bun.SignalCode;
 
     pub const IPCMode = enum {
@@ -82,7 +83,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.ref_count == 0, .SeqCst);
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -92,7 +93,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.ref_count == 0, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -1812,11 +1813,13 @@ pub const Subprocess = struct {
 
                 pub fn unref(self: *@This()) void {
                     self.process.unref();
+                    self.process.ref_count -= 1;
                     bun.default_allocator.destroy(self);
                 }
             };
 
             var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+            this.ref_count += 1;
             holder.* = .{
                 .process = this,
                 .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),

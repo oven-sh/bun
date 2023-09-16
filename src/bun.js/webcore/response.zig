@@ -795,11 +795,11 @@ pub const Fetch = struct {
                             if (body.value.Locked.promise) |promise_| {
                                 const promise = promise_.asAnyPromise().?;
                                 promise.reject(globalThis, err);
-                                return;
+                                // return;
                             }
                         }
                         response.body.value.toErrorInstance(err, globalThis);
-                        return;
+                        // return;
                     }
                 }
 

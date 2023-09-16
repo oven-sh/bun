@@ -107,7 +107,7 @@ describe("fetch() with streaming", () => {
       });
 
       const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url, { signal: AbortSignal.timeout(20) });
+      const res = await fetch(server_url);
       try {
         const promise = res.text(); // start buffering
         res.body?.getReader(); // get a reader

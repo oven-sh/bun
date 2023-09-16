@@ -94,7 +94,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (handlers === undefined) return false;
   // iterate in reverse so the handlers array does not need to be cloned
   for (let i = handlers.length - 1; i >= 0; --i) {
-    // for performance reason Function.call(...) is used if only one arg needs to be passed
+    // for performance reasons Function.call(...) is used if only one arg needs to be passed
     if (args.length === 1) handlers[i].call(this, args[0]);
     else handlers[i].apply(this, args);
   }
@@ -112,14 +112,13 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   // iterate in reverse so the handlers array does not need to be cloned
   for (let i = handlers.length - 1; i >= 0; --i) {
     let result;
-    // for performance reason Function.call(...) is used if only one arg needs to be passed
+    // for performance reasons Function.call(...) is used if only one arg needs to be passed
     if (args.length === 1) result = handlers[i].call(this, args[0]);
     else result = handlers[i].apply(this, args);
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
   }
-
   return true;
 };
 
@@ -267,7 +266,8 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
   if (!_events) return [];
   var handlers = _events[type];
   if (!handlers) return [];
-  return handlers.slice();
+  // reverse array since handlers are stored in reverse internally
+  return handlers.reverse().slice();
 };
 
 EventEmitterPrototype.listenerCount = function listenerCount(type) {

@@ -3674,7 +3674,7 @@ JSC_DEFINE_CUSTOM_GETTER(
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
-// JSValue getConsoleConstructor(VM& vm, JSObject* console)
+// `console.Console` or `import { Console } from 'console';`
 JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = globalObject->vm();

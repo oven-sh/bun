@@ -112,8 +112,10 @@ pub const Subprocess = struct {
         }
     }
 
+    /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
+
         if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
@@ -1812,6 +1814,7 @@ pub const Subprocess = struct {
                 task: JSC.AnyTask,
 
                 pub fn unref(self: *@This()) void {
+                    // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
                     self.process.unref();
                     self.process.has_pending_unref = false;
                     self.process.updateHasPendingActivity();

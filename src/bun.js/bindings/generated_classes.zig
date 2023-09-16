@@ -6781,6 +6781,9 @@ pub const JSTextDecoder = struct {
         if (@TypeOf(TextDecoder.getFatal) != GetterType)
             @compileLog("Expected TextDecoder.getFatal to be a getter");
 
+        if (@TypeOf(TextDecoder.getIgnoreBOM) != GetterType)
+            @compileLog("Expected TextDecoder.getIgnoreBOM to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(TextDecoder.constructor, .{ .name = "TextDecoderClass__construct" });
             @export(TextDecoder.decode, .{ .name = "TextDecoderPrototype__decode" });
@@ -6788,6 +6791,7 @@ pub const JSTextDecoder = struct {
             @export(TextDecoder.finalize, .{ .name = "TextDecoderClass__finalize" });
             @export(TextDecoder.getEncoding, .{ .name = "TextDecoderPrototype__getEncoding" });
             @export(TextDecoder.getFatal, .{ .name = "TextDecoderPrototype__getFatal" });
+            @export(TextDecoder.getIgnoreBOM, .{ .name = "TextDecoderPrototype__getIgnoreBOM" });
         }
     }
 };

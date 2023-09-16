@@ -1,4 +1,4 @@
-void GlobalObject::initGeneratedLazyClasses() {
+ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     m_JSAttributeIterator.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSAttributeIterator::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));

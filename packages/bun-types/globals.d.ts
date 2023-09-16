@@ -3507,8 +3507,9 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
+
 interface ArrayBuffer {
   /**
    * Read-only. The length of the ArrayBuffer (in bytes).

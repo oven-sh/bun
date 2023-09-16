@@ -6,9 +6,10 @@ import { BunTask } from "./tasks";
 import { debugCommand } from "../debug";
 
 /**
- * Parses tasks defined in the package.json file.
+ * Parses tasks defined in the package.json.
  */
 export async function providePackageJsonTasks(): Promise<BunTask[]> {
+  //
   const scripts: Record<string, string> = await (async () => {
     try {
       const file = vscode.Uri.file(vscode.workspace.workspaceFolders[0]?.uri.fsPath + "/package.json");
@@ -41,6 +42,9 @@ export function registerPackageJsonProviders(context: vscode.ExtensionContext) {
   registerHoverProvider(context);
 }
 
+/**
+ * Utility function to extract the scripts from a package.json file, including their name and position in the document.
+ */
 function extractScriptsFromPackageJson(document: vscode.TextDocument) {
   const content = document.getText();
   const matches = content.match(/"scripts"\s*:\s*{([\s\S]*?)}/);
@@ -151,7 +155,7 @@ interface CommandArgs {
 function registerHoverProvider(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider("json", {
-      provideHover(document, position, token) {
+      provideHover(document, position) {
         const { scripts } = extractScriptsFromPackageJson(document);
 
         return {
@@ -161,7 +165,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
             const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
 
             const markdownString = new vscode.MarkdownString(
-              `Bun: [Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
+              `[Debug](command:extension.bun.codelens.debug.task?${command}) | [Run](command:extension.bun.codelens.run.task?${command})`,
             );
             markdownString.isTrusted = true;
 
@@ -185,9 +189,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         return;
       }
 
-      const terminal = vscode.window.createTerminal({
-        name,
-      });
+      const terminal = vscode.window.createTerminal({name});
       terminal.show();
       terminal.sendText(`bun ${script}`);
     }),

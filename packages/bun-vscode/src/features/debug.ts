@@ -237,7 +237,7 @@ function getActivePath(target?: vscode.Uri): string | undefined {
 
 function getRuntime(scope?: vscode.ConfigurationScope): string {
   const value = getConfig<string>("runtime", scope);
-  if (typeof value === "string" && value.trim().length) {
+  if (typeof value === "string" && value.trim().length > 0) {
     return value;
   }
   return "bun";

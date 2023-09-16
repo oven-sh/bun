@@ -111,10 +111,6 @@
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
-      },
-      {
-        "command": "extension.bun.codelens.run",
-        "title": "Run Task from package.json"
       }
     ],
     "menus": {

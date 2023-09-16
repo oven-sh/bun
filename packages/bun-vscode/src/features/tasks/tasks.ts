@@ -21,19 +21,20 @@ export class BunTask extends vscode.Task {
     scope?: vscode.WorkspaceFolder | vscode.TaskScope.Global | vscode.TaskScope.Workspace;
     execution?: vscode.ProcessExecution | vscode.ShellExecution | vscode.CustomExecution;
   }) {
-    super({type: 'bun', script}, scope, name, 'bun', execution);
+    super({ type: "bun", script }, scope, name, "bun", execution);
     this.detail = detail;
   }
 }
 
+/**
+ * Registers the task provider for the bun extension.
+ */
 export function registerTaskProvider(context: vscode.ExtensionContext) {
   const taskProvider: vscode.TaskProvider<BunTask> = {
     provideTasks: async () => await providePackageJsonTasks(),
     resolveTask: task => resolveTask(task),
   };
-
-  const disposable = vscode.tasks.registerTaskProvider("bun", taskProvider);
-  context.subscriptions.push(disposable);
+  context.subscriptions.push(vscode.tasks.registerTaskProvider("bun", taskProvider));
 }
 
 /**

@@ -67,7 +67,7 @@ describe("fs.watch", () => {
     const root = path.join(testDir, "add-directory");
     try {
       fs.mkdirSync(root);
-    } catch {}
+    } catch { }
     let err: Error | undefined = undefined;
     const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
     watcher.on("change", (event, filename) => {
@@ -102,7 +102,7 @@ describe("fs.watch", () => {
     const root = path.join(testDir, "add-subdirectory");
     try {
       fs.mkdirSync(root);
-    } catch {}
+    } catch { }
     const subfolder = path.join(root, "subfolder");
     fs.mkdirSync(subfolder);
     const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(3000) });
@@ -146,6 +146,36 @@ describe("fs.watch", () => {
       try {
         expect(event).toBe("rename");
         expect(filename).toBe("deleted.txt");
+      } catch (e: any) {
+        err = e;
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
+    });
+
+    watcher.once("close", () => {
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      fs.rmSync(filepath, { force: true });
+      const fd = fs.openSync(filepath, "w");
+      fs.closeSync(fd);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/5442
+  test("should work with paths with trailing slashes", done => {
+    const testsubdir = tempDirWithFiles("subdir", {
+      "trailing.txt": "hello",
+    });
+    const filepath = path.join(testsubdir, "trailing.txt");
+    let err: Error | undefined = undefined;
+    const watcher = fs.watch(testsubdir + "/", function (event, filename) {
+      try {
+        expect(event).toBe("rename");
+        expect(filename).toBe("trailing.txt");
       } catch (e: any) {
         err = e;
       } finally {
@@ -408,7 +438,7 @@ describe("fs.promises.watch", () => {
     const root = path.join(testDir, "add-promise-directory");
     try {
       fs.mkdirSync(root);
-    } catch {}
+    } catch { }
     let success = false;
     let err: Error | undefined = undefined;
     try {
@@ -450,7 +480,7 @@ describe("fs.promises.watch", () => {
     const root = path.join(testDir, "add-promise-subdirectory");
     try {
       fs.mkdirSync(root);
-    } catch {}
+    } catch { }
     const subfolder = path.join(root, "subfolder");
     fs.mkdirSync(subfolder);
     let success = false;

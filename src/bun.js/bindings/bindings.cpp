@@ -238,11 +238,16 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
                 JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
                 JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
 
-                unsigned expecedLength = expectedArray->length();
+                unsigned expectedLength = expectedArray->length();
                 unsigned otherLength = otherArray->length();
 
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
                 // O(m*n) but works for now
-                for (unsigned m = 0; m < expecedLength; m++) {
+                for (unsigned m = 0; m < expectedLength; m++) {
                     JSValue expectedValue = expectedArray->get(globalObject, m);
                     bool found = false;
 

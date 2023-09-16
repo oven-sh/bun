@@ -250,7 +250,7 @@ describe("TextDecoder", () => {
   it("constructor should set values", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     expect(decoder.fatal).toBe(true);
-    // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
+    expect(decoder.ignoreBOM).toBe(false);
   });
 
   it("should throw on invalid input", () => {

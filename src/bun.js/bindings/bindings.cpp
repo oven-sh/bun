@@ -230,6 +230,40 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (otherProp.isCell() && otherProp.asCell()->type() == ArrayType) {
+            if (expectedArrayValue.isCell() && expectedArrayValue.asCell()->type() == ArrayType) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expecedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expecedLength; m++) {
+                    JSValue expectedValue = expectedArray->get(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->get(globalObject, n);
+                        if (JSValue::strictEqual(globalObject, expectedValue, otherValue)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;

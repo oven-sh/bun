@@ -2624,6 +2624,11 @@ describe("expect()", () => {
       expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
       expect({ a: [1, 2, 4] }).not.toMatchObject({ a: [1, 2, 3] });
 
+      expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([1, 2]) });
+      expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([4]) });
+      expect({ a: ['hello', 'world'] }).toMatchObject({ a: expect.arrayContaining(['world']) });
+      expect({ a: ['hello', 'world'] }).not.toMatchObject({ a: expect.arrayContaining(['hello', 'mars']) });
+
       expect([]).toMatchObject([]);
       expect([]).toMatchObject({});
       expect({}).not.toMatchObject([]);

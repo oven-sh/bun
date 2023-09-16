@@ -60,7 +60,8 @@
     "onLanguage:typescriptreact",
     "workspaceContains:**/.lockb",
     "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun"
+    "onDebugDynamicConfigurations:bun",
+    "onCommand:workbench.action.tasks.runTask"
   ],
   "browser": "dist/web-extension.js",
   "bugs": {
@@ -293,6 +294,18 @@
           }
         ],
         "priority": "default"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "bun",
+        "required": ["script"],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The script to execute"
+          }
+        }
       }
     ]
   }

@@ -12,6 +12,7 @@ buildSync({
   external: ["vscode"],
   platform: "node",
   format: "cjs",
+  sourcemap: true,
 });
 
 rmSync("extension", { recursive: true, force: true });

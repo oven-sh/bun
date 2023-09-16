@@ -564,16 +564,14 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       ...consolePropAttributes,
       value: function (args) {
         const opts = this[kGetInspectOptions](this._stdout);
-        ArrayPrototypeUnshift.$call(args, opts);
-        return Reflect.apply(formatWithOptions, null, args);
+        return formatWithOptions(opts, ...args);
       },
     },
     [kFormatForStderr]: {
       ...consolePropAttributes,
       value: function (args) {
         const opts = this[kGetInspectOptions](this._stderr);
-        ArrayPrototypeUnshift.$call(args, opts);
-        return Reflect.apply(formatWithOptions, null, args);
+        return formatWithOptions(opts, ...args);
       },
     },
   });

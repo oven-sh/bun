@@ -5,7 +5,7 @@
       "label": "Build",
       "type": "shell",
       "command": "bun run build",
-      "problemMatcher": "$esbuild"
+      "problemMatcher": "$esbuild",
     }
   ]
 }

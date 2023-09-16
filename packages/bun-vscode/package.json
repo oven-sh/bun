@@ -113,8 +113,8 @@
         "icon": "$(debug-alt)"
       },
       {
-        "command": "extension.bun.codelens.debug",
-        "title": "Debug Task"
+        "command": "extension.bun.codelens.run",
+        "title": "Run Task from package.json"
       }
     ],
     "menus": {

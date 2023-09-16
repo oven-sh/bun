@@ -1,4 +1,4 @@
-// File generated via `make generate-builtins`
+// File generated via `make static-hash-table` / `make cpp`
 static const struct CompactHashIndex processObjectTableIndex[267] = {
     { 47, -1 },
     { -1, -1 },
@@ -276,7 +276,7 @@ static const struct HashTableValue processObjectTableValues[65] = {
    { "argv"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructArgv } },
    { "argv0"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructArgv0 } },
    { "assert"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_functionAssert, 1 } },
-   { "binding"_s, ((static_cast<unsigned>(PropertyAttribute::Function)) & ~PropertyAttribute::Function) | PropertyAttribute::Builtin, NoIntrinsic, { HashTableValue::BuiltinGeneratorType, processObjectBindingCodeGenerator, 1 } },
+   { "binding"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_functionBinding, 1 } },
    { "browser"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructBrowser } },
    { "chdir"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_functionChdir, 1 } },
    { "config"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructProcessConfigObject } },

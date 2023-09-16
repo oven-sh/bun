@@ -82,8 +82,8 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-15 2>/dev/null || which clang 2>/dev/null)
-REAL_CXX = $(shell which clang++-15 2>/dev/null || which clang++ 2>/dev/null)
+REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
+REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
 CLANG_FORMAT = $(shell which clang-format-15 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
@@ -108,14 +108,14 @@ CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@15)
+		LLVM_PREFIX = $(shell brew --prefix llvm@16)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 #   This is kinda ugly, but I can't find a better way to error :(
-		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@15' or set LLVM_PREFIX=/path/to/llvm")
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@16' or set LLVM_PREFIX=/path/to/llvm")
 	endif
 
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
@@ -155,7 +155,7 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-15-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
+    -DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
 
 
 
@@ -664,7 +664,7 @@ endif
 .PHONY: assert-deps
 assert-deps:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@15"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@16"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@$(PYTHON) --version >/dev/null 2>&1 || (echo -e "ERROR: python is required."; exit 1)
 	@$(ESBUILD) --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
@@ -1518,7 +1518,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1529,7 +1529,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1540,7 +1540,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1551,7 +1551,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1562,7 +1562,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1573,7 +1573,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1584,7 +1584,7 @@ $(OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1596,7 +1596,7 @@ $(OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1610,7 +1610,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1625,7 +1625,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1638,7 +1638,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1654,7 +1654,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1669,7 +1669,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1684,7 +1684,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1697,7 +1697,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1712,7 +1712,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-exceptions \
 		-I$(SRC_DIR) \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1891,7 +1891,7 @@ cold-jsc-start:
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(LIBICONV_PATH) \
 		$(DEFAULT_LINKER_FLAGS) \
 		$(PLATFORM_LINKER_FLAGS) \
@@ -1915,9 +1915,14 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
+.PHONY: static-hash-table
+static-hash-table:
+	bun src/js/_codegen/static-hash-tables.ts
+
 .PHONY: cpp
 cpp: ## compile src/js/builtins + all c++ code then link
 	@make clean-bindings js
+	@make static-hash-table
 	@make bindings -j$(CPU_COUNT)
 	@make link
 

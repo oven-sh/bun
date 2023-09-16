@@ -13095,39 +13095,13 @@ fn NewParser_(
                     return p.newExpr(E.BigInt{ .value = value }, loc);
                 },
                 .t_slash, .t_slash_equals => {
-                    const needs_decode = try p.lexer.scanRegExp();
+                    try p.lexer.scanRegExp();
                     // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
                     defer p.lexer.regex_flags_start = null;
-
-                    const raw = p.lexer.raw();
-
-                    if (!needs_decode) {
-                        try p.lexer.next();
-                        return p.newExpr(
-                            E.RegExp{
-                                .data = .{
-                                    .raw = raw,
-                                },
-                                .flags_offset = p.lexer.regex_flags_start,
-                            },
-                            loc,
-                        );
-                    }
-
-                    var buf = std.ArrayList(u16).initCapacity(p.allocator, raw.len) catch unreachable;
-                    try p.lexer.decodeEscapeSequences(p.lexer.start, raw, @TypeOf(buf), &buf);
-
+                    const value = p.lexer.raw();
                     try p.lexer.next();
 
-                    return p.newExpr(
-                        E.RegExp{
-                            .data = .{
-                                .decoded = bun.BabyList(u16).init(buf.items),
-                            },
-                            .flags_offset = p.lexer.regex_flags_start,
-                        },
-                        loc,
-                    );
+                    return p.newExpr(E.RegExp{ .value = value, .flags_offset = p.lexer.regex_flags_start }, loc);
                 },
                 .t_void => {
                     try p.lexer.next();

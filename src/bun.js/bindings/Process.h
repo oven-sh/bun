@@ -6,7 +6,7 @@
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
 
-namespace Zig {
+namespace Bun {
 
 // TODO: find a better place for this
 int getRSS(size_t* rss);
@@ -15,6 +15,11 @@ using namespace JSC;
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
+
+    LazyProperty<Process, Structure> m_cpuUsageStructure;
+    LazyProperty<Process, Structure> m_memoryUsageStructure;
+    LazyProperty<Process, JSObject> m_bindingUV;
+    LazyProperty<Process, JSObject> m_bindingNatives;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -50,9 +55,6 @@ public:
         return accessor;
     }
 
-    LazyProperty<JSObject, Structure> cpuUsageStructure;
-    LazyProperty<JSObject, Structure> memoryUsageStructure;
-
     DECLARE_VISIT_CHILDREN;
 
     template<typename, SubspaceAccess mode>
@@ -69,6 +71,11 @@ public:
     }
 
     void finishCreation(JSC::VM& vm);
+
+    inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
+    inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
+    inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
+    inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-} // namespace Zig
+} // namespace Bun

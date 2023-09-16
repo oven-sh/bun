@@ -24,7 +24,7 @@ export function hello() {
 
 {% /codetabs %}
 
-When we run `index.ts`, it prints "Hello world".
+When we run `index.ts`, it prints "Hello world!".
 
 ```bash
 $ bun index.ts
@@ -197,7 +197,7 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
 
 Subpath imports and conditional imports work in conjunction with each other.
 
-```
+```json
 {
   "name": "foo",
   "exports": {

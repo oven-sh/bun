@@ -9,9 +9,8 @@ bench("writeFile(/tmp/foo.txt, short string)", async () => {
   await writeFile("/tmp/foo.txt", "short string", "utf8");
 });
 
-const buffer = Buffer.from("short string");
 bench("writeFile(/tmp/foo.txt, Buffer.from(short string))", async () => {
-  await writeFile("/tmp/foo.txt", buffer);
+  await writeFile("/tmp/foo.txt", Buffer.from("short string"));
 });
 
 const fd = openSync("/tmp/foo.txt", "w");
@@ -22,7 +21,7 @@ bench("write(fd, short string)", () => {
 });
 
 bench("write(fd, Uint8Array(short string))", () => {
-  const bytesWritten = write(fd, buffer);
+  const bytesWritten = write(fd, Buffer.from("short string"));
   if (bytesWritten !== 12) throw new Error("wrote !== 12");
 });
 

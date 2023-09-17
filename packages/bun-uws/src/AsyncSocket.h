@@ -121,18 +121,25 @@ public:
     void corkUnchecked() {
         /* What if another socket is corked? */
         getLoopData()->corkedSocket = this;
+        getLoopData()->corkedSocketIsSSL = SSL;
     }
 
     /* Cork this socket. Only one socket may ever be corked per-loop at any given time */
     void cork() {
         /* Extra check for invalid corking of others */
         if (getLoopData()->corkOffset && getLoopData()->corkedSocket != this) {
-            std::cerr << "Error: Cork buffer must not be acquired without checking canCork!" << std::endl;
-            std::terminate();
+            // We uncork the other socket early instead of terminating the program
+            // is unlikely to be cause any issues and is better than crashing
+            if(getLoopData()->corkedSocketIsSSL) {
+                ((AsyncSocket<true> *) getLoopData()->corkedSocket)->uncork();
+            } else {
+                ((AsyncSocket<false> *) getLoopData()->corkedSocket)->uncork();
+            }
         }
 
         /* What if another socket is corked? */
         getLoopData()->corkedSocket = this;
+        getLoopData()->corkedSocketIsSSL = SSL;
     }
 
     /* Returns the corked socket or nullptr */

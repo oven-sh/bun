@@ -68,6 +68,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc_buffer: bun.ByteList,
 
+    has_pending_unref: bool = false,
     pub const SignalCode = bun.SignalCode;
 
     pub const IPCMode = enum {
@@ -82,7 +83,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .SeqCst);
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -92,7 +93,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -111,8 +112,10 @@ pub const Subprocess = struct {
         }
     }
 
+    /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
+
         if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
@@ -1805,8 +1808,29 @@ pub const Subprocess = struct {
             }
         }
 
-        if (this.hasExited())
-            this.unref();
+        if (this.hasExited()) {
+            const Holder = struct {
+                process: *Subprocess,
+                task: JSC.AnyTask,
+
+                pub fn unref(self: *@This()) void {
+                    // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
+                    self.process.unref();
+                    self.process.has_pending_unref = false;
+                    self.process.updateHasPendingActivity();
+                    bun.default_allocator.destroy(self);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+            this.has_pending_unref = true;
+            holder.* = .{
+                .process = this,
+                .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+            };
+
+            this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+        }
     }
 
     const os = std.os;

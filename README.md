@@ -98,7 +98,7 @@ cp -r misc /usr/local/bin/
 ```
 ```2
 echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
-
+```
 
 ## Quick links
 

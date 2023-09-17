@@ -161,7 +161,7 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency ytrr, making future installs fast and repeatable.",
+        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",

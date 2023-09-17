@@ -329,10 +329,12 @@ describe("test invalid arguments", () => {
   });
 
   it("dns.lookupService", async () => {
-    const t = () => {
+    expect(() => {
+      dns.lookupService("", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    };
-    expect(t).toThrow("Expected address to be a invalid address for 'lookupService'.");
+    }).toThrow("Expected address to be a invalid address for 'lookupService'.");
   });
 });
 
@@ -349,6 +351,19 @@ describe("dns.lookupService", () => {
         expect(err).toBeNull();
         expect(hostname).toStrictEqual(expected[0]);
         expect(service).toStrictEqual(expected[1]);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  it("lookupService(255.255.255.255, 443)", done => {
+    dns.lookupService("255.255.255.255", 443, (err, hostname, service) => {
+      try {
+        expect(err).not.toBeNull();
+        expect(hostname).toBeUndefined();
+        expect(service).toBeUndefined();
         done();
       } catch (err) {
         done(err);

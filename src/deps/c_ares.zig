@@ -327,6 +327,7 @@ pub const struct_nameinfo = extern struct {
                     return;
                 }
                 function(this, null, timeouts, .{ node, service });
+                return;
             }
         }.handle;
     }
@@ -626,7 +627,9 @@ pub const Channel = opaque {
             this,
             &addr.any,
             addr.getOsSockLen(),
-            ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE | ARES_NI_TCP | ARES_NI_UDP,
+            // node returns ENOTFOUND for addresses like 255.255.255.255:80
+            // So, it requires setting the ARES_NI_NAMEREQD flag
+            ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
             struct_nameinfo.CallbackWrapper(Type, callback),
             ctx,
         );

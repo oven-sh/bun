@@ -248,11 +248,11 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
                 // O(m*n) but works for now
                 for (unsigned m = 0; m < expectedLength; m++) {
-                    JSValue expectedValue = expectedArray->get(globalObject, m);
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
                     bool found = false;
 
                     for (unsigned n = 0; n < otherLength; n++) {
-                        JSValue otherValue = otherArray->get(globalObject, n);
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
                         if (JSValue::strictEqual(globalObject, expectedValue, otherValue)) {
                             found = true;
                             break;

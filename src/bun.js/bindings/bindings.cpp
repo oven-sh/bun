@@ -253,7 +253,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
                     for (unsigned n = 0; n < otherLength; n++) {
                         JSValue otherValue = otherArray->getIndex(globalObject, n);
-                        if (JSValue::strictEqual(globalObject, expectedValue, otherValue)) {
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
                             found = true;
                             break;
                         }

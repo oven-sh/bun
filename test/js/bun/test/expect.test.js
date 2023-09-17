@@ -1303,6 +1303,11 @@ describe("expect()", () => {
     expect(array1).toEqual(expect.arrayContaining([]));
     expect(array1).toEqual(expect.arrayContaining([1, 2]));
     expect(array1).not.toEqual(expect.arrayContaining([1, 2, 4]));
+
+    array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
+    expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
+    expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
+    expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));
   });
 
   test("symbol based keys in arrays are processed correctly", () => {

@@ -135,6 +135,23 @@ describe("bun test", () => {
     });
   });
   describe("--only", () => {
+    test("should run nested describe.only when enabled", () => {
+      const stderr = runTest({
+        args: ["--only"],
+        input: `
+            import { test, describe } from "bun:test";
+            describe("outer", () => {
+              describe.only("inner (nested)", () => {
+                test("test", () => {
+                  console.error("reachable");
+                })
+              })
+            })
+            `,
+      });
+      expect(stderr).toContain("reachable");
+      expect(stderr.match(/reachable/g)).toHaveLength(1);
+    });
     test("should skip non-only tests when enabled", () => {
       const stderr = runTest({
         args: ["--only"],

@@ -1610,7 +1610,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = if (parent.is_skip) parent.tag else tag,
-            .is_skip = is_skip or parent.is_skip,
+            .is_skip = is_skip and parent.is_skip,
         };
 
         return scope.run(globalThis, function, &.{});

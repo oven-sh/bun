@@ -146,10 +146,16 @@ describe("bun test", () => {
                   console.error("reachable");
                 })
               })
+              describe("inner (skipped)", () => {
+                test("test", () => {
+                  console.error("unreachable");
+                })
+              })
             })
             `,
       });
       expect(stderr).toContain("reachable");
+      expect(stderr).not.toContain("unreachable");
       expect(stderr.match(/reachable/g)).toHaveLength(1);
     });
     test("should skip non-only tests when enabled", () => {

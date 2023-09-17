@@ -54,13 +54,7 @@
     "../bun-inspector-protocol"
   ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:javascriptreact",
-    "onLanguage:typescript",
-    "onLanguage:typescriptreact",
-    "workspaceContains:**/.lockb",
-    "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun"
+    "onStartupFinished"
   ],
   "browser": "dist/web-extension.js",
   "bugs": {
@@ -293,6 +287,20 @@
           }
         ],
         "priority": "default"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "bun",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The script to execute"
+          }
+        }
       }
     ]
   }

@@ -51,8 +51,25 @@ pub const ImportKind = enum(u8) {
         break :brk labels;
     };
 
+    pub const error_labels: Label = brk: {
+        var labels = Label.initFill("");
+        labels.set(ImportKind.entry_point, "entry point");
+        labels.set(ImportKind.stmt, "import");
+        labels.set(ImportKind.require, "require()");
+        labels.set(ImportKind.dynamic, "import()");
+        labels.set(ImportKind.require_resolve, "require.resolve");
+        labels.set(ImportKind.at, "@import");
+        labels.set(ImportKind.url, "url()");
+        labels.set(ImportKind.internal, "<bun internal>");
+        break :brk labels;
+    };
+
     pub inline fn label(this: ImportKind) []const u8 {
         return all_labels.get(this);
+    }
+
+    pub inline fn errorLabel(this: ImportKind) []const u8 {
+        return error_labels.get(this);
     }
 
     pub inline fn isCommonJS(this: ImportKind) bool {

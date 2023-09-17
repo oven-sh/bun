@@ -5,7 +5,7 @@ This package lets you use Next.js 12.2 with bun. This readme assumes you already
 To start a new project:
 
 ```bash
-bun create next --open
+bun create nextjs --open
 ```
 
 To use Next.js 12 with an existing project:

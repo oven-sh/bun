@@ -78,7 +78,7 @@ By default Bun will _not overwrite_ any existing files. Use the `--force` flag t
 The following official templates are available.
 
 ```bash
-bun create next ./myapp
+bun create nextjs ./myapp
 bun create react ./myapp
 bun create svelte-kit ./myapp
 bun create elysia ./myapp
@@ -162,8 +162,7 @@ You can specify pre- and post-install setup scripts in the `"bun-create"` sectio
   },
   "bun-create": {
     "preinstall": "echo 'Installing...'", // a single command
-    "postinstall": ["echo 'Done!'"], // an array of commands
-    "start": "bun run echo 'Hello world!'"
+    "postinstall": ["echo 'Done!'"] // an array of commands
   }
 }
 ```
@@ -268,7 +267,7 @@ ELSE IF local template
 5. Auto-detect the npm client, preferring `pnpm`, `yarn` (v1), and lastly `npm`
 6. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
 7. Run `${npmClient} install` unless `--no-install` is passed OR no dependencies are in package.json
-8. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
+8. Run any tasks defined in `"bun-create": { "postinstall" }` with the npm client
 9. Run `git init; git add -A .; git commit -am "Initial Commit";`
 
    - Rename `gitignore` to `.gitignore`. NPM automatically removes `.gitignore` files from appearing in packages.

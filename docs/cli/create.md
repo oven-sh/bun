@@ -55,7 +55,7 @@ Running `bun create` performs the following steps:
 The following official templates are available.
 
 ```bash
-bun create next ./myapp
+bun create nextjs ./myapp
 bun create react ./myapp
 bun create svelte-kit ./myapp
 bun create elysia ./myapp

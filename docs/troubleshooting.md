@@ -4,7 +4,7 @@
 
 If you see a message like this
 
-> [1] 28447 killed bun create next ./test
+> [1] 28447 killed bun create nextjs ./test
 
 It most likely means you’re running Bun’s x64 version on Apple Silicon. This happens if Bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which Bun indirectly uses.
 

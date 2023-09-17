@@ -1,0 +1,16 @@
+{
+  "name": "@bun-examples/stric-kit",
+  "version": "0.0.1",
+  "module": "index.ts",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "bun run index.ts"
+  },
+  "dependencies": {
+    "@stricjs/arrow": "^1.1.9",
+    "@stricjs/kit": "^1.0.16"
+  }
+}

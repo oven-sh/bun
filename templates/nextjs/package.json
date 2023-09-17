@@ -1,0 +1,27 @@
+{
+  "name": "@bun-examples/nextjs",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@types/node": "18.15.11",
+    "@types/react": "18.0.37",
+    "@types/react-dom": "18.0.11",
+    "eslint": "8.38.0",
+    "eslint-config-next": "13.3.0",
+    "next": "13.3.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "typescript": "5.0.4"
+  },
+  "bun-create": {
+    "postinstall": [
+      "echo 'Important note! Next.js uses Node.js under the hood. The build performance and\nstartup times may feel slow compared to frameworks that take advantage of Bun.\n'"
+    ],
+    "start": "bun run dev"
+  }
+}

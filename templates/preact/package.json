@@ -1,0 +1,19 @@
+{
+  "name": "@bun-examples/preact",
+  "version": "0.0.6",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "canary"
+  },
+  "dependencies": {
+    "preact": "^10.13.0"
+  },
+  "scripts": {
+    "predev": "NODE_ENV=development bun build ./src/index.jsx --outfile ./.build/bundle.js",
+    "dev": "bun --watch run dev.tsx"
+  },
+  "bun-create": {
+    "start": "bun run dev"
+  },
+  "module": "index.ts"
+}

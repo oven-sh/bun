@@ -1,7 +1,7 @@
 To create a new Next.js app with bun:
 
 ```bash
-$ bun create next ./app
+$ bun create nextjs ./app
 $ cd app
 $ bun dev # start dev server
 ```

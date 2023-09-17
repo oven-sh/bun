@@ -83,6 +83,23 @@ bun upgrade --canary
 
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
+for older CPU Architecture you may have CPU Architecture issue fix it with 
+(intel)
+```1
+wget  https://downloadmirror.intel.com/784319/sde-external-9.24.0-2023-07-13-lin.tar.xz -O /tmp/intel-sde.tar.xz
+cd /tmp
+tar -xf intel-sde.tar.xz
+cd sde-external*
+mkdir /usr/local/bin -p
+cp sde64 /usr/local/bin/sde
+cp -r intel64 /usr/local/bin/
+cp -r misc /usr/local/bin/
+
+```
+```2
+echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
+
+
 ## Quick links
 
 - Intro

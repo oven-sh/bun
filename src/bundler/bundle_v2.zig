@@ -511,8 +511,8 @@ pub const BundleV2 = struct {
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
-                                    "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                    .{path_to_use},
+                                    "Browser build cannot {s} Node.js module: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                    .{ import_record.kind.label(), path_to_use },
                                     import_record.kind,
                                 ) catch unreachable;
                             } else {
@@ -1914,8 +1914,8 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Could not resolve Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{import_record.path.text},
+                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                        .{ import_record.kind.label(), import_record.path.text },
                                         import_record.kind,
                                     ) catch @panic("unexpected log error");
                                 } else {
@@ -9799,15 +9799,45 @@ const LinkerContext = struct {
                         // time, so we emit a debug message and rewrite the value to the literal
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
-                        c.log.addRangeWarningFmt(
+                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .bun)) {
+                            c.log.addRangeWarningFmtWithNote(
+                                source,
+                                r,
+                                c.allocator,
+                                "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
+                                .{
+                                    next_source.path.pretty,
+                                    named_import.alias.?,
+                                },
+                                "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                                .{},
+                                r,
+                            ) catch unreachable;
+                        } else {
+                            c.log.addRangeWarningFmt(
+                                source,
+                                r,
+                                c.allocator,
+                                "Import \"{s}\" will always be undefined because there is no matching export in \"{s}\"",
+                                .{
+                                    named_import.alias.?,
+                                    next_source.path.pretty,
+                                },
+                            ) catch unreachable;
+                        }
+                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                        c.log.addRangeErrorFmtWithNote(
                             source,
                             r,
                             c.allocator,
-                            "Import \"{s}\" will always be undefined because there is no matching export in \"{s}\"",
+                            "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
                             .{
-                                named_import.alias.?,
                                 next_source.path.pretty,
+                                named_import.alias.?,
                             },
+                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
+                            .{},
+                            r,
                         ) catch unreachable;
                     } else {
                         c.log.addRangeErrorFmt(

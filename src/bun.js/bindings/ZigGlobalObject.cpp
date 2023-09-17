@@ -2109,11 +2109,12 @@ private:
 
     void finishCreation(JSC::VM& vm)
     {
-        static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
-            functionPerformanceNowWithoutTypeCheck,
-            JSPerformanceObject::info(),
-            JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-            SpecBytecodeDouble);
+        // Disable until https://github.com/oven-sh/bun/issues/5604 is fixed
+        // static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
+        //     functionPerformanceNowWithoutTypeCheck,
+        //     JSPerformanceObject::info(),
+        //     JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
+        //     SpecBytecodeDouble);
 
         JSFunction* now = JSFunction::create(
             vm,
@@ -2121,8 +2122,9 @@ private:
             0,
             String("now"_s),
             functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
-            &DOMJITSignatureForPerformanceNow);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+            // &DOMJITSignatureForPerformanceNow
+            nullptr);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::Function | 0);
 
         JSFunction* noopNotImplemented = JSFunction::create(
             vm,
@@ -2130,10 +2132,11 @@ private:
             0,
             String("noopNotImplemented"_s),
             functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
-            &DOMJITSignatureForPerformanceNow);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+            nullptr);
+
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
 
         this->putDirect(
             vm,

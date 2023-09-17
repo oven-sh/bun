@@ -1,5 +1,4 @@
-const buffer = new ArrayBuffer({
-  byteLength: 1024,
+const buffer = new ArrayBuffer(1024, {
   maxByteLength: 2048,
 });
 

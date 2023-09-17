@@ -114,7 +114,7 @@ plugin({
   name: "async resolve",
   setup(builder) {
     builder.onResolve({ filter: /original/, namespace: "async-resolve" }, async () => {
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await Bun.sleep(10);
       return {
         path: "changed",
         namespace: "async-resolve",

@@ -46,7 +46,7 @@ describe("bundler", () => {
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await Bun.sleep(10);
         return {
           path: path.resolve(path.dirname(args.importer), args.path.replace(/\.magic$/, ".ts")),
         };

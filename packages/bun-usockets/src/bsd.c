@@ -446,24 +446,49 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
     struct addrinfo *listenAddr;
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
             listenAddr = a;
+
+            if (_bsd_create_listen_socket(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            } else {
+                bsd_close_socket(listenFd);
+                listenFd = LIBUS_SOCKET_ERROR;
+                break;
+            }
+
         }
     }
 
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+    for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
             listenAddr = a;
+
+            if (_bsd_create_listen_socket(listenFd, listenAddr, port, options) != LIBUS_SOCKET_ERROR) {
+                freeaddrinfo(result);
+                return listenFd;
+            } else {
+                bsd_close_socket(listenFd);
+                listenFd = LIBUS_SOCKET_ERROR;
+                break;
+            }
         }
     }
 
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
-    }
+    freeaddrinfo(result);
+    return LIBUS_SOCKET_ERROR;
+}
+
+inline LIBUS_SOCKET_DESCRIPTOR _bsd_create_listen_socket(
+    LIBUS_SOCKET_DESCRIPTOR listenFd,
+    struct addrinfo *listenAddr,
+    int port,
+    int options
+) {
 
     if (port != 0) {
         /* Otherwise, always enable SO_REUSEPORT and SO_REUSEADDR _unless_ options specify otherwise */
@@ -494,12 +519,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
-        bsd_close_socket(listenFd);
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
     return listenFd;
 }
 

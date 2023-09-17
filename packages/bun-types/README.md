@@ -30,6 +30,17 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
   }
 ```
 
+### Example
+
+```json
+{
+  "compilerOptions": {
+    "types": ["bun-types"],
+    "allowSyntheticDefaultImports": true
+  }
+}
+```
+
 # Contributing
 
 `bun-types` is generated via [./scripts/bundle.ts](./scripts/bundle.ts).

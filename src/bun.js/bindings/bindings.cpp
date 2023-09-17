@@ -233,8 +233,8 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
-        if (otherProp.isCell() && otherProp.asCell()->type() == ArrayType) {
-            if (expectedArrayValue.isCell() && expectedArrayValue.asCell()->type() == ArrayType) {
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
                 JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
                 JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
 

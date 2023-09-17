@@ -512,7 +512,7 @@ pub const BundleV2 = struct {
                                     import_record.range,
                                     this.graph.allocator,
                                     "Browser build cannot {s} Node.js module: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                    .{ import_record.kind.label(), path_to_use },
+                                    .{ import_record.kind.errorLabel(), path_to_use },
                                     import_record.kind,
                                 ) catch unreachable;
                             } else {
@@ -1915,7 +1915,7 @@ pub const BundleV2 = struct {
                                         import_record.range,
                                         this.graph.allocator,
                                         "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{ import_record.kind.label(), import_record.path.text },
+                                        .{ import_record.kind.errorLabel(), import_record.path.text },
                                         import_record.kind,
                                     ) catch @panic("unexpected log error");
                                 } else {

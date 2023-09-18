@@ -70,7 +70,7 @@ pub const Bunfig = struct {
                         registry.password = url.password;
                         registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}/", .{ url.displayProtocol(), url.displayHostname(), std.mem.trim(u8, url.pathname, "/") });
                     } else {
-                        if (std.mem.endsWith(u8, url.href, "/")) {
+                        if (strings.hasSuffixComptime(url.href, "/")) {
                             registry.url = url.href;
                         } else {
                             registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.href});

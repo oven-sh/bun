@@ -1430,7 +1430,7 @@ static const JSC::DOMJIT::Signature DOMJITSignatureForjsSQLStatementExecuteState
     jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking,
     JSSQLStatement::info(),
     JSC::DOMJIT::Effect::forReadWriteKinds(readKinds, writeKinds),
-    JSC::SpecHeapTop);
+    JSC::SpecOther);
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

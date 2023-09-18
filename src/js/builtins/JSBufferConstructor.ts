@@ -1,4 +1,5 @@
-// This is marked as a constructor
+// This is marked as a constructor because Node.js allows `new Buffer.from`,
+// Some legacy dependencies depend on this, see #3638
 $constructor;
 export function from(items) {
   if ($isUndefinedOrNull(items)) {

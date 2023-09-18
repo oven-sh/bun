@@ -80,7 +80,7 @@ pub const Bunfig = struct {
                 .e_object => |obj| {
                     if (obj.get("url")) |url| {
                         try this.expect(url, .e_string);
-                        if (std.mem.endsWith(u8, url.data.e_string.data, "/")) {
+                        if (strings.hasSuffixComptime(url.data.e_string.data, "/")) {
                             registry.url = url.data.e_string.data;
                         } else {
                             registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.data.e_string.data});

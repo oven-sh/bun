@@ -2068,9 +2068,11 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
-    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
     double result = time / 1000000.0;
-    return JSValue::encode(jsNumber(result));
+
+    // https://github.com/oven-sh/bun/issues/5604
+    return JSValue::encode(jsDoubleNumber(result));
 }
 
 extern "C" {
@@ -2109,12 +2111,12 @@ private:
 
     void finishCreation(JSC::VM& vm)
     {
-        // Disable until https://github.com/oven-sh/bun/issues/5604 is fixed
-        // static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
-        //     functionPerformanceNowWithoutTypeCheck,
-        //     JSPerformanceObject::info(),
-        //     JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-        //     SpecBytecodeDouble);
+
+        static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
+            functionPerformanceNowWithoutTypeCheck,
+            JSPerformanceObject::info(),
+            JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
+            SpecDoubleReal);
 
         JSFunction* now = JSFunction::create(
             vm,
@@ -2122,8 +2124,7 @@ private:
             0,
             String("now"_s),
             functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
-            // &DOMJITSignatureForPerformanceNow
-            nullptr);
+            &DOMJITSignatureForPerformanceNow);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::Function | 0);
 
         JSFunction* noopNotImplemented = JSFunction::create(

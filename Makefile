@@ -811,7 +811,7 @@ fmt-cpp:
 
 .PHONY: fmt-zig
 fmt-zig:
-	cd src && zig fmt **/*.zig
+	cd src && $(ZIG) fmt **/*.zig
 
 .PHONY: fmt
 fmt: fmt-cpp fmt-zig
@@ -945,7 +945,7 @@ headers:
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
-	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp 
+	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp
 
 .PHONY: jsc-bindings-headers
 jsc-bindings-headers: headers
@@ -1482,7 +1482,7 @@ bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 
 wasm-return1:
-	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
+	$(ZIG) build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 generate-classes:
 	bun src/bun.js/scripts/generate-classes.ts
@@ -1825,7 +1825,7 @@ endif
 build-unit: # to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
-	zig test  $(realpath $(testpath)) \
+	$(ZIG) test  $(realpath $(testpath)) \
 	$(testfilterflag) \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
@@ -1843,7 +1843,7 @@ build-unit: # to build your unit tests
 run-all-unit-tests: # to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
-	zig test src/main.zig \
+	$(ZIG) test src/main.zig \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
 	--test-no-exec \

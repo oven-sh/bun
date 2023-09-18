@@ -3315,12 +3315,7 @@ JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
 
     if (returnedException) {
         throwException(globalObject, scope, returnedException.get());
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (LIKELY(result)) {
-        globalObject->putDirect(vm, property, result, 0);
+        return JSValue::encode(jsUndefined());
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(result));

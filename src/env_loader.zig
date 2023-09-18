@@ -354,7 +354,7 @@ pub const Loader = struct {
                     if (value.len > 0) {
                         this.map.put(key, value) catch unreachable;
                     } else {
-                        this.map.put(key, empty_string_value) catch unreachable;
+                        this.map.put(key, "") catch unreachable;
                     }
                 }
             } else {

@@ -281,10 +281,10 @@ describe("TextDecoder ignoreBOM", () => {
     const array = new Uint8Array(bytes);
 
     const decoder_ignore_bom = new TextDecoder(encoding, {ignoreBOM: true});
-    expect(decoder_ignore_bom.decode(array)).toEqual(`${BOM}abc`);
+    expect(decoder_ignore_bom.decode(array)).toStrictEqual(`${BOM}abc`);
 
     const decoder_not_ignore_bom = new TextDecoder(encoding, {ignoreBOM: false});
-    expect(decoder_not_ignore_bom.decode(array)).toEqual('abc');
+    expect(decoder_not_ignore_bom.decode(array)).toStrictEqual('abc');
   });
 });
 

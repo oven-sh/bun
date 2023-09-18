@@ -1215,8 +1215,6 @@ pub const ThreadSafeFunction = struct {
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.EventLoop,
-    concurrent_task: JSC.ConcurrentTask = .{},
-    concurrent_finalizer_task: JSC.ConcurrentTask = .{},
 
     env: napi_env,
 
@@ -1323,7 +1321,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
     }
 
     pub fn finalize(opaq: *anyopaque) void {
@@ -1372,7 +1370,7 @@ pub const ThreadSafeFunction = struct {
 
         if (this.owning_threads.count() == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_finalizer_task.from(&this.finalizer_task, .manual_deinit));
+            this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, finalize));
             return;
         }
     }

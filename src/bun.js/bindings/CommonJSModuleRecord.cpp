@@ -118,6 +118,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
     JSValue empty = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), thisObject, exception);
+
+    globalObject->m_BunCommonJSModuleValue.clear();
     moduleObject->sourceCode.clear();
 
     return exception.get() == nullptr;
@@ -230,7 +232,13 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
         JSC::Identifier::fromString(vm, "main"_s),
         JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, JSValue()),
         PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
+
+    auto extensions = constructEmptyObject(globalObject());
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
+    extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);
+
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), extensions, 0);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -389,7 +397,7 @@ public:
             globalObject,
             clientData(vm)->builtinNames().requirePrivateName(),
             2,
-            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | 0);
     }
 };
 
@@ -734,7 +742,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     // Special-case for "process" to just return the process object directly.
     if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsDynamicCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
+        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
         return JSValue::encode(globalObject->processObject());
     }
 
@@ -746,7 +754,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
-        jsDynamicCast<JSCommonJSModule*>(callframe->argument(1)),
+        jsCast<JSCommonJSModule*>(callframe->argument(1)),
         specifierValue,
         &specifierStr,
         &referrerStr);

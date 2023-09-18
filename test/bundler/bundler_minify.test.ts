@@ -1,10 +1,12 @@
 import assert from "assert";
-import dedent from "dedent";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
+    // TODO: https://github.com/oven-sh/bun/issues/4217
+    todo: true,
+
     files: {
       "/entry.js": /* js */ `
         capture(\`\${1}-\${2}-\${3}-\${null}-\${undefined}-\${true}-\${false}\`);
@@ -280,6 +282,27 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     minifySyntax: true,
+    run: {
+      stdout: "PASS",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/5501
+  itBundled("minify/BunRequireStatement", {
+    files: {
+      "/entry.js": /* js */ `
+        export function test(ident) {
+          return require(ident);
+        }
+
+        test("fs");
+        console.log("PASS");
+      `,
+    },
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    backend: "cli",
     run: {
       stdout: "PASS",
     },

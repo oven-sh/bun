@@ -1,5 +1,5 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
@@ -857,7 +857,141 @@ it("should handle life-cycle scripts during re-installation", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should use updated life-cycle scripts during re-installation", async () => {
+it("should use updated life-cycle scripts in root during re-installation", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      scripts: {
+        install: [bunExe(), "foo.js"].join(" "),
+      },
+      workspaces: ["bar"],
+    }),
+  );
+  await writeFile(join(package_dir, "foo.js"), 'console.log("[scripts:run] Foo");');
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      scripts: {
+        preinstall: [bunExe(), "bar.js"].join(" "),
+      },
+    }),
+  );
+  await writeFile(join(package_dir, "bar", "bar.js"), 'console.log("[scripts:run] Bar");');
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install` with outdated lockfile
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      scripts: {
+        install: [bunExe(), "moo.js"].join(" "),
+        postinstall: [bunExe(), "foo.js"].join(" "),
+      },
+      workspaces: ["bar"],
+    }),
+  );
+  await writeFile(join(package_dir, "moo.js"), 'console.log("[scripts:run] Moo");');
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Moo",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install --production` with lockfile from before
+  const bun_lockb = await file(join(package_dir, "bun.lockb")).arrayBuffer();
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Moo",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
+});
+
+it("should use updated life-cycle scripts in dependency during re-installation", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -954,6 +1088,40 @@ it("should use updated life-cycle scripts during re-installation", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
   await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install --production` with lockfile from before
+  const bun_lockb = await file(join(package_dir, "bun.lockb")).arrayBuffer();
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Baz",
+    " + Bar@workspace:bar",
+    "[scripts:run] Foo",
+    "[scripts:run] Bar",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await file(join(package_dir, "bun.lockb")).arrayBuffer()).toEqual(bun_lockb);
 });
 
 it("should ignore workspaces within workspaces", async () => {
@@ -1445,6 +1613,50 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-b_4+cafe_b0ba",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle caret range in dependencies when the registry has prereleased packages, issue#4398", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "6.3.0": { as: "0.0.2" }, "7.0.0-rc2": { as: "0.0.3" } }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "^6.3.0",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@6.3.0",
     "",
     " 1 packages installed",
   ]);
@@ -5793,4 +6005,153 @@ it("should handle `workspace:*` on both root & child", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).text()).toEqual(baz_package);
   await access(join(package_dir, "bun.lockb"));
+});
+
+describe("Registry URLs", () => {
+  // Some of the non failing URLs are invalid, but bun's URL parser ignores
+  // the validation error and returns a valid serialized URL anyway.
+  const registryURLs: [url: string, fails: boolean][] = [
+    ["asdfghjklqwertyuiop", true],
+    ["                ", true],
+    ["::::::::::::::::", true],
+    ["https://ex ample.org/", true],
+    ["example", true],
+    ["https://example.com:demo", true],
+    ["http://[www.example.com]/", true],
+    ["c:a", true],
+    ["https://registry.npmjs.org/", false],
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
+    ["", true],
+    ["https:example.org", false],
+    ["https://////example.com///", false],
+    ["https://example.com/https:example.org", false],
+    ["https://example.com/[]?[]#[]", false],
+    ["https://example/%?%#%", false],
+    ["c:", false],
+    ["c:/", false],
+    ["https://點看", false], // gets converted to punycode
+    ["https://xn--c1yn36f/", false],
+  ];
+
+  for (const entry of registryURLs) {
+    const regURL = entry[0];
+    const fails = entry[1];
+
+    it(`should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`, async () => {
+      await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            notapackage: "0.0.2",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: package_dir,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      expect(stdout).toBeDefined();
+      expect(await new Response(stdout).text()).toBeEmpty();
+
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+
+      if (fails) {
+        const url = regURL.at(-1) === "/" ? regURL : regURL + "/";
+        expect(err.includes(`Failed to join registry \"${url}\" and package \"notapackage\" URLs`)).toBeTrue();
+        expect(err.includes("error: InvalidURL")).toBeTrue();
+      } else {
+        expect(err.includes("error: notapackage@0.0.2 failed to resolve")).toBeTrue();
+      }
+      // fails either way, since notapackage is, well, not a real package.
+      expect(await exited).not.toBe(0);
+    });
+  }
+
+  it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
+
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).not.toBeEmpty();
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+
+    expect(err.includes(`Failed to join registry \"${regURL}/\" and package \"notapackage\" URLs`)).toBeTrue();
+    expect(err.includes("warn: InvalidURL")).toBeTrue();
+
+    expect(await exited).toBe(0);
+  });
+
+  // TODO: This test should fail if the param `warn_on_error` is true in
+  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
+  // code never gets run for peer dependencies unless you do some package
+  // manifest magic. I doubt it'd ever fail, but having a dedicated
+  // test would be nice.
+  test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
+
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        peerDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).not.toBeEmpty();
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+
+    expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
+    expect(err.includes("warn: InvalidURL")).toBeTrue();
+
+    expect(await exited).toBe(0);
+  });
 });

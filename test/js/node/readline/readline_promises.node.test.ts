@@ -40,7 +40,7 @@ describe("readline/promises.createInterface()", () => {
 
     rli.on("line", mustNotCall());
     fi.emit("data", "\t");
-    process.nextTick(() => {
+    queueMicrotask(() => {
       expect(fi.output).toMatch(/^Tab completion error/);
       rli.close();
       done();

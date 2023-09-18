@@ -1034,7 +1034,7 @@ declare module "bun:test" {
      * expect("bar").not.toSatisfy((val) => val === "bun");
      * @link https://vitest.dev/api/expect.html#tosatisfy
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
-    */
+     */
     toSatisfy(predicate: (value: T) => boolean): void;
     /**
      * Asserts that a value starts with a `string`.

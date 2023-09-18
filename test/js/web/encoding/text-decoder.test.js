@@ -233,6 +233,20 @@ describe("TextDecoder", () => {
     }).toThrow(TypeError);
   });
 
+  it("should not trim invalid byte sequences when fatal is false", () => {
+    const buf = Buffer.from([77, 97, 110, 32, 208, 129, 240, 164, 173]);
+    const received = new TextDecoder("utf-8").decode(buf);
+    const expected = "Man Ё\ufffd";
+    expect(received).toBe(expected);
+  });
+
+  it("should trim when stream is true", () => {
+    const buf = Buffer.from([77, 97, 110, 32, 208, 129, 240, 164, 173]);
+    const received = new TextDecoder("utf-8").decode(buf, { stream: true });
+    const expected = "Man Ё";
+    expect(received).toBe(expected);
+  });
+
   it("constructor should set values", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     expect(decoder.fatal).toBe(true);
@@ -243,6 +257,11 @@ describe("TextDecoder", () => {
     expect(() => {
       const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
     }).toThrow();
+  });
+
+  it("should support undifined", () => {
+    const decoder = new TextDecoder(undefined);
+    expect(decoder.encoding).toBe("utf-8");
   });
 });
 

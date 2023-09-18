@@ -1,4 +1,4 @@
-`bun:test` lets you change what time it is in your tests. This was introduced in Bun v0.6.13.
+`bun:test` lets you change what time it is in your tests.
 
 This works with any of the following:
 

@@ -62,6 +62,106 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(0);
       });
 
+      it("invalid tsconfig.json is ignored", async () => {
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            name: "test",
+            version: "0.0.0",
+            scripts: {
+              "boop": "echo 'hi'",
+            },
+          }),
+        );
+
+        await writeFile(join(run_dir, "tsconfig.json"), "!!!bad!!!");
+
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "--silent", withRun ? "run" : "", "boop"].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("hi\n");
+        expect(exitCode).toBe(0);
+      });
+
+      it("--silent omits error messages", async () => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "--silent", "bash", "-c", "exit 1"],
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("");
+        expect(exitCode).toBe(1);
+      });
+
+      it("no --silent includes error messages", async () => {
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), "run", "bash", "-c", "exit 1"],
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toStartWith('error: "bash" exited with code 1');
+        expect(exitCode).toBe(1);
+      });
+
+      for (let withLogLevel of [true, false]) {
+        it(
+          "valid tsconfig.json with invalid extends doesn't crash" + (withLogLevel ? " (log level debug)" : ""),
+          async () => {
+            await writeFile(
+              join(run_dir, "package.json"),
+              JSON.stringify({
+                name: "test",
+                version: "0.0.0",
+                scripts: {},
+              }),
+            );
+            if (withLogLevel)
+              await writeFile(
+                join(run_dir, "bunfig.toml"),
+                `
+logLevel = "debug"
+          `,
+              );
+
+            await writeFile(
+              join(run_dir, "tsconfig.json"),
+              JSON.stringify(
+                {
+                  extends: "!!!bad!!!",
+                },
+                null,
+                2,
+              ),
+            );
+
+            await writeFile(join(run_dir, "index.js"), "console.log('hi')");
+
+            const { stdout, stderr, exitCode } = spawnSync({
+              // TODO: figure out why -c is necessary here.
+              cmd: [bunExe(), withRun ? "run" : "", "-c=" + join(run_dir, "bunfig.toml"), "./index.js"].filter(Boolean),
+              cwd: run_dir,
+              env: bunEnv,
+            });
+            if (withLogLevel) {
+              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+            } else {
+              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+            }
+
+            expect(stdout.toString()).toBe("hi\n");
+            expect(exitCode).toBe(0);
+            await rm(join(run_dir, "bunfig.toml"), { force: true });
+          },
+        );
+      }
+
       it("falling back to index with no package.json", async () => {
         await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
 
@@ -233,4 +333,26 @@ for (const entry of await decompress(Buffer.from(buffer))) {
     "",
   ]);
   expect(await exited2).toBe(0);
+});
+
+it("should not crash when downloading a non-existent module, issue#4240", async () => {
+  await writeFile(
+    join(run_dir, "test.js"),
+    `
+import { prueba } from "pruebadfasdfasdkafasdyuif.js";
+  `,
+  );
+  const { exited: exited } = spawn({
+    cmd: [bunExe(), "test.js"],
+    cwd: run_dir,
+    stdin: null,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+  // The exit code will not be 1 if it panics.
+  expect(await exited).toBe(1);
 });

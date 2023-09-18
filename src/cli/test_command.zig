@@ -401,7 +401,7 @@ const Scanner = struct {
             if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
-                std.debug.assert(fd != 0);
+                std.debug.assert(fd != bun.invalid_fd);
                 while (iter.next()) |entry| {
                     this.next(entry.value_ptr.*, fd);
                 }
@@ -409,8 +409,8 @@ const Scanner = struct {
         }
 
         while (this.dirs_to_scan.readItem()) |entry| {
-            var dir = std.fs.Dir{ .fd = entry.relative_dir };
-            std.debug.assert(dir.fd != 0);
+            var dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+            std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
             var parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -549,8 +549,6 @@ const Scanner = struct {
 
 pub const TestCommand = struct {
     pub const name = "test";
-    pub const old_name = "wiptest";
-
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
         fractions: bun.sourcemap.CoverageFraction = .{},
@@ -565,11 +563,7 @@ pub const TestCommand = struct {
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
-        if (strings.eqlComptime(ctx.positionals[0], old_name)) {
-            Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        } else {
-            Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        }
+        Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var env_loader = brk: {
@@ -691,8 +685,13 @@ pub const TestCommand = struct {
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
-            if (vm.hot_reload != .none)
-                JSC.HotReloader.enableHotModuleReloading(vm);
+
+            switch (vm.hot_reload) {
+                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                else => {},
+            }
+
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
@@ -738,7 +737,8 @@ pub const TestCommand = struct {
 
         if (scanner.filter_names.len == 0 and test_files.len == 0) {
             Output.prettyErrorln(
-                \\<b><yellow>No tests found<r>! Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                \\<b><yellow>No tests found!<r>
+                \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
                 \\
             ,
                 .{},
@@ -835,7 +835,7 @@ pub const TestCommand = struct {
             vm.eventLoop().tickPossiblyForever();
 
             while (true) {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }

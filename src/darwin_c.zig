@@ -307,7 +307,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.E2BIG, "Argument list too long");
         map.put(.EACCES, "Permission denied");
         map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Can’t assign requested address");
+        map.put(.EADDRNOTAVAIL, "Can't assign requested address");
         map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
         map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
         map.put(.EALREADY, "Operation already in progress");
@@ -350,7 +350,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EMULTIHOP, "Reserved");
         map.put(.ENAMETOOLONG, "File name too long");
         map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software – operational errors Network is down");
+        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
         map.put(.ENETRESET, "Network dropped connection on reset");
         map.put(.ENETUNREACH, "Network is unreachable");
         map.put(.ENFILE, "Too many open files in system");
@@ -375,7 +375,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOTDIR, "Not a directory");
         map.put(.ENOTEMPTY, "Directory not empty");
         map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software – argument errors. Socket operation on non-socket");
+        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
         map.put(.ENOTSUP, "Operation not supported");
         map.put(.ENOTTY, "Inappropriate ioctl for device");
         map.put(.ENXIO, "Device not configured");
@@ -405,7 +405,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ESTALE, "Network File System. Stale NFS file handle");
         map.put(.ETIME, "STREAM ioctl timeout");
         map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can’t splice");
+        map.put(.ETOOMANYREFS, "Too many references: can't splice");
         map.put(.ETXTBSY, "Text file busy");
         map.put(.EUSERS, "Too many users");
         // map.put(.EWOULDBLOCK, "Operation would block");
@@ -482,12 +482,12 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     // NOT IMPLEMENTED YET
     return 1024 * 1024;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
@@ -507,7 +507,7 @@ pub fn get_total_memory() u64 {
 pub const struct_BootTime = struct {
     sec: u32,
 };
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
@@ -528,7 +528,7 @@ pub const struct_LoadAvg = struct {
     ldavg: [3]u32,
     fscale: c_long,
 };
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
@@ -793,3 +793,10 @@ pub usingnamespace @cImport({
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
+
+pub const Mode = std.os.mode_t;
+
+pub const E = std.os.E;
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

@@ -17223,10 +17223,13 @@ fn NewParser_(
                     }
                 },
                 .e_string => |str| {
-                    if (p.options.features.minify_syntax) {
-                        // minify "long-string".length to 11
-                        if (strings.eqlComptime(name, "length")) {
-                            return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
+                    // Disable until https://github.com/oven-sh/bun/issues/4217 is fixed
+                    if (comptime FeatureFlags.minify_javascript_string_length) {
+                        if (p.options.features.minify_syntax) {
+                            // minify "long-string".length to 11
+                            if (strings.eqlComptime(name, "length")) {
+                                return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
+                            }
                         }
                     }
                 },
@@ -17456,20 +17459,6 @@ fn NewParser_(
                                 _ = p.injectReplacementExport(stmts, p.declareSymbol(.other, logger.Loc.Empty, alias.original_name) catch unreachable, logger.Loc.Empty, entry);
                                 return;
                             }
-                        }
-
-                        if (!p.options.bundle) {
-                            // "import * as ns from 'path'"
-                            // "export {ns}"
-
-                            p.recordUsage(data.namespace_ref);
-                            try stmts.ensureTotalCapacity(stmts.items.len + 2);
-                            stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
-
-                            var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
-                            items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                            stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.items, .is_single_line = true }, stmt.loc));
-                            return;
                         }
                     }
                 },

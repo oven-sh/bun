@@ -132,6 +132,14 @@ Visit `http://localhost:5000` to see your bundled app in action.
 
 {% /details %}
 
+## Watch mode
+
+Like the runtime and test runner, the bundler supports watch mode natively.
+
+```sh
+$ bun build ./index.tsx --outdir ./out --watch
+```
+
 ## Content types
 
 Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](/docs/runtime/loaders) for full documentation.
@@ -960,7 +968,7 @@ By specifying `.` as `root`, the generated file structure will look like this:
 
 A prefix to be appended to any import paths in bundled code.
 
-<!-- $ bun build ./index.tsx --outdir ./out --publicPath https://cdn.example.com -->
+<!-- $ bun build ./index.tsx --outdir ./out --public-path https://cdn.example.com -->
 
 In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
 

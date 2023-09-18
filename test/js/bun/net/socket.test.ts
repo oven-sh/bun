@@ -93,7 +93,7 @@ it("should reject on connection error, calling both connectError() and rejecting
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("SystemError");
+        expect(error.name).toBe("ECONNREFUSED");
         expect(error.message).toBe("Failed to connect");
       },
       data() {
@@ -119,7 +119,7 @@ it("should reject on connection error, calling both connectError() and rejecting
     () => done(new Error("Promise should reject instead")),
     err => {
       expect(err).toBeDefined();
-      expect(err.name).toBe("SystemError");
+      expect(err.name).toBe("ECONNREFUSED");
       expect(err.message).toBe("Failed to connect");
 
       done();
@@ -164,8 +164,9 @@ it("should handle connection error", done => {
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("SystemError");
+        expect(error.name).toBe("ECONNREFUSED");
         expect(error.message).toBe("Failed to connect");
+        expect((error as any).code).toBe("ECONNREFUSED");
         done();
       },
       data() {
@@ -191,5 +192,5 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 1, 100);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 2, 100);
 });

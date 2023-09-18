@@ -66,7 +66,7 @@ public:
     explicit BundlerPluginBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -166,7 +166,7 @@ public:
     explicit ByteLengthQueuingStrategyBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_BYTELENGTHQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_BYTELENGTHQUEUINGSTRATEGY_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -772,7 +772,7 @@ public:
     explicit WritableStreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -1071,7 +1071,7 @@ public:
     explicit TransformStreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -1155,14 +1155,6 @@ inline void TransformStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
     /* ProcessObjectInternals.ts */
-// binding
-#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_BINDING 1
-extern const char* const s_processObjectInternalsBindingCode;
-extern const int s_processObjectInternalsBindingCodeLength;
-extern const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility;
-extern const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility;
-
 // getStdioWriteStream
 #define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
 extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
@@ -1179,20 +1171,28 @@ extern const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeCon
 extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
 
+// initializeNextTickQueue
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_INITIALIZENEXTTICKQUEUE 1
+extern const char* const s_processObjectInternalsInitializeNextTickQueueCode;
+extern const int s_processObjectInternalsInitializeNextTickQueueCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
+
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
-    macro(binding, processObjectInternalsBinding, 1) \
     macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
+    macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
-    macro(processObjectInternalsBindingCode, binding, ASCIILiteral(), s_processObjectInternalsBindingCodeLength) \
     macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
     macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
+    macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
-    macro(binding) \
     macro(getStdioWriteStream) \
     macro(getStdinStream) \
+    macro(initializeNextTickQueue) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
@@ -1205,7 +1205,7 @@ public:
     explicit ProcessObjectInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -1305,7 +1305,7 @@ public:
     explicit TransformStreamBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -1416,7 +1416,7 @@ public:
     explicit ModuleBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_MODULE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -2209,7 +2209,7 @@ public:
     explicit JSBufferPrototypeBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -2342,7 +2342,7 @@ public:
     explicit ReadableByteStreamControllerBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -2431,7 +2431,7 @@ public:
     explicit UtilInspectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -2520,7 +2520,7 @@ public:
     explicit ConsoleObjectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -3291,7 +3291,7 @@ public:
     explicit ReadableStreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -3447,7 +3447,7 @@ public:
     explicit TransformStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -3569,7 +3569,7 @@ public:
     explicit ReadableStreamBYOBReaderBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -3658,7 +3658,7 @@ public:
     explicit JSBufferConstructorBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -3791,7 +3791,7 @@ public:
     explicit ReadableStreamDefaultReaderBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4067,7 +4067,7 @@ public:
     explicit StreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4223,7 +4223,7 @@ public:
     explicit ImportMetaObjectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4323,7 +4323,7 @@ public:
     explicit CountQueuingStrategyBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4434,7 +4434,7 @@ public:
     explicit ReadableStreamBYOBRequestBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4589,7 +4589,7 @@ public:
     explicit WritableStreamDefaultWriterBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4854,7 +4854,7 @@ public:
     explicit ReadableStreamBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -4976,7 +4976,7 @@ public:
     explicit ReadableStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -5439,7 +5439,7 @@ public:
     explicit ReadableByteStreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -5562,7 +5562,7 @@ public:
     explicit WritableStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_WRITABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_WRITABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -5640,7 +5640,7 @@ public:
     explicit EventSourceBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {

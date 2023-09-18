@@ -31,6 +31,10 @@ pub const PathString = packed struct {
         return this.toValue().asObjectRef();
     }
 
+    pub fn estimatedSize(this: *const PathString) usize {
+        return @as(usize, this.len);
+    }
+
     pub fn toJS(this: PathString, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         var zig_str = JSC.ZigString.init(this.slice());
         zig_str.detectEncoding();
@@ -51,7 +55,7 @@ pub const PathString = packed struct {
     pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 
-        return @This(){
+        return .{
             .ptr = @as(PointerIntType, @truncate(@intFromPtr(str.ptr))),
             .len = @as(PathInt, @truncate(str.len)),
         };

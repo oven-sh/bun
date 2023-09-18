@@ -88,6 +88,8 @@ const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext,
 const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
 const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
 
+const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
+
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = .v1,
@@ -670,7 +672,7 @@ pub fn cleanWithLogger(
     // If yes, choose that version instead.
     // Why lower?
     //
-    // Normally, the problem is looks like this:
+    // Normally, the problem looks like this:
     //   Package A: "react@^17"
     //   Package B: "react@17.0.1
     //
@@ -915,7 +917,7 @@ pub const Printer = struct {
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
-            std.os.chdir(std.fs.path.dirname(lockfile_path) orelse "/") catch {};
+            _ = bun.sys.chdir(std.fs.path.dirname(lockfile_path) orelse std.fs.path.sep_str);
 
         _ = try FileSystem.init(null);
 
@@ -981,7 +983,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, entries_option.entries, .production);
+        try env_loader.load(entries_option.entries, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -1473,11 +1475,16 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    _ = C.fchmod(
-        tmpfile.fd,
-        // chmod 777
-        0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-    );
+    if (comptime Environment.isWindows) {
+        // TODO: make this executable
+        bun.todo(@src(), {});
+    } else {
+        _ = C.fchmod(
+            tmpfile.fd,
+            // chmod 777
+            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
+        );
+    }
 
     tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
@@ -1898,8 +1905,8 @@ pub const Package = extern struct {
             defer pkg_dir.close();
             const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
             defer json_file.close();
-            const json_stat = try json_file.stat();
-            const json_buf = try lockfile.allocator.alloc(u8, json_stat.size + 64);
+            const json_stat_size = try json_file.getEndPos();
+            const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
             const json_len = try json_file.preadAll(json_buf, 0);
             const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
             initializeStore();
@@ -3065,12 +3072,12 @@ pub const Package = extern struct {
                     );
 
                     if (entry.cache.fd == 0) {
-                        entry.cache.fd = std.os.openatZ(
-                            std.os.AT.FDCWD,
+                        entry.cache.fd = bun.toFD(std.os.openatZ(
+                            std.fs.cwd().fd,
                             entry_path,
                             std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
                             0,
-                        ) catch continue;
+                        ) catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
@@ -3081,7 +3088,7 @@ pub const Package = extern struct {
                         allocator,
                         workspace_allocator,
                         std.fs.Dir{
-                            .fd = dir_fd,
+                            .fd = bun.fdcast(dir_fd),
                         },
                         "",
                         filepath_buf,
@@ -3627,8 +3634,12 @@ pub const Package = extern struct {
 
     pub const Meta = extern struct {
         origin: Origin = Origin.npm,
+        _padding_origin: u8 = 0,
+
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
+
+        _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
 
@@ -3726,7 +3737,10 @@ pub const Package = extern struct {
             var sliced = list.slice();
 
             inline for (FieldsEnum.fields) |field| {
-                try writer.writeAll(std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name))));
+                const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+
+                comptime assertNoUninitializedPadding(@TypeOf(value));
+                try writer.writeAll(std.mem.sliceAsBytes(value));
             }
 
             const really_end_at = try stream.getPos();
@@ -3777,7 +3791,10 @@ pub const Package = extern struct {
             var sliced = list.slice();
 
             inline for (FieldsEnum.fields) |field| {
-                var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
+                const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+
+                comptime assertNoUninitializedPadding(@TypeOf(value));
+                var bytes = std.mem.sliceAsBytes(value);
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
@@ -3908,7 +3925,9 @@ const Buffers = struct {
     }
 
     pub fn writeArray(comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer, comptime ArrayList: type, array: ArrayList) !void {
+        comptime assertNoUninitializedPadding(@TypeOf(array));
         const bytes = std.mem.sliceAsBytes(array);
+
         const start_pos = try stream.getPos();
         try writer.writeIntLittle(u64, 0xDEADBEEF);
         try writer.writeIntLittle(u64, 0xDEADBEEF);
@@ -4226,6 +4245,25 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         }
     }
 
+    const scripts_begin = "\n-- BEGIN SCRIPTS --\n";
+    const scripts_end = "\n-- END SCRIPTS --\n";
+    var has_scripts = false;
+
+    inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+        var scripts = @field(this.scripts, field_name);
+        for (scripts.items) |script| {
+            if (script.script.len > 0) {
+                string_builder.fmtCount("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
+                has_scripts = true;
+            }
+        }
+    }
+
+    if (has_scripts) {
+        string_builder.count(scripts_begin);
+        string_builder.count(scripts_end);
+    }
+
     std.sort.block(
         PackageID,
         alphabetized_names,
@@ -4243,6 +4281,19 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
 
     for (alphabetized_names) |i| {
         _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes) });
+    }
+
+    if (has_scripts) {
+        _ = string_builder.append(scripts_begin);
+        inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+            var scripts = @field(this.scripts, field_name);
+            for (scripts.items) |script| {
+                if (script.script.len > 0) {
+                    _ = string_builder.fmt("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
+                }
+            }
+        }
+        _ = string_builder.append(scripts_end);
     }
 
     string_builder.ptr.?[string_builder.len..string_builder.cap][0..hash_suffix.len].* = hash_suffix.*;

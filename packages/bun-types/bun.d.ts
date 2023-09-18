@@ -1820,6 +1820,21 @@ declare module "bun" {
       this: Server,
       request: Errorlike,
     ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
+
+    /**
+     * Uniquely identify a server instance with an ID
+     *
+     * ### When bun is started with the `--hot` flag
+     *
+     * This string will be used to hot reload the server without interrupting
+     * pending requests or websockets. If not provided, a value will be
+     * generated. To disable hot reloading, set this value to `null`.
+     *
+     * ### When bun is not started with the `--hot` flag
+     *
+     * This string will currently do nothing. But in the future it could be useful for logs or metrics.
+     */
+    id?: string | null;
   }
 
   export type AnyFunction = (..._: any[]) => any;
@@ -2345,6 +2360,15 @@ declare module "bun" {
      *
      */
     readonly development: boolean;
+
+    /**
+     * An identifier of the server instance
+     *
+     * When bun is started with the `--hot` flag, this ID is used to hot reload the server without interrupting pending requests or websockets.
+     *
+     * When bun is not started with the `--hot` flag, this ID is currently unused.
+     */
+    readonly id: string;
   }
 
   /**
@@ -3743,6 +3767,24 @@ declare module "bun" {
          */
         error?: Errorlike,
       ): void | Promise<void>;
+
+      /**
+       * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
+       * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
+       * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+       *
+       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
+       *
+       * Currently, this is only compatible with processes that are other `bun` instances.
+       */
+      ipc?(
+        message: any,
+        /**
+         * The {@link Subprocess} that sent the message
+         */
+        subprocess: Subprocess<In, Out, Err>,
+      ): void;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -3870,6 +3912,20 @@ declare module "bun" {
      * This method will tell Bun to not wait for this process to exit before shutting down.
      */
     unref(): void;
+
+    /**
+     * Send a message to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option, and is another instance of `bun`.
+     *
+     * Messages are serialized using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
+     */
+    send(message: any): void;
+
+    /**
+     * Disconnect the IPC channel to the subprocess. This is only supported if the subprocess
+     * was created with the `ipc` option.
+     */
+    disconnect(): void;
   }
 
   /**

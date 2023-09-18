@@ -1242,6 +1242,28 @@ pub const JSDebugHTTPSServer = struct {
         return result;
     }
 
+    extern fn DebugHTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of DebugHTTPSServer
     pub fn toJS(this: *DebugHTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -1286,6 +1308,9 @@ pub const JSDebugHTTPSServer = struct {
         if (@TypeOf(DebugHTTPSServer.getHostname) != GetterType)
             @compileLog("Expected DebugHTTPSServer.getHostname to be a getter");
 
+        if (@TypeOf(DebugHTTPSServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getId to be a getter");
+
         if (@TypeOf(DebugHTTPSServer.getPendingRequests) != GetterType)
             @compileLog("Expected DebugHTTPSServer.getPendingRequests to be a getter");
 
@@ -1315,6 +1340,7 @@ pub const JSDebugHTTPSServer = struct {
             @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
             @export(DebugHTTPSServer.getDevelopment, .{ .name = "DebugHTTPSServerPrototype__getDevelopment" });
             @export(DebugHTTPSServer.getHostname, .{ .name = "DebugHTTPSServerPrototype__getHostname" });
+            @export(DebugHTTPSServer.getId, .{ .name = "DebugHTTPSServerPrototype__getId" });
             @export(DebugHTTPSServer.getPendingRequests, .{ .name = "DebugHTTPSServerPrototype__getPendingRequests" });
             @export(DebugHTTPSServer.getPendingWebSockets, .{ .name = "DebugHTTPSServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPSServer.getPort, .{ .name = "DebugHTTPSServerPrototype__getPort" });
@@ -1353,6 +1379,28 @@ pub const JSDebugHTTPServer = struct {
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
         const result = DebugHTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn DebugHTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DebugHTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `DebugHTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DebugHTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `DebugHTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DebugHTTPServerPrototype__idGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
@@ -1403,6 +1451,9 @@ pub const JSDebugHTTPServer = struct {
         if (@TypeOf(DebugHTTPServer.getHostname) != GetterType)
             @compileLog("Expected DebugHTTPServer.getHostname to be a getter");
 
+        if (@TypeOf(DebugHTTPServer.getId) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getId to be a getter");
+
         if (@TypeOf(DebugHTTPServer.getPendingRequests) != GetterType)
             @compileLog("Expected DebugHTTPServer.getPendingRequests to be a getter");
 
@@ -1432,6 +1483,7 @@ pub const JSDebugHTTPServer = struct {
             @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
             @export(DebugHTTPServer.getDevelopment, .{ .name = "DebugHTTPServerPrototype__getDevelopment" });
             @export(DebugHTTPServer.getHostname, .{ .name = "DebugHTTPServerPrototype__getHostname" });
+            @export(DebugHTTPServer.getId, .{ .name = "DebugHTTPServerPrototype__getId" });
             @export(DebugHTTPServer.getPendingRequests, .{ .name = "DebugHTTPServerPrototype__getPendingRequests" });
             @export(DebugHTTPServer.getPendingWebSockets, .{ .name = "DebugHTTPServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPServer.getPort, .{ .name = "DebugHTTPServerPrototype__getPort" });
@@ -2455,6 +2507,87 @@ pub const JSExpectAnything = struct {
         }
     }
 };
+pub const JSExpectArrayContaining = struct {
+    const ExpectArrayContaining = Classes.ExpectArrayContaining;
+    const GetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectArrayContaining {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__fromJS(value);
+    }
+
+    extern fn ExpectArrayContainingPrototype__arrayValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectArrayContainingPrototype__arrayValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectArrayContaining.arrayValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectArrayContainingPrototype__arrayValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectArrayContaining.arrayValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectArrayContainingPrototype__arrayValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectArrayContaining
+    pub fn toJS(this: *ExpectArrayContaining, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectArrayContaining__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectArrayContaining).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectArrayContaining__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectArrayContaining.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectArrayContaining) bool {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectArrayContaining, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectArrayContaining__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectArrayContaining__fromJS(JSC.JSValue) ?*ExpectArrayContaining;
+    extern fn ExpectArrayContaining__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectArrayContaining) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__dangerouslySetPtr(JSC.JSValue, ?*ExpectArrayContaining) bool;
+
+    comptime {
+        if (@TypeOf(ExpectArrayContaining.finalize) != (fn (*ExpectArrayContaining) callconv(.C) void)) {
+            @compileLog("ExpectArrayContaining.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectArrayContaining.call) != StaticCallbackType)
+            @compileLog("Expected ExpectArrayContaining.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectArrayContaining.call, .{ .name = "ExpectArrayContainingClass__call" });
+            @export(ExpectArrayContaining.finalize, .{ .name = "ExpectArrayContainingClass__finalize" });
+        }
+    }
+};
 pub const JSExpectStringContaining = struct {
     const ExpectStringContaining = Classes.ExpectStringContaining;
     const GetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -3059,6 +3192,28 @@ pub const JSHTTPSServer = struct {
         return result;
     }
 
+    extern fn HTTPSServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPSServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPSServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPSServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPSServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPSServerPrototype__idGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of HTTPSServer
     pub fn toJS(this: *HTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -3103,6 +3258,9 @@ pub const JSHTTPSServer = struct {
         if (@TypeOf(HTTPSServer.getHostname) != GetterType)
             @compileLog("Expected HTTPSServer.getHostname to be a getter");
 
+        if (@TypeOf(HTTPSServer.getId) != GetterType)
+            @compileLog("Expected HTTPSServer.getId to be a getter");
+
         if (@TypeOf(HTTPSServer.getPendingRequests) != GetterType)
             @compileLog("Expected HTTPSServer.getPendingRequests to be a getter");
 
@@ -3132,6 +3290,7 @@ pub const JSHTTPSServer = struct {
             @export(HTTPSServer.finalize, .{ .name = "HTTPSServerClass__finalize" });
             @export(HTTPSServer.getDevelopment, .{ .name = "HTTPSServerPrototype__getDevelopment" });
             @export(HTTPSServer.getHostname, .{ .name = "HTTPSServerPrototype__getHostname" });
+            @export(HTTPSServer.getId, .{ .name = "HTTPSServerPrototype__getId" });
             @export(HTTPSServer.getPendingRequests, .{ .name = "HTTPSServerPrototype__getPendingRequests" });
             @export(HTTPSServer.getPendingWebSockets, .{ .name = "HTTPSServerPrototype__getPendingWebSockets" });
             @export(HTTPSServer.getPort, .{ .name = "HTTPSServerPrototype__getPort" });
@@ -3170,6 +3329,28 @@ pub const JSHTTPServer = struct {
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
         const result = HTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn HTTPServerPrototype__idSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn HTTPServerPrototype__idGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `HTTPServer.id` setter
+    /// This value will be visited by the garbage collector.
+    pub fn idSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        HTTPServerPrototype__idSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `HTTPServer.id` getter
+    /// This value will be visited by the garbage collector.
+    pub fn idGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = HTTPServerPrototype__idGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
@@ -3220,6 +3401,9 @@ pub const JSHTTPServer = struct {
         if (@TypeOf(HTTPServer.getHostname) != GetterType)
             @compileLog("Expected HTTPServer.getHostname to be a getter");
 
+        if (@TypeOf(HTTPServer.getId) != GetterType)
+            @compileLog("Expected HTTPServer.getId to be a getter");
+
         if (@TypeOf(HTTPServer.getPendingRequests) != GetterType)
             @compileLog("Expected HTTPServer.getPendingRequests to be a getter");
 
@@ -3249,6 +3433,7 @@ pub const JSHTTPServer = struct {
             @export(HTTPServer.finalize, .{ .name = "HTTPServerClass__finalize" });
             @export(HTTPServer.getDevelopment, .{ .name = "HTTPServerPrototype__getDevelopment" });
             @export(HTTPServer.getHostname, .{ .name = "HTTPServerPrototype__getHostname" });
+            @export(HTTPServer.getId, .{ .name = "HTTPServerPrototype__getId" });
             @export(HTTPServer.getPendingRequests, .{ .name = "HTTPServerPrototype__getPendingRequests" });
             @export(HTTPServer.getPendingWebSockets, .{ .name = "HTTPServerPrototype__getPendingWebSockets" });
             @export(HTTPServer.getPort, .{ .name = "HTTPServerPrototype__getPort" });
@@ -3880,6 +4065,10 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.copyFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFile)));
         if (@TypeOf(NodeJSFS.copyFileSync) != CallbackType)
             @compileLog("Expected NodeJSFS.copyFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFileSync)));
+        if (@TypeOf(NodeJSFS.cp) != CallbackType)
+            @compileLog("Expected NodeJSFS.cp to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cp)));
+        if (@TypeOf(NodeJSFS.cpSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.cpSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.cpSync)));
         if (@TypeOf(NodeJSFS.getDirent) != GetterType)
             @compileLog("Expected NodeJSFS.getDirent to be a getter");
 
@@ -4006,12 +4195,16 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.unlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlink)));
         if (@TypeOf(NodeJSFS.unlinkSync) != CallbackType)
             @compileLog("Expected NodeJSFS.unlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlinkSync)));
+        if (@TypeOf(NodeJSFS.unwatchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.unwatchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unwatchFile)));
         if (@TypeOf(NodeJSFS.utimes) != CallbackType)
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
         if (@TypeOf(NodeJSFS.watch) != CallbackType)
             @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
+        if (@TypeOf(NodeJSFS.watchFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.watchFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watchFile)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -4038,6 +4231,8 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.constructor, .{ .name = "NodeJSFSClass__construct" });
             @export(NodeJSFS.copyFile, .{ .name = "NodeJSFSPrototype__copyFile" });
             @export(NodeJSFS.copyFileSync, .{ .name = "NodeJSFSPrototype__copyFileSync" });
+            @export(NodeJSFS.cp, .{ .name = "NodeJSFSPrototype__cp" });
+            @export(NodeJSFS.cpSync, .{ .name = "NodeJSFSPrototype__cpSync" });
             @export(NodeJSFS.exists, .{ .name = "NodeJSFSPrototype__exists" });
             @export(NodeJSFS.existsSync, .{ .name = "NodeJSFSPrototype__existsSync" });
             @export(NodeJSFS.fchmod, .{ .name = "NodeJSFSPrototype__fchmod" });
@@ -4100,9 +4295,11 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.truncateSync, .{ .name = "NodeJSFSPrototype__truncateSync" });
             @export(NodeJSFS.unlink, .{ .name = "NodeJSFSPrototype__unlink" });
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
+            @export(NodeJSFS.unwatchFile, .{ .name = "NodeJSFSPrototype__unwatchFile" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
             @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
+            @export(NodeJSFS.watchFile, .{ .name = "NodeJSFSPrototype__watchFile" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -5531,6 +5728,94 @@ pub const JSServerWebSocket = struct {
         }
     }
 };
+pub const JSStatWatcher = struct {
+    const StatWatcher = Classes.StatWatcher;
+    const GetterType = fn (*StatWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*StatWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*StatWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*StatWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*StatWatcher {
+        JSC.markBinding(@src());
+        return StatWatcher__fromJS(value);
+    }
+
+    extern fn StatWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `StatWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `StatWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of StatWatcher
+    pub fn toJS(this: *StatWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = StatWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(StatWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return StatWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of StatWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*StatWatcher) bool {
+        JSC.markBinding(@src());
+        return StatWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *StatWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(StatWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn StatWatcher__fromJS(JSC.JSValue) ?*StatWatcher;
+    extern fn StatWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn StatWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*StatWatcher) JSC.JSValue;
+
+    extern fn StatWatcher__dangerouslySetPtr(JSC.JSValue, ?*StatWatcher) bool;
+
+    comptime {
+        if (@TypeOf(StatWatcher.finalize) != (fn (*StatWatcher) callconv(.C) void)) {
+            @compileLog("StatWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(StatWatcher.doClose) != CallbackType)
+            @compileLog("Expected StatWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doClose)));
+        if (@TypeOf(StatWatcher.doRef) != CallbackType)
+            @compileLog("Expected StatWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doRef)));
+        if (@TypeOf(StatWatcher.doUnref) != CallbackType)
+            @compileLog("Expected StatWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(StatWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(StatWatcher.doClose, .{ .name = "StatWatcherPrototype__doClose" });
+            @export(StatWatcher.doRef, .{ .name = "StatWatcherPrototype__doRef" });
+            @export(StatWatcher.doUnref, .{ .name = "StatWatcherPrototype__doUnref" });
+            @export(StatWatcher.finalize, .{ .name = "StatWatcherClass__finalize" });
+            @export(StatWatcher.hasPendingActivity, .{ .name = "StatWatcher__hasPendingActivity" });
+        }
+    }
+};
 pub const JSStats = struct {
     const Stats = Classes.Stats;
     const GetterType = fn (*Stats, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -5936,6 +6221,8 @@ pub const JSSubprocess = struct {
 
         if (@TypeOf(Subprocess.doRef) != CallbackType)
             @compileLog("Expected Subprocess.doRef to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doRef)));
+        if (@TypeOf(Subprocess.doSend) != CallbackType)
+            @compileLog("Expected Subprocess.doSend to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doSend)));
         if (@TypeOf(Subprocess.getSignalCode) != GetterType)
             @compileLog("Expected Subprocess.getSignalCode to be a getter");
 
@@ -5955,6 +6242,7 @@ pub const JSSubprocess = struct {
 
         if (!JSC.is_bindgen) {
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
+            @export(Subprocess.doSend, .{ .name = "SubprocessPrototype__doSend" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
             @export(Subprocess.getExitCode, .{ .name = "SubprocessPrototype__getExitCode" });
@@ -6799,6 +7087,7 @@ comptime {
     _ = JSExpect;
     _ = JSExpectAny;
     _ = JSExpectAnything;
+    _ = JSExpectArrayContaining;
     _ = JSExpectStringContaining;
     _ = JSExpectStringMatching;
     _ = JSFFI;
@@ -6822,6 +7111,7 @@ comptime {
     _ = JSSHA512;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSStatWatcher;
     _ = JSStats;
     _ = JSSubprocess;
     _ = JSTCPSocket;

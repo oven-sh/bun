@@ -241,7 +241,7 @@ pub const errno_map: [108]Errno = brk: {
 const socket_t = os.socket_t;
 const sockaddr = darwin.sockaddr;
 const socklen_t = darwin.socklen_t;
-const system = darwin;
+pub const system = darwin;
 
 pub fn asError(err: anytype) Errno {
     const int = if (@typeInfo(@TypeOf(err)) == .Enum)
@@ -1350,6 +1350,12 @@ pub fn read(
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
+                    if (op.positional) {
+                        const rc = os.system.lseek(op.fd, @intCast(op.offset), 0);
+                        if (rc == -1) {
+                            return error.Unseekable;
+                        }
+                    }
                     const rc = os.system.read(
                         op.fd,
                         op.buf,

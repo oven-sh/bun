@@ -19,6 +19,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -55,8 +56,8 @@
 #include "JSDOMURL.h"
 
 #include <string_view>
-#include <uws/src/App.h>
-#include <uws/uSockets/src/internal/internal.h>
+#include <bun-uws/src/App.h>
+#include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -225,6 +226,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
                         return AsymmetricMatcherResult::PASS;
                     }
                 }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
             }
         }
 
@@ -2063,7 +2105,7 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     JSC::VM& vm = globalObject->vm();
 
     JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, origin.fileSystemPath(),
+        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
@@ -2527,7 +2569,6 @@ JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     const BunString* arg1)
 {
-    globalObject->vm().drainMicrotasks();
     auto name = Bun::toWTFString(*arg1);
     name.impl()->ref();
 
@@ -2546,9 +2587,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
                 JSC::JSInternalPromise::rejectedPromise(globalObject, callFrame->argument(0)));
         });
 
-    globalObject->vm().drainMicrotasks();
     auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
-    globalObject->vm().drainMicrotasks();
 
     // if (promise->status(globalObject->vm()) ==
     // JSC::JSPromise::Status::Fulfilled) {
@@ -3147,11 +3186,16 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     const unsigned char* arg1, uint32_t arg2)
 {
 
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    if (UNLIKELY(!value.isObject()))
+        return JSValue::encode({});
+
     JSC::VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
-    auto propertyName = JSC::PropertyName(
-        JSC::Identifier::fromString(vm, reinterpret_cast<const LChar*>(arg1), (int)arg2));
-    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, propertyName));
+    JSC::JSObject* object = value.getObject();
+    auto identifier = JSC::Identifier::fromString(vm, String(StringImpl::createWithoutCopying(arg1, arg2)));
+    auto property = JSC::PropertyName(identifier);
+
+    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
 }
 
 JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue arg1)

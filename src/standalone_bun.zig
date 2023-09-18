@@ -7,7 +7,7 @@ const Schema = bun.Schema.Api;
 
 const Environment = bun.Environment;
 
-const Syscall = bun.JSC.Node.Syscall;
+const Syscall = bun.sys;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
@@ -228,7 +228,7 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8) i32 {
+    pub fn inject(bytes: []const u8) bun.FileDescriptor {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -330,7 +330,7 @@ pub const StandaloneModuleGraph = struct {
             };
 
             defer _ = Syscall.close(self_fd);
-            bun.copyFile(self_fd, fd) catch |err| {
+            bun.copyFile(bun.fdcast(self_fd), bun.fdcast(fd)) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);
@@ -361,24 +361,27 @@ pub const StandaloneModuleGraph = struct {
         //  gap (a "hole") return null bytes ('\0') until data is actually
         //  written into the gap.
         //
-        std.os.lseek_SET(cloned_executable_fd, seek_position) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>error<r><d>:<r> {s} seeking to end of temporary file (pos: {d})",
-                .{
-                    @errorName(err),
-                    seek_position,
-                },
-            );
-            cleanup(zname, cloned_executable_fd);
-            Global.exit(1);
-        };
+        switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
+            .err => |err| {
+                Output.prettyErrorln(
+                    "{}\nwhile seeking to end of temporary file (pos: {d})",
+                    .{
+                        err,
+                        seek_position,
+                    },
+                );
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            },
+            else => {},
+        }
 
         var remain = bytes;
         while (remain.len > 0) {
             switch (Syscall.write(cloned_executable_fd, bytes)) {
                 .result => |written| remain = remain[written..],
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{s}", .{err});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
                     cleanup(zname, cloned_executable_fd);
 
                     Global.exit(1);
@@ -388,8 +391,9 @@ pub const StandaloneModuleGraph = struct {
 
         // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
         _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
-
-        _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+        if (comptime !Environment.isWindows) {
+            _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+        }
 
         return cloned_executable_fd;
     }
@@ -434,6 +438,11 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
+        if (comptime Environment.isWindows) {
+            Output.prettyError("TODO: windows support. sorry!!\n", .{});
+            Global.exit(1);
+        }
+
         bun.C.moveFileZWithHandle(
             fd,
             std.fs.cwd().fd,
@@ -459,7 +468,7 @@ pub const StandaloneModuleGraph = struct {
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
-        std.os.lseek_END(self_exe, -4096) catch return null;
+        std.os.lseek_END(bun.fdcast(self_exe), -4096) catch return null;
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
             switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
@@ -511,7 +520,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(self_exe, -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
+            std.os.lseek_END(bun.fdcast(self_exe), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
@@ -553,16 +562,16 @@ pub const StandaloneModuleGraph = struct {
         // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
         // this is a cheap way to avoid the extra overhead of opening the executable
         // and also just makes sense.
-        if (std.os.argv.len > 0) {
-            const argv0_len = bun.len(std.os.argv[0]);
+        if (bun.argv().len > 0) {
+            const argv0_len = bun.len(bun.argv()[0]);
             if (argv0_len == 3) {
-                if (bun.strings.eqlComptimeIgnoreLen(std.os.argv[0][0..argv0_len], "bun")) {
+                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun")) {
                     return null;
                 }
             }
 
             if (argv0_len == 4) {
-                if (bun.strings.eqlComptimeIgnoreLen(std.os.argv[0][0..argv0_len], "bunx")) {
+                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bunx")) {
                     return null;
                 }
             }
@@ -572,14 +581,14 @@ pub const StandaloneModuleGraph = struct {
             if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
                 return easymode.handle;
             } else |_| {
-                if (std.os.argv.len > 0) {
+                if (bun.argv().len > 0) {
                     // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
                     var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     if (bun.which(
                         &whichbuf,
                         bun.getenvZ("PATH") orelse return error.FileNotFound,
                         "",
-                        bun.span(std.os.argv[0]),
+                        bun.span(bun.argv()[0]),
                     )) |path| {
                         return (try std.fs.cwd().openFileZ(path, flags)).handle;
                     }
@@ -590,7 +599,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         if (comptime Environment.isWindows) {
-            return (try std.fs.openSelfExe(flags)).handle;
+            return bun.toFD((try std.fs.openSelfExe(flags)).handle);
         }
         // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
         // opened with no modification.

@@ -18,18 +18,18 @@ test("snapshot", () => {
 
 ---
 
-The first time this test is executed, Bun will evaluate the value passed into `expect()` (`{ foo: "bar" }`) and write it to disk in a directory called `__snapshots__` that lives alongside the test file.
+The first time this test is executed, Bun will evaluate the value passed into `expect()` and write it to disk in a directory called `__snapshots__` that lives alongside the test file. (Note the `snapshots: +1 added` line in the output.)
 
 ```sh
 $ bun test test/snap
-bun test v0.8.0 (9c68abdb)
+bun test v1.x (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [1.48ms]
 
  1 pass
  0 fail
- snapshots: +1 added   # note: the snapshot is created automatically the first run
+ snapshots: +1 added
  1 expect() calls
 Ran 1 tests across 1 files. [82.00ms]
 ```
@@ -65,7 +65,7 @@ Later, when this test file is executed again, Bun will read the snapshot file an
 
 ```sh
 $ bun test
-bun test v0.8.0 (9c68abdb)
+bun test v1.x (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [1.05ms]
@@ -82,7 +82,7 @@ To update snapshots, use the `--update-snapshots` flag.
 
 ```sh
 $ bun test --update-snapshots
-bun test v0.8.0 (9c68abdb)
+bun test v1.x (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [0.86ms]

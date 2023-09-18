@@ -23,6 +23,8 @@ pub const bundle_node_modules = true;
 
 pub const tracing = true;
 
+pub const minify_javascript_string_length = false;
+
 pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;

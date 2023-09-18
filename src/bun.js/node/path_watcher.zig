@@ -286,17 +286,8 @@ pub const PathWatcherManager = struct {
                                 if (!(path.len == 1 and entry_point[0] == '/')) {
                                     path = path[entry_point.len..];
 
-                                    if (path.len == 0) {
-                                        while (path.len > 0) {
-                                            if (bun.strings.startsWithChar(path, '/')) {
-                                                path = path[1..];
-                                                break;
-                                            } else {
-                                                path = path[1..];
-                                            }
-                                        }
-                                    } else {
-                                        // Skip forward slash
+                                    // Skip leading slash
+                                    if (bun.strings.startsWithChar(path, '/')) {
                                         path = path[1..];
                                     }
                                 }
@@ -437,6 +428,10 @@ pub const PathWatcherManager = struct {
             watcher: *PathWatcher,
             buf: *[bun.MAX_PATH_BYTES + 1]u8,
         ) !void {
+            if (comptime Environment.isWindows) {
+                bun.todo(@src(), "implement directory watching on windows");
+                return;
+            }
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
@@ -480,6 +475,10 @@ pub const PathWatcherManager = struct {
         }
 
         fn run(this: *DirectoryRegisterTask) void {
+            if (comptime Environment.isWindows) {
+                return bun.todo(@src(), {});
+            }
+
             var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
             while (this.getNext()) |watcher| {
@@ -656,7 +655,7 @@ pub const PathWatcherManager = struct {
         var it = this.file_paths.iterator();
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
-            std.os.close(path.fd);
+            _ = bun.sys.close(path.fd);
             bun.default_allocator.free(path.path);
         }
 

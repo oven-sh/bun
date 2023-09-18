@@ -110,12 +110,25 @@ pub const InitCommand = struct {
         initializeStore();
         read_package_json: {
             if (package_json_file) |pkg| {
-                const stat = pkg.stat() catch break :read_package_json;
+                const size = brk: {
+                    if (comptime bun.Environment.isWindows) {
+                        const end = pkg.getEndPos() catch break :read_package_json;
+                        if (end == 0) {
+                            break :read_package_json;
+                        }
 
-                if (stat.kind != .file or stat.size == 0) {
-                    break :read_package_json;
-                }
-                package_json_contents = try MutableString.init(alloc, stat.size);
+                        break :brk end;
+                    }
+                    const stat = pkg.stat() catch break :read_package_json;
+
+                    if (stat.kind != .file or stat.size == 0) {
+                        break :read_package_json;
+                    }
+
+                    break :brk stat.size;
+                };
+
+                package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {
@@ -208,23 +221,27 @@ pub const InitCommand = struct {
         };
 
         if (!auto_yes) {
-            Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
-            Output.flush();
+            if (!did_load_package_json) {
+                Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
+                Output.flush();
 
-            fields.name = try normalizePackageName(alloc, try prompt(
-                alloc,
-                "<r><cyan>package name<r> ",
-                fields.name,
-                Output.enable_ansi_colors_stdout,
-            ));
-            fields.entry_point = try prompt(
-                alloc,
-                "<r><cyan>entry point<r> ",
-                fields.entry_point,
-                Output.enable_ansi_colors_stdout,
-            );
-            try Output.writer().writeAll("\n");
-            Output.flush();
+                fields.name = try normalizePackageName(alloc, try prompt(
+                    alloc,
+                    "<r><cyan>package name<r> ",
+                    fields.name,
+                    Output.enable_ansi_colors_stdout,
+                ));
+                fields.entry_point = try prompt(
+                    alloc,
+                    "<r><cyan>entry point<r> ",
+                    fields.entry_point,
+                    Output.enable_ansi_colors_stdout,
+                );
+                try Output.writer().writeAll("\n");
+                Output.flush();
+            } else {
+                Output.prettyln("A package.json was found here. Would you like to configure", .{});
+            }
         }
 
         const Steps = struct {
@@ -236,13 +253,7 @@ pub const InitCommand = struct {
 
         var steps = Steps{};
 
-        steps.write_gitignore = brk: {
-            if (exists(".gitignore")) {
-                break :brk false;
-            }
-
-            break :brk true;
-        };
+        steps.write_gitignore = !exists(".gitignore");
 
         steps.write_readme = !exists("README.md") and !exists("README") and !exists("README.txt") and !exists("README.mdx");
 

@@ -1,4 +1,6 @@
 import { expect, it, describe } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import path from "path";
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
@@ -122,4 +124,24 @@ describe("File", () => {
     expect(foo.lastModified).toBe(0);
     expect(await foo.text()).toBe("foo");
   });
+});
+
+it("globals are deletable", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "deletable-globals-fixture.js")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+it("self is a getter", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
+  expect(descriptor.get).toBeInstanceOf(Function);
+  expect(descriptor.set).toBeInstanceOf(Function);
+  expect(descriptor.enumerable).toBe(true);
+  expect(descriptor.configurable).toBe(true);
+  expect(globalThis.self).toBe(globalThis);
 });

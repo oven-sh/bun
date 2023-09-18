@@ -2,7 +2,7 @@
 name: Generate code coverage reports with the Bun test runner
 ---
 
-Bun's test runner supports built-in _code coverage reporting_. This makes it easy to see how much of the codebase is covered by tests, and find areas that are not currently well-tested.
+Bun's test runner supports built-in _code coverage reporting_. This makes it easy to see how much of the codebase is covered by tests and find areas that are not currently well-tested.
 
 ---
 

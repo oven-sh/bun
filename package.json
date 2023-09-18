@@ -5,7 +5,7 @@
     "eslint": "^8.20.0",
     "eslint-config-prettier": "^8.5.0",
     "mitata": "^0.1.3",
-    "peechy": "latest",
+    "peechy": "0.4.34",
     "prettier": "^2.4.1",
     "react": "next",
     "react-dom": "next",
@@ -18,7 +18,7 @@
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js",
     "postinstall": "bash .scripts/postinstall.sh",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
-    "fmt": "prettier --write --cache './{src,test,bench,packages/{bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
+    "fmt": "prettier --write --cache './{src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}'",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix"
   },
@@ -26,7 +26,7 @@
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0",
-    "bun-webkit": "0.0.1-48c1316e907ca597e27e5a7624160dc18a4df8ec"
+    "bun-webkit": "0.0.1-b4cf172ad2b038b8c4aa672c32d970d52e939c11"
   },
   "version": "0.0.0",
   "prettier": "./.prettierrc.cjs"

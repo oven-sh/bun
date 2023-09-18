@@ -602,6 +602,7 @@ pub const Version = extern struct {
     major: u32 = 0,
     minor: u32 = 0,
     patch: u32 = 0,
+    _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
     tag: Tag = .{},
     // raw: RawType = RawType{},
 
@@ -1266,7 +1267,7 @@ pub const Range = struct {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
         }
 
-        pub fn satisfies(this: Comparator, version: Version) bool {
+        pub fn satisfies(this: Comparator, version: Version, include_pre: bool) bool {
             const order = version.orderWithoutTag(this.version);
 
             return switch (order) {
@@ -1275,11 +1276,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (this.op) {
-                    .gt, .gte => true,
+                    .gt, .gte => if (!include_pre) false else true,
                     else => false,
                 },
                 .lt => switch (this.op) {
-                    .lt, .lte => true,
+                    .lt, .lte => if (!include_pre) false else true,
                     else => false,
                 },
             };
@@ -1287,15 +1288,46 @@ pub const Range = struct {
     };
 
     pub fn satisfies(this: Range, version: Version) bool {
-        if (!this.hasLeft()) {
+        const has_left = this.hasLeft();
+        const has_right = this.hasRight();
+
+        if (!has_left) {
             return true;
         }
 
-        if (!this.left.satisfies(version)) {
+        // When the boundaries of a range do not include a pre-release tag on either side,
+        // we should not consider that '7.0.0-rc2' < "7.0.0"
+        // ```
+        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
+        // false
+        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
+        // false
+        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
+        // true
+        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
+        // true
+        // ```
+        //
+        // - https://github.com/npm/node-semver#prerelease-tags
+        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
+        var include_pre = true;
+        if (version.tag.hasPre()) {
+            if (!has_right) {
+                if (!this.left.version.tag.hasPre()) {
+                    include_pre = false;
+                }
+            } else {
+                if (!this.left.version.tag.hasPre() and !this.right.version.tag.hasPre()) {
+                    include_pre = false;
+                }
+            }
+        }
+
+        if (!this.left.satisfies(version, include_pre)) {
             return false;
         }
 
-        if (this.hasRight() and !this.right.satisfies(version)) {
+        if (has_right and !this.right.satisfies(version, include_pre)) {
             return false;
         }
 

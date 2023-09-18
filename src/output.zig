@@ -395,7 +395,8 @@ pub inline fn _debug(comptime fmt: string, args: anytype) void {
     println(fmt, args);
 }
 
-pub noinline fn print(comptime fmt: string, args: anytype) void {
+// callconv is a workaround for a zig wasm bug?
+pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.Unspecified) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;

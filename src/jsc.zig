@@ -51,9 +51,9 @@ pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/types.zig");
     pub usingnamespace @import("./bun.js/node/node_fs.zig");
     pub usingnamespace @import("./bun.js/node/node_fs_watcher.zig");
+    pub usingnamespace @import("./bun.js/node/node_fs_stat_watcher.zig");
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
-    pub const Syscall = @import("./bun.js/node/syscall.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
 };
 pub const Maybe = Node.Maybe;

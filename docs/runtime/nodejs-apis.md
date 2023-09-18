@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization.
+🟡 Missing `Stream` stdio, `proc.gid`, `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -26,7 +26,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 
-🟢 Recommended to use `console` global instead
+🟡 Missing `Console` constructor.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
@@ -50,11 +50,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on`
+🟡 Missing `on`.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -94,7 +94,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
-🟡 See `Globals > process`.
+🟡 See [`process`](#process) Global.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
@@ -122,7 +122,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
-🟡 See `node:util`.
+🟡 See [`node:util`](#node-util).
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
@@ -130,7 +130,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tls`](https://nodejs.org/api/tls.html)
 
-🟡 Missing `tls.createSecurePair`
+🟡 Missing `tls.createSecurePair`.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
@@ -146,7 +146,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `util.MIMEParams` `util.MIMEType` `util.formatWithOptions()` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
+🟡 Missing `util.MIMEParams` `util.MIMEType` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -166,7 +166,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Missing `zlib.brotli*`. Some methods are not optimized.
+🟡 Missing `zlib.brotli*`. Has not been optimized.
 
 <!-- {% block className="ScrollFrame" %}
 {% table %}
@@ -250,7 +250,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_fs" %} [`node:fs`](https://nodejs.org/api/fs.html) {% /anchor %}
 - 🟡
-- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ---
 
@@ -364,7 +364,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
 - 🟡
-- Missing `tls.createSecurePair`
+- Missing `tls.createSecurePair`.
 
 ---
 
@@ -418,7 +418,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_zlib" %} [`node:zlib`](https://nodejs.org/api/zlib.html) {% /anchor %}
 - 🟡
-- Missing `zlib.brotli*`
+- Missing `zlib.brotli*`.
 
 {% /table %}
 {% /block %} -->
@@ -529,7 +529,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData)
 
-🟢 Fully implemented. Added in Bun 0.5.7.
+🟢 Fully implemented.
 
 ### [`global`](https://nodejs.org/api/globals.html#global)
 
@@ -589,7 +589,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel()` `process.connected` `process.constrainedMemory()` `process.disconnect()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()` `process.send()`.
+🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.constrainedMemory()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 
@@ -621,7 +621,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`require()`](https://nodejs.org/api/globals.html#require)
 
-🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
+🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options).
 
 ### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
 
@@ -859,7 +859,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 - {% anchor id="node_formdata" %} [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData) {% /anchor %}
 - 🟢
-- Fully implemented. Added in Bun 0.5.7.
+- Fully implemented.
 
 ---
 

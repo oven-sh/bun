@@ -50,6 +50,10 @@ pub const RunCommand = struct {
     };
 
     pub fn findShell(PATH: string, cwd: string) ?string {
+        if (comptime Environment.isWindows) {
+            return "C:\\Windows\\System32\\cmd.exe";
+        }
+
         inline for (shells_to_search) |shell| {
             if (which(&path_buf, PATH, cwd, shell)) |shell_| {
                 return shell_;
@@ -58,8 +62,7 @@ pub const RunCommand = struct {
 
         const Try = struct {
             pub fn shell(str: stringZ) bool {
-                std.os.accessZ(str, std.os.X_OK) catch return false;
-                return true;
+                return bun.sys.isExecutableFilePath(str);
             }
         };
 
@@ -279,7 +282,10 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         const result = child_process.spawnAndWait() catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            if (!silent) {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            }
+
             Output.flush();
             return true;
         };
@@ -287,7 +293,7 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    if (code != 2) {
+                    if (code != 2 and !silent) {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
                         Output.flush();
                     }
@@ -296,14 +302,18 @@ pub const RunCommand = struct {
                 }
             },
             .Signal => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.flush();
+                }
 
                 Global.exit(1);
             },
             .Stopped => |signal| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
-                Output.flush();
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                    Output.flush();
+                }
 
                 Global.exit(1);
             },
@@ -338,15 +348,17 @@ pub const RunCommand = struct {
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
+        const silent = ctx.debug.silent;
 
         const result = child_process.spawnAndWait() catch |err| {
             if (err == error.AccessDenied) {
-                {
+                if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);
                     const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            if (!silent)
+                                Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
                             Global.exit(1);
                         }
                     }
@@ -358,24 +370,25 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2)
+                if (sig > 0 and sig != 2 and !silent)
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 Global.exit(sig);
             },
             .Signal => |sig| {
                 // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
-                if (sig > 0 and sig != 2) {
+                if (sig > 0 and sig != 2 and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 }
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Stopped => |sig| {
-                if (sig > 0)
+                if (sig > 0 and !silent)
                     Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Unknown => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                if (!silent)
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
         }
@@ -408,16 +421,21 @@ pub const RunCommand = struct {
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
     fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+        if (comptime Environment.isWindows) {
+            bun.todo(@src(), {});
+            return;
+        }
+
         var retried = false;
 
-        if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
+        if (!strings.endsWithComptime(std.mem.span(bun.argv()[0]), "node")) {
             var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
-            if (std.os.argv[0][0] == '/') {
-                optional_bun_path.* = bun.span(std.os.argv[0]);
-                argv0 = std.os.argv[0];
+            if (bun.argv()[0][0] == '/') {
+                optional_bun_path.* = bun.span(bun.argv()[0]);
+                argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
@@ -429,7 +447,7 @@ pub const RunCommand = struct {
             }
 
             if (optional_bun_path.len == 0) {
-                argv0 = std.os.argv[0];
+                argv0 = bun.argv()[0];
             }
 
             while (true) {
@@ -445,7 +463,6 @@ pub const RunCommand = struct {
                         continue;
                     };
                 }
-                _ = bun.C.chmod(bun_node_dir ++ "/node", 0o777);
                 break;
             }
         }
@@ -475,6 +492,10 @@ pub const RunCommand = struct {
 
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
+
+        this_bundler.resolver.opts.load_tsconfig_json = false;
+        this_bundler.options.load_tsconfig_json = false;
+
         this_bundler.configureLinker();
 
         var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
@@ -484,7 +505,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("Error loading directory: \"{s}\"", .{@errorName(err)});
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), strings.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
@@ -493,7 +514,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("Error loading current directory", .{});
+            Output.prettyErrorln("error loading current directory", .{});
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };
@@ -518,9 +539,9 @@ pub const RunCommand = struct {
             if (root_dir_info.getEntries(0)) |dir| {
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, .production) catch {};
+                    this_bundler.env.load(dir, .production) catch {};
                 } else {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, .development) catch {};
+                    this_bundler.env.load(dir, .development) catch {};
                 }
             }
         }
@@ -723,7 +744,7 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                std.os.accessZ(slice, std.os.X_OK) catch continue;
+                                if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
                             }
@@ -944,7 +965,8 @@ pub const RunCommand = struct {
                         // "White space after #! is optional."
                         var shebang_buf: [64]u8 = undefined;
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
+                            if (!ctx.debug.silent)
+                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
                             Global.exit(1);
                         };
 
@@ -953,7 +975,7 @@ pub const RunCommand = struct {
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
+                            const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {

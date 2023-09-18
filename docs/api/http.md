@@ -13,7 +13,7 @@ Start an HTTP server in Bun with `Bun.serve`.
 ```ts
 Bun.serve({
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 ```
@@ -24,9 +24,9 @@ The `fetch` handler handles incoming requests. It receives a [`Request`](https:/
 Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname === "/") return new Response(`Home page!`);
+    if (url.pathname === "/") return new Response("Home page!");
     if (url.pathname === "/blog") return new Response("Blog!");
-    return new Response(`404!`);
+    return new Response("404!");
   },
 });
 ```
@@ -35,8 +35,19 @@ To configure which port and hostname the server will listen on:
 
 ```ts
 Bun.serve({
-  port: 8080, // defaults to $PORT, then 3000
+  port: 8080, // defaults to $BUN_PORT, $PORT, $NODE_PORT otherwise 3000
   hostname: "mydomain.com", // defaults to "0.0.0.0"
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+```
+
+To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket):
+
+```ts
+Bun.serve({
+  unix: "/tmp/my-socket.sock", // path to socket
   fetch(req) {
     return new Response(`404!`);
   },
@@ -60,7 +71,7 @@ In development mode, Bun will surface errors in-browser with a built-in error pa
 
 {% image src="/images/exception_page.png" caption="Bun's built-in 500 page" /%}
 
-To handle server-side errors, implement an `error` handler. This function should return a `Response` to served to the client when an error occurs. This response will supercede Bun's default error page in `development` mode.
+To handle server-side errors, implement an `error` handler. This function should return a `Response` to serve to the client when an error occurs. This response will supersede Bun's default error page in `development` mode.
 
 ```ts
 Bun.serve({
@@ -78,7 +89,7 @@ Bun.serve({
 ```
 
 {% callout %}
-**Note** — Full debugger support is planned.
+[Learn more about debugging in Bun](https://bun.sh/docs/runtime/debugger)
 {% /callout %}
 
 The call to `Bun.serve` returns a `Server` object. To stop the server, call the `.stop()` method.
@@ -129,12 +140,6 @@ Bun.serve({
 });
 ```
 
-{% callout %}
-
-**Note** — Earlier versions of Bun supported passing a file path as `keyFile` and `certFile`; this has been deprecated as of `v0.6.3`.
-
-{% /callout %}
-
 If your private key is encrypted with a passphrase, provide a value for `passphrase` to decrypt it.
 
 ```ts-diff
@@ -178,7 +183,7 @@ Bun.serve({
 });
 ```
 
-## Hot reloading
+## Object syntax
 
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
@@ -187,29 +192,27 @@ import {type Serve} from "bun";
 
 export default {
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 } satisfies Serve;
 ```
 
-Instead of passing the server options into `Bun.serve`, export it. This file can be executed as-is; when Bun runs a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
+Instead of passing the server options into `Bun.serve`, `export default` it. This file can be executed as-is; when Bun sees a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
 
-This syntax has one major advantage: it is hot-reloadable out of the box. When any source file is changed, Bun will reload the server with the updated code _without restarting the process_. This makes hot reloads nearly instantaneous. Use the `--hot` flag when starting the server to enable hot reloading.
+<!-- This syntax has one major advantage: it is hot-reloadable out of the box. When any source file is changed, Bun will reload the server with the updated code _without restarting the process_. This makes hot reloads nearly instantaneous. Use the `--hot` flag when starting the server to enable hot reloading. -->
 
-```bash
+<!-- ```bash
 $ bun --hot server.ts
-```
+``` -->
 
-It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](/docs/runtime/hot).
+<!-- It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](/docs/runtime/hot). -->
 
 ## Streaming files
 
 To stream a file, return a `Response` object with a `BunFile` object as the body.
 
 ```ts
-import { serve, file } from "bun";
-
-serve({
+Bun.serve({
   fetch(req) {
     return new Response(Bun.file("./hello.txt"));
   },
@@ -220,7 +223,7 @@ serve({
 ⚡️ **Speed** — Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 {% /callout %}
 
-**[v0.3.0+]** You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
+You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
 
 ```ts
 Bun.serve({
@@ -249,7 +252,7 @@ Below are Bun and Node.js implementations of a simple HTTP server that responds 
 ```ts#Bun
 Bun.serve({
   fetch(req: Request) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
   port: 3000,
 });

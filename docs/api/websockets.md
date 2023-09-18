@@ -87,7 +87,7 @@ ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
 
 ### Headers
 
-Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attched to this `Response` in the call to `server.upgrade()`.
+Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attached to this `Response` in the call to `server.upgrade()`.
 
 ```ts
 Bun.serve({
@@ -236,7 +236,11 @@ This gives you better control over backpressure in your server.
 
 ## Connect to a `Websocket` server
 
-To connect to an external socket server, either from a browser or from Bun, create an instance of `WebSocket` with the constructor.
+{% callout %}
+**🚧** — The `WebSocket` client still does not pass the full [Autobahn test suite](https://github.com/crossbario/autobahn-testsuite) and should not be considered ready for production.
+{% /callout %}
+
+Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
 ```ts
 const socket = new WebSocket("ws://localhost:3000");

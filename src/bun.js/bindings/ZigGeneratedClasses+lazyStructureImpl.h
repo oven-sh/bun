@@ -1,4 +1,4 @@
-void GlobalObject::initGeneratedLazyClasses() {
+ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     m_JSAttributeIterator.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSAttributeIterator::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -105,6 +105,12 @@ void GlobalObject::initGeneratedLazyClasses() {
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSExpectAnything::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSExpectAnything::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSExpectArrayContaining.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSExpectArrayContaining::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSExpectArrayContaining::createStructure(init.vm, init.global, init.prototype));
                  
               });
     m_JSExpectStringContaining.initLater(
@@ -245,6 +251,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSServerWebSocket::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSServerWebSocket::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSStatWatcher.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSStatWatcher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSStatWatcher::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSStats.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSStats::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -297,53 +309,55 @@ void GlobalObject::initGeneratedLazyClasses() {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
-      thisObject->m_JSAttributeIterator.visit(visitor);  visitor.append(thisObject->m_JSAttributeIteratorSetterValue);
-      thisObject->m_JSBigIntStats.visit(visitor);  visitor.append(thisObject->m_JSBigIntStatsSetterValue);
-      thisObject->m_JSBlob.visit(visitor);  visitor.append(thisObject->m_JSBlobSetterValue);
-      thisObject->m_JSBuildArtifact.visit(visitor);  visitor.append(thisObject->m_JSBuildArtifactSetterValue);
-      thisObject->m_JSBuildMessage.visit(visitor);  visitor.append(thisObject->m_JSBuildMessageSetterValue);
-      thisObject->m_JSComment.visit(visitor);  visitor.append(thisObject->m_JSCommentSetterValue);
-      thisObject->m_JSCrypto.visit(visitor);  visitor.append(thisObject->m_JSCryptoSetterValue);
-      thisObject->m_JSCryptoHasher.visit(visitor);  visitor.append(thisObject->m_JSCryptoHasherSetterValue);
-      thisObject->m_JSDebugHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPSServerSetterValue);
-      thisObject->m_JSDebugHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPServerSetterValue);
-      thisObject->m_JSDirent.visit(visitor);  visitor.append(thisObject->m_JSDirentSetterValue);
-      thisObject->m_JSDocEnd.visit(visitor);  visitor.append(thisObject->m_JSDocEndSetterValue);
-      thisObject->m_JSDocType.visit(visitor);  visitor.append(thisObject->m_JSDocTypeSetterValue);
-      thisObject->m_JSElement.visit(visitor);  visitor.append(thisObject->m_JSElementSetterValue);
-      thisObject->m_JSEndTag.visit(visitor);  visitor.append(thisObject->m_JSEndTagSetterValue);
-      thisObject->m_JSExpect.visit(visitor);  visitor.append(thisObject->m_JSExpectSetterValue);
-      thisObject->m_JSExpectAny.visit(visitor);  visitor.append(thisObject->m_JSExpectAnySetterValue);
-      thisObject->m_JSExpectAnything.visit(visitor);  visitor.append(thisObject->m_JSExpectAnythingSetterValue);
-      thisObject->m_JSExpectStringContaining.visit(visitor);  visitor.append(thisObject->m_JSExpectStringContainingSetterValue);
-      thisObject->m_JSExpectStringMatching.visit(visitor);  visitor.append(thisObject->m_JSExpectStringMatchingSetterValue);
-      thisObject->m_JSFFI.visit(visitor);  visitor.append(thisObject->m_JSFFISetterValue);
-      thisObject->m_JSFSWatcher.visit(visitor);  visitor.append(thisObject->m_JSFSWatcherSetterValue);
-      thisObject->m_JSFileSystemRouter.visit(visitor);  visitor.append(thisObject->m_JSFileSystemRouterSetterValue);
-      thisObject->m_JSHTMLRewriter.visit(visitor);  visitor.append(thisObject->m_JSHTMLRewriterSetterValue);
-      thisObject->m_JSHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPSServerSetterValue);
-      thisObject->m_JSHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPServerSetterValue);
-      thisObject->m_JSListener.visit(visitor);  visitor.append(thisObject->m_JSListenerSetterValue);
-      thisObject->m_JSMD4.visit(visitor);  visitor.append(thisObject->m_JSMD4SetterValue);
-      thisObject->m_JSMD5.visit(visitor);  visitor.append(thisObject->m_JSMD5SetterValue);
-      thisObject->m_JSMatchedRoute.visit(visitor);  visitor.append(thisObject->m_JSMatchedRouteSetterValue);
-      thisObject->m_JSNodeJSFS.visit(visitor);  visitor.append(thisObject->m_JSNodeJSFSSetterValue);
-      thisObject->m_JSRequest.visit(visitor);  visitor.append(thisObject->m_JSRequestSetterValue);
-      thisObject->m_JSResolveMessage.visit(visitor);  visitor.append(thisObject->m_JSResolveMessageSetterValue);
-      thisObject->m_JSResponse.visit(visitor);  visitor.append(thisObject->m_JSResponseSetterValue);
-      thisObject->m_JSSHA1.visit(visitor);  visitor.append(thisObject->m_JSSHA1SetterValue);
-      thisObject->m_JSSHA224.visit(visitor);  visitor.append(thisObject->m_JSSHA224SetterValue);
-      thisObject->m_JSSHA256.visit(visitor);  visitor.append(thisObject->m_JSSHA256SetterValue);
-      thisObject->m_JSSHA384.visit(visitor);  visitor.append(thisObject->m_JSSHA384SetterValue);
-      thisObject->m_JSSHA512.visit(visitor);  visitor.append(thisObject->m_JSSHA512SetterValue);
-      thisObject->m_JSSHA512_256.visit(visitor);  visitor.append(thisObject->m_JSSHA512_256SetterValue);
-      thisObject->m_JSServerWebSocket.visit(visitor);  visitor.append(thisObject->m_JSServerWebSocketSetterValue);
-      thisObject->m_JSStats.visit(visitor);  visitor.append(thisObject->m_JSStatsSetterValue);
-      thisObject->m_JSSubprocess.visit(visitor);  visitor.append(thisObject->m_JSSubprocessSetterValue);
-      thisObject->m_JSTCPSocket.visit(visitor);  visitor.append(thisObject->m_JSTCPSocketSetterValue);
-      thisObject->m_JSTLSSocket.visit(visitor);  visitor.append(thisObject->m_JSTLSSocketSetterValue);
-      thisObject->m_JSTextChunk.visit(visitor);  visitor.append(thisObject->m_JSTextChunkSetterValue);
-      thisObject->m_JSTextDecoder.visit(visitor);  visitor.append(thisObject->m_JSTextDecoderSetterValue);
-      thisObject->m_JSTimeout.visit(visitor);  visitor.append(thisObject->m_JSTimeoutSetterValue);
-      thisObject->m_JSTranspiler.visit(visitor);  visitor.append(thisObject->m_JSTranspilerSetterValue);
+      thisObject->m_JSAttributeIterator.visit(visitor);
+      thisObject->m_JSBigIntStats.visit(visitor);
+      thisObject->m_JSBlob.visit(visitor);
+      thisObject->m_JSBuildArtifact.visit(visitor);
+      thisObject->m_JSBuildMessage.visit(visitor);
+      thisObject->m_JSComment.visit(visitor);
+      thisObject->m_JSCrypto.visit(visitor);
+      thisObject->m_JSCryptoHasher.visit(visitor);
+      thisObject->m_JSDebugHTTPSServer.visit(visitor);
+      thisObject->m_JSDebugHTTPServer.visit(visitor);
+      thisObject->m_JSDirent.visit(visitor);
+      thisObject->m_JSDocEnd.visit(visitor);
+      thisObject->m_JSDocType.visit(visitor);
+      thisObject->m_JSElement.visit(visitor);
+      thisObject->m_JSEndTag.visit(visitor);
+      thisObject->m_JSExpect.visit(visitor);
+      thisObject->m_JSExpectAny.visit(visitor);
+      thisObject->m_JSExpectAnything.visit(visitor);
+      thisObject->m_JSExpectArrayContaining.visit(visitor);
+      thisObject->m_JSExpectStringContaining.visit(visitor);
+      thisObject->m_JSExpectStringMatching.visit(visitor);
+      thisObject->m_JSFFI.visit(visitor);
+      thisObject->m_JSFSWatcher.visit(visitor);
+      thisObject->m_JSFileSystemRouter.visit(visitor);
+      thisObject->m_JSHTMLRewriter.visit(visitor);
+      thisObject->m_JSHTTPSServer.visit(visitor);
+      thisObject->m_JSHTTPServer.visit(visitor);
+      thisObject->m_JSListener.visit(visitor);
+      thisObject->m_JSMD4.visit(visitor);
+      thisObject->m_JSMD5.visit(visitor);
+      thisObject->m_JSMatchedRoute.visit(visitor);
+      thisObject->m_JSNodeJSFS.visit(visitor);
+      thisObject->m_JSRequest.visit(visitor);
+      thisObject->m_JSResolveMessage.visit(visitor);
+      thisObject->m_JSResponse.visit(visitor);
+      thisObject->m_JSSHA1.visit(visitor);
+      thisObject->m_JSSHA224.visit(visitor);
+      thisObject->m_JSSHA256.visit(visitor);
+      thisObject->m_JSSHA384.visit(visitor);
+      thisObject->m_JSSHA512.visit(visitor);
+      thisObject->m_JSSHA512_256.visit(visitor);
+      thisObject->m_JSServerWebSocket.visit(visitor);
+      thisObject->m_JSStatWatcher.visit(visitor);
+      thisObject->m_JSStats.visit(visitor);
+      thisObject->m_JSSubprocess.visit(visitor);
+      thisObject->m_JSTCPSocket.visit(visitor);
+      thisObject->m_JSTLSSocket.visit(visitor);
+      thisObject->m_JSTextChunk.visit(visitor);
+      thisObject->m_JSTextDecoder.visit(visitor);
+      thisObject->m_JSTimeout.visit(visitor);
+      thisObject->m_JSTranspiler.visit(visitor);
 }

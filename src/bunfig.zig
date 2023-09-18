@@ -64,19 +64,27 @@ pub const Bunfig = struct {
                     // Token
                     if (url.username.len == 0 and url.password.len > 0) {
                         registry.token = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}/", .{ url.displayProtocol(), url.displayHostname(), std.mem.trim(u8, url.pathname, "/") });
                     } else if (url.username.len > 0 and url.password.len > 0) {
                         registry.username = url.username;
                         registry.password = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}/", .{ url.displayProtocol(), url.displayHostname(), std.mem.trim(u8, url.pathname, "/") });
                     } else {
-                        registry.url = url.href;
+                        if (strings.hasSuffixComptime(url.href, "/")) {
+                            registry.url = url.href;
+                        } else {
+                            registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.href});
+                        }
                     }
                 },
                 .e_object => |obj| {
                     if (obj.get("url")) |url| {
                         try this.expect(url, .e_string);
-                        registry.url = url.data.e_string.data;
+                        if (strings.hasSuffixComptime(url.data.e_string.data, "/")) {
+                            registry.url = url.data.e_string.data;
+                        } else {
+                            registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.data.e_string.data});
+                        }
                     }
 
                     if (obj.get("username")) |username| {
@@ -205,26 +213,6 @@ pub const Bunfig = struct {
                 if (json.get("smol")) |expr| {
                     try this.expect(expr, .e_boolean);
                     this.ctx.runtime_options.smol = expr.data.e_boolean.value;
-                }
-            }
-
-            if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
-                if (json.get("dev")) |expr| {
-                    if (expr.get("disableBunJS")) |disable| {
-                        this.ctx.debug.fallback_only = disable.asBool() orelse false;
-                    }
-
-                    if (expr.get("logLevel")) |expr2| {
-                        try this.loadLogLevel(expr2);
-                    }
-
-                    if (expr.get("port")) |port| {
-                        try this.expect(port, .e_number);
-                        this.bunfig.port = port.data.e_number.toU16();
-                        if (this.bunfig.port.? == 0) {
-                            this.bunfig.port = 3000;
-                        }
-                    }
                 }
             }
 
@@ -501,7 +489,7 @@ pub const Bunfig = struct {
             }
 
             if (json.get("bundle")) |_bun| {
-                if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
+                if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);
@@ -623,7 +611,7 @@ pub const Bunfig = struct {
             }
 
             switch (comptime cmd) {
-                .AutoCommand, .DevCommand, .BuildCommand => {
+                .AutoCommand, .BuildCommand => {
                     if (json.get("publicDir")) |public_dir| {
                         try this.expect(public_dir, .e_string);
                         this.bunfig.router = Api.RouteConfig{

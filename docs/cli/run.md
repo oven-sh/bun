@@ -1,5 +1,28 @@
 The `bun` CLI can be used to execute JavaScript/TypeScript files, `package.json` scripts, and [executable packages](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#bin).
 
+## Performance
+
+Bun is designed to start fast and run fast.
+
+Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. In most cases, the startup and running performance is faster than V8, the engine used by Node.js and Chromium-based browsers. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+
+{% table %}
+
+---
+
+- `bun hello.js`
+- `5.2ms`
+
+---
+
+- `node hello.js`
+- `25.1ms`
+
+{% /table %}
+{% caption content="Running a simple Hello World script on Linux" /%}
+
+<!-- {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%} -->
+
 <!-- ## Speed -->
 
 <!--
@@ -26,10 +49,11 @@ $ bun run index.ts
 $ bun run index.tsx
 ```
 
-The "naked" `bun` command is equivalent to `bun run`.
+Alternatively, you can omit the `run` keyword and use the "naked" command; it behaves identically.
 
 ```bash
 $ bun index.tsx
+$ bun index.js
 ```
 
 ### `--watch`
@@ -41,10 +65,6 @@ $ bun --watch run index.tsx
 ```
 
 ### `--smol`
-
-{% callout %}
-Added in Bun v0.7.0.
-{% /callout %}
 
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
 
@@ -70,7 +90,7 @@ Your `package.json` can define a number of named `"scripts"` that correspond to 
 }
 ```
 
-Use `bun <script>` to execute these scripts.
+Use `bun <script>` or `bun run <script>` to execute these scripts.
 
 ```bash
 $ bun clean
@@ -108,22 +128,18 @@ quickstart scripts:
 
 Bun respects lifecycle hooks. For instance, `bun run clean` will execute `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun will not execute the script itself.
 
-## Environment variables
+### `--bun`
 
-Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:
+It's common for `package.json` scripts to reference locally-installed CLIs like `vite` or `next`. These CLIs are often JavaScript files marked with a [shebang](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate that they should be executed with `node`.
 
-1. `.env.local` (first)
-2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
-3. `.env`
+```js
+#!/usr/bin/env node
 
-To debug environment variables, run `bun run env` to view a list of resolved environment variables.
+// do stuff
+```
 
-## Performance
+By default, Bun respects this shebang and executes the script with `node`. However, you can override this behavior with the `--bun` flag. For Node.js-based CLIs, this will run the CLI with Bun instead of Node.js.
 
-Bun is designed to start fast and run fast.
-
-Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), which is developed by Apple for Safari. In most cases, the startup and running performance is faster than V8, the engine used by Node.js and Chromium-based browsers. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
-
-{% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
-
-<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
+```bash
+$ bun run --bun vite
+```

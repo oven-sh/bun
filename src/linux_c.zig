@@ -167,7 +167,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENXIO, "No such device or address");
         map.put(.E2BIG, "Argument list too long");
         map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file number");
+        map.put(.EBADF, "Bad file descriptor");
         map.put(.ECHILD, "No child processes");
         map.put(.EAGAIN, "Try again");
         map.put(.ENOMEM, "Out of memory");
@@ -416,25 +416,25 @@ pub const struct_sysinfo = extern struct {
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
-pub fn get_free_memory() u64 {
+pub fn getFreeMemory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_total_memory() u64 {
+pub fn getTotalMemory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
-pub fn get_system_uptime() u64 {
+pub fn getSystemUptime() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.uptime));
     return 0;
 }
 
-pub fn get_system_loadavg() [3]f64 {
+pub fn getSystemLoadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
@@ -446,7 +446,7 @@ pub fn get_system_loadavg() [3]f64 {
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
@@ -454,7 +454,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     return name_buffer[0..result.len];
 }
 
-pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);
@@ -541,6 +541,7 @@ pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
 pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+pub const POSIX_SPAWN_SETSID = @as(c_int, 0x80);
 
 const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
@@ -571,3 +572,10 @@ pub const freeifaddrs = net_c.freeifaddrs;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+
+pub const Mode = u32;
+pub const E = std.os.E;
+
+pub fn getErrno(rc: anytype) E {
+    return std.c.getErrno(rc);
+}

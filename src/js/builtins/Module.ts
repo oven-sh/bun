@@ -39,7 +39,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
     return existing.exports;
   }
 
-  if (id.endsWith(".json") || id.endsWith(".toml") || id.endsWith(".node")) {
+  if (id.endsWith(".node")) {
     return $internalRequire(id);
   }
 
@@ -86,7 +86,6 @@ export function requireResolve(this: string | { path: string }, id: string) {
 }
 
 export function requireNativeModule(id: string) {
-  // There might be a race condition here?
   let esm = Loader.registry.$get(id);
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
     const exports = Loader.getModuleNamespaceObject(esm.module);

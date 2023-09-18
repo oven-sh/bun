@@ -1,4 +1,4 @@
-// File generated via `make generate-builtins`
+// File generated via `make static-hash-table` / `make cpp`
 static const struct CompactHashIndex bunObjectTableIndex[269] = {
     { 75, -1 },
     { -1, -1 },

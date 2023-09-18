@@ -1,5 +1,5 @@
 {% callout %}
-`Worker` support was added in Bun v0.7.0.
+**🚧** — The `Worker` API is still experimental and should not be considered ready for production.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.
@@ -123,14 +123,14 @@ By default, an active `Worker` will keep the main (spawning) process alive, so a
 
 ### `worker.unref()`
 
-To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivlent to what Node.js' `worker_threads` does.
+To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivalent to what Node.js' `worker_threads` does.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 worker.unref();
 ```
 
-Note: `worker.unref()` is not available in browers.
+Note: `worker.unref()` is not available in browsers.
 
 ### `worker.ref()`
 
@@ -151,7 +151,7 @@ const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
 });
 ```
 
-Note: `worker.ref()` is not available in browers.
+Note: `worker.ref()` is not available in browsers.
 
 ## Memory usage with `smol`
 

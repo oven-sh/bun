@@ -67,6 +67,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
+            
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
@@ -108,11 +109,6 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile and FunctionEnum != .realpath) {
-                globalObject.throw("Not implemented yet", .{});
-                return .zero;
-            }
-
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
@@ -139,49 +135,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             // TODO: handle globalObject.throwValue
 
-            if (comptime FunctionEnum == .readdir) {
-                return JSC.Node.AsyncReaddirTask.create(globalObject, args, slice.vm, slice.arena);
+            const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
+            if (comptime FunctionEnum == .cp) {
+                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+            } else {
+                return Task.create(globalObject, args, globalObject.bunVM());
             }
-
-            if (comptime FunctionEnum == .readFile) {
-                return JSC.Node.AsyncReadFileTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .realpath) {
-                return JSC.Node.AsyncRealpathTask.create(globalObject, args, slice.vm, slice.arena);
-            }
-
-            if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {
-                return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat, slice.arena);
-            }
-
-            // defer {
-            //     for (arguments.len) |arg| {
-            //         JSC.C.JSValueUnprotect(ctx, arg);
-            //     }
-            //     slice.arena.deinit();
-            // }
-
-            // const args = if (comptime Arguments != void)
-            //     Arguments.fromJS(ctx, &slice, exception)
-            // else
-            //     Arguments{};
-            // if (exception.* != null) return null;
-
-            // const result: Maybe(Result) = Function(this, comptime Flavor.sync, args);
-            // switch (result) {
-            //     .err => |err| {
-            //         exception.* = err.toJS(ctx);
-            //         return null;
-            //     },
-            //     .result => |res| {
-            //         return switch (comptime Result) {
-            //             void => JSC.JSValue.jsUndefined().asRef(),
-            //             else => res.toJS(ctx),
-            //         };
-            //     },
-            // }
-            // unreachable;
         }
     };
     return NodeBindingClosure.bind;
@@ -201,6 +160,7 @@ pub const NodeJSFS = struct {
     pub const appendFile = call(.appendFile);
     pub const close = call(.close);
     pub const copyFile = call(.copyFile);
+    pub const cp = call(.cp);
     pub const exists = call(.exists);
     pub const chown = call(.chown);
     pub const chmod = call(.chmod);
@@ -236,6 +196,7 @@ pub const NodeJSFS = struct {
     pub const accessSync = callSync(.access);
     pub const appendFileSync = callSync(.appendFile);
     pub const closeSync = callSync(.close);
+    pub const cpSync = callSync(.cp);
     pub const copyFileSync = callSync(.copyFile);
     pub const existsSync = callSync(.exists);
     pub const chownSync = callSync(.chown);
@@ -286,6 +247,8 @@ pub const NodeJSFS = struct {
     }
 
     pub const watch = callSync(.watch);
+    pub const watchFile = callSync(.watchFile);
+    pub const unwatchFile = callSync(.unwatchFile);
 
     // Not implemented yet:
     const notimpl = fdatasync;

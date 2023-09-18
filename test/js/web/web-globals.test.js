@@ -31,6 +31,7 @@ const globalSetters = [
 for (const [Constructor, name, eventName, prop] of globalSetters) {
   test(`self.${name}`, () => {
     var called = false;
+    console.log("name", name);
 
     const callback = ({ [prop]: data }) => {
       expect(data).toBe("hello");
@@ -224,4 +225,11 @@ test("navigator", () => {
   const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
+  if (process.platform === "darwin") {
+    expect(navigator.platform).toBe("MacIntel");
+  } else if (process.platform === "win32") {
+    expect(navigator.platform).toBe("Win32");
+  } else if (process.platform === "linux") {
+    expect(navigator.platform).toBe("Linux x86_64");
+  }
 });

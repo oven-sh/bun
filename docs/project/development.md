@@ -32,31 +32,32 @@ $ proto install bun
 
 ## Install LLVM
 
-Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 16 and Clang 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@15
+$ brew install llvm@16
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm clang lld
+$ sudo pacman -S llvm16 clang16 lld
+
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
-Make sure LLVM 15 is in your path:
+Make sure LLVM 16 is in your path:
 
 ```bash
-$ which clang-15
+$ which clang-16
 ```
 
 If not, run this to manually link it:
@@ -65,9 +66,17 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@15)/bin"
-$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
-$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
+$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@16)/lib"
+$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@16)/include"
+```
+
+```bash#Arch
+
+$ export PATH="$PATH:/usr/lib/llvm16/bin"
+$ export LDFLAGS="$LDFLAGS -L/usr/lib/llvm16/lib"
+$ export CPPFLAGS="$CPPFLAGS -I/usr/lib/llvm16/include"
+
 ```
 
 {% /codetabs %}
@@ -127,11 +136,11 @@ After cloning the repository, run the following command to run the first build. 
 $ make setup
 ```
 
-The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, lets print the version number on the development build of Bun.
+The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
 $ packages/debug-bun-*/bun-debug --version
-bun 0.x.y__dev
+bun 1.x.y__dev
 ```
 
 Note: `make setup` is just an alias for the following:
@@ -144,61 +153,137 @@ $ make assert-deps submodule npm-install-dev node-fallbacks runtime_js fallback_
 
 Bun uses a series of make commands to rebuild parts of the codebase. The general rule for rebuilding is there is `make link` to rerun the linker, and then different make targets for different parts of the codebase. Do not pass `-j` to make as these scripts will break if run out of order, and multiple cores will be used when possible during the builds.
 
-| What changed                         | Run this command                                                                                                                                                |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Zig Code                             | `make zig`                                                                                                                                                      |
-| C++ Code                             | `make cpp`                                                                                                                                                      |
-| Zig + C++ Code                       | `make dev` (combination of the above two)                                                                                                                       |
-| JS/TS Code in `src/js`               | `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`. |
-| `*.classes.ts`                       | `make generate-classes dev`                                                                                                                                     |
-| JSSink                               | `make generate-sink cpp`                                                                                                                                        |
-| `src/node_fallbacks/*`               | `make node-fallbacks zig`                                                                                                                                       |
-| `identifier_data.zig`                | `make identifier-cache zig`                                                                                                                                     |
-| Code using `cppFn`/`JSC.markBinding` | `make headers` (TODO: explain explain what this is used for and why it's useful)                                                                                |
+{% table %}
+
+- What changed
+- Run this command
+
+---
+
+- Zig Code
+- `make zig`
+
+---
+
+- C++ Code
+- `make cpp`
+
+---
+
+- Zig + C++ Code
+- `make dev` (combination of the above two)
+
+---
+
+- JS/TS Code in `src/js`
+- `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`.
+
+---
+
+- `*.classes.ts`
+- `make generate-classes dev`
+
+---
+
+- JSSink
+- `make generate-sink cpp`
+
+---
+
+- `src/node_fallbacks/*`
+- `make node-fallbacks zig`
+
+---
+
+- `identifier_data.zig`
+- `make identifier-cache zig`
+
+---
+
+- Code using `cppFn`/`JSC.markBinding`
+- `make headers` (TODO: explain what this is used for and why it's useful)
+
+{% /table %}
 
 `make setup` cloned a bunch of submodules and built the subprojects. When a submodule is out of date, run `make submodule` to quickly reset/update all your submodules, then you can rebuild individual submodules with their respective command.
 
-| Dependency     | Run this command                         |
-| -------------- | ---------------------------------------- |
-| WebKit         | `bun install` (it is a prebuilt package) |
-| uWebSockets    | `make uws`                               |
-| Mimalloc       | `make mimalloc`                          |
-| PicoHTTPParser | `make picohttp`                          |
-| zlib           | `make zlib`                              |
-| BoringSSL      | `make boringssl`                         |
-| libarchive     | `make libarchive`                        |
-| lolhtml        | `make lolhtml`                           |
-| sqlite         | `make sqlite`                            |
-| TinyCC         | `make tinycc`                            |
-| c-ares         | `make c-ares`                            |
-| zstd           | `make zstd`                              |
-| Base64         | `make base64`                            |
+{% table %}
+
+- Dependency
+- Run this command
+
+---
+
+- WebKit
+- `bun install` (it is a prebuilt package)
+
+---
+
+- uWebSockets
+- `make uws`
+
+---
+
+- Mimalloc
+- `make mimalloc`
+
+---
+
+- PicoHTTPParser
+- `make picohttp`
+
+---
+
+- zlib
+- `make zlib`
+
+---
+
+- BoringSSL
+- `make boringssl`
+
+---
+
+- libarchive
+- `make libarchive`
+
+---
+
+- lolhtml
+- `make lolhtml`
+
+---
+
+- sqlite
+- `make sqlite`
+
+---
+
+- TinyCC
+- `make tinycc`
+
+---
+
+- c-ares
+- `make c-ares`
+
+---
+
+- zstd
+- `make zstd`
+
+---
+
+- Base64
+- `make base64`
+
+{% /table %}
 
 The above will probably also need Zig and/or C++ code rebuilt.
 
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
-
-### ZLS
-
-ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
-
-```bash
-$ git clone https://github.com/zigtools/zls
-$ cd zls
-$ git checkout f91ff831f4959efcb7e648dba4f0132c296d26c0
-$ zig build
-```
-
-Then add absolute paths to Zig and ZLS in your vscode config:
-
-```json
-{
-  "zig.zigPath": "/path/to/zig/install/zig",
-  "zig.zls.path": "/path/to/zls/zig-out/bin/zls"
-}
-```
 
 ## JavaScript builtins
 
@@ -258,7 +343,7 @@ When these are changed, run:
 $ make js
 ```
 
-In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
+In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`.
 
 ## Release build
 

@@ -104,7 +104,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = _fd } else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = bun.fdcast(_fd) } else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -219,7 +219,7 @@ pub const Linker = struct {
                 var record_i: u32 = 0;
                 const record_count = @as(u32, @truncate(import_records.items.len));
 
-                outer: while (record_i < record_count) : (record_i += 1) {
+                while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records.items[record_i];
                     if (import_record.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
@@ -332,282 +332,282 @@ pub const Linker = struct {
                         }
                     }
 
-                    var resolved_import_: anyerror!Resolver.Result = brk: {
-                        switch (import_record.tag) {
-                            else => {},
-                            // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
-                            .react_refresh => {
-                                if (linker.options.jsx.use_embedded_refresh_runtime) {
-                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", linker.options.jsx.refresh_runtime, "", ""), "bun");
-                                    continue :outer;
-                                }
+                    // var resolved_import_: anyerror!Resolver.Result = brk: {
+                    //     switch (import_record.tag) {
+                    //         else => {},
+                    //         // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
+                    //         .react_refresh => {
+                    //             if (linker.options.jsx.use_embedded_refresh_runtime) {
+                    //                 import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", linker.options.jsx.refresh_runtime, "", ""), "bun");
+                    //                 continue :outer;
+                    //             }
 
-                                if (linker.tagged_resolutions.react_refresh != null) {
-                                    break :brk linker.tagged_resolutions.react_refresh.?;
-                                }
-                            },
-                        }
+                    //             if (linker.tagged_resolutions.react_refresh != null) {
+                    //                 break :brk linker.tagged_resolutions.react_refresh.?;
+                    //             }
+                    //         },
+                    //     }
 
-                        if (comptime is_bun) {
-                            switch (linker.resolver.resolveAndAutoInstall(
-                                source_dir,
-                                import_record.path.text,
-                                import_record.kind,
-                                linker.options.global_cache,
-                            )) {
-                                .success => |_resolved_import| {
-                                    switch (import_record.tag) {
-                                        else => {},
-                                        .react_refresh => {
-                                            linker.tagged_resolutions.react_refresh = _resolved_import;
-                                            linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                                        },
-                                    }
+                    //     if (comptime is_bun) {
+                    //         switch (linker.resolver.resolveAndAutoInstall(
+                    //             source_dir,
+                    //             import_record.path.text,
+                    //             import_record.kind,
+                    //             linker.options.global_cache,
+                    //         )) {
+                    //             .success => |_resolved_import| {
+                    //                 switch (import_record.tag) {
+                    //                     else => {},
+                    //                     .react_refresh => {
+                    //                         linker.tagged_resolutions.react_refresh = _resolved_import;
+                    //                         linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                    //                     },
+                    //                 }
 
-                                    break :brk _resolved_import;
-                                },
-                                .failure => |err| {
-                                    break :brk err;
-                                },
-                                .pending => |pending1| {
-                                    var pending = pending1;
-                                    if (!linker.resolver.opts.global_cache.canInstall()) {
-                                        break :brk error.InstallationPending;
-                                    }
+                    //                 break :brk _resolved_import;
+                    //             },
+                    //             .failure => |err| {
+                    //                 break :brk err;
+                    //             },
+                    //             .pending => |pending1| {
+                    //                 var pending = pending1;
+                    //                 if (!linker.resolver.opts.global_cache.canInstall()) {
+                    //                     break :brk error.InstallationPending;
+                    //                 }
 
-                                    pending.import_record_id = record_i;
-                                    try result.pending_imports.append(linker.allocator, pending);
-                                    continue;
-                                },
-                                .not_found => break :brk error.ModuleNotFound,
-                                // else => unreachable,
-                            }
-                        } else {
-                            if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
-                                switch (import_record.tag) {
-                                    else => {},
-                                    .react_refresh => {
-                                        linker.tagged_resolutions.react_refresh = _resolved_import;
-                                        linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                                    },
-                                }
+                    //                 pending.import_record_id = record_i;
+                    //                 try result.pending_imports.append(linker.allocator, pending);
+                    //                 continue;
+                    //             },
+                    //             .not_found => break :brk error.ModuleNotFound,
+                    //             // else => unreachable,
+                    //         }
+                    //     } else {
+                    //         if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
+                    //             switch (import_record.tag) {
+                    //                 else => {},
+                    //                 .react_refresh => {
+                    //                     linker.tagged_resolutions.react_refresh = _resolved_import;
+                    //                     linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                    //                 },
+                    //             }
 
-                                break :brk _resolved_import;
-                            } else |err| {
-                                break :brk err;
-                            }
-                        }
-                    };
+                    //             break :brk _resolved_import;
+                    //         } else |err| {
+                    //             break :brk err;
+                    //         }
+                    //     }
+                    // };
 
-                    if (resolved_import_) |*resolved_import| {
-                        if (resolved_import.is_external or resolved_import.is_standalone_module) {
-                            if (resolved_import.is_external)
-                                externals.append(record_index) catch unreachable;
-                            continue;
-                        }
+                    // if (resolved_import_) |*resolved_import| {
+                    //     if (resolved_import.is_external or resolved_import.is_standalone_module) {
+                    //         if (resolved_import.is_external)
+                    //             externals.append(record_index) catch unreachable;
+                    //         continue;
+                    //     }
 
-                        const path = resolved_import.pathConst() orelse {
-                            import_record.path.is_disabled = true;
-                            continue;
-                        };
+                    //     const path = resolved_import.pathConst() orelse {
+                    //         import_record.path.is_disabled = true;
+                    //         continue;
+                    //     };
 
-                        const loader = linker.options.loader(path.name.ext);
+                    //     const loader = linker.options.loader(path.name.ext);
 
-                        linker.processImportRecord(
-                            loader,
+                    //     linker.processImportRecord(
+                    //         loader,
 
-                            // Include trailing slash
-                            source_dir,
-                            resolved_import,
-                            import_record,
-                            origin,
-                            import_path_format,
-                        ) catch continue;
+                    //         // Include trailing slash
+                    //         source_dir,
+                    //         resolved_import,
+                    //         import_record,
+                    //         origin,
+                    //         import_path_format,
+                    //     ) catch continue;
 
-                        // If we're importing a CommonJS module as ESM
-                        // We need to do the following transform:
-                        //      import React from 'react';
-                        //      =>
-                        //      import {_require} from 'RUNTIME_IMPORTS';
-                        //      import * as react_module from 'react';
-                        //      var React = _require(react_module).default;
-                        // UNLESS it's a namespace import
-                        // If it's a namespace import, assume it's safe.
-                        // We can do this in the printer instead of creating a bunch of AST nodes here.
-                        // But we need to at least tell the printer that this needs to happen.
-                        if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
-                            import_record.do_commonjs_transform_in_printer = true;
-                            import_record.module_id = @as(u32, @truncate(bun.hash(path.pretty)));
-                        }
-                    } else |err| {
-                        switch (err) {
-                            error.VersionSpecifierNotAllowedHere => {
-                                var subpath_buf: [512]u8 = undefined;
+                    //     // If we're importing a CommonJS module as ESM
+                    //     // We need to do the following transform:
+                    //     //      import React from 'react';
+                    //     //      =>
+                    //     //      import {_require} from 'RUNTIME_IMPORTS';
+                    //     //      import * as react_module from 'react';
+                    //     //      var React = _require(react_module).default;
+                    //     // UNLESS it's a namespace import
+                    //     // If it's a namespace import, assume it's safe.
+                    //     // We can do this in the printer instead of creating a bunch of AST nodes here.
+                    //     // But we need to at least tell the printer that this needs to happen.
+                    //     if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
+                    //         import_record.do_commonjs_transform_in_printer = true;
+                    //         import_record.module_id = @as(u32, @truncate(bun.hash(path.pretty)));
+                    //     }
+                    // } else |err| {
+                    //     switch (err) {
+                    //         error.VersionSpecifierNotAllowedHere => {
+                    //             var subpath_buf: [512]u8 = undefined;
 
-                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
-                                        .{ pkg.version, import_record.path.text },
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                } else {
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                }
-                                had_resolve_errors = true;
-                                continue;
-                            },
+                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
+                    //                     .{ pkg.version, import_record.path.text },
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             } else {
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
+                    //                     .{import_record.path.text},
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             }
+                    //             had_resolve_errors = true;
+                    //             continue;
+                    //         },
 
-                            error.NoMatchingVersion => {
-                                if (import_record.handles_import_errors) {
-                                    import_record.path.is_disabled = true;
-                                    continue;
-                                }
+                    //         error.NoMatchingVersion => {
+                    //             if (import_record.handles_import_errors) {
+                    //                 import_record.path.is_disabled = true;
+                    //                 continue;
+                    //             }
 
-                                had_resolve_errors = true;
+                    //             had_resolve_errors = true;
 
-                                var package_name = import_record.path.text;
-                                var subpath_buf: [512]u8 = undefined;
-                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                                    package_name = pkg.name;
-                                    if (pkg.version.len > 0) {
-                                        linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
-                                            .{ pkg.version, package_name, import_record.path.text },
-                                            import_record.kind,
-                                            err,
-                                        ) catch {};
-                                    } else {
-                                        linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "No matching version found for package \"{s}\" (while resolving \"{s}\")",
-                                            .{ package_name, import_record.path.text },
-                                            import_record.kind,
-                                            err,
-                                        ) catch {};
-                                    }
-                                } else {
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Package version not found: \"{s}\"",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                }
-                                continue;
-                            },
+                    //             var package_name = import_record.path.text;
+                    //             var subpath_buf: [512]u8 = undefined;
+                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                    //                 package_name = pkg.name;
+                    //                 if (pkg.version.len > 0) {
+                    //                     linker.log.addResolveError(
+                    //                         &result.source,
+                    //                         import_record.range,
+                    //                         linker.allocator,
+                    //                         "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                    //                         .{ pkg.version, package_name, import_record.path.text },
+                    //                         import_record.kind,
+                    //                         err,
+                    //                     ) catch {};
+                    //                 } else {
+                    //                     linker.log.addResolveError(
+                    //                         &result.source,
+                    //                         import_record.range,
+                    //                         linker.allocator,
+                    //                         "No matching version found for package \"{s}\" (while resolving \"{s}\")",
+                    //                         .{ package_name, import_record.path.text },
+                    //                         import_record.kind,
+                    //                         err,
+                    //                     ) catch {};
+                    //                 }
+                    //             } else {
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Package version not found: \"{s}\"",
+                    //                     .{import_record.path.text},
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             }
+                    //             continue;
+                    //         },
 
-                            error.DistTagNotFound => {
-                                if (import_record.handles_import_errors) {
-                                    import_record.path.is_disabled = true;
-                                    continue;
-                                }
+                    //         error.DistTagNotFound => {
+                    //             if (import_record.handles_import_errors) {
+                    //                 import_record.path.is_disabled = true;
+                    //                 continue;
+                    //             }
 
-                                had_resolve_errors = true;
+                    //             had_resolve_errors = true;
 
-                                var package_name = import_record.path.text;
-                                var subpath_buf: [512]u8 = undefined;
-                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                                    package_name = pkg.name;
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
-                                        .{ pkg.version, package_name, import_record.path.text },
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                } else {
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Package tag not found: \"{s}\"",
-                                        .{import_record.path.text},
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                }
+                    //             var package_name = import_record.path.text;
+                    //             var subpath_buf: [512]u8 = undefined;
+                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                    //                 package_name = pkg.name;
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                    //                     .{ pkg.version, package_name, import_record.path.text },
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             } else {
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Package tag not found: \"{s}\"",
+                    //                     .{import_record.path.text},
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             }
 
-                                continue;
-                            },
+                    //             continue;
+                    //         },
 
-                            error.PackageManifestHTTP404 => {
-                                if (import_record.handles_import_errors) {
-                                    import_record.path.is_disabled = true;
-                                    continue;
-                                }
+                    //         error.PackageManifestHTTP404 => {
+                    //             if (import_record.handles_import_errors) {
+                    //                 import_record.path.is_disabled = true;
+                    //                 continue;
+                    //             }
 
-                                had_resolve_errors = true;
+                    //             had_resolve_errors = true;
 
-                                var package_name = import_record.path.text;
-                                var subpath_buf: [512]u8 = undefined;
-                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
-                                    package_name = pkg.name;
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Package not found: \"{s}\" (while resolving \"{s}\")",
-                                        .{ package_name, import_record.path.text },
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                } else {
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Package not found: \"{s}\"",
-                                        .{package_name},
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
-                                }
-                                continue;
-                            },
-                            error.ModuleNotFound => {
-                                had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
-                            },
-                            else => {
-                                had_resolve_errors = true;
+                    //             var package_name = import_record.path.text;
+                    //             var subpath_buf: [512]u8 = undefined;
+                    //             if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                    //                 package_name = pkg.name;
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Package not found: \"{s}\" (while resolving \"{s}\")",
+                    //                     .{ package_name, import_record.path.text },
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             } else {
+                    //                 linker.log.addResolveError(
+                    //                     &result.source,
+                    //                     import_record.range,
+                    //                     linker.allocator,
+                    //                     "Package not found: \"{s}\"",
+                    //                     .{package_name},
+                    //                     import_record.kind,
+                    //                     err,
+                    //                 ) catch {};
+                    //             }
+                    //             continue;
+                    //         },
+                    //         error.ModuleNotFound => {
+                    //             had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
+                    //         },
+                    //         else => {
+                    //             had_resolve_errors = true;
 
-                                try linker.log.addResolveError(
-                                    &result.source,
-                                    import_record.range,
-                                    linker.allocator,
-                                    "{s} resolving \"{s}\"",
-                                    .{
-                                        @errorName(err),
-                                        import_record.path.text,
-                                    },
-                                    import_record.kind,
-                                    err,
-                                );
-                                continue;
-                            },
-                        }
-                    }
+                    //             try linker.log.addResolveError(
+                    //                 &result.source,
+                    //                 import_record.range,
+                    //                 linker.allocator,
+                    //                 "{s} resolving \"{s}\"",
+                    //                 .{
+                    //                     @errorName(err),
+                    //                     import_record.path.text,
+                    //                 },
+                    //                 import_record.kind,
+                    //                 err,
+                    //             );
+                    //             continue;
+                    //         },
+                    //     }
+                    // }
                 }
             },
 

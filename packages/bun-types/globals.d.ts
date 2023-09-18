@@ -1,3 +1,5 @@
+// import * as tls from 'node:tls';
+
 /**
  * "blob" is not supported yet
  */
@@ -1300,6 +1302,14 @@ interface FetchRequestInit extends RequestInit {
    * This is a custom property that is not part of the Fetch API specification.
    */
   proxy?: string;
+
+  /**
+   * Override the default TLS options
+   */
+  tls?: {
+    rejectUnauthorized?: boolean | undefined; // Defaults to true
+    checkServerIdentity?: any | undefined; // TODO: change `any` to `checkServerIdentity`
+  };
 }
 
 /**
@@ -2437,6 +2447,14 @@ declare var URL: {
   createObjectURL(obj: Blob): string;
   /** Not implemented yet */
   revokeObjectURL(url: string): void;
+
+  /**
+   * Check if `url` is a valid URL string
+   *
+   * @param url URL string to parse
+   * @param base URL to resolve against
+   */
+  canParse(url: string, base?: string): boolean;
 };
 
 type TimerHandler = (...args: any[]) => void;
@@ -3489,8 +3507,9 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
+
 interface ArrayBuffer {
   /**
    * Read-only. The length of the ArrayBuffer (in bytes).

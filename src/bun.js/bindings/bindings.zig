@@ -2030,6 +2030,10 @@ pub const JSPromise = extern struct {
             return this.strong.get().?;
         }
 
+        pub fn valueOrEmpty(this: *Strong) JSValue {
+            return this.strong.get() orelse .zero;
+        }
+
         pub fn swap(this: *Strong) *JSC.JSPromise {
             var prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
@@ -2497,6 +2501,12 @@ pub const JSGlobalObject = extern struct {
 
     pub fn throwOutOfMemory(this: *JSGlobalObject) void {
         this.throwValue(this.createErrorInstance("Out of memory", .{}));
+    }
+
+    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
+        const err = this.createErrorInstance("{s}", .{msg});
+        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJSConst(this));
+        this.throwValue(err);
     }
 
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
@@ -3763,7 +3773,14 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
             // u0 => jsNumberFromInt32(0),
-            else => @compileError("Type transformation missing for number of type: " ++ @typeName(Number)),
+            else => {
+                // windows
+                if (comptime Number == std.os.fd_t) {
+                    return jsNumber(bun.toFD(number));
+                }
+
+                @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
+            },
         };
     }
 
@@ -4900,6 +4917,13 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
+
+    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: isize) JSValue;
+
+    /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
+    pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
+        return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
@@ -5467,10 +5491,19 @@ pub const URL = opaque {
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
     extern fn URL__getHref(*String) String;
     extern fn URL__getFileURLString(*String) String;
+    extern fn URL__getHrefJoin(*String, *String) String;
+
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
         var input = str;
         return URL__getHref(&input);
+    }
+
+    pub fn join(base: bun.String, relative: bun.String) String {
+        JSC.markBinding(@src());
+        var base_str = base;
+        var relative_str = relative;
+        return URL__getHrefJoin(&base_str, &relative_str);
     }
 
     pub fn fileURLFromString(str: bun.String) String {

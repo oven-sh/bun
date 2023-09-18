@@ -27,7 +27,7 @@ interface BunFSWatcher {
    */
   unref(): void;
 }
-type BunFS = Omit<typeof import("node:fs"), "watch"> & {
+type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), "watch" | "cp" | "cpSync"> & {
   /**
    * Watch for changes on `filename`, where `filename` is either a file or a
    * directory.
@@ -87,6 +87,18 @@ type BunFS = Omit<typeof import("node:fs"), "watch"> & {
    * @param filename A path to a file or directory. If a URL is provided, it must use the `file:` protocol.
    */
   watch(filename: string, listener?: BunWatchListener<string>): BunFSWatcher;
+
+  // internal api is for fs.cp and fs.cpSync that is limited to a few options.
+  // there is a js implementation for options like `filter` in `src/js/internal/fs/cp*`
+  cpSync(
+    source: string,
+    dest: string,
+    recursive?: boolean,
+    errorOnExist?: boolean,
+    force?: boolean,
+    mode?: number,
+  ): void;
+  cp(source: string, dest: string, recursive?: boolean, errorOnExist?: boolean, force?: boolean, mode?: number): void;
 };
 
 declare module "bun" {
@@ -148,17 +160,6 @@ declare interface Error {
 function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
 
 interface BunLazyModules {
-  /**
-   * Primordials is a dynamic object that contains builtin functions and values.
-   *
-   * like primordials.isPromise -> $isPromise, etc
-   * Also primordials.Bun -> $Bun, etc; untampered globals
-   *
-   * The implmentation of this is done using createBuiltin('(function (){ return @<name here>; })')
-   * Meaning you can crash bun if you try returning something like `getInternalField`
-   */
-  primordials: any;
-
   "bun:jsc": Omit<typeof import("bun:jsc"), "jscDescribe" | "jscDescribeArray"> & {
     describe: typeof import("bun:jsc").jscDescribe;
     describeArray: typeof import("bun:jsc").jscDescribe;
@@ -189,9 +190,8 @@ interface BunLazyModules {
     callback: any;
   };
   "async_hooks": {
-    get: typeof import("./builtins/AsyncContext").getAsyncContext;
-    set: typeof import("./builtins/AsyncContext").setAsyncContext;
     cleanupLater: () => void;
+    setAsyncHooksEnabled: (enabled: boolean) => void;
   };
   "worker_threads": [
     //

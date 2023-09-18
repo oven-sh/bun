@@ -2119,7 +2119,7 @@ pub const ZigConsoleClient = struct {
                         this.globalThis,
                         this.custom_formatted_object.function,
                         this.custom_formatted_object.this,
-                        this.max_depth - this.depth,
+                        this.max_depth -| this.depth,
                         this.max_depth,
                         enable_ansi_colors,
                     );
@@ -2158,7 +2158,7 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(printable.len);
 
                     if (printable.len == 0) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                     }
@@ -3430,6 +3430,7 @@ pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;
 pub const HTTPSSLServerRequestContext = JSC.API.HTTPSServer.RequestContext;
 pub const HTTPDebugServerRequestContext = JSC.API.DebugHTTPServer.RequestContext;
 pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestContext;
+pub const BodyValueBuffererContext = JSC.WebCore.BodyValueBufferer;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
     if (!is_bindgen) {
@@ -3458,5 +3459,6 @@ comptime {
         _ = ZigString__free_global;
 
         TestScope.shim.ref();
+        BodyValueBuffererContext.shim.ref();
     }
 }

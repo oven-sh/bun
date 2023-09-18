@@ -263,12 +263,17 @@ pub const fmt = struct {
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 
-pub const FileDescriptor = if (Environment.isBrowser) u0 else std.os.fd_t;
+pub const FileDescriptor = if (Environment.isBrowser)
+    u0
+else if (Environment.isWindows)
+    u64
+else
+    std.os.fd_t;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
 // As a useful optimization, we can store file descriptors and just keep them open...forever
-pub const StoredFileDescriptorType = if (Environment.isWindows or Environment.isBrowser) u0 else std.os.fd_t;
+pub const StoredFileDescriptorType = if (Environment.isBrowser) u0 else FileDescriptor;
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
@@ -285,6 +290,7 @@ pub inline fn constStrToU8(s: []const u8) []u8 {
 }
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
+pub const MAX_WPATH = [MAX_PATH_BYTES / 2:0]u16;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
@@ -599,10 +605,14 @@ pub fn ensureNonBlocking(fd: anytype) void {
 }
 
 const global_scope_log = Output.scoped(.bun, false);
-pub fn isReadable(fd: std.os.fd_t) PollFlag {
+pub fn isReadable(fd: FileDescriptor) PollFlag {
+    if (comptime Environment.isWindows) {
+        return todo(@src(), PollFlag.not_ready);
+    }
+
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = @intCast(fd),
             .events = std.os.POLL.IN | std.os.POLL.ERR,
             .revents = 0,
         },
@@ -619,10 +629,14 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
-pub fn isWritable(fd: std.os.fd_t) PollFlag {
+pub fn isWritable(fd: FileDescriptor) PollFlag {
+    if (comptime Environment.isWindows) {
+        return todo(@src(), PollFlag.not_ready);
+    }
+
     var polls = [_]std.os.pollfd{
         .{
-            .fd = fd,
+            .fd = @intCast(fd),
             .events = std.os.POLL.OUT,
             .revents = 0,
         },
@@ -650,7 +664,7 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -700,7 +714,13 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     return r;
 }
 
-pub const invalid_fd = std.math.maxInt(FileDescriptor);
+pub const invalid_fd = if (Environment.isWindows)
+    // on windows, max usize is the process handle, a very valid fd
+    std.math.maxInt(i32) + 1
+else
+    std.math.maxInt(FileDescriptor);
+
+pub const UFileDescriptor = if (Environment.isWindows) usize else u32;
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
@@ -966,6 +986,7 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
+pub const is_executable_fileZ = @import("./which.zig").is_executable_file;
 pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
@@ -1022,7 +1043,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.os.AT.FDCWD, ".", 0, 0);
+    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", 0, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
@@ -1035,7 +1056,8 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    const fd = fdcast(toFD(fd_));
     if (comptime !Environment.isLinux) {
         return std.os.getFdPath(fd, buf);
     }
@@ -1294,9 +1316,9 @@ pub fn reloadProcess(
     clear_terminal: bool,
 ) void {
     const PosixSpawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
-
-    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, std.os.argv.len, null) catch unreachable;
-    for (std.os.argv, dupe_argv) |src, *dest| {
+    const bun = @This();
+    var dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
+    for (bun.argv(), dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
     }
 
@@ -1593,3 +1615,229 @@ pub inline fn assertComptime() void {
         @compileError("This function can only be called in comptime.");
     }
 }
+
+const TODO_LOG = Output.scoped(.TODO, false);
+pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
+    if (comptime Environment.allow_assert) {
+        TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
+    }
+
+    return value;
+}
+
+pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return fd;
+    }
+
+    return @ptrFromInt(fd);
+}
+
+pub inline fn socketcast(fd: FileDescriptor) std.os.fd_t {
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return fd;
+    }
+
+    return @ptrFromInt(fd);
+}
+
+pub inline fn toFD(fd: anytype) FileDescriptor {
+    const FD = @TypeOf(fd);
+    if (comptime FileDescriptor == std.os.fd_t) {
+        return @intCast(fd);
+    }
+
+    if (comptime FD == std.os.fd_t) {
+        return @intFromPtr(fd);
+    }
+
+    return @intCast(fd);
+}
+
+pub const HOST_NAME_MAX = if (Environment.isWindows)
+    // TODO: i have no idea what this value should be
+    256
+else
+    std.os.HOST_NAME_MAX;
+
+pub const enums = @import("./enums.zig");
+const WindowsStat = extern struct {
+    dev: u32,
+    ino: u32,
+    nlink: usize,
+
+    mode: Mode,
+    uid: u32,
+    gid: u32,
+    rdev: u32,
+    size: u32,
+    blksize: isize,
+    blocks: i64,
+
+    atim: std.c.timespec,
+    mtim: std.c.timespec,
+    ctim: std.c.timespec,
+
+    pub fn mtime(this: *const WindowsStat) std.c.timespec {
+        return this.mtim;
+    }
+
+    pub fn ctime(this: *const WindowsStat) std.c.timespec {
+        return this.ctim;
+    }
+
+    pub fn atime(this: *const WindowsStat) std.c.timespec {
+        return this.atim;
+    }
+};
+
+pub const Stat = if (Environment.isPosix) std.os.Stat else WindowsStat;
+
+pub const posix = struct {
+    pub const STDOUT_FD = std.os.STDOUT_FILENO;
+    pub const STDERR_FD = std.os.STDERR_FILENO;
+    pub const STDIN_FD = std.os.STDIN_FILENO;
+    pub inline fn argv() [][*:0]u8 {
+        return std.os.argv;
+    }
+    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
+        std.os.argv = new_ptr;
+    }
+
+    pub fn stdio(i: anytype) FileDescriptor {
+        return switch (i) {
+            STDOUT_FD => STDOUT_FD,
+            STDERR_FD => STDERR_FD,
+            STDIN_FD => STDIN_FD,
+            else => @panic("Invalid stdio fd"),
+        };
+    }
+};
+
+pub const win32 = struct {
+    pub var STDOUT_FD: FileDescriptor = undefined;
+    pub var STDERR_FD: FileDescriptor = undefined;
+    pub var STDIN_FD: FileDescriptor = undefined;
+    var argv_: [][*:0]u8 = undefined;
+    var args_buf: [255][*:0]u8 = undefined;
+
+    pub inline fn argv() [][*:0]u8 {
+        return argv_;
+    }
+
+    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
+        argv_ = new_ptr;
+    }
+
+    pub fn stdio(i: anytype) FileDescriptor {
+        return switch (i) {
+            0 => STDIN_FD,
+            1 => STDOUT_FD,
+            2 => STDERR_FD,
+            else => @panic("Invalid stdio fd"),
+        };
+    }
+
+    pub fn populateArgv() void {
+        const kernel32 = windows;
+
+        var wargv_all = kernel32.GetCommandLineW();
+        var num_args: c_int = 0;
+        var start = kernel32.CommandLineToArgvW(wargv_all, &num_args);
+        defer _ = kernel32.LocalFree(@ptrCast(start));
+        var wargv = start[0..@as(usize, @intCast(num_args))];
+        var argv_list = std.ArrayList([*:0]u8).init(default_allocator);
+        argv_list.items = &args_buf;
+        argv_list.capacity = args_buf.len;
+
+        if (wargv.len > args_buf.len) {
+            var ptrs = default_allocator.alloc(?[*]u8, wargv.len + 1) catch unreachable;
+            ptrs[ptrs.len - 1] = null;
+            argv_list.items = @ptrCast(ptrs[0 .. ptrs.len - 1]);
+            argv_list.capacity = argv_list.items.len + 1;
+        }
+
+        const probably_overestimated_length = strings.elementLengthUTF16IntoUTF8([]const u16, sliceTo(wargv_all, 0)) + argv_list.items.len;
+        var buf = default_allocator.alloc(u8, probably_overestimated_length) catch unreachable;
+        var builder = StringBuilder{
+            .cap = probably_overestimated_length,
+            .ptr = buf.ptr,
+            .len = 0,
+        };
+
+        for (wargv) |warg_| {
+            var warg = sliceTo(warg_, 0);
+            argv_list.appendAssumeCapacity(
+                (builder.append16(warg) orelse brk: {
+                    var list = strings.convertUTF16ToUTF8(std.ArrayList(u8).init(default_allocator), []const u16, warg) catch unreachable;
+                    list.append(0) catch unreachable;
+                    break :brk list.items.ptr[0..list.items.len :0];
+                }).ptr,
+            );
+        }
+
+        argv_ = argv_list.items.ptr[0..argv_list.items.len];
+    }
+};
+
+pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;
+
+pub fn isRegularFile(mode: Mode) bool {
+    if (comptime Environment.isPosix) {
+        return std.os.S.ISREG(mode);
+    }
+
+    if (comptime Environment.isWindows) {
+        return todo(@src(), true);
+    }
+
+    @compileError("Unsupported platform");
+}
+
+pub const sys = @import("./sys.zig");
+
+pub const Mode = C.Mode;
+
+pub const windows = @import("./windows.zig");
+
+pub const FDTag = enum {
+    none,
+    stderr,
+    stdin,
+    stdout,
+    pub fn get(fd_: anytype) FDTag {
+        const fd = toFD(fd_);
+        if (comptime Environment.isWindows) {
+            if (fd == win32.STDOUT_FD) {
+                return .stdout;
+            } else if (fd == win32.STDERR_FD) {
+                return .stderr;
+            } else if (fd == win32.STDIN_FD) {
+                return .stdin;
+            }
+
+            return .none;
+        } else {
+            return switch (fd) {
+                posix.STDIN_FD => FDTag.stdin,
+                posix.STDOUT_FD => FDTag.stdout,
+                posix.STDERR_FD => FDTag.stderr,
+                else => .none,
+            };
+        }
+    }
+};
+
+pub fn fdi32(fd_: anytype) i32 {
+    if (comptime Environment.isPosix) {
+        return @intCast(toFD(fd_));
+    }
+
+    if (comptime @TypeOf(fd_) == *anyopaque) {
+        return @intCast(@intFromPtr(fd_));
+    }
+
+    return @intCast(fd_);
+}
+
+pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;

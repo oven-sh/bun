@@ -5,6 +5,7 @@ import { cap, fmtCPPString, readdirRecursive, resolveSyncOrNull } from "./helper
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { builtinModules } from "node:module";
 import { BuildConfig } from "bun";
+import { define } from "./replacements";
 
 const t = new Bun.Transpiler({ loader: "tsx" });
 
@@ -63,7 +64,7 @@ function codegenRequireId(id: string) {
 }
 
 function codegenRequireNativeModule(id: string) {
-  return `(__intrinsic__requireNativeModule(${id}))`;
+  return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
 }
 
 globalThis.requireTransformer = (specifier: string, from: string) => {
@@ -84,7 +85,7 @@ globalThis.requireTransformer = (specifier: string, from: string) => {
     const found = moduleList.indexOf(path.relative(BASE, relativeMatch));
     if (found === -1) {
       throw new Error(
-        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here.`,
+        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,
       );
     }
     return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);
@@ -168,11 +169,12 @@ const config = ({ platform, debug }: { platform: string; debug?: boolean }) =>
   ({
     entrypoints: bundledEntryPoints,
     // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
-    minify: { syntax: true, whitespace: false },
+    minify: { syntax: !debug, whitespace: false },
     root: TMP,
     target: "bun",
     external: builtinModules,
     define: {
+      ...define,
       IS_BUN_DEVELOPMENT: String(!!debug),
       __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
       "process.platform": JSON.stringify(platform),
@@ -222,7 +224,7 @@ for (const [name, bundle, outputs] of [
         .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
         .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
         .replace(/]\s*,\s*__debug_end__\)/g, ")")
-        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
           try {
             const str = JSON.parse(specifier);
@@ -381,6 +383,7 @@ fs.writeFileSync(
     object = 3,
     file = 4,
     esm = 5,
+    json_for_object_loader = 6,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -403,6 +406,7 @@ fs.writeFileSync(
     ObjectModule = 3,
     File = 4,
     ESM = 5,
+    JSONForObjectLoader = 6,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`

@@ -472,11 +472,11 @@ pub const Bundler = struct {
                 }
 
                 if (!has_production_env and this.options.isTest()) {
-                    try this.env.load(&this.fs.fs, dir, .@"test");
+                    try this.env.load(dir, .@"test");
                 } else if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, .production);
+                    try this.env.load(dir, .production);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, .development);
+                    try this.env.load(dir, .development);
                 }
             },
             .disable => {
@@ -990,7 +990,7 @@ pub const Bundler = struct {
                     null,
                 ) catch return null;
 
-                const _file = Fs.File{ .path = file_path, .contents = entry.contents };
+                const _file = Fs.PathContentsPair{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
 
@@ -1008,12 +1008,12 @@ pub const Bundler = struct {
                 output_file.size = css_writer.ctx.context.bytes_written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 
-                file_op.fd = file.handle;
+                file_op.fd = bun.toFD(file.handle);
 
                 file_op.is_tmpdir = false;
 
                 if (Outstream == std.fs.Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = bun.toFD(outstream.fd);
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1266,7 +1266,7 @@ pub const Bundler = struct {
             if (this_parse.file_fd_ptr) |file_fd_ptr| {
                 file_fd_ptr.* = entry.fd;
             }
-            break :brk logger.Source.initRecycledFile(Fs.File{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
+            break :brk logger.Source.initRecycledFile(.{ .path = path, .contents = entry.contents }, bundler.allocator) catch return null;
         };
 
         if (comptime return_file_only) {
@@ -1384,43 +1384,127 @@ pub const Bundler = struct {
                 };
             },
             // TODO: use lazy export AST
-            .json => {
-                var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
-                    .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{
-                        .loc = logger.Loc{},
-                        .ref = Ref.None,
-                    },
-                }, logger.Loc{ .start = 0 });
-                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
-                stmts[0] = stmt;
-                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
-                parts[0] = js_ast.Part{ .stmts = stmts };
+            inline .toml, .json => |kind| {
+                var expr = if (kind == .json)
+                    // We allow importing tsconfig.*.json or jsconfig.*.json with comments
+                    // These files implicitly become JSONC files, which aligns with the behavior of text editors.
+                    if (source.path.isJSONCFile())
+                        json_parser.ParseTSConfig(&source, bundler.log, allocator) catch return null
+                    else
+                        json_parser.ParseJSON(&source, bundler.log, allocator) catch return null
+                else if (kind == .toml)
+                    TOML.parse(&source, bundler.log, allocator) catch return null
+                else
+                    @compileError("unreachable");
 
-                return ParseResult{
-                    .ast = js_ast.Ast.initTest(parts),
-                    .source = source,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                var symbols: []js_ast.Symbol = &.{};
+
+                var parts = brk: {
+                    if (expr.data == .e_object) {
+                        var properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
+                        if (properties.len > 0) {
+                            var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
+                            var decls = allocator.alloc(js_ast.G.Decl, properties.len) catch return null;
+                            symbols = allocator.alloc(js_ast.Symbol, properties.len) catch return null;
+                            var export_clauses = allocator.alloc(js_ast.ClauseItem, properties.len) catch return null;
+                            var duplicate_key_checker = bun.StringHashMap(u32).init(allocator);
+                            defer duplicate_key_checker.deinit();
+                            var count: usize = 0;
+                            for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
+                                const name = prop.key.?.data.e_string.slice(allocator);
+                                // Do not make named exports for "default" exports
+                                if (strings.eqlComptime(name, "default"))
+                                    continue;
+
+                                var visited = duplicate_key_checker.getOrPut(name) catch continue;
+                                if (visited.found_existing) {
+                                    decls[visited.value_ptr.*].value = prop.value.?;
+                                    continue;
+                                }
+                                visited.value_ptr.* = @truncate(i);
+
+                                symbol.* = js_ast.Symbol{
+                                    .original_name = MutableString.ensureValidIdentifier(name, allocator) catch return null,
+                                };
+
+                                const ref = Ref.init(@truncate(i), 0, false);
+                                decl.* = js_ast.G.Decl{
+                                    .binding = js_ast.Binding.alloc(allocator, js_ast.B.Identifier{
+                                        .ref = ref,
+                                    }, prop.key.?.loc),
+                                    .value = prop.value.?,
+                                };
+                                export_clauses[i] = js_ast.ClauseItem{
+                                    .name = .{
+                                        .ref = ref,
+                                        .loc = prop.key.?.loc,
+                                    },
+                                    .alias = name,
+                                    .alias_loc = prop.key.?.loc,
+                                };
+                                prop.value = js_ast.Expr.initIdentifier(ref, prop.value.?.loc);
+                                count += 1;
+                            }
+
+                            stmts[0] = js_ast.Stmt.alloc(
+                                js_ast.S.Local,
+                                js_ast.S.Local{
+                                    .decls = js_ast.G.Decl.List.init(decls[0..count]),
+                                    .kind = .k_var,
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+                            stmts[1] = js_ast.Stmt.alloc(
+                                js_ast.S.ExportClause,
+                                js_ast.S.ExportClause{
+                                    .items = export_clauses[0..count],
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+                            stmts[2] = js_ast.Stmt.alloc(
+                                js_ast.S.ExportDefault,
+                                js_ast.S.ExportDefault{
+                                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                                    .default_name = js_ast.LocRef{
+                                        .loc = logger.Loc{},
+                                        .ref = Ref.None,
+                                    },
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+
+                            var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                            parts_[0] = js_ast.Part{ .stmts = stmts };
+                            break :brk parts_;
+                        }
+                    }
+
+                    {
+                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        stmts[0] = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                            .value = js_ast.StmtOrExpr{ .expr = expr },
+                            .default_name = js_ast.LocRef{
+                                .loc = logger.Loc{},
+                                .ref = Ref.None,
+                            },
+                        }, logger.Loc{ .start = 0 });
+
+                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        parts_[0] = js_ast.Part{ .stmts = stmts };
+                        break :brk parts_;
+                    }
                 };
-            },
-            .toml => {
-                var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
-                    .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{
-                        .loc = logger.Loc{},
-                        .ref = Ref.None,
-                    },
-                }, logger.Loc{ .start = 0 });
-                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
-                stmts[0] = stmt;
-                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
-                parts[0] = js_ast.Part{ .stmts = stmts };
+                var ast = js_ast.Ast.fromParts(parts);
+                ast.symbols = js_ast.Symbol.List.init(symbols);
 
                 return ParseResult{
-                    .ast = js_ast.Ast.initTest(parts),
+                    .ast = ast,
                     .source = source,
                     .loader = loader,
                     .input_fd = input_fd,
@@ -1572,9 +1656,9 @@ pub const Bundler = struct {
             else => {
                 var abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-                var stat = try file.stat();
+                const size = try file.getEndPos();
                 return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, stat.size),
+                    .file = options.OutputFile.initFile(file, abs_path, size),
                     .mime_type = MimeType.byLoader(
                         loader,
                         mime_type_ext[1..],

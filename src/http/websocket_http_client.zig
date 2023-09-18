@@ -197,12 +197,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
-            if (vm.uws_event_loop) |other| {
+            if (vm.event_loop_handle) |other| {
                 std.debug.assert(other == loop);
             }
-            const is_new_loop = vm.uws_event_loop == null;
+            const is_new_loop = vm.event_loop_handle == null;
 
-            vm.uws_event_loop = loop;
+            vm.event_loop_handle = loop;
 
             Socket.configure(
                 ctx,
@@ -236,7 +236,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_values: ?[*]const JSC.ZigString,
             header_count: usize,
         ) callconv(.C) ?*HTTPClient {
-            std.debug.assert(global.bunVM().uws_event_loop != null);
+            std.debug.assert(global.bunVM().event_loop_handle != null);
 
             var client_protocol_hash: u64 = 0;
             var body = buildRequestBody(
@@ -881,11 +881,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
-            if (vm.uws_event_loop) |other| {
+            if (vm.event_loop_handle) |other| {
                 std.debug.assert(other == loop);
             }
 
-            vm.uws_event_loop = loop;
+            vm.event_loop_handle = loop;
 
             Socket.configure(
                 ctx,

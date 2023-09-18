@@ -1,33 +1,60 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.1",
+  "version": "0.0.8",
   "author": "oven",
   "repository": {
     "type": "git",
     "url": "https://github.com/oven-sh/bun"
   },
   "main": "dist/extension.js",
-  "dependencies": {
-    "semver": "^7.5.4",
-    "source-map-js": "^1.0.2",
-    "ws": "^8.13.0"
-  },
   "devDependencies": {
-    "@types/vscode": "^1.81.0",
+    "@types/vscode": "^1.60.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
+    "@vscode/vsce": "^2.20.1",
     "bun-types": "^0.7.3",
-    "typescript": "^5.0.0",
-    "esbuild": "^0.19.2"
+    "esbuild": "^0.19.2",
+    "typescript": "^5.0.0"
   },
+  "description": "The Visual Studio Code extension for Bun.",
+  "displayName": "Bun for Visual Studio Code",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "galleryBanner": {
+    "color": "#3B3738",
+    "theme": "dark"
+  },
+  "homepage": "https://bun.sh/",
+  "icon": "assets/icon.png",
+  "keywords": [
+    "bun",
+    "node.js",
+    "javascript",
+    "typescript",
+    "vscode"
+  ],
+  "license": "MIT",
+  "publisher": "oven",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pretest": "bun run build",
+    "test": "node scripts/test.mjs",
+    "prepublish": "npm version patch && bun run build",
+    "publish": "cd extension && bunx vsce publish"
+  },
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "workspaces": [
+    "../bun-debug-adapter-protocol",
+    "../bun-inspector-protocol"
+  ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:javascriptreact",
-    "onLanguage:typescript",
-    "onLanguage:typescriptreact",
-    "workspaceContains:**/.lockb",
-    "onDebugResolve:bun",
-    "onDebugDynamicConfigurations:bun"
+    "onStartupFinished"
   ],
   "browser": "dist/web-extension.js",
   "bugs": {
@@ -48,11 +75,23 @@
     "configuration": {
       "title": "Bun",
       "properties": {
-        "bun.path": {
+        "bun.runtime": {
           "type": "string",
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
           "scope": "window",
           "default": null
+        },
+        "bun.debugTerminal.enabled": {
+          "type": "boolean",
+          "description": "If Bun should be added to the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": true
+        },
+        "bun.debugTerminal.stopOnEntry": {
+          "type": "boolean",
+          "description": "If the debugger should stop on the first line when used in the JavaScript Debug Terminal.",
+          "scope": "window",
+          "default": false
         }
       }
     },
@@ -60,6 +99,7 @@
       {
         "command": "extension.bun.runFile",
         "title": "Run File",
+        "shortTitle": "Run",
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(play)"
@@ -67,6 +107,7 @@
       {
         "command": "extension.bun.debugFile",
         "title": "Debug File",
+        "shortTitle": "Debug",
         "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
@@ -130,46 +171,67 @@
             "properties": {
               "runtime": {
                 "type": "string",
-                "description": "The path to Bun.",
+                "description": "The path to the `bun` executable. Defaults to `PATH` environment variable.",
                 "default": "bun"
+              },
+              "runtimeArgs": {
+                "type": "array",
+                "description": "The command-line arguments passed to the `bun` executable. Unlike `args`, these arguments are not passed to the program, but to the `bun` executable itself.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
               },
               "program": {
                 "type": "string",
-                "description": "The file to debug.",
+                "description": "The path to a JavaScript or TypeScript file.",
                 "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "description": "The command-line arguments passed to the program.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
               },
               "cwd": {
                 "type": "string",
                 "description": "The working directory.",
                 "default": "${workspaceFolder}"
               },
-              "args": {
-                "type": "array",
-                "description": "The arguments passed to Bun.",
-                "items": {
-                  "type": "string"
-                },
-                "default": []
-              },
               "env": {
                 "type": "object",
-                "description": "The environment variables passed to Bun.",
+                "description": "The environment variables to pass to Bun.",
                 "default": {}
               },
-              "inheritEnv": {
+              "strictEnv": {
                 "type": "boolean",
-                "description": "If environment variables should be inherited from the parent process.",
-                "default": true
+                "description": "If environment variables should not be inherited from the parent process.",
+                "default": false
               },
-              "watch": {
-                "type": ["boolean", "string"],
-                "description": "If the process should be restarted when files change.",
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "If the debugger should stop on the first line of the program.",
+                "default": false
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "If the debugger should be disabled.",
+                "default": false
+              },
+              "watchMode": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "If the process should be restarted when files change. Equivalent to passing `--watch` or `--hot` to the `bun` executable.",
                 "enum": [
                   true,
                   false,
                   "hot"
                 ],
-                "default": true
+                "default": false
               }
             }
           },
@@ -177,48 +239,21 @@
             "properties": {
               "url": {
                 "type": "string",
-                "description": "The URL of the Bun process to attach to.",
-                "default": "ws://localhost:6499/"
+                "description": "The URL of the WebSocket inspector to attach to."
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "If the debugger should be disabled.",
+                "default": false
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "If the debugger should stop on the first line of the program.",
+                "default": false
               }
             }
           }
-        },
-        "initialConfigurations": [
-          {
-            "type": "bun",
-            "request": "launch",
-            "name": "Bun: Debug",
-            "program": "${file}"
-          },
-          {
-            "type": "bun",
-            "request": "attach",
-            "name": "Bun: Attach",
-            "url": "ws://localhost:6499/"
-          }
-        ],
-        "configurationSnippets": [
-          {
-            "label": "Bun: Debug",
-            "description": "A new configuration for 'debugging' a Bun process.",
-            "body": {
-              "type": "bun",
-              "request": "launch",
-              "name": "Ask for file name",
-              "program": "^\"\\${file}\""
-            }
-          },
-          {
-            "label": "Bun: Attach",
-            "description": "A new configuration for 'attaching' to a running Bun process.",
-            "body": {
-              "type": "bun",
-              "request": "attach",
-              "name": "Attach to Bun",
-              "url": "ws://localhost:6499/"
-            }
-          }
-        ]
+        }
       }
     ],
     "languages": [
@@ -231,15 +266,15 @@
           ".lockb"
         ],
         "icon": {
-          "dark": "src/assets/icon-small.png",
-          "light": "src/assets/icon-small.png"
+          "dark": "assets/icon-small.png",
+          "light": "assets/icon-small.png"
         }
       }
     ],
     "jsonValidation": [
       {
         "fileMatch": "package.json",
-        "url": "src/resources/package.json"
+        "url": "./assets/package.json"
       }
     ],
     "customEditors": [
@@ -253,42 +288,20 @@
         ],
         "priority": "default"
       }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "bun",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The script to execute"
+          }
+        }
+      }
     ]
-  },
-  "description": "The Visual Studio Code extension for Bun.",
-  "displayName": "Bun",
-  "engines": {
-    "vscode": "^1.81.0"
-  },
-  "extensionKind": [
-    "workspace"
-  ],
-  "galleryBanner": {
-    "color": "#C80000",
-    "theme": "dark"
-  },
-  "homepage": "https://bun.sh/",
-  "icon": "src/assets/icon.png",
-  "keywords": [
-    "bun",
-    "node.js",
-    "javascript",
-    "typescript",
-    "vscode"
-  ],
-  "license": "MIT",
-  "publisher": "oven",
-  "scripts": {
-    "bundle": "./node_modules/.bin/esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
-    "prebuild": "bun run bundle && rm -rf extension && mkdir -p extension/src && cp -r dist extension/dist && cp -r src/assets extension/src/assets && cp package.json extension && cp README.md extension",
-    "build": "cd extension && vsce package",
-    "build:watch": "./node_modules/.bin/esbuild --watch src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs"
-  },
-  "workspaceTrust": {
-    "request": "never"
-  },
-  "workspaces": [
-    "../bun-debug-adapter-protocol",
-    "../bun-inspector-protocol"
-  ]
+  }
 }

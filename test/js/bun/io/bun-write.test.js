@@ -291,6 +291,25 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async don
   done();
 });
 
+it("offset should work #4963", async () => {
+  const filename = tmpdir() + "/bun.test.offset.txt";
+  await Bun.write(filename, "contents");
+  const file = Bun.file(filename);
+  const slice = file.slice(2, file.size);
+  const contents = await slice.text();
+  expect(contents).toBe("ntents");
+});
+
+it("length should be limited by file size #5080", async () => {
+  const filename = tmpdir() + "/bun.test.offset2.txt";
+  await Bun.write(filename, "contents");
+  const file = Bun.file(filename);
+  const slice = file.slice(2, 1024);
+  const contents = await slice.text();
+  expect(contents).toBe("ntents");
+  expect(contents.length).toBeLessThanOrEqual(file.size);
+});
+
 it("#2674", async () => {
   const file = path.join(import.meta.dir, "big-stdout.js");
 

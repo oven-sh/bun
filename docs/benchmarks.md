@@ -52,7 +52,6 @@ Run this with `bun cat.js /path/to/big/file`.
 ## Reading from standard input
 
 ```ts
-// As of Bun v0.3.0, console is an AsyncIterable
 for await (const line of console) {
   // line of text from stdin
   console.log(line);

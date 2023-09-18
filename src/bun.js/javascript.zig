@@ -32,7 +32,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const http = @import("../http.zig");
+const http = @import("../bun_dev_http_server.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
@@ -84,6 +84,7 @@ const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
+const IPC = @import("ipc.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -182,6 +183,27 @@ pub const SavedSourceMap = struct {
 
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
+    pub fn deinit(this: *SavedSourceMap) void {
+        {
+            this.mutex.lock();
+            var iter = this.map.valueIterator();
+            while (iter.next()) |val| {
+                var value = Value.from(val.*);
+                if (value.get(ParsedSourceMap)) |source_map_| {
+                    var source_map: *ParsedSourceMap = source_map_;
+                    source_map.deinit(default_allocator);
+                } else if (value.get(SavedMappings)) |saved_mappings| {
+                    var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+                    saved.deinit();
+                }
+            }
+
+            this.mutex.unlock();
+        }
+
+        this.map.deinit();
+    }
+
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -238,7 +260,6 @@ pub const SavedSourceMap = struct {
 const uws = @import("root").bun.uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    _ = @sizeOf(JSC.VirtualMachine) + 1;
     return JSC.VirtualMachine.get().global;
 }
 
@@ -259,20 +280,42 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
-// comptime {
-//     if (!JSC.is_bindgen) {
-//         _ = Bun__getDefaultGlobal;
-//         _ = Bun__getVM;
-//         _ = Bun__drainMicrotasks;
-//         _ = Bun__queueTask;
-//         _ = Bun__queueTaskConcurrently;
-//         _ = Bun__handleRejectedPromise;
-//         _ = Bun__readOriginTimer;
-//         _ = Bun__onDidAppendPlugin;
-//         _ = Bun__readOriginTimerStart;
-//         _ = Bun__reportUnhandledError;
-//     }
-// }
+pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
+    return global.bunVM().ipc != null;
+}
+
+pub export fn Bun__Process__send(
+    globalObject: *JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) JSValue {
+    JSC.markBinding(@src());
+    if (callFrame.argumentsCount() < 1) {
+        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
+        return .zero;
+    }
+    var vm = globalObject.bunVM();
+    if (vm.ipc) |ipc| {
+        const fd = ipc.socket.fd();
+        const success = IPC.serializeJSValueForSubprocess(
+            globalObject,
+            callFrame.argument(0),
+            fd,
+        );
+        return if (success) .undefined else .zero;
+    } else {
+        globalObject.throw("IPC Socket is no longer open.", .{});
+        return .zero;
+    }
+}
+
+pub export fn Bun__Process__disconnect(
+    globalObject: *JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) JSValue {
+    _ = callFrame;
+    _ = globalObject;
+    return .undefined;
+}
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
@@ -358,6 +401,50 @@ pub const ExitHandler = struct {
 
 pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
+pub const ImportWatcher = union(enum) {
+    none: void,
+    hot: *HotReloader.Watcher,
+    watch: *WatchReloader.Watcher,
+
+    pub fn start(this: ImportWatcher) !void {
+        switch (this) {
+            inline .hot => |watcher| try watcher.start(),
+            inline .watch => |watcher| try watcher.start(),
+            else => {},
+        }
+    }
+
+    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.watchlist,
+            else => .{},
+        };
+    }
+
+    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            else => null,
+        };
+    }
+
+    pub inline fn addFile(
+        this: ImportWatcher,
+        fd: StoredFileDescriptorType,
+        file_path: string,
+        hash: Watcher.HashType,
+        loader: options.Loader,
+        dir_fd: StoredFileDescriptorType,
+        package_json: ?*PackageJSON,
+        comptime copy_file_path: bool,
+    ) !void {
+        switch (this) {
+            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
+            else => {},
+        }
+    }
+};
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -367,8 +454,7 @@ pub const VirtualMachine = struct {
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
     bundler: Bundler,
-    bun_dev_watcher: ?*http.Watcher = null,
-    bun_watcher: ?*JSC.Watcher = null,
+    bun_watcher: ImportWatcher = .{ .none = {} },
     console: *ZigConsoleClient,
     log: *logger.Log,
     main: string = "",
@@ -380,7 +466,7 @@ pub const VirtualMachine = struct {
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
     timer: Bun.Timer = Bun.Timer{},
-    uws_event_loop: ?*uws.Loop = null,
+    event_loop_handle: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
     unhandled_pending_rejection_to_capture: ?*JSC.JSValue = null,
@@ -428,6 +514,9 @@ pub const VirtualMachine = struct {
 
     transpiler_store: JSC.RuntimeTranspilerStore,
 
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?OpaqueCallback = null,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -458,11 +547,9 @@ pub const VirtualMachine = struct {
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
-    us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
     auto_install_dependencies: bool = false,
-    load_builtins_from_path: []const u8 = "",
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
@@ -477,8 +564,10 @@ pub const VirtualMachine = struct {
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
+    ipc: ?*IPCInstance = null,
 
     debugger: ?Debugger = null,
+    has_started_debugger: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
@@ -510,6 +599,21 @@ pub const VirtualMachine = struct {
 
     pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
         return this.rareData().mimeTypeFromString(this.allocator, str);
+    }
+
+    pub fn onAfterEventLoop(this: *VirtualMachine) void {
+        if (this.after_event_loop_callback) |cb| {
+            var ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.active_tasks > 0 or
+            vm.event_loop_handle.?.active > 0 or
+            vm.event_loop.tasks.count > 0;
     }
 
     const SourceMapHandlerGetter = struct {
@@ -604,12 +708,15 @@ pub const VirtualMachine = struct {
     pub fn loadExtraEnv(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
 
-        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null)
+        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
+        }
 
-        if (map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
-            if (override_path.len > 0) {
-                this.load_builtins_from_path = override_path;
+        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
+                this.initIPCInstance(fd);
+            } else {
+                Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
             }
         }
 
@@ -703,7 +810,7 @@ pub const VirtualMachine = struct {
     pub fn prepareLoop(_: *VirtualMachine) void {}
 
     pub fn enterUWSLoop(this: *VirtualMachine) void {
-        var loop = this.uws_event_loop.?;
+        var loop = this.event_loop_handle.?;
         loop.run();
     }
 
@@ -711,7 +818,7 @@ pub const VirtualMachine = struct {
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {
-            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) : (dispatch = true) {
+            while (this.isEventLoopAlive()) : (dispatch = true) {
                 this.tick();
                 this.eventLoop().autoTickActive();
             }
@@ -720,7 +827,7 @@ pub const VirtualMachine = struct {
                 this.exit_handler.dispatchOnBeforeExit();
                 dispatch = false;
 
-                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) continue;
+                if (this.isEventLoopAlive()) continue;
             }
 
             break;
@@ -745,10 +852,19 @@ pub const VirtualMachine = struct {
         return debugger.next_debugger_id;
     }
 
+    pub fn hotMap(this: *VirtualMachine) ?*JSC.RareData.HotMap {
+        if (this.hot_reload != .hot) {
+            return null;
+        }
+
+        return this.rareData().hotMap(this.allocator);
+    }
+
     pub var has_created_debugger: bool = false;
 
     pub const Debugger = struct {
-        path_or_port: []const u8 = "",
+        path_or_port: ?[]const u8 = null,
+        unix: []const u8 = "",
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
@@ -759,8 +875,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) bun.String;
-        var has_started_debugger_thread: bool = false;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
         var futex_atomic: std.atomic.Atomic(u32) = undefined;
 
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
@@ -770,8 +885,8 @@ pub const VirtualMachine = struct {
             has_created_debugger = true;
             var debugger = &this.debugger.?;
             debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
-            if (!has_started_debugger_thread) {
-                has_started_debugger_thread = true;
+            if (!this.has_started_debugger) {
+                this.has_started_debugger = true;
                 futex_atomic = std.atomic.Atomic(u32).init(0);
                 var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
                 thread.detach();
@@ -819,8 +934,6 @@ pub const VirtualMachine = struct {
             vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
         }
 
-        pub export var Bun__debugger_server_url: bun.String = undefined;
-
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
             std.debug.assert(this.debugger.?.wait_for_connection);
@@ -832,9 +945,17 @@ pub const VirtualMachine = struct {
             JSC.markBinding(@src());
 
             var this = VirtualMachine.get();
-            var str = bun.String.create(other_vm.debugger.?.path_or_port);
-            Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
-            Bun__debugger_server_url.toThreadSafe();
+            var debugger = other_vm.debugger.?;
+
+            if (debugger.unix.len > 0) {
+                var url = bun.String.create(debugger.unix);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
+
+            if (debugger.path_or_port) |path_or_port| {
+                var url = bun.String.create(path_or_port);
+                Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
+            }
 
             this.global.handleRejectedPromises();
 
@@ -855,7 +976,7 @@ pub const VirtualMachine = struct {
             this.eventLoop().tick();
 
             while (true) {
-                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) {
+                while (this.isEventLoopAlive()) {
                     this.tick();
                     this.eventLoop().autoTickActive();
                 }
@@ -928,7 +1049,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
-        return this.bun_dev_watcher != null or this.bun_watcher != null;
+        return this.bun_watcher != .none;
     }
 
     /// Instead of storing timestamp as a i128, we store it as a u64.
@@ -979,7 +1100,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1082,7 +1203,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1143,13 +1264,27 @@ pub const VirtualMachine = struct {
     }
 
     fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+        var unix = bun.getenvZ("BUN_INSPECT") orelse "";
+        var set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
+        var wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+
         switch (debugger) {
-            .unspecified => {},
+            .unspecified => {
+                if (unix.len > 0) {
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .unix = unix,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                    };
+                }
+            },
             .enable => {
                 this.debugger = Debugger{
                     .path_or_port = debugger.enable.path_or_port,
-                    .wait_for_connection = debugger.enable.wait_for_connection,
-                    .set_breakpoint_on_first_line = debugger.enable.set_breakpoint_on_first_line,
+                    .unix = unix,
+                    .wait_for_connection = wait_for_connection or debugger.enable.wait_for_connection,
+                    .set_breakpoint_on_first_line = set_breakpoint_on_first_line or debugger.enable.set_breakpoint_on_first_line,
                 };
             },
         }
@@ -1197,7 +1332,7 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
-            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
@@ -1424,9 +1559,9 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
-            ret.path = @as(string, @tagName(result));
+            ret.path = result.path;
             return;
         }
 
@@ -1581,7 +1716,7 @@ pub const VirtualMachine = struct {
                     printed,
                 ),
             };
-            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.utf8()).asVoid());
+            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             return;
         }
 
@@ -1828,7 +1963,9 @@ pub const VirtualMachine = struct {
     }
 
     // TODO:
-    pub fn deinit(_: *VirtualMachine) void {}
+    pub fn deinit(this: *VirtualMachine) void {
+        this.source_mappings.deinit();
+    }
 
     pub const ExceptionList = std.ArrayList(Api.JsException);
 
@@ -1893,7 +2030,7 @@ pub const VirtualMachine = struct {
 
         try this.entry_point.generate(
             this.allocator,
-            this.bun_watcher != null,
+            this.bun_watcher != .none,
             Fs.PathName.init(entry_path),
             main_file_name,
         );
@@ -1950,7 +2087,7 @@ pub const VirtualMachine = struct {
                     defer JSValue.fromCell(promise).unprotect();
 
                     // pending_internal_promise can change if hot module reloading is enabled
-                    if (this.bun_watcher != null) {
+                    if (this.isWatcherEnabled()) {
                         this.eventLoop().performGC();
                         switch (this.pending_internal_promise.status(this.global.vm())) {
                             JSC.JSPromise.Status.Pending => {
@@ -2005,7 +2142,7 @@ pub const VirtualMachine = struct {
         var promise = try this.reloadEntryPoint(entry_path);
 
         // pending_internal_promise can change if hot module reloading is enabled
-        if (this.bun_watcher != null) {
+        if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
@@ -2029,6 +2166,21 @@ pub const VirtualMachine = struct {
         this.eventLoop().autoTick();
 
         return this.pending_internal_promise;
+    }
+
+    pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().addListeningSocketForWatchMode(socket);
+    }
+    pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().removeListeningSocketForWatchMode(socket);
     }
 
     pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
@@ -2643,6 +2795,71 @@ pub const VirtualMachine = struct {
         }
     }
 
+    extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+    extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+
+    pub const IPCInstance = struct {
+        globalThis: ?*JSGlobalObject,
+        socket: IPC.Socket,
+        uws_context: *uws.SocketContext,
+        ipc_buffer: bun.ByteList,
+
+        pub fn handleIPCMessage(
+            this: *IPCInstance,
+            message: IPC.DecodedIPCMessage,
+        ) void {
+            JSC.markBinding(@src());
+            switch (message) {
+                // In future versions we can read this in order to detect version mismatches,
+                // or disable future optimizations if the subprocess is old.
+                .version => |v| {
+                    IPC.log("Parent IPC version is {d}", .{v});
+                },
+                .data => |data| {
+                    IPC.log("Received IPC message from parent", .{});
+                    if (this.globalThis) |global| {
+                        Process__emitMessageEvent(global, data);
+                    }
+                },
+            }
+        }
+
+        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+            JSC.markBinding(@src());
+            if (this.globalThis) |global| {
+                var vm = global.bunVM();
+                vm.ipc = null;
+                Process__emitDisconnectEvent(global);
+            }
+            uws.us_socket_context_free(0, this.uws_context);
+            bun.default_allocator.destroy(this);
+        }
+
+        pub const Handlers = IPC.NewIPCHandler(IPCInstance);
+    };
+
+    pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+        this.event_loop.ensureWaker();
+        const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
+        IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
+
+        const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
+            uws.us_socket_context_free(0, context);
+            Output.prettyWarnln("Failed to initialize IPC connection to parent", .{});
+            return;
+        };
+
+        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
+        instance.* = .{
+            .globalThis = this.global,
+            .socket = socket,
+            .uws_context = context,
+            .ipc_buffer = bun.ByteList{},
+        };
+        var ptr = socket.ext(*IPCInstance);
+        ptr.?.* = instance;
+        this.ipc = instance;
+    }
     comptime {
         if (!JSC.is_bindgen)
             _ = Bun__remapStackFramePositions;
@@ -2650,7 +2867,9 @@ pub const VirtualMachine = struct {
 };
 
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 pub const Watcher = HotReloader.Watcher;
+extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
@@ -2674,6 +2893,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
             this.eventLoop().enqueueTaskConcurrent(task);
         }
+
+        pub var clear_screen = false;
 
         pub const HotReloadTask = struct {
             reloader: *Reloader,
@@ -2700,14 +2921,20 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
+                JSC.markBinding(@src());
                 if (this.count == 0)
                     return;
 
                 if (comptime reload_immediately) {
-                    bun.reloadProcess(bun.default_allocator, Output.enable_ansi_colors);
+                    Output.flush();
+                    if (comptime Ctx == ImportWatcher) {
+                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                    }
+                    bun.reloadProcess(bun.default_allocator, clear_screen);
                     unreachable;
                 }
 
+                BunDebugger__willHotReload();
                 var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
 
                 that.* = this.*;
@@ -2737,23 +2964,51 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         ) void);
 
         pub fn enableHotModuleReloading(this: *Ctx) void {
-            if (this.bun_watcher != null)
-                return;
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                if (this.bun_watcher != .none)
+                    return;
+            } else {
+                if (this.bun_watcher != null)
+                    return;
+            }
 
             var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
-            this.bun_watcher = @This().Watcher.init(
-                reloader,
-                this.bundler.fs,
-                bun.default_allocator,
-            ) catch @panic("Failed to enable File Watcher");
 
-            this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                this.bun_watcher = if (reload_immediately)
+                    .{ .watch = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") }
+                else
+                    .{ .hot = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") };
 
-            this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
+                if (reload_immediately) {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                } else {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                }
+            } else {
+                this.bun_watcher = @This().Watcher.init(
+                    reloader,
+                    this.bundler.fs,
+                    bun.default_allocator,
+                ) catch @panic("Failed to enable File Watcher");
+                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            }
+
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+
+            reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
 
         pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
@@ -2780,6 +3035,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
         }
 
+        pub fn getContext(this: *@This()) *@This().Watcher {
+            if (comptime @TypeOf(this.ctx.bun_watcher) == ImportWatcher) {
+                if (reload_immediately) {
+                    return this.ctx.bun_watcher.watch;
+                } else {
+                    return this.ctx.bun_watcher.hot;
+                }
+            } else {
+                return this.ctx.bun_watcher.?;
+            }
+        }
+
         pub fn onFileUpdate(
             this: *@This(),
             events: []watcher.WatchEvent,
@@ -2793,7 +3060,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             var file_descriptors = slice.items(.fd);
-            var ctx = this.ctx.bun_watcher.?;
+            var ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 

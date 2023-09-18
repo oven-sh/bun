@@ -1,15 +1,17 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-{% callout %}
-**Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
+## macOS and Linux
 
+{% callout %}
 **Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 {% /callout %}
 
 {% codetabs %}
 
-```bash#Native
+```bash#macOS/Linux_(curl)
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+# to install a specific version
+$ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
 ```bash#NPM
@@ -31,6 +33,20 @@ $ proto install bun
 ```
 
 {% /codetabs %}
+
+## Windows
+
+Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+
+- `bun <file>`
+- `bun run <file>`
+
+The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+
+- `bun test`
+- `bun install/add/remove`
+- `bun link/unlink`
+- `bun build`
 
 ## Upgrading
 
@@ -99,29 +115,9 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
 this is some output
 ``` -->
 
-## TypeScript
+<!-- ## Completions
 
-To install TypeScript definitions for Bun's built-in APIs in your project, install `bun-types`.
-
-```sh
-$ bun add -d bun-types # dev dependency
-```
-
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
-
-```json-diff
-  {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
-  }
-```
-
-Refer to [Ecosystem > TypeScript](/docs/runtime/typescript) for a complete guide to TypeScript support in Bun.
-
-## Completions
-
-Shell auto-completion should be configured automatically when Bun is installed.
+Shell auto-completion should be configured automatically when Bun is installed!
 
 If not, run the following command. It uses `$SHELL` to determine which shell you're using and writes a completion file to the appropriate place on disk. It's automatically re-run on every `bun upgrade`.
 
@@ -134,4 +130,28 @@ To write the completions to a custom location:
 ```bash
 $ bun completions > path-to-file      # write to file
 $ bun completions /path/to/directory  # write into directory
+``` -->
+
+## Uninstall
+
+If you need to remove Bun from your system, use the following commands.
+
+{% codetabs %}
+
+```bash#macOS/Linux_(curl)
+$ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
+
+```bash#NPM
+$ npm uninstall -g bun
+```
+
+```bash#Homebrew
+$ brew uninstall bun
+```
+
+```bash#Proto
+$ proto uninstall bun
+```
+
+{% /codetabs %}

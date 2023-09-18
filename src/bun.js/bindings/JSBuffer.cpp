@@ -1589,7 +1589,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame), )
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_allocBody(lexicalGlobalObject, callFrame);
 }
@@ -1917,9 +1917,9 @@ static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsaf
 
 /* Source for JSBuffer.lut.h
 @begin jsBufferConstructorTable
-    alloc           jsBufferConstructorFunction_alloc              Function 1
-    allocUnsafe     jsBufferConstructorFunction_allocUnsafe        Function 1
-    allocUnsafeSlow jsBufferConstructorFunction_allocUnsafeSlow    Function 1
+    alloc           jsBufferConstructorFunction_alloc              Constructable|Function 1
+    allocUnsafe     jsBufferConstructorFunction_allocUnsafe        Constructable|Function 1
+    allocUnsafeSlow jsBufferConstructorFunction_allocUnsafeSlow    Constructable|Function 1
     byteLength      jsBufferConstructorFunction_byteLength         Function 2
     compare         jsBufferConstructorFunction_compare            Function 2
     concat          jsBufferConstructorFunction_concat             Function 2

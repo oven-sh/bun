@@ -3315,10 +3315,10 @@ JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
 
     if (returnedException) {
         throwException(globalObject, scope, returnedException.get());
-        return JSValue::encode(jsUndefined());
+        return jsUndefined();
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    RELEASE_AND_RETURN(scope, result);
 }
 
 // `console.Console` or `import { Console } from 'console';`

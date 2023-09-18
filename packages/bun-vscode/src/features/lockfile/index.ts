@@ -38,10 +38,10 @@ export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorPro
 function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, extensionUri: vscode.Uri): void {
   const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "vscode.css"));
   const lockfileContent = styleLockfile(preview);
-  
-  const lineNumbers: string[] = []
-  for(let i = 0; i < lockfileContent.split('\n').length; i++){
-    lineNumbers.push(`<span class="line-number">${i + 1}</span>`)
+
+  const lineNumbers: string[] = [];
+  for (let i = 0; i < lockfileContent.split("\n").length; i++) {
+    lineNumbers.push(`<span class="line-number">${i + 1}</span>`);
   }
 
   webview.html = `
@@ -50,7 +50,7 @@ function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, exten
   <head>
     <meta charset="UTF-8">
 
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource};">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource};">    
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
@@ -59,7 +59,7 @@ function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, exten
   <body>
     <div class="bunlock">
       <div class="lines">
-        ${lineNumbers.join('\n')}
+        ${lineNumbers.join("\n")}
       </div>
       <code>${lockfileContent}</code>
     </div>
@@ -96,15 +96,17 @@ function previewLockfile(uri: vscode.Uri, token?: vscode.CancellationToken): Pro
   });
 }
 
-export default function (context: vscode.ExtensionContext): void {
+export function registerBunlockEditor(context: vscode.ExtensionContext): void {
   const viewType = "bun.lockb";
   const provider = new BunLockfileEditorProvider(context);
 
-  vscode.window.registerCustomEditorProvider(viewType, provider, {
-    supportsMultipleEditorsPerDocument: true,
-    webviewOptions: {
-      enableFindWidget: true,
-      retainContextWhenHidden: true,
-    },
-  });
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(viewType, provider, {
+      supportsMultipleEditorsPerDocument: true,
+      webviewOptions: {
+        enableFindWidget: true,
+        retainContextWhenHidden: true,
+      },
+    }),
+  );
 }

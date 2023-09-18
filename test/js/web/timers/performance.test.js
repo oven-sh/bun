@@ -27,3 +27,28 @@ it("performance.now() should never return NaN", () => {
     expect(Number.isNaN(now)).toBe(false);
   }
 });
+
+// https://github.com/oven-sh/bun/issues/5604
+it("performance.now() DOMJIT", () => {
+  // This test is very finnicky.
+  // It has to return true || return false to reproduce. Throwing an error doesn't work.
+  function run(start, prev) {
+    while (true) {
+      const current = performance.now();
+
+      if (Number.isNaN(current) || current < prev) {
+        return false;
+      }
+
+      if (current - start > 200) {
+        return true;
+      }
+      prev = current;
+    }
+  }
+
+  const start = performance.now();
+  if (!run(start, start)) {
+    throw new Error("performance.now() is not monotonic");
+  }
+});

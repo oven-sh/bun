@@ -58,3 +58,17 @@ $ bun run dev
 Open [http://localhost:3000](http://localhost:3000) to see the app. Any changes you make to `app/routes/_index.tsx` will be hot-reloaded in the browser.
 
 {% image src="https://github.com/oven-sh/bun/assets/3084745/c26f1059-a5d4-4c0b-9a88-d9902472fd77" caption="Remix app running on localhost" /%}
+
+---
+
+To build and start the your app on the bun server, run `bun run build` then `bun start` from the project root. This will build your Remix app and start the server using `remix-serve`.
+
+```sh
+$ bun run build
+$ remix build
+ info  building... (NODE_ENV=production)
+ info  built (158ms)
+% bun start
+$ remix-serve ./build/index.js
+[remix-serve] http://localhost:3000 (http://192.168.86.237:3000)
+```

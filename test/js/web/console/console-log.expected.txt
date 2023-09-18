@@ -35,7 +35,7 @@ Promise { <pending> }
 [Function]
 [Function]
 [class Foo]
-[class]
+[class (anonymous)]
 {}
 [Function: foooo]
 /FooRegex/

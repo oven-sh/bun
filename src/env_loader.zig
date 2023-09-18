@@ -37,6 +37,13 @@ pub const Loader = struct {
 
     const empty_string_value: string = "\"\"";
 
+    pub fn has(this: *const Loader, input: []const u8) bool {
+        const value = this.map.get(input) orelse return false;
+        if (value.len == 0) return false;
+
+        return !strings.eqlComptime(value, "\"\"") and !strings.eqlComptime(value, "''") and !strings.eqlComptime(value, "0") and !strings.eqlComptime(value, "false");
+    }
+
     pub fn isProduction(this: *const Loader) bool {
         const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
         return strings.eqlComptime(env, "production");

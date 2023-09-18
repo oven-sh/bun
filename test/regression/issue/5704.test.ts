@@ -7,7 +7,7 @@ import { bunEnv, bunExe } from "harness";
 
 test("running a empty script should not return a missing script error", () => {
   const tmp = mkdtempSync(join(tmpdir(), "bun-test-"));
-  writeFileSync(join(tmp, "empty-file.ts"), '');
+  writeFileSync(join(tmp, "empty-file.ts"), "");
 
   const result = Bun.spawnSync({
     cmd: [bunExe(), "run", join(tmp, "empty-file.ts")],

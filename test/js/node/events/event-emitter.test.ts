@@ -185,7 +185,7 @@ describe("EventEmitter", () => {
     });
 
     test("emit multiple values", () => {
-      var emitter = new EventEmitter();
+      const emitter = new EventEmitter();
 
       const receivedVals: number[] = [];
       emitter.on("multiple-vals", (val1, val2, val3) => {
@@ -291,6 +291,60 @@ describe("EventEmitter", () => {
     myEmitter.emit("foo");
 
     expect(order).toEqual([3, 2, 1, 4, 1, 4]);
+  });
+
+  test("prependListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.prependListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 2, 1, 3]);
+  });
+
+  test("addListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.addListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 1, 3, 2]);
   });
 
   test("listeners", () => {

@@ -3,7 +3,7 @@ name: Build an app with Remix and Bun
 ---
 
 {% callout %}
-Remix currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
+Remix Dev (`@remix-run/dev`) currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
 {% /callout %}
 
 ---

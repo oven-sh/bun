@@ -2615,8 +2615,8 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        var sa: std.os.sockaddr = std.mem.zeroes(std.os.sockaddr);
-        if (c_ares.getSockaddr(addr_s, port, &sa) != 0) {
+        var sa: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
+        if (c_ares.getSockaddr(addr_s, port, @as(*std.os.sockaddr, @ptrCast(&sa))) != 0) {
             globalThis.throwInvalidArgumentType("lookupService", "address", "invalid address");
             return .zero;
         }
@@ -2663,7 +2663,7 @@ pub const DNSResolver = struct {
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(
-            &sa,
+            @as(*std.os.sockaddr, @ptrCast(&sa)),
             GetNameInfoRequest,
             request,
             GetNameInfoRequest.onCaresComplete,

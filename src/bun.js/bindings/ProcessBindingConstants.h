@@ -1,3 +1,4 @@
+#pragma once
 #include "root.h"
 
 namespace Bun {
@@ -10,6 +11,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static ProcessBindingConstants* create(JSC::VM& vm, JSC::Structure* structure);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);

@@ -455,6 +455,7 @@ pub const GarbageCollectionController = struct {
     gc_repeating_timer: *uws.Timer = undefined,
     gc_timer_interval: i32 = 0,
     gc_repeating_timer_fast: bool = true,
+    disabled: bool = false,
 
     pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         var actual = vm.event_loop_handle.?;
@@ -469,8 +470,12 @@ pub const GarbageCollectionController = struct {
                 }
             } else |_| {}
         }
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
         this.gc_timer_interval = gc_timer_interval;
+
+        this.disabled = vm.bundler.env.has("BUN_GC_TIMER_DISABLE");
+
+        if (!this.disabled)
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
     }
 
     pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
@@ -484,6 +489,7 @@ pub const GarbageCollectionController = struct {
 
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
         var this = timer.as(*GarbageCollectionController);
+        if (this.disabled) return;
         this.gc_timer_state = .run_on_next_tick;
     }
 
@@ -528,11 +534,12 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn processGCTimer(this: *GarbageCollectionController) void {
+        if (this.disabled) return;
         var vm = this.bunVM().global.vm();
         this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
     }
 
-    pub fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
+    fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
         const prev = this.gc_last_heap_size;
 
         switch (this.gc_timer_state) {
@@ -568,6 +575,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn performGC(this: *GarbageCollectionController) void {
+        if (this.disabled) return;
         var vm = this.bunVM().global.vm();
         vm.collectAsync();
         this.gc_last_heap_size = vm.blockBytesAllocated();
@@ -613,6 +621,7 @@ pub const EventLoop = struct {
     }
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject) void {
+        JSC.markBinding(@src());
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
         this.drainDeferredTasks();
     }

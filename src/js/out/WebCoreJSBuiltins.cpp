@@ -634,14 +634,6 @@ WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* ProcessObjectInternals.ts */
-// binding
-const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsBindingCodeLength = 569;
-static const JSC::Intrinsic s_processObjectInternalsBindingCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsBindingCode = "(function (bindingName) {\"use strict\";\n  if (bindingName === \"constants\")\n    return @processBindingConstants;\n  const issue = {\n    fs: 3546,\n    buffer: 2020,\n    natives: 2254,\n    uv: 2891\n  }[bindingName];\n  if (issue)\n    throw new Error(`process.binding(\"${bindingName}\") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/${issue}`);\n  @throwTypeError(`process.binding(\"${bindingName}\") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample.`);\n})\n";
-
 // getStdioWriteStream
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;

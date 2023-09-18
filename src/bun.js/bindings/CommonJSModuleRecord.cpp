@@ -118,6 +118,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
     JSValue empty = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), thisObject, exception);
+
+    globalObject->m_BunCommonJSModuleValue.clear();
     moduleObject->sourceCode.clear();
 
     return exception.get() == nullptr;
@@ -740,7 +742,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     // Special-case for "process" to just return the process object directly.
     if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsDynamicCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
+        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
         return JSValue::encode(globalObject->processObject());
     }
 
@@ -752,7 +754,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
-        jsDynamicCast<JSCommonJSModule*>(callframe->argument(1)),
+        jsCast<JSCommonJSModule*>(callframe->argument(1)),
         specifierValue,
         &specifierStr,
         &referrerStr);

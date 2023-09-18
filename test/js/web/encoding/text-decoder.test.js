@@ -258,6 +258,11 @@ describe("TextDecoder", () => {
       const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
     }).toThrow();
   });
+
+  it("should support undifined", () => {
+    const decoder = new TextDecoder(undefined);
+    expect(decoder.encoding).toBe("utf-8");
+  });
 });
 
 it("truncated sequences", () => {

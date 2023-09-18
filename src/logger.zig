@@ -703,12 +703,12 @@ pub const Log = struct {
         };
     }
 
-    pub fn addVerboseFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-        if (!Kind.shouldPrint(.verbose, log.level)) return;
+    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
 
         @setCold(true);
         try log.addMsg(.{
-            .kind = .verbose,
+            .kind = .debug,
             .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
@@ -1103,6 +1103,31 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .warn,
+            .data = rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable),
+            .notes = notes,
+        });
+    }
+
+    pub fn addRangeErrorFmtWithNote(
+        log: *Log,
+        source: ?*const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        comptime note_fmt: string,
+        note_args: anytype,
+        note_range: Range,
+    ) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.err, log.level)) return;
+        log.errors += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(source, note_range, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+
+        try log.addMsg(.{
+            .kind = .err,
             .data = rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable),
             .notes = notes,
         });

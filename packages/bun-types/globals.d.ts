@@ -2466,6 +2466,14 @@ declare var URL: {
   createObjectURL(obj: Blob): string;
   /** Not implemented yet */
   revokeObjectURL(url: string): void;
+
+  /**
+   * Check if `url` is a valid URL string
+   *
+   * @param url URL string to parse
+   * @param base URL to resolve against
+   */
+  canParse(url: string, base?: string): boolean;
 };
 
 type TimerHandler = (...args: any[]) => void;
@@ -3518,8 +3526,9 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
+
 interface ArrayBuffer {
   /**
    * Read-only. The length of the ArrayBuffer (in bytes).

@@ -50,7 +50,10 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     // best practices
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "composite": true,
+    "downlevelIteration": true,
+    "allowSyntheticDefaultImports": true
   }
 }
 ```

@@ -540,7 +540,7 @@ class Server extends EventEmitter {
       });
       setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
-      setTimeout(emitListeningNextTick, 1, this, onListen, err);
+      server.emit("error", err);
     }
 
     return this;

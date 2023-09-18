@@ -2615,10 +2615,11 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        const addr = std.net.Address.parseIp(addr_s, port) catch {
+        var sa: std.os.sockaddr = std.mem.zeroes(std.os.sockaddr);
+        if (c_ares.getSockaddr(addr_s, port, &sa) != 0) {
             globalThis.throwInvalidArgumentType("lookupService", "address", "invalid address");
             return .zero;
-        };
+        }
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
@@ -2662,7 +2663,7 @@ pub const DNSResolver = struct {
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(
-            addr,
+            &sa,
             GetNameInfoRequest,
             request,
             GetNameInfoRequest.onCaresComplete,

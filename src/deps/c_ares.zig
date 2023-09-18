@@ -622,11 +622,11 @@ pub const Channel = opaque {
     }
 
     // https://c-ares.org/ares_getnameinfo.html
-    pub fn getNameInfo(this: *Channel, addr: std.net.Address, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
+    pub fn getNameInfo(this: *Channel, sa: *std.os.sockaddr, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
         return ares_getnameinfo(
             this,
-            &addr.any,
-            addr.getOsSockLen(),
+            sa,
+            if (sa.*.family == std.os.AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
             // node returns ENOTFOUND for addresses like 255.255.255.255:80
             // So, it requires setting the ARES_NI_NAMEREQD flag
             ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
@@ -1534,6 +1534,52 @@ pub export fn Bun__canonicalizeIP(
         return .zero;
     }
 }
+
+/// Creates a sockaddr structure from an address, port.
+///
+/// # Parameters
+/// - `addr`: A byte slice representing the IP address.
+/// - `port`: A 16-bit unsigned integer representing the port number.
+/// - `sa`: A pointer to a sockaddr structure where the result will be stored.
+///
+/// # Returns
+///
+/// This function returns 0 on success.
+pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
+    const buf_size = 128;
+
+    var buf: [buf_size]u8 = undefined;
+    const addr_ptr: [*:0]const u8 = brk: {
+        if (addr.len == 0 or addr.len >= buf_size) {
+            return -1;
+        }
+        const len = @min(addr.len, buf.len - 1);
+        @memcpy(buf[0..len], addr[0..len]);
+
+        buf[len] = 0;
+        break :brk buf[0..len :0];
+    };
+
+    {
+        const in: *std.os.sockaddr.in = @as(*std.os.sockaddr.in, @alignCast(@ptrCast(sa)));
+        if (ares_inet_pton(std.os.AF.INET, addr_ptr, &in.addr) == 1) {
+            in.*.family = std.os.AF.INET;
+            in.*.port = std.mem.nativeToBig(u16, port);
+            return 0;
+        }
+    }
+    {
+        const in6: *std.os.sockaddr.in6 = @as(*std.os.sockaddr.in6, @alignCast(@ptrCast(sa)));
+        if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &in6.addr) == 1) {
+            in6.*.family = std.os.AF.INET6;
+            in6.*.port = std.mem.nativeToBig(u16, port);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__canonicalizeIP;

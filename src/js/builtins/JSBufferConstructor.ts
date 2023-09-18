@@ -1,3 +1,5 @@
+// This is marked as a constructor
+$constructor;
 export function from(items) {
   if ($isUndefinedOrNull(items)) {
     throw new TypeError(

@@ -92,11 +92,28 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  // iterate in reverse so the handlers array does not need to be cloned
-  for (let i = handlers.length - 1; i >= 0; --i) {
-    // for performance reasons Function.call(...) is used if only one arg needs to be passed
-    if (args.length === 1) handlers[i].call(this, args[0]);
-    else handlers[i].apply(this, args);
+  // clone handlers array if necessary since handlers can be added/removed during the loop
+  const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
+  for (let i = 0; i < maybeClonedHandlers.length; i++) {
+    const handler = maybeClonedHandlers[i];
+    // for performance reasons Function.call(...) is used whenever possible
+    switch (args.length) {
+      case 0:
+        handler.call(this);
+        break;
+      case 1:
+        handler.call(this, args[0]);
+        break;
+      case 2:
+        handler.call(this, args[0], args[1]);
+        break;
+      case 3:
+        handler.call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        handler.apply(this, args);
+        break;
+    }
   }
   return true;
 };
@@ -109,12 +126,29 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  // iterate in reverse so the handlers array does not need to be cloned
-  for (let i = handlers.length - 1; i >= 0; --i) {
+  // clone handlers array if necessary since handlers can be added/removed during the loop
+  const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
+  for (let i = 0; i < maybeClonedHandlers.length; ++i) {
+    const handler = maybeClonedHandlers[i];
     let result;
-    // for performance reasons Function.call(...) is used if only one arg needs to be passed
-    if (args.length === 1) result = handlers[i].call(this, args[0]);
-    else result = handlers[i].apply(this, args);
+    // for performance reasons Function.call(...) is used whenever possible
+    switch (args.length) {
+      case 0:
+        result = handler.call(this);
+        break;
+      case 1:
+        result = handler.call(this, args[0]);
+        break;
+      case 2:
+        result = handler.call(this, args[0], args[1]);
+        break;
+      case 3:
+        result = handler.call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        result = handler.apply(this, args);
+        break;
+    }
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -138,9 +172,7 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
     events[type] = [fn];
     this._eventsCount++;
   } else {
-    // for performance reasons the handlers are stored in reverse
-    // -> adding = unshifting
-    handlers.unshift(fn);
+    handlers.push(fn);
     var m = this._maxListeners ?? defaultMaxListeners;
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
@@ -165,9 +197,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
     events[type] = [fn];
     this._eventsCount++;
   } else {
-    // for performance reasons the handlers are stored in reverse
-    // -> prepending = pushing
-    handlers.push(fn);
+    handlers.unshift(fn);
     var m = this._maxListeners ?? defaultMaxListeners;
     if (m > 0 && handlers.length > m && !handlers.warned) {
       overflowWarning(this, type, handlers);
@@ -257,8 +287,7 @@ EventEmitterPrototype.listeners = function listeners(type) {
   if (!events) return [];
   var handlers = events[type];
   if (!handlers) return [];
-  // reverse array since handlers are stored in reverse internally
-  return handlers.reverse().map(x => x.listener ?? x);
+  return handlers.map(x => x.listener ?? x);
 };
 
 EventEmitterPrototype.rawListeners = function rawListeners(type) {
@@ -266,8 +295,7 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
   if (!_events) return [];
   var handlers = _events[type];
   if (!handlers) return [];
-  // reverse array since handlers are stored in reverse internally
-  return handlers.reverse().slice();
+  return handlers.slice();
 };
 
 EventEmitterPrototype.listenerCount = function listenerCount(type) {

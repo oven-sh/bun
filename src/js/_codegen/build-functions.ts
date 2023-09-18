@@ -29,6 +29,7 @@ interface BundledBuiltin {
   directives: Record<string, any>;
   isGetter: boolean;
   constructAbility: string;
+  constructKind: string;
   isLinkTimeConstant: boolean;
   intrinsic: string;
   overriddenName: string;
@@ -54,9 +55,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   const consumeEndOfType = /;|.(?=export|type|interface|\$|\/\/|\/\*|function)/;
 
   const functions: ParsedBuiltin[] = [];
-  let directives: Record<string, any> = {
-    ConstructAbility: "CannotConstruct",
-  };
+  let directives: Record<string, any> = {};
   const bundledFunctions: BundledBuiltin[] = [];
   let internal = false;
 
@@ -100,7 +99,8 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       if (name === "constructor") {
         directives.ConstructAbility = "CanConstruct";
       } else if (name === "nakedConstructor") {
-        directives.ConstructAbility = "Naked";
+        directives.ConstructAbility = "CanConstruct";
+        directives.ConstructKind = "Naked";
       } else {
         directives[name] = value;
       }
@@ -194,6 +194,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
       isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
+      constructKind: fn.directives.ConstructKind ?? "None",
       isLinkTimeConstant: !!fn.directives.linkTimeConstant,
       intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
       overriddenName: fn.directives.getter
@@ -257,7 +258,7 @@ for (const { basename, functions } of files) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
 const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
-const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
+const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;

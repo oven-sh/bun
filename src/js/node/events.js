@@ -94,7 +94,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (handlers === undefined) return false;
   // clone handlers array if necessary since handlers can be added/removed during the loop
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
-  for (let i = 0; i < maybeClonedHandlers.length; i++) {
+  for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];
     // for performance reasons Function.call(...) is used whenever possible
     switch (args.length) {
@@ -128,7 +128,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (handlers === undefined) return false;
   // clone handlers array if necessary since handlers can be added/removed during the loop
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
-  for (let i = 0; i < maybeClonedHandlers.length; ++i) {
+  for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];
     let result;
     // for performance reasons Function.call(...) is used whenever possible

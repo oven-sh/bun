@@ -34,8 +34,9 @@ describe("console.Console", () => {
   });
 
   test("it can write to a stream", async () => {
+    console.log();
     const [stream, value] = writable();
-    const c = new Console({ stdout: stream, stderr: stream });
+    const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
     c.log("hello");
     c.log({ foo: "bar" });
     stream.end();

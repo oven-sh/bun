@@ -559,6 +559,13 @@ pub const TextDecoder = struct {
                     remainder = remainder[1..];
                     continue;
                 },
+                // BOM handling
+                0xFEFF => {
+                    buffer.ensureTotalCapacity(allocator, 1) catch unreachable;
+                    buffer.items.ptr[buffer.items.len] = remainder[0];
+                    buffer.items.len += 1;
+                    remainder = remainder[1..];
+                },
 
                 // Is this an unpaired low surrogate or four-digit hex escape?
                 else => {

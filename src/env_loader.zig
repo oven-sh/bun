@@ -358,11 +358,7 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
-                    if (value.len > 0) {
-                        this.map.put(key, value) catch unreachable;
-                    } else {
-                        this.map.put(key, "") catch unreachable;
-                    }
+                    this.map.put(key, value) catch unreachable;
                 }
             } else {
                 if (env.len > 0) {

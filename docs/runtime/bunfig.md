@@ -100,6 +100,14 @@ Bun supports the following loaders:
 - `dataurl`
 - `text`
 
+### `disableTelemetry`
+
+The `disableTelemetry` field permit to enable/disable the analytics records. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
+
+```toml
+disableTelemetry = true
+```
+
 ## Test runner
 
 The test runner is configured under the `[test]` section of your bunfig.toml.

@@ -19,7 +19,7 @@ fn checkPath(filepath: [:0]const u8) bool {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
-    if (bin.len == 0) return null;
+    // if (bin.len == 0) return null;
 
     // handle absolute paths
     if (std.fs.path.isAbsolute(bin)) {

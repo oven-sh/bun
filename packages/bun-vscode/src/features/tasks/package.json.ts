@@ -189,7 +189,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         return;
       }
 
-      const terminal = vscode.window.createTerminal({name});
+      const terminal = vscode.window.createTerminal({ name });
       terminal.show();
       terminal.sendText(`bun ${script}`);
     }),

@@ -1,3 +1,4 @@
+// @ts-check
 // Hardcoded module "node:util"
 const types = require("node:util/types");
 const { parseArgs } = require('@pkgjs/parseargs');
@@ -9,6 +10,7 @@ const StringPrototypeCharAt = String.prototype.charAt;
 const ObjectDefineProperty = Object.defineProperty;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const FunctionPrototypeCall = Function.prototype.call;
+const ArrayIsArray = Array.isArray;
 const SymbolIterator = Symbol.iterator;
 const NOT_HTTP_TOKEN_CODE_POINT = /[^!#$%&'*+\-.^_`|~A-Za-z0-9]/g;
 const NOT_HTTP_QUOTED_STRING_CODE_POINT = /[^\t\u0020-~\u0080-\u00FF]/g;
@@ -579,9 +581,32 @@ var toUSVString = input => {
 
 const SafeStringPrototypeSearch = (str, regexp) => {
   regexp.lastIndex = 0;
-  const match = RegExpPrototypeExec(regexp, str);
+  const match = RegExpPrototypeExec.call(regexp, str);
   return match ? match.index : -1;
 };
+
+const EQUALS_SEMICOLON_OR_END = /[;=]|$/;
+const QUOTED_VALUE_PATTERN = /^(?:([\\]$)|[\\][\s\S]|[^"])*(?:(")|$)/u;
+
+function removeBackslashes(str) {
+  let ret = '';
+  // We stop at str.length - 1 because we want to look ahead one character.
+  let i;
+  for (i = 0; i < str.length - 1; i++) {
+    const c = str[i];
+    if (c === '\\') {
+      i++;
+      ret += str[i];
+    } else {
+      ret += c;
+    }
+  }
+  // We add the last character if we didn't skip to it.
+  if (i === str.length - 1) {
+    ret += str[i];
+  }
+  return ret;
+}
 
 function toASCIILower(str) {
   let result = '';
@@ -589,7 +614,7 @@ function toASCIILower(str) {
     const char = str[i];
 
     result += char >= 'A' && char <= 'Z' ?
-      StringPrototypeToLowerCase(char) :
+      StringPrototypeToLowerCase.call(char) :
       char;
   }
   return result;
@@ -602,10 +627,10 @@ function parseTypeAndSubtype(str) {
   // Skip only HTTP whitespace from start
   let position = SafeStringPrototypeSearch(str, END_BEGINNING_WHITESPACE);
   // read until '/'
-  const typeEnd = StringPrototypeIndexOf(str, SOLIDUS, position);
+  const typeEnd = StringPrototypeIndexOf.call(str, SOLIDUS, position);
   const trimmedType = typeEnd === -1 ?
     StringPrototypeSlice(str, position) :
-    StringPrototypeSlice(str, position, typeEnd);
+    StringPrototypeSlice.$call(str, position, typeEnd);
   const invalidTypeIndex = SafeStringPrototypeSearch(trimmedType,
                                                      NOT_HTTP_TOKEN_CODE_POINT);
   if (trimmedType === '' || invalidTypeIndex !== -1 || typeEnd === -1) {
@@ -616,16 +641,16 @@ function parseTypeAndSubtype(str) {
   position = typeEnd + 1;
   const type = toASCIILower(trimmedType);
   // read until ';'
-  const subtypeEnd = StringPrototypeIndexOf(str, SEMICOLON, position);
+  const subtypeEnd = StringPrototypeIndexOf.call(str, SEMICOLON, position);
   const rawSubtype = subtypeEnd === -1 ?
     StringPrototypeSlice(str, position) :
-    StringPrototypeSlice(str, position, subtypeEnd);
+    StringPrototypeSlice.$call(str, position, subtypeEnd);
   position += rawSubtype.length;
   if (subtypeEnd !== -1) {
     // skip ';'
     position += 1;
   }
-  const trimmedSubtype = StringPrototypeSlice(
+  const trimmedSubtype = StringPrototypeSlice.$call(
     rawSubtype,
     0,
     SafeStringPrototypeSearch(rawSubtype, START_ENDING_WHITESPACE));
@@ -729,13 +754,13 @@ class MIMEParams {
       position += SafeStringPrototypeSearch(StringPrototypeSlice(str, position), END_BEGINNING_WHITESPACE);
       // Read until ';' or '='
       const afterParameterName =
-        SafeStringPrototypeSearch(StringPrototypeSlice(str, position), EQUALS_SEMICOLON_OR_END) + position;
-      const parameterString = toASCIILower(StringPrototypeSlice(str, position, afterParameterName));
+        SafeStringPrototypeSearch(StringPrototypeSlice.$call(str, position), EQUALS_SEMICOLON_OR_END) + position;
+      const parameterString = toASCIILower(StringPrototypeSlice.$call(str, position, afterParameterName));
       position = afterParameterName;
       // If we found a terminating character
       if (position < endOfSource) {
         // Safe to use because we never do special actions for surrogate pairs
-        const char = StringPrototypeCharAt(str, position);
+        const char = StringPrototypeCharAt.$call(str, position);
         // Skip the terminating character
         position += 1;
         // Ignore parameters without values
@@ -746,7 +771,7 @@ class MIMEParams {
       // If we are at end of the string, it cannot have a value
       if (position >= endOfSource) break;
       // Safe to use because we never do special actions for surrogate pairs
-      const char = StringPrototypeCharAt(str, position);
+      const char = StringPrototypeCharAt.$call(str, position);
       let parameterValue = null;
       if (char === '"') {
         // Handle quoted-string form of values
@@ -756,11 +781,11 @@ class MIMEParams {
         //   use $1 to see if we terminated on unmatched '\'
         //   use $2 to see if we terminated on a matching '"'
         //   so we can skip the last char in either case
-        const insideMatch = RegExpPrototypeExec(QUOTED_VALUE_PATTERN, StringPrototypeSlice(str, position));
+        const insideMatch = RegExpPrototypeExec.call(QUOTED_VALUE_PATTERN, StringPrototypeSlice(str, position));
         position += insideMatch[0].length;
         // Skip including last character if an unmatched '\' or '"' during
         // unescape
-        const inside = insideMatch[1] || insideMatch[2] ? StringPrototypeSlice(insideMatch[0], 0, -1) : insideMatch[0];
+        const inside = insideMatch[1] || insideMatch[2] ? StringPrototypeSlice.$call(insideMatch[0], 0, -1) : insideMatch[0];
         // Unescape '\' quoted characters
         parameterValue = removeBackslashes(inside);
         // If we did have an unmatched '\' add it back to the end
@@ -769,9 +794,9 @@ class MIMEParams {
         // Handle the normal parameter value form
         const valueEnd = StringPrototypeIndexOf(str, SEMICOLON, position);
         const rawValue =
-          valueEnd === -1 ? StringPrototypeSlice(str, position) : StringPrototypeSlice(str, position, valueEnd);
+          valueEnd === -1 ? StringPrototypeSlice(str, position) : StringPrototypeSlice.$call(str, position, valueEnd);
         position += rawValue.length;
-        const trimmedValue = StringPrototypeSlice(
+        const trimmedValue = StringPrototypeSlice.$call(
           rawValue,
           0,
           SafeStringPrototypeSearch(rawValue, START_ENDING_WHITESPACE),
@@ -886,7 +911,7 @@ export default Object.assign(cjs_exports, {
   _extend,
   inspect,
   types,
-  isArray: $isArray,
+  isArray: ArrayIsArray,
   isBoolean,
   isNull,
   isNullOrUndefined,
@@ -911,5 +936,4 @@ export default Object.assign(cjs_exports, {
   TextEncoder,
   MIMEParams,
   MIMEType,
-  parseArgs
 });

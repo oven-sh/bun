@@ -13,7 +13,6 @@ export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   cwd: "${workspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
-  
 };
 
 export const RUN_CONFIGURATION: vscode.DebugConfiguration = {
@@ -83,7 +82,7 @@ function debugFileCommand(resource?: vscode.Uri) {
 }
 
 function injectDebugTerminal(terminal: vscode.Terminal): void {
-  if (!getConfig("debugTerminal.enabled")) return
+  if (!getConfig("debugTerminal.enabled")) return;
 
   const { name, creationOptions } = terminal;
   if (name !== "JavaScript Debug Terminal") {
@@ -246,4 +245,3 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
 function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
   return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }
- 

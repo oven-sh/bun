@@ -4663,30 +4663,6 @@ fn NewParser_(
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
-        pub const GlobalIdentifiers = struct {
-            pub var String: ?Expr = null;
-            pub var Number: ?Expr = null;
-            pub var Object: ?Expr = null;
-            pub var Symbol: ?Expr = null;
-            pub var BigInt: ?Expr = null;
-            pub var Function: ?Expr = null;
-            pub var Boolean: ?Expr = null;
-            pub var Array: ?Expr = null;
-
-            pub fn get(p: *P, comptime name: string) Expr {
-                return @field(@This(), name) orelse {
-                    @field(@This(), name) = p.newExpr(
-                        E.Identifier{
-                            .can_be_removed_if_unused = false,
-                            .ref = p.newSymbol(.unbound, name) catch unreachable,
-                        },
-                        logger.Loc.Empty,
-                    );
-                    return @field(@This(), name).?;
-                };
-            }
-        };
-
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -6993,8 +6969,7 @@ fn NewParser_(
                     // "function foo(a: any) {}"
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
-                        // if allow_ts_decorators is true, this fn is a class method or constructor.
-                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators or arg_has_decorators)) {
                             ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
                         } else {
                             try p.skipTypeScriptType(.lowest);
@@ -19433,11 +19408,20 @@ fn NewParser_(
 
         fn serializeMetadata(p: *P, ts_metadata: TypeScript.Metadata) !Expr {
             return switch (ts_metadata) {
-                .m_none,
+                .m_none => p.newExpr(
+                    E.Undefined{},
+                    logger.Loc.Empty,
+                ),
+
                 .m_any,
                 .m_unknown,
                 .m_object,
-                => GlobalIdentifiers.get(p, "Object"),
+                => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
 
                 .m_never,
                 .m_undefined,
@@ -19448,18 +19432,53 @@ fn NewParser_(
                     logger.Loc.Empty,
                 ),
 
-                .m_string => GlobalIdentifiers.get(p, "String"),
-                .m_number => GlobalIdentifiers.get(p, "Number"),
-                .m_function => GlobalIdentifiers.get(p, "Function"),
-                .m_boolean => GlobalIdentifiers.get(p, "Boolean"),
-                .m_array => GlobalIdentifiers.get(p, "Array"),
+                .m_string => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "String") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_number => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Number") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_function => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Function") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_boolean => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Boolean") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_array => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Array") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
 
                 .m_bigint => p.maybeDefinedHelper(
-                    GlobalIdentifiers.get(p, "BigInt"),
+                    p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "BigInt") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
                 ),
 
                 .m_symbol => p.maybeDefinedHelper(
-                    GlobalIdentifiers.get(p, "Symbol"),
+                    p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "Symbol") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
                 ),
 
                 .m_identifier => |ref| {
@@ -19541,7 +19560,12 @@ fn NewParser_(
 
                     var root = p.newExpr(
                         E.If{
-                            .yes = GlobalIdentifiers.get(p, "Object"),
+                            .yes = p.newExpr(
+                                E.Identifier{
+                                    .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                                },
+                                logger.Loc.Empty,
+                            ),
                             .no = dots,
                             .test_ = maybe_defined_dots,
                         },
@@ -19577,7 +19601,12 @@ fn NewParser_(
             return p.newExpr(
                 E.If{
                     .test_ = try p.checkIfDefinedHelper(identifier_expr),
-                    .yes = GlobalIdentifiers.get(p, "Object"),
+                    .yes = p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
                     .no = identifier_expr,
                 },
                 logger.Loc.Empty,

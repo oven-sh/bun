@@ -414,4 +414,15 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:paramtypes", A.prototype, "prop3")).toBeUndefined();
     expect(Reflect.getMetadata("design:returntype", A.prototype, "prop3")).toBeUndefined();
   });
+
+  test("class with only constructor argument decorators", () => {
+    function d1() {}
+    class A {
+      constructor(@d1 arg1: string) {}
+    }
+
+    expect(Reflect.getMetadata("design:type", A)).toBeUndefined();
+    expect(Reflect.getMetadata("design:paramtypes", A)[0]).toBe(String);
+    expect(Reflect.getMetadata("design:returntype", A)).toBeUndefined();
+  });
 });

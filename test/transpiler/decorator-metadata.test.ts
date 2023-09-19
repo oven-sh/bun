@@ -187,192 +187,182 @@ describe("decorator metadata", () => {
       ) {}
     }
 
-    // expect(Reflect.getMetadata("design:type", A)).toBe(Function);
-
     const received = Reflect.getMetadata("design:paramtypes", A);
-    const expected = [
-      Object,
-      Object,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      Number,
-      String,
-      Boolean,
-      typeof Symbol === "function" ? Symbol : Object,
-      typeof BigInt === "function" ? BigInt : Object,
-      Object,
-      Function,
-      Array,
-      Object,
-      Number,
-      typeof BigInt === "function" ? BigInt : Object,
-      String,
-      String,
-      Boolean,
-      Boolean,
-      Map,
-      Set,
-      Known,
-      Object,
-      void 0,
-      void 0,
-      String,
-      String,
-      String,
-      String,
-      Object,
-      Object,
-      String,
-      String,
-      Object,
-      Object,
-      String,
-      String,
-      String,
-      String,
-      String,
-      String,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      String,
-      String,
-      Object,
-      Object,
-      Object,
-      Object,
-      Swag,
-      Swag,
-      Swag,
-      Swag,
-      Swag,
-      Swag,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      void 0,
-      void 0,
-      Swag,
-      Swag,
-      Swag,
-      Swag,
-      Object,
-      Object,
-      Swag,
-      Swag,
-      Object,
-      Object,
-      Swag,
-      Swag,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      Object,
-      void 0,
-      Object,
-      Object,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      void 0,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      Object,
-      Object,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      void 0,
-      Object,
-      Object,
-      Object,
-      void 0,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Object,
-      Boolean,
-      Object,
-      Object,
-    ];
-
-    expect(received.length).toBe(expected.length);
-    for (let i = 0; i < expected.length; i++) {
-      expect(received[i]).toEqual(expected[i]);
-    }
-
-    expect(Object).toEqual(String);
+    expect(received.length).toBe(174);
+    expect(received[0]).toBe(Object);
+    expect(received[1]).toBe(Object);
+    expect(received[2]).toBe(void 0);
+    expect(received[3]).toBe(void 0);
+    expect(received[4]).toBe(void 0);
+    expect(received[5]).toBe(void 0);
+    expect(received[6]).toBe(Number);
+    expect(received[7]).toBe(String);
+    expect(received[8]).toBe(Boolean);
+    expect(received[9]).toBe(typeof Symbol === "function" ? Symbol : Object);
+    expect(received[10]).toBe(typeof BigInt === "function" ? BigInt : Object);
+    expect(received[11]).toBe(Object);
+    expect(received[12]).toBe(Function);
+    expect(received[13]).toBe(Array);
+    expect(received[14]).toBe(Object);
+    expect(received[15]).toBe(Number);
+    expect(received[16]).toBe(typeof BigInt === "function" ? BigInt : Object);
+    expect(received[17]).toBe(String);
+    expect(received[18]).toBe(String);
+    expect(received[19]).toBe(Boolean);
+    expect(received[20]).toBe(Boolean);
+    expect(received[21]).toBe(Map);
+    expect(received[22]).toBe(Set);
+    expect(received[23]).toBe(Known);
+    expect(received[24]).toBe(Object);
+    expect(received[25]).toBe(void 0);
+    expect(received[26]).toBe(void 0);
+    expect(received[27]).toBe(String);
+    expect(received[28]).toBe(String);
+    expect(received[29]).toBe(String);
+    expect(received[30]).toBe(String);
+    expect(received[31]).toBe(Object);
+    expect(received[32]).toBe(Object);
+    expect(received[33]).toBe(String);
+    expect(received[34]).toBe(String);
+    expect(received[35]).toBe(Object);
+    expect(received[36]).toBe(Object);
+    expect(received[37]).toBe(String);
+    expect(received[38]).toBe(String);
+    expect(received[39]).toBe(String);
+    expect(received[40]).toBe(String);
+    expect(received[41]).toBe(String);
+    expect(received[42]).toBe(String);
+    expect(received[43]).toBe(Object);
+    expect(received[44]).toBe(Object);
+    expect(received[45]).toBe(Object);
+    expect(received[46]).toBe(Object);
+    expect(received[47]).toBe(Object);
+    expect(received[48]).toBe(Object);
+    expect(received[49]).toBe(String);
+    expect(received[50]).toBe(String);
+    expect(received[51]).toBe(Object);
+    expect(received[52]).toBe(Object);
+    expect(received[53]).toBe(Object);
+    expect(received[54]).toBe(Object);
+    expect(received[55]).toBe(Swag);
+    expect(received[56]).toBe(Swag);
+    expect(received[57]).toBe(Swag);
+    expect(received[58]).toBe(Swag);
+    expect(received[59]).toBe(Swag);
+    expect(received[60]).toBe(Swag);
+    expect(received[61]).toBe(Object);
+    expect(received[62]).toBe(Object);
+    expect(received[63]).toBe(Object);
+    expect(received[64]).toBe(Object);
+    expect(received[65]).toBe(Object);
+    expect(received[66]).toBe(Object);
+    expect(received[67]).toBe(void 0);
+    expect(received[68]).toBe(void 0);
+    expect(received[69]).toBe(Swag);
+    expect(received[70]).toBe(Swag);
+    expect(received[71]).toBe(Swag);
+    expect(received[72]).toBe(Swag);
+    expect(received[73]).toBe(Object);
+    expect(received[74]).toBe(Object);
+    expect(received[75]).toBe(Swag);
+    expect(received[76]).toBe(Swag);
+    expect(received[77]).toBe(Object);
+    expect(received[78]).toBe(Object);
+    expect(received[79]).toBe(Swag);
+    expect(received[80]).toBe(Swag);
+    expect(received[81]).toBe(Object);
+    expect(received[82]).toBe(Object);
+    expect(received[83]).toBe(Object);
+    expect(received[84]).toBe(Object);
+    expect(received[85]).toBe(Object);
+    expect(received[86]).toBe(Object);
+    expect(received[87]).toBe(void 0);
+    expect(received[88]).toBe(void 0);
+    expect(received[89]).toBe(void 0);
+    expect(received[90]).toBe(void 0);
+    expect(received[91]).toBe(void 0);
+    expect(received[92]).toBe(void 0);
+    expect(received[93]).toBe(void 0);
+    expect(received[94]).toBe(void 0);
+    expect(received[95]).toBe(Object);
+    expect(received[96]).toBe(void 0);
+    expect(received[97]).toBe(Object);
+    expect(received[98]).toBe(Object);
+    expect(received[99]).toBe(void 0);
+    expect(received[100]).toBe(void 0);
+    expect(received[101]).toBe(void 0);
+    expect(received[102]).toBe(void 0);
+    expect(received[103]).toBe(void 0);
+    expect(received[104]).toBe(void 0);
+    expect(received[105]).toBe(void 0);
+    expect(received[106]).toBe(void 0);
+    expect(received[107]).toBe(Object);
+    expect(received[108]).toBe(Object);
+    expect(received[109]).toBe(Object);
+    expect(received[110]).toBe(Object);
+    expect(received[111]).toBe(Object);
+    expect(received[112]).toBe(Object);
+    expect(received[113]).toBe(Object);
+    expect(received[114]).toBe(Object);
+    expect(received[115]).toBe(Object);
+    expect(received[116]).toBe(Object);
+    expect(received[117]).toBe(Object);
+    expect(received[118]).toBe(Object);
+    expect(received[119]).toBe(Object);
+    expect(received[120]).toBe(void 0);
+    expect(received[121]).toBe(Object);
+    expect(received[122]).toBe(Object);
+    expect(received[123]).toBe(Object);
+    expect(received[124]).toBe(Object);
+    expect(received[125]).toBe(Object);
+    expect(received[126]).toBe(Object);
+    expect(received[127]).toBe(Object);
+    expect(received[128]).toBe(Object);
+    expect(received[129]).toBe(Object);
+    expect(received[130]).toBe(Object);
+    expect(received[131]).toBe(Object);
+    expect(received[132]).toBe(Object);
+    expect(received[133]).toBe(Object);
+    expect(received[134]).toBe(void 0);
+    expect(received[135]).toBe(void 0);
+    expect(received[136]).toBe(void 0);
+    expect(received[137]).toBe(void 0);
+    expect(received[138]).toBe(void 0);
+    expect(received[139]).toBe(void 0);
+    expect(received[140]).toBe(void 0);
+    expect(received[141]).toBe(void 0);
+    expect(received[142]).toBe(void 0);
+    expect(received[143]).toBe(void 0);
+    expect(received[144]).toBe(Object);
+    expect(received[145]).toBe(Object);
+    expect(received[146]).toBe(void 0);
+    expect(received[147]).toBe(void 0);
+    expect(received[148]).toBe(void 0);
+    expect(received[149]).toBe(void 0);
+    expect(received[150]).toBe(void 0);
+    expect(received[151]).toBe(void 0);
+    expect(received[152]).toBe(void 0);
+    expect(received[153]).toBe(void 0);
+    expect(received[154]).toBe(void 0);
+    expect(received[155]).toBe(Object);
+    expect(received[156]).toBe(Object);
+    expect(received[157]).toBe(Object);
+    expect(received[158]).toBe(void 0);
+    expect(received[159]).toBe(Object);
+    expect(received[160]).toBe(Object);
+    expect(received[161]).toBe(Object);
+    expect(received[162]).toBe(Object);
+    expect(received[163]).toBe(Object);
+    expect(received[164]).toBe(Object);
+    expect(received[165]).toBe(Object);
+    expect(received[166]).toBe(Object);
+    expect(received[167]).toBe(Object);
+    expect(received[168]).toBe(Object);
+    expect(received[169]).toBe(Object);
+    expect(received[170]).toBe(Object);
+    expect(received[171]).toBe(Boolean);
+    expect(received[172]).toBe(Object);
+    expect(received[173]).toBe(Object);
   });
   test("design: type, paramtypes, returntype", () => {
     function d1() {}

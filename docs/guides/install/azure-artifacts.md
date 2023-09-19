@@ -6,7 +6,9 @@ name: Using bun install with an Azure Artifacts npm registry
 
 To use it with `bun install`, add a `bunfig.toml` file to your project with the following contents:
 
-**Configure with bunfig.toml**
+---
+
+### Configure with bunfig.toml
 
 Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`.
 
@@ -21,7 +23,9 @@ password = "$NPM_PASSWORD"
 Set the `$NPM_PASSWORD` environment variable to your Azure Artifacts npm registry password and Bun will automatically replace it with the correct value. You can also choose not to use an environment variable and instead hardcode your password in the `bunfig.toml` file, but be careful not to commit it to source control.
 
 
-**Configure with environment variables**
+---
+
+### Configure with environment variables
 
 You can also use an environment variable to configure Azure Artifacts with bun install.
 
@@ -38,7 +42,9 @@ Make sure to:
 - Replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`
 - Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry
 
-**Don't base64 encode the password**
+---
+
+### Don't base64 encode the password
 
 In [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) instructions for `.npmrc`, they say to base64 encode the password. Do not do this for `bun install`. Bun will automatically base64 encode the password for you if needed.
 

@@ -1,5 +1,4 @@
 FROM debian:bullseye-slim AS build
-# Not officially supported (yet)
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -41,7 +40,6 @@ RUN apt-get update -qq \
       gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
       || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
     done \
-    && gpg --update-trustdb \
     && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
       -fsSLO \
       --compressed \
@@ -54,16 +52,16 @@ RUN apt-get update -qq \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun \
-    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
-    && which bunx \
     && bun --version
 
 FROM gcr.io/distroless/base-nossl-debian11
 
-COPY --from=build /usr/local/bin/bun /usr/local/bin
-COPY --from=build /usr/local/bin/bunx /usr/local/bin
+COPY --from=build /usr/local/bin/bun /usr/local/bin/
 
-WORKDIR /app
+# Known issue: `bunx` is not available in distroless.
+#
+# If `ln -s` is used in the build image, the size of the final
+# image will be double, because of: https://github.com/oven-sh/bun/issues/5269
+
 ENTRYPOINT ["/usr/local/bin/bun"]
-CMD ["/usr/local/bin/bun"]

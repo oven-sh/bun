@@ -1,7 +1,7 @@
 FROM debian:bullseye-slim AS build
 
 # https://github.com/oven-sh/bun/releases
-ARG BUN_VERSION=0.5.7
+ARG BUN_VERSION=latest
 
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
@@ -40,7 +40,6 @@ RUN apt-get update -qq \
       gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
       || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
     done \
-    && gpg --update-trustdb \
     && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
       -fsSLO \
       --compressed \
@@ -53,9 +52,7 @@ RUN apt-get update -qq \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun \
-    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
-    && which bunx \
     && bun --version
 
 FROM debian:bullseye-slim
@@ -69,9 +66,8 @@ RUN groupadd bun \
       --create-home
 
 COPY docker-entrypoint.sh /usr/local/bin
-COPY --from=build /usr/local/bin/bun /usr/local/bin
-COPY --from=build /usr/local/bin/bunx /usr/local/bin
+COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
-WORKDIR /home/bun/app
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/bun"]

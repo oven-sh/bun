@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
+import { gzipSync } from "zlib";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick } from "harness";
 import net from "net";
@@ -344,6 +345,27 @@ describe("Headers", () => {
     });
     expect(headers.count).toBe(5);
     expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
+  });
+
+  it("presence of content-encoding header(issue #5668)", async () => {
+    startServer({
+      fetch(req) {
+        const content = gzipSync(JSON.stringify({ message: "Hello world" }));
+        return new Response(content, {
+          status: 200,
+          headers: {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+          },
+        });
+      },
+    });
+    const result = await fetch(`http://${server.hostname}:${server.port}/`);
+    const value = result.headers.get("content-encoding");
+    const body = await result.json();
+    expect(value).toBe("gzip");
+    expect(body).toBeDefined();
+    expect(body.message).toBe("Hello world");
   });
 
   it(".getSetCookie() with array", () => {

@@ -55,18 +55,6 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
-        fn registryURLNeedsTrailingSlash(str: string) bool {
-            return !(strings.endsWithChar(str, '/') or
-                // These are trailing parameters in the registry URL
-                // We deliberately omit the ":" because artifactory's url omits the ":"
-                // Example:
-                //  https://buntest.jfrog.io/artifactory/api/npm/npm/_auth=CODE==
-                strings.contains(str, "_auth=") or
-                strings.contains(str, "username=") or
-                strings.contains(str, "_password=") or
-                strings.contains(str, "_token="));
-        }
-
         fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
             const url = URL.parse(str.data);
             var registry = std.mem.zeroes(Api.NpmRegistry);
@@ -74,18 +62,15 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}/", .{ url.displayProtocol(), url.displayHostname(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}/", .{ url.displayProtocol(), url.displayHostname(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
-                if (!registryURLNeedsTrailingSlash(url.href)) {
-                    registry.url = url.href;
-                } else {
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.href});
-                }
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = url.href;
             }
 
             return registry;
@@ -97,11 +82,8 @@ pub const Bunfig = struct {
             if (obj.get("url")) |url| {
                 try this.expect(url, .e_string);
                 const href = url.data.e_string.data;
-                if (!registryURLNeedsTrailingSlash(href)) {
-                    registry.url = href;
-                } else {
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{href});
-                }
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = href;
             }
 
             if (obj.get("username")) |username| {

@@ -81,6 +81,7 @@ pub const Registry = struct {
 
             var url = URL.parse(registry.url);
             var auth: string = "";
+            var needs_normalize = false;
 
             if (registry.token.len == 0) {
                 outer: {
@@ -95,6 +96,7 @@ pub const Registry = struct {
                             var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
                             needs_to_check_slash = false;
+                            needs_normalize = true;
                             if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
                                 pathname = pathname[0 .. pathname.len - 1];
                             }
@@ -139,28 +141,28 @@ pub const Registry = struct {
                                     if (strings.eqlComptime(segment, "_authToken")) {
                                         registry.token = value;
                                         pathname = pathname[0 .. last_slash + 1];
-
+                                        needs_normalize = true;
                                         break :outer;
                                     }
 
                                     if (strings.eqlComptime(segment, "_auth")) {
                                         auth = value;
                                         pathname = pathname[0 .. last_slash + 1];
-
+                                        needs_normalize = true;
                                         break :outer;
                                     }
 
                                     if (strings.eqlComptime(segment, "username")) {
                                         registry.username = value;
                                         pathname = pathname[0 .. last_slash + 1];
-
+                                        needs_normalize = true;
                                         break :outer;
                                     }
 
                                     if (strings.eqlComptime(segment, "_password")) {
                                         registry.password = value;
                                         pathname = pathname[0 .. last_slash + 1];
-
+                                        needs_normalize = true;
                                         break :outer;
                                     }
                                 }
@@ -185,6 +187,16 @@ pub const Registry = struct {
             }
 
             registry.token = env.getAuto(registry.token);
+
+            if (needs_normalize) {
+                url = URL.parse(
+                    try std.fmt.allocPrint(allocator, "{s}://{}/{s}/", .{
+                        url.displayProtocol(),
+                        url.displayHost(),
+                        strings.trim(url.pathname, "/"),
+                    }),
+                );
+            }
 
             return Scope{ .name = name, .url = url, .token = registry.token, .auth = auth };
         }

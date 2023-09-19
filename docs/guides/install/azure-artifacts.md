@@ -6,7 +6,7 @@ name: Using bun install with an Azure Artifacts npm registry
 
 To use it with `bun install`, add a `bunfig.toml` file to your project with the following contents:
 
-### Configuring Azure Artifacts using bunfig.toml
+### Configure with bunfig.toml
 
 ```toml#bunfig.toml
 [install.registry]
@@ -29,19 +29,25 @@ atob("base64-encoded-password");
 
 If it ends with `==`, it probably is base64 encoded.
 
-### Configuring Azure Artifacts using environment variables
+### Configure with environment variables
 
 You can also use an environment variable to configure Azure Artifacts with bun install.
 
-Like with npm, the environment variable to use is `NPM_CONFIG_REGISTRY`.
+Like with the `npm` CLI, the environment variable to use is `NPM_CONFIG_REGISTRY`.
 
 The URL should include `:username` and `:_password` as query parameters. For example:
 
 ```bash
-NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry/:username=my-azure-artifacts-user&:_password=my-azure-artifacts-password
+NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry/:username=my-azure-artifacts-user:_password=my-azure-artifacts-password
 ```
 
 Make sure to:
 
 - Replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`
 - Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry. If it ends with `==`, it probably is base64 encoded.
+
+To un-base64 encode a password, you can open your browser console and run:
+
+```js
+atob("base64-encoded-password");
+```

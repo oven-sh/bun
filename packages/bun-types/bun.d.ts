@@ -3815,7 +3815,7 @@ declare module "bun" {
       : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
-      ? Uint8Array
+      ? Buffer
       : undefined;
 
     type WritableIO = FileSink | number | undefined;

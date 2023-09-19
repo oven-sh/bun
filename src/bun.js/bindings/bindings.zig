@@ -5496,6 +5496,7 @@ pub const URL = opaque {
     extern fn URL__getHref(*String) String;
     extern fn URL__getFileURLString(*String) String;
     extern fn URL__getHrefJoin(*String, *String) String;
+    extern fn URL__pathFromFileURL(*String) String;
 
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
@@ -5514,6 +5515,12 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         var input = str;
         return URL__getFileURLString(&input);
+    }
+
+    pub fn pathFromFileURL(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__pathFromFileURL(&input);
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result

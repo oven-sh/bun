@@ -1517,16 +1517,20 @@ pub const VirtualMachine = struct {
         query_string: []const u8 = "",
     };
 
-    fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
+    fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) ZigString.Slice {
         var specifier = specifier_;
-        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
             query_string.* = specifier[i..];
             specifier = specifier[0..i];
         }
 
-        return specifier;
+        if (strings.hasPrefixComptime(specifier, "file://")) {
+            const href = bun.JSC.URL.pathFromFileURL(bun.String.init(specifier));
+            return href.toUTF8(bun.default_allocator);
+        }
+
+        return ZigString.Slice.fromUTF8NeverFree(specifier);
     }
 
     threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1568,6 +1572,7 @@ pub const VirtualMachine = struct {
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
         var query_string: []const u8 = "";
         const normalized_specifier = normalizeSpecifierForResolution(specifier, &query_string);
+        defer normalized_specifier.deinit();
         const source_to_use = if (!is_special_source)
             if (is_a_file_path)
                 Fs.PathName.init(source).dirWithTrailingSlash()
@@ -1584,7 +1589,7 @@ pub const VirtualMachine = struct {
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,
-                    normalized_specifier,
+                    normalized_specifier.slice(),
                     if (is_esm) .stmt else .require,
                     .read_only,
                 )) {
@@ -1596,15 +1601,15 @@ pub const VirtualMachine = struct {
                         retry_on_not_found = false;
 
                         const buster_name = name: {
-                            if (std.fs.path.isAbsolute(normalized_specifier)) {
-                                if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                            if (std.fs.path.isAbsolute(normalized_specifier.slice())) {
+                                if (std.fs.path.dirname(normalized_specifier.slice())) |dir| {
+                                    break :name strings.withTrailingSlash(dir, normalized_specifier.slice());
                                 }
                             }
 
                             var parts = [_]string{
                                 source_to_use,
-                                normalized_specifier,
+                                normalized_specifier.slice(),
                                 "../",
                             };
 

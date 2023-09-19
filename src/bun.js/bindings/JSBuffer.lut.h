@@ -37,8 +37,8 @@ static const struct CompactHashIndex jsBufferConstructorTableIndex[33] = {
 
 static const struct HashTableValue jsBufferConstructorTableValues[10] = {
    { "alloc"_s, static_cast<unsigned>(PropertyAttribute::Constructable|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_alloc, 1 } },
-   { "allocUnsafe"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
-   { "allocUnsafeSlow"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
+   { "allocUnsafe"_s, static_cast<unsigned>(PropertyAttribute::Constructable|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
+   { "allocUnsafeSlow"_s, static_cast<unsigned>(PropertyAttribute::Constructable|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
    { "byteLength"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_byteLength, 2 } },
    { "compare"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_compare, 2 } },
    { "concat"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_concat, 2 } },

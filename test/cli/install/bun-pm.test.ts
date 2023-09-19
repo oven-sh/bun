@@ -290,19 +290,19 @@ it("should remove all cache", async () => {
   expect(await readdirSorted(cache_dir)).toContain("bar");
 
   const {
-      stdout: stdout1,
-      stderr: stderr1,
-      exited: exited1
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
   } = spawn({
-      cmd: [bunExe(), "pm", "cache"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-          ...env,
-          BUN_INSTALL_CACHE_DIR: cache_dir,
-      }
+    cmd: [bunExe(), "pm", "cache"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: cache_dir,
+    },
   });
   expect(stderr1).toBeDefined();
   expect(await new Response(stderr1).text()).toBe("");
@@ -313,17 +313,17 @@ it("should remove all cache", async () => {
   const {
     stdout: stdout2,
     stderr: stderr2,
-    exited: exited2
+    exited: exited2,
   } = spawn({
-      cmd: [bunExe(), "pm", "cache", "rm"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-          ...env,
-          BUN_INSTALL_CACHE_DIR: cache_dir,
-      }
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: cache_dir,
+    },
   });
   expect(stderr2).toBeDefined();
   expect(await new Response(stderr2).text()).toBe("");

@@ -48,6 +48,15 @@ The test runner, package manager, and bundler are still under development. The f
 - `bun link/unlink`
 - `bun build`
 
+For now, you can use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) to run your bun.
+
+First, create a folder, open a PowerShell inside this directory and run these comands:
+```powershell
+Write-Output "wsl bash -ic `"bun %*`"" | out-file "bun.bat" -Encoding ASCII
+$env:Path += ";$pwd"
+wsl bash -ic "curl -fsSL https://bun.sh/install | bash"
+```
+
 ## Upgrading
 
 Once installed, the binary can upgrade itself.

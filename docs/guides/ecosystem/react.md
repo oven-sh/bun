@@ -4,27 +4,11 @@ name: Use React and JSX
 
 React just works with Bun. Bun supports `.jsx` and `.tsx` files out of the box.
 
-Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution. React uses JSX syntax, as do other React alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/).
+Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. It's commonReact uses JSX syntax, as do other React alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/). Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.
 
 ---
 
-Bun supports _JSX_ out of the box, and it _assumes_ you're using React unless you [configure it otherwise](/docs/runtime/bunfig#jsx).
-
-```tsx#react.tsx
-function Component(props: {message: string}) {
-  return (
-    <body>
-      <h1 style={{color: 'red'}}>{props.message}</h1>
-    </body>
-  );
-}
-
-console.log(<Component message="Hello world!" />);
-```
-
----
-
-Unless otherwise configured, Bun converts JSX into React components. So a line like this:
+Bun _assumes_ you're using React (unless you [configure it otherwise](/docs/runtime/bunfig#jsx)) so a line like this:
 
 ```
 const element = <h1>Hello, world!</h1>;
@@ -48,10 +32,6 @@ This code requires `react` to run, so make sure you you've installed React.
 ```bash
 $ bun install react
 ```
-
----
-
-Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. React uses JSX syntax, as do other React alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/). Bun supports _JSX_ out of the box, and it _assumes_ you're using React unless you [configure it otherwise](/docs/runtime/bunfig#jsx).
 
 ---
 

@@ -232,11 +232,11 @@ it("should handle @scoped names", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "@bar/baz" not found localhost/@bar/baz 404');
+  expect(err.split(/\r?\n/)).toContain('error: package "@bar/baz" not found localhost/@bar%2fbaz 404');
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls.sort()).toEqual([`${root_url}/@bar/baz`]);
+  expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));

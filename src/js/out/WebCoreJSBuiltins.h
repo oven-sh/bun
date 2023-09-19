@@ -2497,17 +2497,28 @@ extern const JSC::ConstructAbility s_consoleObjectWriteCodeConstructAbility;
 extern const JSC::ConstructorKind s_consoleObjectWriteCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_consoleObjectWriteCodeImplementationVisibility;
 
+// createConsoleConstructor
+#define WEBCORE_BUILTIN_CONSOLEOBJECT_CREATECONSOLECONSTRUCTOR 1
+extern const char* const s_consoleObjectCreateConsoleConstructorCode;
+extern const int s_consoleObjectCreateConsoleConstructorCodeLength;
+extern const JSC::ConstructAbility s_consoleObjectCreateConsoleConstructorCodeConstructAbility;
+extern const JSC::ConstructorKind s_consoleObjectCreateConsoleConstructorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_consoleObjectCreateConsoleConstructorCodeImplementationVisibility;
+
 #define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_DATA(macro) \
     macro(asyncIterator, consoleObjectAsyncIterator, 0) \
     macro(write, consoleObjectWrite, 1) \
+    macro(createConsoleConstructor, consoleObjectCreateConsoleConstructor, 1) \
 
 #define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(macro) \
     macro(consoleObjectAsyncIteratorCode, asyncIterator, "[Symbol.asyncIterator]"_s, s_consoleObjectAsyncIteratorCodeLength) \
     macro(consoleObjectWriteCode, write, ASCIILiteral(), s_consoleObjectWriteCodeLength) \
+    macro(consoleObjectCreateConsoleConstructorCode, createConsoleConstructor, ASCIILiteral(), s_consoleObjectCreateConsoleConstructorCodeLength) \
 
 #define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(macro) \
     macro(asyncIterator) \
     macro(write) \
+    macro(createConsoleConstructor) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

@@ -185,7 +185,7 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([
-    `${root_url}/@barn/moo`,
+    `${root_url}/@barn%2fmoo`,
     `${root_url}/@barn/moo-0.1.0.tgz`,
     `${root_url}/baz`,
     `${root_url}/baz-0.0.3.tgz`,
@@ -236,7 +236,7 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([
-    `${root_url}/@barn/moo`,
+    `${root_url}/@barn%2fmoo`,
     `${root_url}/@barn/moo-0.1.0.tgz`,
     `${root_url}/baz`,
     `${root_url}/baz-0.0.5.tgz`,

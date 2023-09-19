@@ -3903,6 +3903,10 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
+        return jsNumberFromPtrSize(i);
+    }
+
+    pub fn jsNumberFromPtrSize(i: usize) JSValue {
         return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @intCast(@as(u51, @truncate(i)))))));
     }
 

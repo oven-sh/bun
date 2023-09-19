@@ -252,9 +252,22 @@ const NetworkTask = struct {
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
+
+            // Not all registries support scoped package names when fetching the manifest.
+            // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
+            // Other registries like AWS codeartifact only support the former.
+            // "npm" CLI requests the the manifest with the encoded name.
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
+            var encoded_name = name;
+            if (strings.containsChar(name, '/')) {
+                encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
+            }
+
             const tmp = bun.JSC.URL.join(
                 bun.String.fromUTF8(scope.url.href),
-                bun.String.fromUTF8(name),
+                bun.String.fromUTF8(encoded_name),
             );
             defer tmp.deref();
 

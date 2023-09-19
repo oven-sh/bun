@@ -835,7 +835,7 @@ pub const G = struct {
         // This is omitted for class fields
         value: ?ExprNodeIndex = null,
 
-        ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
+        ts_metadata: TypeScript.Metadata = .m_none,
 
         pub const List = BabyList(Property);
 
@@ -869,7 +869,7 @@ pub const G = struct {
 
         flags: Flags.Function.Set = Flags.Function.None,
 
-        return_ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
+        return_ts_metadata: TypeScript.Metadata = .m_none,
     };
     pub const Arg = struct {
         ts_decorators: ExprNodeList = ExprNodeList{},
@@ -879,7 +879,7 @@ pub const G = struct {
         // "constructor(public x: boolean) {}"
         is_typescript_ctor_field: bool = false,
 
-        ts_metadata: TypeScript.Metadata = .{ .m_none = {} },
+        ts_metadata: TypeScript.Metadata = .m_none,
     };
 };
 

@@ -70,7 +70,7 @@ const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
-const StringHashMapUnamanged = bun.StringHashMapUnmanaged;
+const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 
@@ -458,8 +458,134 @@ pub const TypeScript = struct {
         m_bigint: void,
         m_symbol: void,
         m_identifier: Ref,
+        m_dot: List(Ref),
 
-        pub const default = @This(){ .m_none = {} };
+        pub const default: @This() = .m_none;
+
+        // the logic in finishUnion, mergeUnion, finishIntersection and mergeIntersection is
+        // translated from:
+        // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
+
+        /// Return the final union type if possible, or return null to continue merging.
+        ///
+        /// If the current type is m_never, m_null, or m_undefined assign the current type
+        /// to m_none and return null to ensure it's always replaced by the next type.
+        pub fn finishUnion(current: *@This(), p: anytype) ?@This() {
+            return switch (current.*) {
+                .m_identifier => |ref| {
+                    if (strings.eqlComptime(p.loadNameFromRef(ref), "Object")) {
+                        return .m_object;
+                    }
+                    return null;
+                },
+
+                .m_unknown,
+                .m_any,
+                .m_object,
+                => .m_object,
+
+                .m_never,
+                .m_null,
+                .m_undefined,
+                => {
+                    current.* = .m_none;
+                    return null;
+                },
+
+                else => null,
+            };
+        }
+
+        pub fn mergeUnion(result: *@This(), left: @This()) void {
+            if (left != .m_none) {
+                if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
+                    result.* = switch (result.*) {
+                        .m_never,
+                        .m_undefined,
+                        .m_null,
+                        => left,
+
+                        else => .m_object,
+                    };
+                } else {
+                    switch (result.*) {
+                        .m_identifier => |ref| {
+                            if (!ref.eql(left.m_identifier)) {
+                                result.* = .m_object;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            } else {
+                // always take the next value if left is m_none
+            }
+        }
+
+        /// Return the final intersection type if possible, or return null to continue merging.
+        ///
+        /// If the current type is m_unknown, m_null, or m_undefined assign the current type
+        /// to m_none and return null to ensure it's always replaced by the next type.
+        pub fn finishIntersection(current: *@This(), p: anytype) ?@This() {
+            return switch (current.*) {
+                .m_identifier => |ref| {
+                    if (strings.eqlComptime(p.loadNameFromRef(ref), "Object")) {
+                        return .m_object;
+                    }
+                    return null;
+                },
+
+                // ensure m_never is the final type
+                .m_never => .m_never,
+
+                .m_any,
+                .m_object,
+                => .m_object,
+
+                .m_unknown,
+                .m_null,
+                .m_undefined,
+                => {
+                    current.* = .m_none;
+                    return null;
+                },
+
+                else => null,
+            };
+        }
+
+        pub fn mergeIntersection(result: *@This(), left: @This()) void {
+            if (left != .m_none) {
+                if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
+                    result.* = switch (result.*) {
+                        .m_unknown,
+                        .m_undefined,
+                        .m_null,
+                        => left,
+
+                        // ensure m_never is the final type
+                        .m_never => .m_never,
+
+                        else => .m_object,
+                    };
+                } else {
+                    switch (result.*) {
+                        .m_identifier => |ref| {
+                            if (!ref.eql(left.m_identifier)) {
+                                result.* = .m_object;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            } else {
+                // make sure intersection of only m_unknown serializes to "undefined"
+                // instead of "Object"
+                if (result.* == .m_unknown) {
+                    result.* = .m_undefined;
+                }
+            }
+        }
     };
 
     pub fn isTSArrowFnJSX(p: anytype) !bool {
@@ -730,6 +856,7 @@ pub const TypeScript = struct {
         disallow_conditional_types,
 
         pub const Bitset = std.enums.EnumSet(@This());
+        pub const empty = Bitset.initEmpty();
     };
 };
 
@@ -2472,6 +2599,7 @@ const FnOrArrowDataParse = struct {
     is_typescript_declare: bool = false,
 
     has_argument_decorators: bool = false,
+    has_decorators: bool = false,
 
     is_return_disallowed: bool = false,
     is_this_disallowed: bool = false,
@@ -2608,6 +2736,7 @@ const PropertyOpts = struct {
     is_ts_abstract: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
     has_argument_decorators: bool = false,
+    has_class_decorators: bool = false,
 };
 
 pub const ScanPassResult = struct {
@@ -4339,7 +4468,7 @@ fn NewParser_(
 
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
-        known_enum_values: Map(Ref, StringHashMapUnamanged(f64)) = .{},
+        known_enum_values: Map(Ref, StringHashMapUnmanaged(f64)) = .{},
         local_type_names: StringBoolMap = StringBoolMap{},
 
         // This is the reference to the generated function argument for the namespace,
@@ -4533,6 +4662,30 @@ fn NewParser_(
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
+
+        pub const GlobalIdentifiers = struct {
+            pub var String: ?Expr = null;
+            pub var Number: ?Expr = null;
+            pub var Object: ?Expr = null;
+            pub var Symbol: ?Expr = null;
+            pub var BigInt: ?Expr = null;
+            pub var Function: ?Expr = null;
+            pub var Boolean: ?Expr = null;
+            pub var Array: ?Expr = null;
+
+            pub fn get(p: *P, comptime name: string) Expr {
+                return @field(@This(), name) orelse {
+                    @field(@This(), name) = p.newExpr(
+                        E.Identifier{
+                            .can_be_removed_if_unused = false,
+                            .ref = p.newSymbol(.unbound, name) catch unreachable,
+                        },
+                        logger.Loc.Empty,
+                    );
+                    return @field(@This(), name).?;
+                };
+            }
+        };
 
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
@@ -6841,7 +6994,7 @@ fn NewParser_(
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
                         // if allow_ts_decorators is true, this fn is a class method or constructor.
-                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators) {
+                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
                             ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
                         } else {
                             try p.skipTypeScriptType(.lowest);
@@ -6908,7 +7061,12 @@ fn NewParser_(
             // "function foo(): any {}"
             if (is_typescript_enabled and p.lexer.token == .t_colon) {
                 try p.lexer.next();
-                try p.skipTypescriptReturnType();
+
+                if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                    func.return_ts_metadata = try p.skipTypescriptReturnTypeWithMetadata();
+                } else {
+                    try p.skipTypescriptReturnType();
+                }
             }
 
             // "function foo(): any;"
@@ -6925,7 +7083,13 @@ fn NewParser_(
 
         pub inline fn skipTypescriptReturnType(p: *P) anyerror!void {
             var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(&result, .lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type));
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, &result);
+        }
+
+        pub inline fn skipTypescriptReturnTypeWithMetadata(p: *P) anyerror!TypeScript.Metadata {
+            var result = TypeScript.Metadata.default;
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), true, &result);
+            return result;
         }
 
         pub fn parseTypeScriptDecorators(p: *P) ![]ExprNodeIndex {
@@ -6954,13 +7118,13 @@ fn NewParser_(
         inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             p.markTypeScriptOnly();
             var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(&result, level, TypeScript.SkipTypeOptions.Bitset.initEmpty());
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, &result);
         }
 
         inline fn skipTypeScriptTypeWithMetadata(p: *P, level: js_ast.Op.Level) anyerror!TypeScript.Metadata {
             p.markTypeScriptOnly();
             var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(&result, level, TypeScript.SkipTypeOptions.Bitset.initEmpty());
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, true, &result);
             return result;
         }
 
@@ -7106,25 +7270,30 @@ fn NewParser_(
         //     let x = (y: any): (y) => {return 0};
         //     let x = (y: any): asserts y is (y) => {};
         //
-        fn skipTypeScriptParenOrFnTypeWithMetadata(p: *P, result: *TypeScript.Metadata) anyerror!void {
+        fn skipTypeScriptParenOrFnType(p: *P, comptime get_metadata: bool, result: *TypeScript.Metadata) anyerror!void {
             p.markTypeScriptOnly();
 
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
                 try p.skipTypescriptReturnType();
-                result.* = .{ .m_function = {} };
+                if (comptime get_metadata)
+                    result.* = .m_function;
             } else {
                 try p.lexer.expect(.t_open_paren);
-                const new_result = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                if (comptime get_metadata) {
+                    result.* = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                } else {
+                    try p.skipTypeScriptType(.lowest);
+                }
                 try p.lexer.expect(.t_close_paren);
-                result.* = new_result;
             }
         }
 
         fn skipTypeScriptTypeWithOpts(
             p: *P,
-            result: *TypeScript.Metadata,
             level: js_ast.Op.Level,
             opts: TypeScript.SkipTypeOptions.Bitset,
+            comptime get_metadata: bool,
+            result: *TypeScript.Metadata,
         ) anyerror!void {
             p.markTypeScriptOnly();
 
@@ -7132,27 +7301,39 @@ fn NewParser_(
                 switch (p.lexer.token) {
                     .t_numeric_literal => {
                         try p.lexer.next();
-                        result.* = .{ .m_number = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_number;
+                        }
                     },
                     .t_big_integer_literal => {
                         try p.lexer.next();
-                        result.* = .{ .m_bigint = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_bigint;
+                        }
                     },
                     .t_string_literal, .t_no_substitution_template_literal => {
                         try p.lexer.next();
-                        result.* = .{ .m_string = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_string;
+                        }
                     },
                     .t_true, .t_false => {
                         try p.lexer.next();
-                        result.* = .{ .m_boolean = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_boolean;
+                        }
                     },
                     .t_null => {
                         try p.lexer.next();
-                        result.* = .{ .m_null = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_null;
+                        }
                     },
                     .t_void => {
                         try p.lexer.next();
-                        result.* = .{ .m_void = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_void;
+                        }
                     },
                     .t_const => {
                         const r = p.lexer.range();
@@ -7174,7 +7355,9 @@ fn NewParser_(
                             return;
                         }
 
-                        result.* = .{ .m_object = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
+                        }
                     },
                     .t_minus => {
                         // "-123"
@@ -7183,10 +7366,14 @@ fn NewParser_(
 
                         if (p.lexer.token == .t_big_integer_literal) {
                             try p.lexer.next();
-                            result.* = .{ .m_bigint = {} };
+                            if (comptime get_metadata) {
+                                result.* = .m_bigint;
+                            }
                         } else {
                             try p.lexer.expect(.t_numeric_literal);
-                            result.* = .{ .m_number = {} };
+                            if (comptime get_metadata) {
+                                result.* = .m_number;
+                            }
                         }
                     },
                     .t_ampersand, .t_bar => {
@@ -7232,16 +7419,16 @@ fn NewParser_(
                         }
 
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-                        try p.skipTypeScriptParenOrFnTypeWithMetadata(result);
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_less_than => {
                         // "<T>() => Foo<T>"
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-                        try p.skipTypeScriptParenOrFnTypeWithMetadata(result);
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_open_paren => {
                         // "(number | string)"
-                        try p.skipTypeScriptParenOrFnTypeWithMetadata(result);
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_identifier => {
                         const kind = TypeScript.Identifier.IMap.get(p.lexer.identifier) orelse .normal;
@@ -7310,56 +7497,84 @@ fn NewParser_(
                             },
                             .primitive_any => {
                                 try p.lexer.next();
-                                result.* = .{ .m_any = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_any;
+                                }
                             },
                             .primitive_never => {
                                 try p.lexer.next();
-                                result.* = .{ .m_never = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_never;
+                                }
                             },
                             .primitive_unknown => {
                                 try p.lexer.next();
-                                result.* = .{ .m_unknown = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_unknown;
+                                }
                             },
                             .primitive_undefined => {
                                 try p.lexer.next();
-                                result.* = .{ .m_undefined = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_undefined;
+                                }
                             },
                             .primitive_object => {
                                 try p.lexer.next();
-                                result.* = .{ .m_object = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_object;
+                                }
                             },
                             .primitive_number => {
                                 try p.lexer.next();
-                                result.* = .{ .m_number = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_number;
+                                }
                             },
                             .primitive_string => {
                                 try p.lexer.next();
-                                result.* = .{ .m_string = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_string;
+                                }
                             },
                             .primitive_boolean => {
                                 try p.lexer.next();
-                                result.* = .{ .m_boolean = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_boolean;
+                                }
                             },
                             .primitive_bigint => {
                                 try p.lexer.next();
-                                result.* = .{ .m_bigint = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_bigint;
+                                }
                             },
                             .primitive_symbol => {
                                 try p.lexer.next();
-                                result.* = .{ .m_symbol = {} };
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_symbol;
+                                }
                             },
                             else => {
-                                result.* = .{ .m_identifier = try p.storeNameInRef(p.lexer.identifier) };
+                                if (comptime get_metadata) {
+                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    if (p.known_enum_values.contains(find_result.ref)) {
+                                        result.* = .m_number;
+                                    } else {
+                                        result.* = .{ .m_identifier = find_result.ref };
+                                    }
+                                }
+
                                 try p.lexer.next();
                             },
                         }
@@ -7385,7 +7600,9 @@ fn NewParser_(
                         }
 
                         // always `Object`
-                        result.* = .{ .m_object = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
+                        }
 
                         if (p.lexer.token == .t_import) {
                             // "typeof import('fs')"
@@ -7418,14 +7635,16 @@ fn NewParser_(
                         // "[first: number, second: string]"
                         try p.lexer.next();
 
-                        result.* = .{ .m_array = {} };
+                        if (comptime get_metadata) {
+                            result.* = .m_array;
+                        }
 
                         while (p.lexer.token != .t_close_bracket) {
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
                             var dummy_result = TypeScript.Metadata.default;
-                            try p.skipTypeScriptTypeWithOpts(&dummy_result, .lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels));
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, &dummy_result);
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -7441,12 +7660,13 @@ fn NewParser_(
                         try p.lexer.expect(.t_close_bracket);
                     },
                     .t_open_brace => {
-                        result.* = .{ .m_object = {} };
                         try p.skipTypeScriptObjectType();
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
+                        }
                     },
                     .t_template_head => {
                         // "`${'a' | 'b'}-${'c' | 'd'}`"
-                        result.* = .{ .m_string = {} };
                         while (true) {
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
@@ -7456,6 +7676,9 @@ fn NewParser_(
                                 try p.lexer.next();
                                 break;
                             }
+                        }
+                        if (comptime get_metadata) {
+                            result.* = .m_string;
                         }
                     },
 
@@ -7489,10 +7712,18 @@ fn NewParser_(
 
                         try p.lexer.next();
 
-                        const old_result = result.*;
-                        try p.skipTypeScriptTypeWithOpts(result, .bitwise_or, TypeScript.SkipTypeOptions.Bitset.initEmpty());
-                        if (old_result != .m_none and old_result != .m_never and !std.meta.eql(old_result, result.*)) {
-                            result.* = .{ .m_object = {} };
+                        if (comptime get_metadata) {
+                            var left = result.*;
+                            if (left.finishUnion(p)) |final| {
+                                // finish skipping the rest of the type without collecting type metadata.
+                                result.* = final;
+                                try p.skipTypeScriptType(.bitwise_or);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeUnion(left);
+                            }
+                        } else {
+                            try p.skipTypeScriptType(.bitwise_or);
                         }
                     },
                     .t_ampersand => {
@@ -7502,26 +7733,18 @@ fn NewParser_(
 
                         try p.lexer.next();
 
-                        const old_result = result.*;
-                        try p.skipTypeScriptTypeWithOpts(result, .bitwise_and, TypeScript.SkipTypeOptions.Bitset.initEmpty());
-                        if (old_result != .m_none) {
-                            if (old_result == .m_never or result.* == .m_never) {
-                                result.* = .{ .m_never = {} };
-                            } else if (result.* == .m_null or old_result == .m_null) {
-                                if (result.* == .m_null) {
-                                    result.* = old_result;
-                                }
-                            } else if (result.* == .m_undefined or old_result == .m_undefined) {
-                                if (result.* == .m_undefined) {
-                                    result.* = old_result;
-                                }
-                            } else if (result.* == .m_unknown or old_result == .m_unknown) {
-                                if (result.* == .m_unknown) {
-                                    result.* = old_result;
-                                }
-                            } else if (!std.meta.eql(old_result, result.*)) {
-                                result.* = .{ .m_object = {} };
+                        if (comptime get_metadata) {
+                            var left = result.*;
+                            if (left.finishIntersection(p)) |final| {
+                                // finish skipping the rest of the type without collecting type metadata.
+                                result.* = final;
+                                try p.skipTypeScriptType(.bitwise_and);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeIntersection(left);
                             }
+                        } else {
+                            try p.skipTypeScriptType(.bitwise_and);
                         }
                     },
                     .t_exclamation => {
@@ -7541,6 +7764,22 @@ fn NewParser_(
                         if (!p.lexer.isIdentifierOrKeyword()) {
                             try p.lexer.expect(.t_identifier);
                         }
+
+                        if (comptime get_metadata) {
+                            if (result.* == .m_identifier) {
+                                var dot = List(Ref).initCapacity(p.allocator, 2) catch unreachable;
+                                dot.appendAssumeCapacity(result.m_identifier);
+                                const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                dot.appendAssumeCapacity(find_result.ref);
+                                result.* = .{ .m_dot = dot };
+                            } else if (result.* == .m_dot) {
+                                if (p.lexer.isIdentifierOrKeyword()) {
+                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    result.m_dot.append(p.allocator, find_result.ref) catch unreachable;
+                                }
+                            }
+                        }
+
                         try p.lexer.next();
 
                         // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
@@ -7561,14 +7800,16 @@ fn NewParser_(
                         }
                         try p.lexer.expect(.t_close_bracket);
 
-                        if (result.* == .m_none) {
-                            result.* = .{ .m_array = {} };
-                        } else {
-                            // if something was skipped, it is object type
-                            if (skipped) {
-                                result.* = .{ .m_object = {} };
+                        if (comptime get_metadata) {
+                            if (result.* == .m_none) {
+                                result.* = .m_array;
                             } else {
-                                result.* = .{ .m_array = {} };
+                                // if something was skipped, it is object type
+                                if (skipped) {
+                                    result.* = .m_object;
+                                } else {
+                                    result.* = .m_array;
+                                }
                             }
                         }
                     },
@@ -7582,7 +7823,7 @@ fn NewParser_(
 
                         // The type following "extends" is not permitted to be another conditional type
                         var dummy_result = TypeScript.Metadata.default;
-                        try p.skipTypeScriptTypeWithOpts(&dummy_result, .lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types));
+                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &dummy_result);
 
                         try p.lexer.expect(.t_question);
                         try p.skipTypeScriptType(.lowest);
@@ -7617,8 +7858,8 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    var _result = TypeScript.Metadata{ .m_none = {} };
-                    try p.skipTypeScriptTypeWithOpts(&_result, .lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature));
+                    var metadata = TypeScript.Metadata.default;
+                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, &metadata);
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -11290,8 +11531,8 @@ fn NewParser_(
 
             pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) anyerror!bool {
                 try p.lexer.expect(.t_extends);
-                var result = TypeScript.Metadata.default;
-                try p.skipTypeScriptTypeWithOpts(&result, .prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types));
+                var metadata = TypeScript.Metadata.default;
+                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &metadata);
 
                 if (!flags.contains(.disallow_conditional_types) and p.lexer.token == .t_question) {
                     return error.Backtrack;
@@ -11805,7 +12046,7 @@ fn NewParser_(
                     // Skip over types
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
-                        if (opts.is_class) {
+                        if (p.options.features.emit_decorator_metadata and opts.is_class and opts.ts_decorators.len > 0) {
                             ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
                         } else {
                             try p.skipTypeScriptType(.lowest);
@@ -11910,7 +12151,7 @@ fn NewParser_(
                     .allow_super_property = true,
                     .allow_ts_decorators = opts.allow_ts_decorators,
                     .is_constructor = is_constructor,
-                    // .has_decorators = false,
+                    .has_decorators = opts.ts_decorators.len > 0 or (opts.has_class_decorators and is_constructor),
 
                     // Only allow omitting the body if we're parsing TypeScript class
                     .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
@@ -11988,7 +12229,7 @@ fn NewParser_(
                     }),
                     .key = key,
                     .value = value,
-                    .ts_metadata = .{ .m_function = {} },
+                    .ts_metadata = .m_function,
                 };
             }
 
@@ -12068,6 +12309,7 @@ fn NewParser_(
                 const first_decorator_loc = p.lexer.loc();
                 if (opts.allow_ts_decorators) {
                     opts.ts_decorators = try p.parseTypeScriptDecorators();
+                    opts.has_class_decorators = class_opts.ts_decorators.len > 0;
                     has_decorators = has_decorators or opts.ts_decorators.len > 0;
                 } else {
                     opts.ts_decorators = &[_]Expr{};
@@ -18296,7 +18538,7 @@ fn NewParser_(
 
                     // Track values so they can be used by constant folding. We need to follow
                     // links here in case the enum was merged with a preceding namespace
-                    var values_so_far = StringHashMapUnamanged(f64){};
+                    var values_so_far = StringHashMapUnmanaged(f64){};
 
                     p.known_enum_values.put(allocator, data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
                     p.known_enum_values.put(allocator, data.arg, values_so_far) catch unreachable;
@@ -18991,27 +19233,37 @@ fn NewParser_(
                                     array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                 }
                                 {
-                                    // design:paramtypes if method
+                                    // design:paramtypes and design:returntype if method
                                     if (prop.flags.contains(.is_method)) {
                                         if (prop.value) |prop_value| {
-                                            var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                            args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                            {
+                                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
 
-                                            const method_args = prop_value.data.e_function.func.args;
+                                                const method_args = prop_value.data.e_function.func.args;
 
-                                            if (method_args.len > 0) {
-                                                var args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
+                                                if (method_args.len > 0) {
+                                                    var args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
 
-                                                for (method_args, 0..) |method_arg, i| {
-                                                    args_array[i] = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
+                                                    for (method_args, 0..) |method_arg, i| {
+                                                        args_array[i] = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
+                                                    }
+
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                } else {
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
                                                 }
 
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
-                                            } else {
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                                array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
+                                            {
+                                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
 
-                                            array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                                args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
+
+                                                array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                            }
                                         }
                                     }
                                 }
@@ -19135,34 +19387,24 @@ fn NewParser_(
 
                         if (p.options.features.emit_decorator_metadata) {
                             if (constructor_function != null) {
-                                {
-                                    // design:type
-                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                    args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
-                                    // always be a function type
-                                    args[1] = p.serializeMetadata(.{ .m_function = {} }) catch unreachable;
-                                    array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
-                                }
-                                {
-                                    // design:paramtypes
-                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                    args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                // design:paramtypes
+                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
 
-                                    const constructor_args = constructor_function.?.func.args;
-                                    if (constructor_args.len > 0) {
-                                        var param_array = p.allocator.alloc(Expr, constructor_args.len) catch unreachable;
+                                const constructor_args = constructor_function.?.func.args;
+                                if (constructor_args.len > 0) {
+                                    var param_array = p.allocator.alloc(Expr, constructor_args.len) catch unreachable;
 
-                                        for (constructor_args, 0..) |constructor_arg, i| {
-                                            param_array[i] = p.serializeMetadata(constructor_arg.ts_metadata) catch unreachable;
-                                        }
-
-                                        args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, logger.Loc.Empty);
-                                    } else {
-                                        args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                    for (constructor_args, 0..) |constructor_arg, i| {
+                                        param_array[i] = p.serializeMetadata(constructor_arg.ts_metadata) catch unreachable;
                                     }
 
-                                    array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, logger.Loc.Empty);
+                                } else {
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
                                 }
+
+                                array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
                             }
                         }
 
@@ -19191,105 +19433,152 @@ fn NewParser_(
 
         fn serializeMetadata(p: *P, ts_metadata: TypeScript.Metadata) !Expr {
             return switch (ts_metadata) {
-                .m_none => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Object"),
-                    },
-                    logger.Loc.Empty,
-                ),
+                .m_none,
+                .m_any,
+                .m_unknown,
+                .m_object,
+                => GlobalIdentifiers.get(p, "Object"),
+
                 .m_never,
                 .m_undefined,
+                .m_null,
+                .m_void,
                 => p.newExpr(
                     E.Undefined{},
                     logger.Loc.Empty,
                 ),
-                .m_object => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Object"),
-                    },
-                    logger.Loc.Empty,
+
+                .m_string => GlobalIdentifiers.get(p, "String"),
+                .m_number => GlobalIdentifiers.get(p, "Number"),
+                .m_function => GlobalIdentifiers.get(p, "Function"),
+                .m_boolean => GlobalIdentifiers.get(p, "Boolean"),
+                .m_array => GlobalIdentifiers.get(p, "Array"),
+
+                .m_bigint => p.maybeDefinedHelper(
+                    GlobalIdentifiers.get(p, "BigInt"),
                 ),
-                .m_string => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "String"),
-                    },
-                    logger.Loc.Empty,
+
+                .m_symbol => p.maybeDefinedHelper(
+                    GlobalIdentifiers.get(p, "Symbol"),
                 ),
-                // ._string_type => p.getStaticSymbol("String"),
-                .m_number => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Number"),
-                    },
-                    logger.Loc.Empty,
-                ),
-                .m_bigint => p.maybeDefined("BigInt"),
-                .m_function => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Function"),
-                    },
-                    logger.Loc.Empty,
-                ),
-                .m_boolean => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Boolean"),
-                    },
-                    logger.Loc.Empty,
-                ),
-                .m_symbol => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Symbol"),
-                    },
-                    logger.Loc.Empty,
-                ),
-                .m_array => p.newExpr(
-                    E.Identifier{
-                        .ref = try p.newSymbol(.unbound, "Array"),
-                    },
-                    logger.Loc.Empty,
-                ),
-                .m_identifier => |ref| p.maybeDefined(p.loadNameFromRef(ref)),
-                else => p.newExpr(
-                    E.String{ .data = "TODO: this metadata type" },
-                    logger.Loc.Empty,
-                ),
+
+                .m_identifier => |ref| {
+                    p.recordUsage(ref);
+                    return p.maybeDefinedHelper(p.newExpr(
+                        E.Identifier{ .ref = ref },
+                        logger.Loc.Empty,
+                    ));
+                },
+
+                .m_dot => |_refs| {
+                    var refs = _refs;
+                    std.debug.assert(refs.items.len >= 2);
+                    defer refs.deinit(p.allocator);
+
+                    var dots = p.newExpr(
+                        E.Dot{
+                            .name = p.loadNameFromRef(refs.items[refs.items.len - 1]),
+                            .name_loc = logger.Loc.Empty,
+                            .target = undefined,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    var current_expr = &dots.data.e_dot.target;
+                    var i: usize = refs.items.len - 2;
+                    while (i > 0) {
+                        current_expr.* = p.newExpr(E.Dot{
+                            .name = p.loadNameFromRef(refs.items[i]),
+                            .name_loc = logger.Loc.Empty,
+                            .target = undefined,
+                        }, logger.Loc.Empty);
+                        current_expr = &current_expr.data.e_dot.target;
+                        i -= 1;
+                    }
+
+                    current_expr.* = p.newExpr(
+                        E.Identifier{
+                            .ref = refs.items[0],
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const dot_identifier = current_expr.*;
+                    var current_dot = dots;
+
+                    var maybe_defined_dots = p.newExpr(
+                        E.Binary{
+                            .op = .bin_logical_or,
+                            .right = try p.checkIfDefinedHelper(current_dot),
+                            .left = undefined,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    if (i < refs.items.len - 2) {
+                        current_dot = current_dot.data.e_dot.target;
+                    }
+                    current_expr = &maybe_defined_dots.data.e_binary.left;
+
+                    while (i < refs.items.len - 2) {
+                        current_expr.* = p.newExpr(
+                            E.Binary{
+                                .op = .bin_logical_or,
+                                .right = try p.checkIfDefinedHelper(current_dot),
+                                .left = undefined,
+                            },
+                            logger.Loc.Empty,
+                        );
+
+                        current_expr = &current_expr.data.e_binary.left;
+                        i += 1;
+                        if (i < refs.items.len - 2) {
+                            current_dot = current_dot.data.e_dot.target;
+                        }
+                    }
+
+                    current_expr.* = try p.checkIfDefinedHelper(dot_identifier);
+
+                    var root = p.newExpr(
+                        E.If{
+                            .yes = GlobalIdentifiers.get(p, "Object"),
+                            .no = dots,
+                            .test_ = maybe_defined_dots,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    return root;
+                },
             };
         }
 
-        fn maybeDefined(p: *P, name: string) !Expr {
-            const sym_expr = p.newExpr(
-                E.Identifier{
-                    .ref = try p.newSymbol(.unbound, name),
+        fn checkIfDefinedHelper(p: *P, expr: Expr) !Expr {
+            return p.newExpr(
+                E.Binary{
+                    .op = .bin_strict_eq,
+                    .left = p.newExpr(
+                        E.Unary{
+                            .op = .un_typeof,
+                            .value = expr,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                    .right = p.newExpr(
+                        E.String{ .data = "undefined" },
+                        logger.Loc.Empty,
+                    ),
                 },
                 logger.Loc.Empty,
             );
+        }
+
+        fn maybeDefinedHelper(p: *P, identifier_expr: Expr) !Expr {
             return p.newExpr(
                 E.If{
-                    .test_ = p.newExpr(
-                        E.Binary{
-                            .op = .bin_strict_eq,
-                            .left = p.newExpr(
-                                E.Unary{
-                                    .op = .un_typeof,
-                                    .value = sym_expr,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .right = p.newExpr(
-                                E.String{
-                                    .data = "undefined",
-                                },
-                                logger.Loc.Empty,
-                            ),
-                        },
-                        logger.Loc.Empty,
-                    ),
-                    .yes = p.newExpr(
-                        E.Identifier{
-                            .ref = try p.newSymbol(.unbound, "Object"),
-                        },
-                        logger.Loc.Empty,
-                    ),
-                    .no = sym_expr,
+                    .test_ = try p.checkIfDefinedHelper(identifier_expr),
+                    .yes = GlobalIdentifiers.get(p, "Object"),
+                    .no = identifier_expr,
                 },
                 logger.Loc.Empty,
             );

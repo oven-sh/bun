@@ -24,7 +24,7 @@ let port: string;
 let add_dir: string;
 beforeAll(() => {
   port = new URL(root_url).port;
-})
+});
 
 beforeEach(async () => {
   add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
@@ -1516,7 +1516,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect((await file(join(package_dir, "package.json")).text())).toInclude("bun-add.test");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun-add.test");
 }
 
 it("should add dependency alongside peerDependencies", async () => {

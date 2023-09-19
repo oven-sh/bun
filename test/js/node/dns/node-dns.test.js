@@ -360,13 +360,24 @@ describe("dns.lookupService", () => {
 
   it("lookupService(255.255.255.255, 443)", done => {
     dns.lookupService("255.255.255.255", 443, (err, hostname, service) => {
-      try {
-        expect(err).not.toBeNull();
-        expect(hostname).toBeUndefined();
-        expect(service).toBeUndefined();
-        done();
-      } catch (err) {
-        done(err);
+      if (process.platform == "darwin") {
+        try {
+          expect(err).toBeNull();
+          expect(hostname).toStrictEqual("broadcasthost");
+          expect(service).toStrictEqual("https");
+          done();
+        } catch (err) {
+          done(err);
+        }
+      } else {
+        try {
+          expect(err).not.toBeNull();
+          expect(hostname).toBeUndefined();
+          expect(service).toBeUndefined();
+          done();
+        } catch (err) {
+          done(err);
+        }
       }
     });
   });

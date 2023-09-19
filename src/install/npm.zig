@@ -90,10 +90,11 @@ pub const Registry = struct {
                             url.pathname = pathname;
                             url.path = pathname;
                         }
-
+                        var needs_to_check_slash = true;
                         while (strings.lastIndexOfChar(pathname, ':')) |colon| {
                             var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
+                            needs_to_check_slash = false;
                             if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
                                 pathname = pathname[0 .. pathname.len - 1];
                             }
@@ -122,6 +123,47 @@ pub const Registry = struct {
                             if (strings.eqlComptime(segment, "_password")) {
                                 registry.password = value;
                                 continue;
+                            }
+                        }
+
+                        // In this case, there is only one.
+                        if (needs_to_check_slash) {
+                            if (strings.lastIndexOfChar(pathname, '/')) |last_slash| {
+                                var remain = pathname[last_slash + 1 ..];
+                                if (strings.indexOfChar(remain, '=')) |eql_i| {
+                                    const segment = remain[0..eql_i];
+                                    var value = remain[eql_i + 1 ..];
+
+                                    // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
+                                    // Bearer Token
+                                    if (strings.eqlComptime(segment, "_authToken")) {
+                                        registry.token = value;
+                                        pathname = pathname[0 .. last_slash + 1];
+
+                                        break :outer;
+                                    }
+
+                                    if (strings.eqlComptime(segment, "_auth")) {
+                                        auth = value;
+                                        pathname = pathname[0 .. last_slash + 1];
+
+                                        break :outer;
+                                    }
+
+                                    if (strings.eqlComptime(segment, "username")) {
+                                        registry.username = value;
+                                        pathname = pathname[0 .. last_slash + 1];
+
+                                        break :outer;
+                                    }
+
+                                    if (strings.eqlComptime(segment, "_password")) {
+                                        registry.password = value;
+                                        pathname = pathname[0 .. last_slash + 1];
+
+                                        break :outer;
+                                    }
+                                }
                             }
                         }
                     }

@@ -14,6 +14,8 @@ To use it with `bun install`, add a `bunfig.toml` file to your project with the 
 
 ### Configure with bunfig.toml
 
+---
+
 Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`.
 
 Set the `$NPM_PASSWORD` environment variable to your Azure Artifacts npm registry password and Bun will automatically replace it with the correct value. You can also choose not to use an environment variable and instead hardcode your password in the `bunfig.toml` file, but be careful not to commit it to source control.
@@ -29,6 +31,8 @@ password = "$NPM_PASSWORD"
 ---
 
 ### Configure with environment variables
+
+---
 
 You can also use an environment variable to configure Azure Artifacts with `bun install`.
 

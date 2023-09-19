@@ -45,7 +45,7 @@ export function resolveTask(task: BunTask): BunTask | undefined {
   // Make sure the task has a script defined
   const definition: BunTask["definition"] = task.definition;
   if (!definition.script) return task;
-  const shellCommand = definition.script.startsWith("bun ") ? definition.script : `bun ${definition.script}`;
+  const shellCommand = definition.script.startsWith("bun run ") ? definition.script : `bun run ${definition.script}`;
 
   const newTask = new vscode.Task(
     definition,

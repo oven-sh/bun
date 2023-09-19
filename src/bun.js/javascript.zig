@@ -1526,7 +1526,7 @@ pub const VirtualMachine = struct {
         }
 
         if (strings.hasPrefixComptime(specifier, "file://")) {
-            const href = bun.JSC.URL.pathFromFileURL(bun.String.init(specifier));
+            const href = bun.JSC.URL.pathFromFileURL(bun.String.static(specifier));
             return href.toUTF8(bun.default_allocator);
         }
 

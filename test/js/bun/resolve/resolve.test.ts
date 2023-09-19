@@ -121,7 +121,12 @@ it("file url with special characters in await import resolves", async () => {
   const dir = tempDirWithFiles("file url", {
     [filename]: "export const foo = 1;",
   });
-  writeFileSync(`${dir}/test.js`, `const {foo} = await import('file://${dir}/${filename}.js');\nconsole.log(foo);`);
+  writeFileSync(
+    `${dir}/test.js`,
+    `const {foo} = await import('file://${dir.replace(/ /g, "%20")}/${encodeURIComponent(
+      filename,
+    )}');\nconsole.log(foo);`,
+  );
 
   const { exitCode, stdout } = Bun.spawnSync({
     cmd: [bunExe(), `${dir}/test.js`],

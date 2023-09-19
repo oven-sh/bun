@@ -18,7 +18,7 @@ test("running extensionless file works", async () => {
 });
 
 test("running shebang typescript file works", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-test1");
+  const dir = join(realpathSync(tmpdir()), "bun-run-test2");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });
 

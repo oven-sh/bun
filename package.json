@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@pkgjs/parseargs": "^0.11.0",
     "@vscode/debugadapter": "^1.61.0",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",

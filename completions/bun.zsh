@@ -55,7 +55,6 @@ _bun() {
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
-                '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
@@ -97,7 +96,6 @@ _bun() {
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
-                '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
@@ -133,7 +131,6 @@ _bun() {
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
-                '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
@@ -284,7 +281,6 @@ _bun() {
                 '--frozen-lockfile[Disallow changes to lockfile]' \
                 '--no-save[Do not save a lockfile]'
                 '--dry-run[Do not install anything]'
-                '--lockfile[Store & load a lockfile at a specific filepath]'
                 '-f[Always request the latest versions from the registry & reinstall all dependencies]'
                 '--force[Always request the latest versions from the registry & reinstall all dependencies]'
                 '--cache-dir[Store & load cached data from a specific directory path]'
@@ -540,7 +536,6 @@ _bun() {
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
-                '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
@@ -576,7 +571,6 @@ _bun() {
                 '-g[Remove a package globally]' \
                 '--global[Remove a package globally]' \
                 '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
-                '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
                 '--silent[Don'"'"'t output anything]' \
@@ -642,7 +636,7 @@ _bun_run_param_script_completion() {
     local -a scripts_list
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
-    
+
     _alternative "scripts:scripts:(($scripts_list))"
     _alternative "bin:bin:(($bins))"
     _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"

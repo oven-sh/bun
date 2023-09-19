@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunExe, bunEnv } from "harness";
+import path from "path";
 
 describe("Server", () => {
   test("normlizes incoming request URLs", async () => {
@@ -356,5 +358,25 @@ describe("Server", () => {
       expect(signalOnServer).toBe(true);
       server.stop(true);
     }
+  });
+
+  test("should not crash with big formData", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "big-form-data.fixture.js"],
+      cwd: import.meta.dir,
+      env: bunEnv,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("should be able to parse source map and fetch small stream", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
   });
 });

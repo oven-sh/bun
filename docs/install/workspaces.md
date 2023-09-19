@@ -6,7 +6,10 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 {
   "name": "my-project",
   "version": "1.0.0",
-  "workspaces": ["packages/*"]
+  "workspaces": ["packages/*"],
+  "devDependencies": {
+    "example-package-in-monorepo": "workspace:*"
+  }
 }
 ```
 
@@ -14,7 +17,23 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 **Glob support** — Bun supports simple `<directory>/*` globs in `"workspaces"`. Full glob syntax (e.g. `**` and `?`) is not yet supported.
 {% /callout %}
 
-This has a couple major benefits.
+When referencing other packages in the monorepo, use `"workspace:*"` as the version field in your `package.json`.
+
+```json
+{
+  "name": "pkg-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-b": "workspace:*"
+  }
+}
+```
+
+{% callout %}
+**Version support** — Bun supports simple `workspace:*` versions in `"dependencies"`. Full version syntax (e.g. `workspace:^*`) is not yet supported.
+{% /callout %}
+
+Workspaces have a couple major benefits.
 
 - **Code can be split into logical parts.** If one package relies on another, you can simply add it as a dependency with `bun add`. If package `b` depends on `a`, `bun install` will symlink your local `packages/a` directory into the `node_modules` folder of `b`, instead of trying to download it from the npm registry.
 - **Dependencies can be de-duplicated.** If `a` and `b` share a common dependency, it will be _hoisted_ to the root `node_modules` directory. This reduces redundant disk usage and minimizes "dependency hell" issues associated with having multiple versions of a package installed simultaneously.

@@ -47,7 +47,7 @@ random.mock.results;
 These extra properties make it possible to write `expect` assertions about usage of the mock function, including how many times it was called, the arguments, and the return values.
 
 ```ts
-import { test, mock } from "bun:test";
+import { test, expect, mock } from "bun:test";
 
 const random = mock((multiplier: number) => multiplier * Math.random());
 

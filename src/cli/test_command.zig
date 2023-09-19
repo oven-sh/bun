@@ -685,8 +685,13 @@ pub const TestCommand = struct {
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
-            if (vm.hot_reload != .none)
-                JSC.HotReloader.enableHotModuleReloading(vm);
+
+            switch (vm.hot_reload) {
+                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                else => {},
+            }
+
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }

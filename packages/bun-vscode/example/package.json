@@ -7,6 +7,10 @@
     "mime": "^3.0.0",
     "mime-db": "^1.52.0"
   },
+  "scripts": {
+    "run": "hello.js",
+    "start": "bun hello.js"
+  },
   "trustedDependencies": [
     "mime"
   ],

@@ -347,6 +347,13 @@ it("db.query()", () => {
     ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
+  const domjit = db.query("SELECT * FROM test");
+  (function (domjit) {
+    for (let i = 0; i < 100000; i++) {
+      domjit.get().name;
+    }
+  })(domjit);
+
   db.close();
 
   // Check that a closed database doesn't crash

@@ -11,7 +11,11 @@ Bun does not read `.npmrc` files; instead private registries are configured via 
 
 # as an object with username/password
 # you can reference environment variables
-"@myorg2" = { username = "myusername", password = "$npm_pass", url = "https://registry.myorg.com/" }
+"@myorg2" = {
+  username = "myusername",
+  password = "$npm_pass",
+  url = "https://registry.myorg.com/"
+}
 
 # as an object with token
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }

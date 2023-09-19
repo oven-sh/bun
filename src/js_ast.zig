@@ -425,7 +425,7 @@ pub const Binding = struct {
                 );
             },
             else => {
-                Global.panic("Interanl error", .{});
+                Global.panic("Internal error", .{});
             },
         }
     }

@@ -343,6 +343,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -421,6 +423,8 @@ const NetworkTask = struct {
             HTTP.FetchRedirect.follow,
             null,
         );
+        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
         this.callback = .{ .extract = tarball };
     }
 };
@@ -1066,6 +1070,7 @@ const PackageInstall = struct {
                             )) {
                                 0 => {},
                                 else => |errno| switch (std.os.errno(errno)) {
+                                    .XDEV => return error.NotSupported, // not same file system
                                     .OPNOTSUPP => return error.NotSupported,
                                     .NOENT => return error.FileNotFound,
                                     // sometimes the downlowded npm package has already node_modules with it, so just ignore exist error here
@@ -1124,6 +1129,7 @@ const PackageInstall = struct {
         )) {
             0 => .{ .success = {} },
             else => |errno| switch (std.os.errno(errno)) {
+                .XDEV => error.NotSupported, // not same file system
                 .OPNOTSUPP => error.NotSupported,
                 .NOENT => error.FileNotFound,
                 // We first try to delete the directory
@@ -1246,7 +1252,15 @@ const PackageInstall = struct {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .file => {
-                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0) catch |err| {
+                                if (err != error.PathAlreadyExists) {
+                                    return err;
+                                }
+
+                                std.os.unlinkat(destination_dir_.dir.fd, entry.path, 0) catch {};
+                                try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
+                            };
+
                             real_file_count += 1;
                         },
                         else => {},
@@ -1677,6 +1691,10 @@ pub const PackageManager = struct {
 
     pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
         return this.env.getHttpProxy(url);
+    }
+
+    pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
+        return this.env.getTLSRejectUnauthorized();
     }
 
     pub const WakeHandler = struct {
@@ -4316,7 +4334,6 @@ pub const PackageManager = struct {
         bin_path: stringZ = "node_modules/.bin",
 
         lockfile_path: stringZ = Lockfile.default_filename,
-        save_lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
         scope: Npm.Registry.Scope = undefined,
 
@@ -4465,8 +4482,6 @@ pub const PackageManager = struct {
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
         ) !void {
-            this.save_lockfile_path = this.lockfile_path;
-
             var base = Api.NpmRegistry{
                 .url = "",
                 .username = "",
@@ -4554,19 +4569,6 @@ pub const PackageManager = struct {
                     this.local_package_features.optional_dependencies = save;
                 }
 
-                if (bun_install.lockfile_path) |save| {
-                    if (save.len > 0) {
-                        this.lockfile_path = try allocator.dupeZ(u8, save);
-                        this.save_lockfile_path = this.lockfile_path;
-                    }
-                }
-
-                if (bun_install.save_lockfile_path) |save| {
-                    if (save.len > 0) {
-                        this.save_lockfile_path = try allocator.dupeZ(u8, save);
-                    }
-                }
-
                 this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
             }
 
@@ -4647,14 +4649,6 @@ pub const PackageManager = struct {
                 if (cli.token.len > 0) {
                     this.scope.token = cli.token;
                 }
-
-                if (cli.lockfile.len > 0) {
-                    this.lockfile_path = try allocator.dupeZ(u8, cli.lockfile);
-                }
-            }
-
-            if (env.map.get("BUN_CONFIG_LOCKFILE_SAVE_PATH")) |save_lockfile_path| {
-                this.save_lockfile_path = try allocator.dupeZ(u8, save_lockfile_path);
             }
 
             if (env.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
@@ -5243,7 +5237,7 @@ pub const PackageManager = struct {
         };
 
         env.loadProcess();
-        try env.load(&fs.fs, entries_option.entries, .production);
+        try env.load(entries_option.entries, .production);
 
         if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
@@ -5749,7 +5743,6 @@ pub const PackageManager = struct {
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
         clap.parseParam("--save                            Save to package.json") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
-        clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
         clap.parseParam("--frozen-lockfile                 Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
         clap.parseParam("--cache-dir <PATH>                 Store & load cached data from a specific directory path") catch unreachable,
@@ -5938,10 +5931,6 @@ pub const PackageManager = struct {
             //         Global.crash();
             //     }
             // }
-
-            if (args.option("--lockfile")) |lockfile| {
-                cli.lockfile = lockfile;
-            }
 
             if (args.option("--cwd")) |cwd_| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -7740,7 +7729,7 @@ pub const PackageManager = struct {
         save: {
             if (manager.lockfile.isEmpty()) {
                 if (!manager.options.dry_run) {
-                    std.fs.cwd().deleteFileZ(manager.options.save_lockfile_path) catch |err| brk: {
+                    std.fs.cwd().deleteFileZ(manager.options.lockfile_path) catch |err| brk: {
                         // we don't care
                         if (err == error.FileNotFound) {
                             if (had_any_diffs) break :save;
@@ -7768,7 +7757,7 @@ pub const PackageManager = struct {
                 manager.progress.refresh();
             }
 
-            manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
+            manager.lockfile.saveToDisk(manager.options.lockfile_path);
             if (comptime log_level.showProgress()) {
                 node.end();
                 manager.progress.refresh();

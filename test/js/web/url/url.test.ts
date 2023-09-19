@@ -165,4 +165,51 @@ describe("url", () => {
       expect(result.username).toBe(values.username);
     }
   });
+
+  describe("URL.canParse", () => {
+    (
+      [
+        {
+          "url": undefined,
+          "base": undefined,
+          "expected": false,
+        },
+        {
+          "url": "a:b",
+          "base": undefined,
+          "expected": true,
+        },
+        {
+          "url": undefined,
+          "base": "a:b",
+          "expected": false,
+        },
+        {
+          "url": "a:/b",
+          "base": undefined,
+          "expected": true,
+        },
+        {
+          "url": undefined,
+          "base": "a:/b",
+          "expected": true,
+        },
+        {
+          "url": "https://test:test",
+          "base": undefined,
+          "expected": false,
+        },
+        {
+          "url": "a",
+          "base": "https://b/",
+          "expected": true,
+        },
+      ] as const
+    ).forEach(({ url, base, expected }) => {
+      it(`URL.canParse(${url}, ${base})`, () => {
+        // @ts-expect-error
+        expect(URL.canParse(url, base)).toBe(expected);
+      });
+    });
+  });
 });

@@ -47,7 +47,7 @@ registry = "https://registry.yarnpkg.com/"
 # Install for production? This is the equivalent to the "--production" CLI argument
 production = false
 
-# Disallow changes to lockfile? This is the equivalent to the "--fozen-lockfile" CLI argument
+# Disallow changes to lockfile? This is the equivalent to the "--frozen-lockfile" CLI argument
 frozenLockfile = false
 
 # Don't actually install
@@ -88,12 +88,6 @@ disableManifest = false
 # Print a yarn v1 lockfile
 # Note: it does not load the lockfile, it just converts bun.lockb into a yarn.lock
 print = "yarn"
-
-# Path to read bun.lockb from
-path = "bun.lockb"
-
-# Path to save bun.lockb to
-savePath = "bun.lockb"
 
 # Save the lockfile to disk
 save = true
@@ -142,8 +136,6 @@ export interface Cache {
 
 export interface Lockfile {
   print?: "yarn";
-  path: string;
-  savePath: string;
   save: boolean;
 }
 ```
@@ -156,7 +148,6 @@ Environment variables have a higher priority than `bunfig.toml`.
 | -------------------------------- | ------------------------------------------------------------- |
 | BUN_CONFIG_REGISTRY              | Set an npm registry (default: <https://registry.npmjs.org>)   |
 | BUN_CONFIG_TOKEN                 | Set an auth token (currently does nothing)                    |
-| BUN_CONFIG_LOCKFILE_SAVE_PATH    | File path to save the lockfile to (default: bun.lockb)        |
 | BUN_CONFIG_YARN_LOCKFILE         | Save a Yarn v1-style yarn.lock                                |
 | BUN_CONFIG_LINK_NATIVE_BINS      | Point `bin` in package.json to a platform-specific dependency |
 | BUN_CONFIG_SKIP_SAVE_LOCKFILE    | Don’t save a lockfile                                         |

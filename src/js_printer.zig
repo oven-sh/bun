@@ -2179,6 +2179,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {
@@ -2188,6 +2189,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_call_target => {
+                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .cjs or !is_bun_platform) {
@@ -3180,10 +3182,26 @@ fn NewPrinter(
                                         hex_chars[cursor.c & 15],
                                     });
                                 },
-                                else => {
-                                    p.print("\\u{");
-                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
-                                    p.print("}");
+
+                                else => |c| {
+                                    const k = c - 0x10000;
+                                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
+                                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
+
+                                    p.print(&[_]u8{
+                                        '\\',
+                                        'u',
+                                        hex_chars[lo >> 12],
+                                        hex_chars[(lo >> 8) & 15],
+                                        hex_chars[(lo >> 4) & 15],
+                                        hex_chars[lo & 15],
+                                        '\\',
+                                        'u',
+                                        hex_chars[hi >> 12],
+                                        hex_chars[(hi >> 8) & 15],
+                                        hex_chars[(hi >> 4) & 15],
+                                        hex_chars[hi & 15],
+                                    });
                                 },
                             }
                         },

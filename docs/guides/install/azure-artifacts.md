@@ -19,15 +19,6 @@ Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts usernam
 
 Set the `$NPM_PASSWORD` environment variable to your Azure Artifacts npm registry password and Bun will automatically replace it with the correct value. You can also choose not to use an environment variable and instead hardcode your password in the `bunfig.toml` file, but be careful not to commit it to source control.
 
-Note: **password must not be base64 encoded**. In [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) instructions for `.npmrc`, they say to base64 encode the password. Do not do this for `bun install`. Bun will automatically base64 encode the password for you if needed.
-
-To un-base64 encode a password, you can open your browser console and run:
-
-```js
-atob("base64-encoded-password");
-```
-
-If it ends with `==`, it probably is base64 encoded.
 
 ### Configure with environment variables
 
@@ -46,8 +37,20 @@ Make sure to:
 - Replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`
 - Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry. If it ends with `==`, it probably is base64 encoded.
 
+### Don't base64 encode the password
+
+In [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) instructions for `.npmrc`, they say to base64 encode the password. Do not do this for `bun install`. Bun will automatically base64 encode the password for you if needed.
+
 To un-base64 encode a password, you can open your browser console and run:
 
 ```js
 atob("base64-encoded-password");
 ```
+
+You can also use the `base64` command line tool, but doing so means it may be saved in your terminal history which is not recommended:
+
+```bash
+echo "base64-encoded-password" | base64 --decode
+```
+
+If it ends with `==`, it probably is base64 encoded.

@@ -1,7 +1,5 @@
-// @ts-check
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-const { parseArgs } = require("@pkgjs/parseargs");
 const SafeMap = Map;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeSlice = String.prototype.slice;

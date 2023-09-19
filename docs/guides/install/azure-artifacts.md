@@ -38,7 +38,7 @@ Make sure to:
 - Replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`
 - Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry
 
-### Don't base64 encode the password
+**Don't base64 encode the password**
 
 In [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) instructions for `.npmrc`, they say to base64 encode the password. Do not do this for `bun install`. Bun will automatically base64 encode the password for you if needed.
 

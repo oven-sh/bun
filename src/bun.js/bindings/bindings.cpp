@@ -230,6 +230,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;

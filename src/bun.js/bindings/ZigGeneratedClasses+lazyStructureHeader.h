@@ -70,6 +70,10 @@ JSC::Structure* JSExpectAnythingStructure() { return m_JSExpectAnything.getIniti
   JSC::JSObject* JSExpectAnythingConstructor() { return m_JSExpectAnything.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSExpectAnythingPrototype() { return m_JSExpectAnything.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSExpectAnything;
+JSC::Structure* JSExpectArrayContainingStructure() { return m_JSExpectArrayContaining.getInitializedOnMainThread(this); }
+  JSC::JSObject* JSExpectArrayContainingConstructor() { return m_JSExpectArrayContaining.constructorInitializedOnMainThread(this); }
+  JSC::JSValue JSExpectArrayContainingPrototype() { return m_JSExpectArrayContaining.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectArrayContaining;
 JSC::Structure* JSExpectStringContainingStructure() { return m_JSExpectStringContaining.getInitializedOnMainThread(this); }
   JSC::JSObject* JSExpectStringContainingConstructor() { return m_JSExpectStringContaining.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSExpectStringContainingPrototype() { return m_JSExpectStringContaining.prototypeInitializedOnMainThread(this); }

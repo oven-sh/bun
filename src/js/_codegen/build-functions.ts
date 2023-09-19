@@ -28,9 +28,9 @@ interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
   isGetter: boolean;
-  isConstructor: boolean;
+  constructAbility: string;
+  constructKind: string;
   isLinkTimeConstant: boolean;
-  isNakedConstructor: boolean;
   intrinsic: string;
   overriddenName: string;
   source: string;
@@ -97,12 +97,13 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         throw new SyntaxError("Could not parse directive value " + directive[2] + " (must be JSON parsable)");
       }
       if (name === "constructor") {
-        throw new SyntaxError("$constructor not implemented");
+        directives.ConstructAbility = "CanConstruct";
+      } else if (name === "nakedConstructor") {
+        directives.ConstructAbility = "CanConstruct";
+        directives.ConstructKind = "Naked";
+      } else {
+        directives[name] = value;
       }
-      if (name === "nakedConstructor") {
-        throw new SyntaxError("$nakedConstructor not implemented");
-      }
-      directives[name] = value;
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
       const declaration = contents.match(
@@ -192,9 +193,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       params: fn.params,
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
       isGetter: !!fn.directives.getter,
-      isConstructor: !!fn.directives.constructor,
+      constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
+      constructKind: fn.directives.ConstructKind ?? "None",
       isLinkTimeConstant: !!fn.directives.linkTimeConstant,
-      isNakedConstructor: !!fn.directives.nakedConstructor,
       intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
@@ -256,8 +257,8 @@ for (const { basename, functions } of files) {
   for (const fn of functions) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
-const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
+const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
+const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;

@@ -1,4 +1,4 @@
-void GlobalObject::initGeneratedLazyClasses() {
+ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     m_JSAttributeIterator.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSAttributeIterator::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -105,6 +105,12 @@ void GlobalObject::initGeneratedLazyClasses() {
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSExpectAnything::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSExpectAnything::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSExpectArrayContaining.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSExpectArrayContaining::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSExpectArrayContaining::createStructure(init.vm, init.global, init.prototype));
                  
               });
     m_JSExpectStringContaining.initLater(
@@ -321,6 +327,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSExpect.visit(visitor);
       thisObject->m_JSExpectAny.visit(visitor);
       thisObject->m_JSExpectAnything.visit(visitor);
+      thisObject->m_JSExpectArrayContaining.visit(visitor);
       thisObject->m_JSExpectStringContaining.visit(visitor);
       thisObject->m_JSExpectStringMatching.visit(visitor);
       thisObject->m_JSFFI.visit(visitor);

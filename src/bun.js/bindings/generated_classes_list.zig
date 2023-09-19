@@ -17,6 +17,7 @@ pub const Classes = struct {
     pub const ExpectAnything = JSC.Expect.ExpectAnything;
     pub const ExpectStringContaining = JSC.Expect.ExpectStringContaining;
     pub const ExpectStringMatching = JSC.Expect.ExpectStringMatching;
+    pub const ExpectArrayContaining = JSC.Expect.ExpectArrayContaining;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;

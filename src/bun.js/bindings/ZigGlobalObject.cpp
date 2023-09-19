@@ -2068,9 +2068,11 @@ static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalOb
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
-    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
     double result = time / 1000000.0;
-    return JSValue::encode(jsNumber(result));
+
+    // https://github.com/oven-sh/bun/issues/5604
+    return JSValue::encode(jsDoubleNumber(result));
 }
 
 extern "C" {
@@ -2109,11 +2111,12 @@ private:
 
     void finishCreation(JSC::VM& vm)
     {
+
         static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
             functionPerformanceNowWithoutTypeCheck,
             JSPerformanceObject::info(),
             JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-            SpecBytecodeDouble);
+            SpecDoubleReal);
 
         JSFunction* now = JSFunction::create(
             vm,
@@ -2122,7 +2125,7 @@ private:
             String("now"_s),
             functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
             &DOMJITSignatureForPerformanceNow);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::Function | 0);
 
         JSFunction* noopNotImplemented = JSFunction::create(
             vm,
@@ -2130,10 +2133,11 @@ private:
             0,
             String("noopNotImplemented"_s),
             functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
-            &DOMJITSignatureForPerformanceNow);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+            nullptr);
+
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "markResourceTiming"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::Function | 0);
 
         this->putDirect(
             vm,
@@ -3311,9 +3315,42 @@ JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
 
     if (returnedException) {
         throwException(globalObject, scope, returnedException.get());
+        return jsUndefined();
     }
 
     RELEASE_AND_RETURN(scope, result);
+}
+
+// `console.Console` or `import { Console } from 'console';`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, consoleObjectCreateConsoleConstructorCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(console);
+    JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, createConsoleConstructor, callData, console, args, returnedException);
+    if (returnedException) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, returnedException.get());
+    }
+    console->putDirect(vm, property, result, 0);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName property))
+{
+    if (JSValue::decode(thisValue) != globalObject) {
+        return false;
+    }
+
+    auto& vm = globalObject->vm();
+    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
+    return true;
 }
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
@@ -3538,7 +3575,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | 0);
+    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)

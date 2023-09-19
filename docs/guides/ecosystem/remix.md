@@ -72,3 +72,7 @@ $ bun start
  $ remix-serve ./build/index.js
  [remix-serve] http://localhost:3000 (http://192.168.86.237:3000)
 ```
+
+---
+
+Read the [Remix docs](https://remix.run/) for more information on how to build apps with Remix.

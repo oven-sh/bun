@@ -169,7 +169,7 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
-        this.#handle = Database.deserialize(
+        this.#handle = Database.#deserialize(
           filenameGiven,
           typeof options === "object" && options
             ? !!options.readonly
@@ -243,12 +243,16 @@ class Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static deserialize(serialized, isReadOnly = false) {
+  static #deserialize(serialized, isReadOnly = false) {
     if (!SQL) {
       SQL = $lazy("sqlite");
     }
 
     return SQL.deserialize(serialized, isReadOnly);
+  }
+
+  static deserialize(serialized, isReadOnly = false) {
+    return new Database(serialized, isReadOnly ? constants.SQLITE_OPEN_READONLY : 0);
   }
 
   static setCustomSQLite(path) {

@@ -8,8 +8,10 @@
     "mime-db": "^1.52.0"
   },
   "scripts": {
-    "run": "hello.js",
-    "start": "bun hello.js"
+    "run": "node hello.js",
+    "start": "hello.js",
+    "start:bun": "bun hello.js",
+    "start:bun:quotes": "bun run hello.js"
   },
   "trustedDependencies": [
     "mime"

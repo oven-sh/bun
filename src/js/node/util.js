@@ -1,7 +1,7 @@
 // @ts-check
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-const { parseArgs } = require('@pkgjs/parseargs');
+const { parseArgs } = require("@pkgjs/parseargs");
 const SafeMap = Map;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeSlice = String.prototype.slice;
@@ -589,12 +589,12 @@ const EQUALS_SEMICOLON_OR_END = /[;=]|$/;
 const QUOTED_VALUE_PATTERN = /^(?:([\\]$)|[\\][\s\S]|[^"])*(?:(")|$)/u;
 
 function removeBackslashes(str) {
-  let ret = '';
+  let ret = "";
   // We stop at str.length - 1 because we want to look ahead one character.
   let i;
   for (i = 0; i < str.length - 1; i++) {
     const c = str[i];
-    if (c === '\\') {
+    if (c === "\\") {
       i++;
       ret += str[i];
     } else {
@@ -609,42 +609,37 @@ function removeBackslashes(str) {
 }
 
 function toASCIILower(str) {
-  let result = '';
+  let result = "";
   for (let i = 0; i < str.length; i++) {
     const char = str[i];
 
-    result += char >= 'A' && char <= 'Z' ?
-      StringPrototypeToLowerCase.call(char) :
-      char;
+    result += char >= "A" && char <= "Z" ? StringPrototypeToLowerCase.call(char) : char;
   }
   return result;
 }
 
-const SOLIDUS = '/';
-const SEMICOLON = ';';
+const SOLIDUS = "/";
+const SEMICOLON = ";";
 
 function parseTypeAndSubtype(str) {
   // Skip only HTTP whitespace from start
   let position = SafeStringPrototypeSearch(str, END_BEGINNING_WHITESPACE);
   // read until '/'
   const typeEnd = StringPrototypeIndexOf.call(str, SOLIDUS, position);
-  const trimmedType = typeEnd === -1 ?
-    StringPrototypeSlice(str, position) :
-    StringPrototypeSlice.$call(str, position, typeEnd);
-  const invalidTypeIndex = SafeStringPrototypeSearch(trimmedType,
-                                                     NOT_HTTP_TOKEN_CODE_POINT);
-  if (trimmedType === '' || invalidTypeIndex !== -1 || typeEnd === -1) {
-    const msg = invalidTypeIndex !== -1 ? ` at ${invalidTypeIndex}` : '';
-    throw new Error(`The MIME syntax for a type in "${str}" is invalid ${msg}`)
+  const trimmedType =
+    typeEnd === -1 ? StringPrototypeSlice(str, position) : StringPrototypeSlice.$call(str, position, typeEnd);
+  const invalidTypeIndex = SafeStringPrototypeSearch(trimmedType, NOT_HTTP_TOKEN_CODE_POINT);
+  if (trimmedType === "" || invalidTypeIndex !== -1 || typeEnd === -1) {
+    const msg = invalidTypeIndex !== -1 ? ` at ${invalidTypeIndex}` : "";
+    throw new Error(`The MIME syntax for a type in "${str}" is invalid ${msg}`);
   }
   // skip type and '/'
   position = typeEnd + 1;
   const type = toASCIILower(trimmedType);
   // read until ';'
   const subtypeEnd = StringPrototypeIndexOf.call(str, SEMICOLON, position);
-  const rawSubtype = subtypeEnd === -1 ?
-    StringPrototypeSlice(str, position) :
-    StringPrototypeSlice.$call(str, position, subtypeEnd);
+  const rawSubtype =
+    subtypeEnd === -1 ? StringPrototypeSlice(str, position) : StringPrototypeSlice.$call(str, position, subtypeEnd);
   position += rawSubtype.length;
   if (subtypeEnd !== -1) {
     // skip ';'
@@ -653,12 +648,12 @@ function parseTypeAndSubtype(str) {
   const trimmedSubtype = StringPrototypeSlice.$call(
     rawSubtype,
     0,
-    SafeStringPrototypeSearch(rawSubtype, START_ENDING_WHITESPACE));
-  const invalidSubtypeIndex = SafeStringPrototypeSearch(trimmedSubtype,
-                                                        NOT_HTTP_TOKEN_CODE_POINT);
-  if (trimmedSubtype === '' || invalidSubtypeIndex !== -1) {
-    const msg = invalidSubtypeIndex !== -1 ? ` at ${invalidSubtypeIndex}` : '';
-    throw new Error(`The MIME syntax for a subtype in "${str}" is invalid ${msg}`)
+    SafeStringPrototypeSearch(rawSubtype, START_ENDING_WHITESPACE),
+  );
+  const invalidSubtypeIndex = SafeStringPrototypeSearch(trimmedSubtype, NOT_HTTP_TOKEN_CODE_POINT);
+  if (trimmedSubtype === "" || invalidSubtypeIndex !== -1) {
+    const msg = invalidSubtypeIndex !== -1 ? ` at ${invalidSubtypeIndex}` : "";
+    throw new Error(`The MIME syntax for a subtype in "${str}" is invalid ${msg}`);
   }
   const subtype = toASCIILower(trimmedSubtype);
   return {
@@ -785,7 +780,8 @@ class MIMEParams {
         position += insideMatch[0].length;
         // Skip including last character if an unmatched '\' or '"' during
         // unescape
-        const inside = insideMatch[1] || insideMatch[2] ? StringPrototypeSlice.$call(insideMatch[0], 0, -1) : insideMatch[0];
+        const inside =
+          insideMatch[1] || insideMatch[2] ? StringPrototypeSlice.$call(insideMatch[0], 0, -1) : insideMatch[0];
         // Unescape '\' quoted characters
         parameterValue = removeBackslashes(inside);
         // If we did have an unmatched '\' add it back to the end
@@ -846,11 +842,7 @@ class MIMEType {
     this.#type = data.type;
     this.#subtype = data.subtype;
     this.#parameters = new MIMEParams();
-    parseParametersString(
-      string,
-      data.parametersStringIndex,
-      this.#parameters,
-    );
+    parseParametersString(string, data.parametersStringIndex, this.#parameters);
   }
 
   get type() {
@@ -862,7 +854,7 @@ class MIMEType {
     const invalidTypeIndex = SafeStringPrototypeSearch(v, NOT_HTTP_TOKEN_CODE_POINT);
     if (v.length === 0 || invalidTypeIndex !== -1) {
       const msg = invalidTypeIndex !== -1 ? ` at ${invalidTypeIndex}` : "";
-      throw new Error(`The MIME syntax for a type in "${v}" is invalid ${msg}`)
+      throw new Error(`The MIME syntax for a type in "${v}" is invalid ${msg}`);
     }
     this.#type = toASCIILower(v);
   }
@@ -876,7 +868,7 @@ class MIMEType {
     const invalidSubtypeIndex = SafeStringPrototypeSearch(v, NOT_HTTP_TOKEN_CODE_POINT);
     if (v.length === 0 || invalidSubtypeIndex !== -1) {
       const msg = invalidSubtypeIndex !== -1 ? ` at ${invalidSubtypeIndex}` : "";
-      throw new Error(`The MIME syntax for a subtype in "${v}" is invalid ${msg}`)
+      throw new Error(`The MIME syntax for a subtype in "${v}" is invalid ${msg}`);
     }
     this.#subtype = toASCIILower(v);
   }
@@ -896,7 +888,7 @@ class MIMEType {
     return ret;
   }
 }
-ObjectDefineProperty(MIMEType.prototype, 'toJSON', {
+ObjectDefineProperty(MIMEType.prototype, "toJSON", {
   __proto__: null,
   configurable: true,
   value: MIMEType.prototype.toString,

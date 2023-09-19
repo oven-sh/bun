@@ -58,12 +58,6 @@ private:
         for (auto &p : loopData->postHandlers) {
             p.second((Loop *) loop);
         }
-
-        /* After every event loop iteration, we must not hold the cork buffer */
-        if (loopData->corkedSocket) {
-            std::cerr << "Error: Cork buffer must not be held across event loop iterations!" << std::endl;
-            std::terminate();
-        }
     }
 
     Loop() = delete;

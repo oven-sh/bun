@@ -1,4 +1,4 @@
-Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
+Bun ships with a fast, built-in, Jest-compatible test runner. Tests are executed with the Bun runtime, and support the following features.
 
 - TypeScript and JSX
 - Lifecycle hooks
@@ -6,6 +6,10 @@ Bun ships with a fast built-in test runner. Tests are executed with the Bun runt
 - UI & DOM testing
 - Watch mode with `--watch`
 - Script pre-loading with `--preload`
+
+{% callout %}
+Bun aims for compatibility with Jest, but not everything is implemented. To track compatibility, see [this tracking issue](https://github.com/oven-sh/bun/issues/1825).
+{% /callout %}
 
 ## Run tests
 
@@ -103,7 +107,11 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-Create mocks with the `mock` function. Mocks are automatically reset between tests.
+{% callout %}
+Module mocking (`jest.mock()`) is not yet supported. Track support for it [here](https://github.com/oven-sh/bun/issues/5394).
+{% /callout %}
+
+Create mock functions with the `mock` function. Mocks are automatically reset between tests.
 
 ```ts
 import { test, expect, mock } from "bun:test";
@@ -117,11 +125,38 @@ test("random", async () => {
 });
 ```
 
+Alternatively, you can use `jest.fn()`, it behaves identically.
+
+```ts-diff
+- import { test, expect, mock } from "bun:test";
++ import { test, expect, jest } from "bun:test";
+
+- const random = mock(() => Math.random());
++ const random = jest.fn(() => Math.random());
+```
+
 See [Test > Mocks](/docs/test/mocks) for complete documentation.
 
 ## Snapshot testing
 
-Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
+Snapshots are supported by `bun test`.
+
+```ts
+// example usage of toMatchSnapshot
+import { test, expect } from "bun:test";
+
+test("snapshot", async () => {
+  expect({ a: 1 }).toMatchSnapshot();
+});
+```
+
+To update snapshots, use the `--update-snapshots` flag.
+
+```sh
+$ bun test --update-snapshots
+```
+
+See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
 
 ## UI & DOM testing
 

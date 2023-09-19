@@ -2723,7 +2723,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRender(this: *RequestContext) void {
-            ctxLog("render", .{});
+            ctxLog("doRender", .{});
 
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -3039,7 +3039,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (last) {
                     var bytes = this.request_body_buf;
-                    defer this.request_body_buf = .{};
+
                     var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
@@ -3070,6 +3070,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         };
                         // }
                     }
+                    this.request_body_buf = .{};
 
                     if (old == .Locked) {
                         var vm = this.server.vm;
@@ -5254,6 +5255,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
+
+            if (!ssl_enabled_)
+                this.vm.removeListeningSocketForWatchMode(@intCast(listener.socket().fd()));
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
@@ -5388,24 +5393,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                     .unix => |unix| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(
-                                &output_buf,
-                                "Failed to listen on unix socket {}",
-                                .{
-                                    strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
-                                },
-                            ) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                 }
             }
@@ -5428,6 +5427,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.listener = socket;
             this.vm.event_loop_handle = uws.Loop.get();
+            if (!ssl_enabled_)
+                this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
         }
 
         pub fn ref(this: *ThisServer) void {

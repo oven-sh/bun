@@ -2,10 +2,10 @@
 name: Build an app with Astro and Bun
 ---
 
-Initialize a fresh Astro app with `bunx create-astro`. The `create-astro` package detects when you are using `bunx` and will automatically install dependencies using `bun`.
+Initialize a fresh Astro app with `bun create astro`. The `create-astro` package detects when you are using `bunx` and will automatically install dependencies using `bun`.
 
 ```sh
-$ bunx create-astro
+$ bun create astro
 ╭─────╮  Houston:
 │ ◠ ◡ ◠  We're glad to have you on board.
 ╰─────╯

@@ -35,7 +35,12 @@ pub const Loader = struct {
 
     did_load_process: bool = false,
 
-    const empty_string_value: string = "\"\"";
+    pub fn has(this: *const Loader, input: []const u8) bool {
+        const value = this.map.get(input) orelse return false;
+        if (value.len == 0) return false;
+
+        return !strings.eqlComptime(value, "\"\"") and !strings.eqlComptime(value, "''") and !strings.eqlComptime(value, "0") and !strings.eqlComptime(value, "false");
+    }
 
     pub fn isProduction(this: *const Loader) bool {
         const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
@@ -102,18 +107,24 @@ pub const Loader = struct {
 
         if (url.isHTTP()) {
             if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
-                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
+                    http_proxy = URL.parse(proxy);
+                }
             }
         } else {
             if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
-                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+                if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
+                    http_proxy = URL.parse(proxy);
+                }
             }
         }
 
         // NO_PROXY filter
         if (http_proxy != null) {
             if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
-                if (no_proxy_text.len == 0) return http_proxy;
+                if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
+                    return http_proxy;
+                }
 
                 var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();
@@ -161,7 +172,12 @@ pub const Loader = struct {
     }
 
     pub fn getAuto(this: *const Loader, key: string) string {
-        return this.get(key) orelse key;
+        // If it's "" or "$", it's not a variable
+        if (key.len < 2 or key[0] != '$') {
+            return key;
+        }
+
+        return this.get(key[1..]) orelse key;
     }
 
     /// Load values from the environment into Define.
@@ -291,7 +307,7 @@ pub const Loader = struct {
                     }
                 } else {
                     while (iter.next()) |entry| {
-                        const value: string = if (entry.value_ptr.value.len == 0) empty_string_value else entry.value_ptr.value;
+                        const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
@@ -345,15 +361,11 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
-                    if (value.len > 0) {
-                        this.map.put(key, value) catch unreachable;
-                    } else {
-                        this.map.put(key, empty_string_value) catch unreachable;
-                    }
+                    this.map.put(key, value) catch unreachable;
                 }
             } else {
                 if (env.len > 0) {
-                    this.map.put(env, empty_string_value) catch unreachable;
+                    this.map.put(env, "") catch unreachable;
                 }
             }
         }

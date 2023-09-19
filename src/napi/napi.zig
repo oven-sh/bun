@@ -309,14 +309,14 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
+pub export fn napi_get_value_double(globalObject: napi_env, value: napi_value, result: *f64) napi_status {
     log("napi_get_value_double", .{});
-    result.* = value.asNumber();
+    result.* = value.coerce(f64, globalObject);
     return .ok;
 }
-pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
+pub export fn napi_get_value_int32(globalObject: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
-    result.* = value.to(i32);
+    result.* = value.coerce(i32, globalObject);
     return .ok;
 }
 pub export fn napi_get_value_uint32(_: napi_env, value: napi_value, result: *u32) napi_status {
@@ -1097,6 +1097,8 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
 extern fn node_api_create_syntax_error(napi_env, napi_value, napi_value, *napi_value) napi_status;
 extern fn node_api_symbol_for(napi_env, [*]const c_char, usize, *napi_value) napi_status;
 extern fn node_api_throw_syntax_error(napi_env, [*]const c_char, [*]const c_char) napi_status;
+extern fn node_api_create_external_string_latin1(napi_env, [*:0]u8, usize, napi_finalize, ?*anyopaque, *JSValue, *bool) napi_status;
+extern fn node_api_create_external_string_utf16(napi_env, [*:0]u16, usize, napi_finalize, ?*anyopaque, *JSValue, *bool) napi_status;
 
 pub export fn napi_create_async_work(
     env: napi_env,
@@ -1617,5 +1619,7 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&node_api_create_syntax_error);
     std.mem.doNotOptimizeAway(&node_api_symbol_for);
     std.mem.doNotOptimizeAway(&node_api_throw_syntax_error);
+    std.mem.doNotOptimizeAway(&node_api_create_external_string_latin1);
+    std.mem.doNotOptimizeAway(&node_api_create_external_string_utf16);
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

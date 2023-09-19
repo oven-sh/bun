@@ -8,6 +8,7 @@ import {
   Server,
   validateHeaderName,
   validateHeaderValue,
+  ServerResponse,
 } from "node:http";
 import { createTest } from "node-harness";
 import url from "node:url";
@@ -110,6 +111,23 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+  });
+
+  describe("response", () => {
+    test("set-cookie works with getHeader", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      expect(res.getHeader("Set-Cookie")).toEqual(["swag=true", "yolo=true"]);
+    });
+    test("set-cookie works with getHeaders", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      res.setHeader("test", "test");
+      expect(res.getHeaders()).toEqual({
+        "Set-Cookie": ["swag=true", "yolo=true"],
+        "test": "test",
+      });
     });
   });
 
@@ -240,6 +258,27 @@ describe("node:http", () => {
     //     req.end();
     //   });
     // });
+
+    it("should not insert extraneous accept-encoding header", async done => {
+      try {
+        let headers;
+        var server = createServer((req, res) => {
+          headers = req.headers;
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.end();
+          });
+        });
+        const url = await listen(server);
+        await fetch(url, { decompress: false });
+        expect(headers["accept-encoding"]).toBeFalsy();
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        server.close();
+      }
+    });
 
     it("should make a standard GET request when passed string as first arg", done => {
       runTest(done, (server, port, done) => {
@@ -885,6 +924,22 @@ describe("node:http", () => {
       } finally {
         server.close();
       }
+    });
+  });
+
+  test("error event not fired, issue#4651", done => {
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: 42069 }, () => {
+      const server2 = createServer((_, res) => {
+        res.end();
+      });
+      server2.on("error", err => {
+        expect(err.code).toBe("EADDRINUSE");
+        done();
+      });
+      server2.listen({ port: 42069 }, () => {});
     });
   });
 });

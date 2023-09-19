@@ -75,6 +75,7 @@ pub const Cli = struct {
                         \\  <cyan>--target<r>             The intended execution environment for the bundle.
                         \\                       ("browser", "bun" or "node")
                         \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
+                        \\  <cyan>--watch<r>              Run bundler in watch mode
                         \\
                         \\<b>Examples:<r>
                         \\  <d>Frontend web apps:<r>
@@ -168,7 +169,7 @@ pub const Arguments = struct {
         clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>?              Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
@@ -184,7 +185,7 @@ pub const Arguments = struct {
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("-p, --port <STR>                  Port to serve Bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
@@ -201,13 +202,13 @@ pub const Arguments = struct {
     // note: we are keeping --port and --origin as it can be reused for bun
     // build and elsewhere
     pub const not_bun_dev_flags = [_]ParamType{
-        clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("--watch                           Automatically restart bun's JavaScript runtime on file change") catch unreachable,
-        clap.parseParam("--no-install                      Disable auto install in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("-i                                Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
+        clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
+        clap.parseParam("-i                                Automatically install dependencies and use global cache in Bun's runtime, equivalent to --install=fallback") catch unreachable,
         clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
-        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
-        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
+        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
     };
 
@@ -896,7 +897,7 @@ pub const HelpCommand = struct {
             \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
             \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
             \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
-            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies & save to package.json
+            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
             \\  <b><blue>link<r>                           Link an npm package globally
             \\  <b><blue>unlink<r>                         Globally unlink an npm package
             \\  <b>pm<r>                             More commands for managing packages
@@ -1509,6 +1510,28 @@ pub const Command = struct {
                 var positionals_ = positionals[0..positional_i];
 
                 const template_name = positionals[0];
+
+                // if template_name is "react"
+                // print message telling user to use "bun create vite" instead
+                if (strings.eqlComptime(template_name, "react")) {
+                    Output.prettyErrorln(
+                        \\The "react" template has been deprecated.
+                        \\It is recommended to use "react-app" or "vite" instead.
+                        \\
+                        \\To create a project using Create React App, run
+                        \\
+                        \\  bun create react-app
+                        \\
+                        \\To create a React project using Vite, run
+                        \\
+                        \\  bun create vite
+                        \\
+                        \\Then select "React" from the list of frameworks.
+                        \\
+                    , .{});
+                    Global.exit(1);
+                    return;
+                }
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or

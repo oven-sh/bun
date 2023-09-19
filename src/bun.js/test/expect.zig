@@ -3437,8 +3437,11 @@ pub const Expect = struct {
         return ExpectStringMatching.call(globalObject, callFrame);
     }
 
+    pub fn arrayContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectArrayContaining.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
-    pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
     pub const objectContaining = notImplementedStaticFn;
@@ -3618,6 +3621,43 @@ pub const ExpectAny = struct {
         vm.autoGarbageCollect();
 
         return any_js_value;
+    }
+};
+
+pub const ExpectArrayContaining = struct {
+    pub usingnamespace JSC.Codegen.JSExpectArrayContaining;
+
+    pub fn finalize(
+        this: *ExpectArrayContaining,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callFrame.arguments(1).slice();
+
+        if (args.len == 0 or !args[0].jsType().isArray()) {
+            const fmt = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        const array_value = args[0];
+        const array_containing = globalObject.bunVM().allocator.create(ExpectArrayContaining) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.arrayContaining() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        const array_containing_js_value = array_containing.toJS(globalObject);
+        ExpectArrayContaining.arrayValueSetCached(array_containing_js_value, globalObject, array_value);
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+        return array_containing_js_value;
     }
 };
 

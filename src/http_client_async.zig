@@ -2122,7 +2122,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!override_accept_encoding) {
+    if (!override_accept_encoding and !this.disable_decompression) {
         request_headers_buf[header_count] = accept_encoding_header;
         header_count += 1;
     }
@@ -2637,6 +2637,14 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.state.pending_response = response;
 
             var body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
+            // handle the case where we have a 100 Continue
+            if (response.status_code == 100) {
+                // we still can have the 200 OK in the same buffer sometimes
+                if (body_buf.len > 0) {
+                    this.onData(is_ssl, body_buf, ctx, socket);
+                }
+                return;
+            }
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
@@ -3399,6 +3407,7 @@ pub fn handleResponseMetadata(
         this.proxy_tunneling = false;
     }
 
+    // if is no redirect or if is redirect == "manual" just proceed
     const is_redirect = response.status_code >= 300 and response.status_code <= 399;
     if (is_redirect) {
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
@@ -3513,7 +3522,6 @@ pub fn handleResponseMetadata(
         }
     }
 
-    // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
     const content_length = this.state.content_length orelse 0;
     // if no body is expected we should stop processing

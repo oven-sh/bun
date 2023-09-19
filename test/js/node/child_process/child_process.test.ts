@@ -2,6 +2,8 @@ import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { bunExe, bunEnv } from "harness";
+import path from "path";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -307,4 +309,24 @@ describe("Bun.spawn()", () => {
   //   const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
   //   expect(child.pid).toBe(undefined);
   // });
+});
+
+it("should call close and exit before process exits", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), path.join("fixtures", "child-process-exit-event.js")],
+    cwd: import.meta.dir,
+    env: bunEnv,
+    stdout: "pipe",
+  });
+  await proc.exited;
+  expect(proc.exitCode).toBe(0);
+  let data = "";
+  const reader = proc.stdout.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    data += new TextDecoder().decode(value);
+  }
+  expect(data).toContain("closeHandler called");
+  expect(data).toContain("exithHandler called");
 });

@@ -49,6 +49,18 @@ export default [
     proto: {},
   }),
   define({
+    name: "ExpectArrayContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["arrayValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,

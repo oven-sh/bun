@@ -183,7 +183,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/configuration)
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig)
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -204,7 +204,7 @@ Bun.ArrayBufferSink;
 
 ## `Bun.deepEquals()`
 
-Nestedly checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
 
 ```ts
 const foo = { a: 1, b: 2, c: { d: 3 } };

@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
+import { platform } from "os";
 
 import {
   CFunction,
@@ -643,10 +644,15 @@ it(".ptr is not leaked", () => {
   }
 });
 
-const test = existsSync("/lib/x86_64-linux-gnu/libc.so.6") ? it : it.skip;
-
+const lib_path =
+  platform() === "darwin"
+    ? "/usr/lib/libSystem.B.dylib"
+    : existsSync("/lib/x86_64-linux-gnu/libc.so.6")
+    ? "/lib/x86_64-linux-gnu/libc.so.6"
+    : null;
+const test = lib_path ? it : it.skip;
 test("can open more than 63 symbols", () => {
-  const lib = dlopen("/lib/x86_64-linux-gnu/libc.so.6", {
+  const lib = dlopen(lib_path, {
     memchr: {
       returns: "ptr",
       args: ["ptr", "int", "usize"],
@@ -715,31 +721,11 @@ test("can open more than 63 symbols", () => {
       returns: "ptr",
       args: ["int", "ptr", "usize"],
     },
-    strerrordesc_np: {
-      returns: "ptr",
-      args: ["int"],
-    },
-    strerrorname_np: {
-      returns: "ptr",
-      args: ["int"],
-    },
-    explicit_bzero: {
-      returns: "void",
-      args: ["ptr", "usize"],
-    },
     strsep: {
       returns: "ptr",
       args: ["ptr", "ptr"],
     },
     strsignal: {
-      returns: "ptr",
-      args: ["int"],
-    },
-    sigabbrev_np: {
-      returns: "ptr",
-      args: ["int"],
-    },
-    sigdescr_np: {
       returns: "ptr",
       args: ["int"],
     },
@@ -751,18 +737,6 @@ test("can open more than 63 symbols", () => {
       returns: "ptr",
       args: ["ptr", "ptr", "usize"],
     },
-    strverscmp: {
-      returns: "int",
-      args: ["ptr", "ptr"],
-    },
-    strfry: {
-      returns: "ptr",
-      args: ["ptr"],
-    },
-    memfrob: {
-      returns: "ptr",
-      args: ["ptr", "usize"],
-    },
     basename: {
       returns: "ptr",
       args: ["ptr"],
@@ -770,6 +744,50 @@ test("can open more than 63 symbols", () => {
     bcmp: {
       returns: "int",
       args: ["ptr", "ptr", "usize"],
+    },
+    getdate: {
+      returns: "ptr",
+      args: ["ptr"],
+    },
+    gmtime: {
+      returns: "ptr",
+      args: ["ptr"],
+    },
+    localtime: {
+      returns: "ptr",
+      args: ["ptr"],
+    },
+    ctime: {
+      returns: "ptr",
+      args: ["ptr"],
+    },
+    asctime: {
+      returns: "ptr",
+      args: ["ptr"],
+    },
+    strftime: {
+      returns: "usize",
+      args: ["ptr", "usize", "ptr", "ptr"],
+    },
+    strptime: {
+      returns: "ptr",
+      args: ["ptr", "ptr", "ptr"],
+    },
+    asctime_r: {
+      returns: "ptr",
+      args: ["ptr", "ptr"],
+    },
+    ctime_r: {
+      returns: "ptr",
+      args: ["ptr", "ptr"],
+    },
+    gmtime_r: {
+      returns: "ptr",
+      args: ["ptr", "ptr"],
+    },
+    localtime_r: {
+      returns: "ptr",
+      args: ["ptr", "ptr"],
     },
     bcopy: {
       returns: "int",
@@ -879,18 +897,6 @@ test("can open more than 63 symbols", () => {
       returns: "int",
       args: ["ptr", "ptr", "usize"],
     },
-    pthread_attr_setaffinity_np: {
-      returns: "int",
-      args: ["ptr", "usize", "ptr"],
-    },
-    pthread_attr_getaffinity_np: {
-      returns: "int",
-      args: ["ptr", "usize", "ptr"],
-    },
-    pthread_getattr_np: {
-      returns: "int",
-      args: ["usize", "ptr"],
-    },
     pthread_attr_getguardsize: {
       returns: "int",
       args: ["ptr", "ptr"],
@@ -898,18 +904,6 @@ test("can open more than 63 symbols", () => {
     pthread_attr_setguardsize: {
       returns: "int",
       args: ["ptr", "usize"],
-    },
-    pthread_getattr_default_np: {
-      returns: "int",
-      args: ["ptr"],
-    },
-    pthread_setattr_default_np: {
-      returns: "int",
-      args: ["ptr"],
-    },
-    pthread_getattr_np: {
-      returns: "int",
-      args: ["usize", "ptr"],
     },
     login_tty: {
       returns: "int",
@@ -929,7 +923,7 @@ test("can open more than 63 symbols", () => {
     },
   });
 
-  expect(Object.keys(lib.symbols).length).toBe(67);
+  expect(Object.keys(lib.symbols).length).toBe(65);
   expect(lib.symbols.strcasecmp(Buffer.from("ciro"), Buffer.from("CIRO"))).toBe(0);
   expect(lib.symbols.strlen(Buffer.from("bunbun", "ascii"))).toBe(6n);
 });

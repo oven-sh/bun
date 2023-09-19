@@ -172,7 +172,12 @@ pub const Loader = struct {
     }
 
     pub fn getAuto(this: *const Loader, key: string) string {
-        return this.get(key) orelse key;
+        // If it's "" or "$", it's not a variable
+        if (key.len < 2 or key[0] != '$') {
+            return key;
+        }
+
+        return this.get(key[1..]) orelse key;
     }
 
     /// Load values from the environment into Define.

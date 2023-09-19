@@ -53,9 +53,8 @@ For now, you can use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install
 ```powershell
 $BunInstallFolder = "$env:ProgramData/bun" # An installation folder. You can change it
 mkdir $BunInstallFolder
-cd $BunInstallFolder
-Write-Output "@ECHO OFF`nwsl bash -ic `"bun %*`"" | out-file "bun.bat" -Encoding ASCII
-$env:Path += ";$pwd"
+Write-Output "@ECHO OFF`nwsl bash -ic `"bun %*`"" | out-file "$BunInstallFolder/bun.bat" -Encoding ASCII
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$BunInstallFolder", "Machine")
 wsl bash -ic "curl -fsSL https://bun.sh/install | bash"
 ```
 

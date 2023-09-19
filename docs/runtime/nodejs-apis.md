@@ -78,7 +78,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
+🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList` `net.Server.ref()` `net.Server.unref()` `net.Socket.ref()` `net.Socket.unref()`.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

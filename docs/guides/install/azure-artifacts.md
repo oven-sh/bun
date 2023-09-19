@@ -35,7 +35,7 @@ NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-artifacts-user/_packagin
 Make sure to:
 
 - Replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`
-- Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry. If it ends with `==`, it probably is base64 encoded.
+- Replace `my-azure-artifacts-password` with the non-base64 encoded password for your Azure Artifacts npm registry
 
 ### Don't base64 encode the password
 

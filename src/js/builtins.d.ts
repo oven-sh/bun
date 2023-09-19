@@ -26,6 +26,7 @@ declare var $visibility: "Public" | "Private";
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
 declare var $intrinsic: string;
+/** Assign to this directly above a function declaration (like a decorator) to make it a constructor. */
 declare var $constructor;
 /** Place this directly above a function declaration (like a decorator) to NOT include "use strict" */
 declare var $sloppy;
@@ -315,8 +316,6 @@ declare function $isPaused(): TODO;
 declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazy(): TODO;
-declare function $lazyLoad(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;

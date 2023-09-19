@@ -55,51 +55,68 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
-        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+            const url = URL.parse(str.data);
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
-            switch (expr.data) {
-                .e_string => |str| {
-                    const url = URL.parse(str.data);
-                    // Token
-                    if (url.username.len == 0 and url.password.len > 0) {
-                        registry.token = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
-                    } else if (url.username.len > 0 and url.password.len > 0) {
-                        registry.username = url.username;
-                        registry.password = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
-                    } else {
-                        registry.url = url.href;
-                    }
-                },
-                .e_object => |obj| {
-                    if (obj.get("url")) |url| {
-                        try this.expect(url, .e_string);
-                        registry.url = url.data.e_string.data;
-                    }
+            // Token
+            if (url.username.len == 0 and url.password.len > 0) {
+                registry.token = url.password;
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+            } else if (url.username.len > 0 and url.password.len > 0) {
+                registry.username = url.username;
+                registry.password = url.password;
 
-                    if (obj.get("username")) |username| {
-                        try this.expect(username, .e_string);
-                        registry.username = username.data.e_string.data;
-                    }
-
-                    if (obj.get("password")) |password| {
-                        try this.expect(password, .e_string);
-                        registry.password = password.data.e_string.data;
-                    }
-
-                    if (obj.get("token")) |token| {
-                        try this.expect(token, .e_string);
-                        registry.token = token.data.e_string.data;
-                    }
-                },
-                else => {
-                    try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                },
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = url.href;
             }
 
             return registry;
+        }
+
+        fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
+            var registry = std.mem.zeroes(Api.NpmRegistry);
+
+            if (obj.get("url")) |url| {
+                try this.expect(url, .e_string);
+                const href = url.data.e_string.data;
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = href;
+            }
+
+            if (obj.get("username")) |username| {
+                try this.expect(username, .e_string);
+                registry.username = username.data.e_string.data;
+            }
+
+            if (obj.get("password")) |password| {
+                try this.expect(password, .e_string);
+                registry.password = password.data.e_string.data;
+            }
+
+            if (obj.get("token")) |token| {
+                try this.expect(token, .e_string);
+                registry.token = token.data.e_string.data;
+            }
+
+            return registry;
+        }
+
+        fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            switch (expr.data) {
+                .e_string => |str| {
+                    return this.parseRegistryURLString(str);
+                },
+                .e_object => |obj| {
+                    return this.parseRegistryObject(obj);
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected registry to be a URL string or an object");
+                    return std.mem.zeroes(Api.NpmRegistry);
+                },
+            }
         }
 
         fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {

@@ -145,3 +145,5 @@ _napi_wrap
 _node_api_create_syntax_error
 _node_api_symbol_for
 _node_api_throw_syntax_error
+_node_api_create_external_string_latin1
+_node_api_create_external_string_utf16

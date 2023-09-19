@@ -996,7 +996,12 @@ pub const Listener = struct {
                 handlers.vm.allocator.destroy(handlers_ptr);
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tls);
-                exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
+                const err = JSC.SystemError{
+                    .message = bun.String.static("Failed to connect"),
+                    .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+                };
+                exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
             tls.poll_ref.ref(handlers.vm);
@@ -1022,7 +1027,12 @@ pub const Listener = struct {
                 handlers.vm.allocator.destroy(handlers_ptr);
                 handlers.promise.deinit();
                 bun.default_allocator.destroy(tcp);
-                exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
+                const err = JSC.SystemError{
+                    .message = bun.String.static("Failed to connect"),
+                    .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+                };
+                exception.* = err.toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
             tcp.poll_ref.ref(handlers.vm);
@@ -1205,6 +1215,12 @@ fn NewSocket(comptime ssl: bool) type {
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
+
+                // For some reason errno is 0 which causes this to be success.
+                // Unix socket case wont hit this callback because it instantly errors.
+                .code = bun.String.static("ECONNREFUSED"),
+                // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
+                // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
 
             if (callback == .zero) {

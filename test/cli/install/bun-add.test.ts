@@ -20,7 +20,11 @@ import {
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 
+let port: string;
 let add_dir: string;
+beforeAll(() => {
+  port = new URL(root_url).port;
+});
 
 beforeEach(async () => {
   add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
@@ -102,9 +106,9 @@ it("should reject missing package", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.includes("bun add")).toBeTrue();
-  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
-  expect(err.includes(`note: error occured while resolving file:${add_path}`)).toBeTrue();
+  expect(err).toContain("bun add");
+  expect(err).toContain("error: MissingPackageJSON");
+  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -144,9 +148,9 @@ it("should reject invalid path without segfault", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.includes("bun add")).toBeTrue();
-  expect(err.includes("error: MissingPackageJSON")).toBeTrue();
-  expect(err.includes(`note: error occured while resolving file://${add_path}`)).toBeTrue();
+  expect(err).toContain("bun add");
+  expect(err).toContain("error: MissingPackageJSON");
+  expect(err).toContain(`note: error occured while resolving file://${add_path}`);
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -189,7 +193,7 @@ it("should handle semver-like names", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "1.2.3" not found localhost/1.2.3 404');
+  expect(err.split(/\r?\n/)).toContain(`error: package "1.2.3" not found localhost:${port}/1.2.3 404`);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
@@ -232,11 +236,11 @@ it("should handle @scoped names", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "@bar/baz" not found localhost/@bar/baz 404');
+  expect(err.split(/\r?\n/)).toContain(`error: package "@bar/baz" not found localhost:${port}/@bar%2fbaz 404`);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls.sort()).toEqual([`${root_url}/@bar/baz`]);
+  expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
@@ -1512,7 +1516,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect((await file(join(package_dir, "package.json")).text()).includes("bun-add.test"));
+  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun-add.test");
 }
 
 it("should add dependency alongside peerDependencies", async () => {

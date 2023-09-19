@@ -236,6 +236,8 @@ pub const UpgradeCommand = struct {
             null,
             HTTP.FetchRedirect.follow,
         );
+        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -481,6 +483,8 @@ pub const UpgradeCommand = struct {
             );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
+            async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+
             const response = try async_http.sendSync(true);
 
             switch (response.status_code) {

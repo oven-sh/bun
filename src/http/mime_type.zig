@@ -133,7 +133,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                     }
                 }
 
-                if (strings.eqlComptimeIgnoreLen(str, "octet-stream")) {
+                if (strings.eqlComptime(str, "octet-stream")) {
                     return other;
                 }
 

@@ -288,6 +288,7 @@ pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
         return .zero;
@@ -400,6 +401,50 @@ pub const ExitHandler = struct {
 
 pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
+pub const ImportWatcher = union(enum) {
+    none: void,
+    hot: *HotReloader.Watcher,
+    watch: *WatchReloader.Watcher,
+
+    pub fn start(this: ImportWatcher) !void {
+        switch (this) {
+            inline .hot => |watcher| try watcher.start(),
+            inline .watch => |watcher| try watcher.start(),
+            else => {},
+        }
+    }
+
+    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.watchlist,
+            else => .{},
+        };
+    }
+
+    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+        return switch (this) {
+            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            else => null,
+        };
+    }
+
+    pub inline fn addFile(
+        this: ImportWatcher,
+        fd: StoredFileDescriptorType,
+        file_path: string,
+        hash: Watcher.HashType,
+        loader: options.Loader,
+        dir_fd: StoredFileDescriptorType,
+        package_json: ?*PackageJSON,
+        comptime copy_file_path: bool,
+    ) !void {
+        switch (this) {
+            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
+            else => {},
+        }
+    }
+};
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -409,8 +454,7 @@ pub const VirtualMachine = struct {
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
     bundler: Bundler,
-    bun_dev_watcher: ?*http.Watcher = null,
-    bun_watcher: ?*JSC.Watcher = null,
+    bun_watcher: ImportWatcher = .{ .none = {} },
     console: *ZigConsoleClient,
     log: *logger.Log,
     main: string = "",
@@ -669,7 +713,7 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value, 10) catch null) |fd| {
+            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(fd);
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -1005,7 +1049,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
-        return this.bun_dev_watcher != null or this.bun_watcher != null;
+        return this.bun_watcher != .none;
     }
 
     /// Instead of storing timestamp as a i128, we store it as a u64.
@@ -1515,9 +1559,9 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Aliases.get(specifier, .bun)) |result| {
             ret.result = null;
-            ret.path = @as(string, @tagName(result));
+            ret.path = result.path;
             return;
         }
 
@@ -1672,7 +1716,7 @@ pub const VirtualMachine = struct {
                     printed,
                 ),
             };
-            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.utf8()).asVoid());
+            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             return;
         }
 
@@ -1986,7 +2030,7 @@ pub const VirtualMachine = struct {
 
         try this.entry_point.generate(
             this.allocator,
-            this.bun_watcher != null,
+            this.bun_watcher != .none,
             Fs.PathName.init(entry_path),
             main_file_name,
         );
@@ -2043,7 +2087,7 @@ pub const VirtualMachine = struct {
                     defer JSValue.fromCell(promise).unprotect();
 
                     // pending_internal_promise can change if hot module reloading is enabled
-                    if (this.bun_watcher != null) {
+                    if (this.isWatcherEnabled()) {
                         this.eventLoop().performGC();
                         switch (this.pending_internal_promise.status(this.global.vm())) {
                             JSC.JSPromise.Status.Pending => {
@@ -2098,7 +2142,7 @@ pub const VirtualMachine = struct {
         var promise = try this.reloadEntryPoint(entry_path);
 
         // pending_internal_promise can change if hot module reloading is enabled
-        if (this.bun_watcher != null) {
+        if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
@@ -2122,6 +2166,21 @@ pub const VirtualMachine = struct {
         this.eventLoop().autoTick();
 
         return this.pending_internal_promise;
+    }
+
+    pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().addListeningSocketForWatchMode(socket);
+    }
+    pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
+        if (this.hot_reload != .watch) {
+            return;
+        }
+
+        this.rareData().removeListeningSocketForWatchMode(socket);
     }
 
     pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
@@ -2749,6 +2808,7 @@ pub const VirtualMachine = struct {
             this: *IPCInstance,
             message: IPC.DecodedIPCMessage,
         ) void {
+            JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -2765,6 +2825,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+            JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
@@ -2806,6 +2867,7 @@ pub const VirtualMachine = struct {
 };
 
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
+pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
 pub const Watcher = HotReloader.Watcher;
 extern fn BunDebugger__willHotReload() void;
 
@@ -2832,6 +2894,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             this.eventLoop().enqueueTaskConcurrent(task);
         }
 
+        pub var clear_screen = false;
+
         pub const HotReloadTask = struct {
             reloader: *Reloader,
             count: u8 = 0,
@@ -2857,11 +2921,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
+                JSC.markBinding(@src());
                 if (this.count == 0)
                     return;
 
                 if (comptime reload_immediately) {
-                    bun.reloadProcess(bun.default_allocator, Output.enable_ansi_colors);
+                    Output.flush();
+                    if (comptime Ctx == ImportWatcher) {
+                        this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
+                    }
+                    bun.reloadProcess(bun.default_allocator, clear_screen);
                     unreachable;
                 }
 
@@ -2895,23 +2964,51 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         ) void);
 
         pub fn enableHotModuleReloading(this: *Ctx) void {
-            if (this.bun_watcher != null)
-                return;
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                if (this.bun_watcher != .none)
+                    return;
+            } else {
+                if (this.bun_watcher != null)
+                    return;
+            }
 
             var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
             };
-            this.bun_watcher = @This().Watcher.init(
-                reloader,
-                this.bundler.fs,
-                bun.default_allocator,
-            ) catch @panic("Failed to enable File Watcher");
 
-            this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                this.bun_watcher = if (reload_immediately)
+                    .{ .watch = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") }
+                else
+                    .{ .hot = @This().Watcher.init(
+                        reloader,
+                        this.bundler.fs,
+                        bun.default_allocator,
+                    ) catch @panic("Failed to enable File Watcher") };
 
-            this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
+                if (reload_immediately) {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                } else {
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                }
+            } else {
+                this.bun_watcher = @This().Watcher.init(
+                    reloader,
+                    this.bundler.fs,
+                    bun.default_allocator,
+                ) catch @panic("Failed to enable File Watcher");
+                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+            }
+
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+
+            reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
 
         pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
@@ -2938,6 +3035,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
         }
 
+        pub fn getContext(this: *@This()) *@This().Watcher {
+            if (comptime @TypeOf(this.ctx.bun_watcher) == ImportWatcher) {
+                if (reload_immediately) {
+                    return this.ctx.bun_watcher.watch;
+                } else {
+                    return this.ctx.bun_watcher.hot;
+                }
+            } else {
+                return this.ctx.bun_watcher.?;
+            }
+        }
+
         pub fn onFileUpdate(
             this: *@This(),
             events: []watcher.WatchEvent,
@@ -2951,7 +3060,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             const hashes = slice.items(.hash);
             const parents = slice.items(.parent_hash);
             var file_descriptors = slice.items(.fd);
-            var ctx = this.ctx.bun_watcher.?;
+            var ctx = this.getContext();
             defer ctx.flushEvictions();
             defer Output.flush();
 

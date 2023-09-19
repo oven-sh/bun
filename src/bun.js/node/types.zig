@@ -315,6 +315,68 @@ pub const StringOrBunStringOrBuffer = union(enum) {
     }
 };
 
+pub const SliceWithUnderlyingStringOrBuffer = union(enum) {
+    SliceWithUnderlyingString: bun.SliceWithUnderlyingString,
+    buffer: Buffer,
+
+    pub fn toThreadSafe(this: *@This()) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.toThreadSafe(),
+            else => {},
+        }
+    }
+
+    pub fn toJS(this: *SliceWithUnderlyingStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .SliceWithUnderlyingStringOrBuffer => {
+                defer {
+                    this.SliceWithUnderlyingString.deinit();
+                    this.SliceWithUnderlyingString.underlying = bun.String.empty;
+                    this.SliceWithUnderlyingString.utf8 = .{};
+                }
+
+                return this.SliceWithUnderlyingString.underlying.toJS(ctx);
+            },
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+        };
+    }
+
+    pub fn slice(this: *const SliceWithUnderlyingStringOrBuffer) []const u8 {
+        return switch (this.*) {
+            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.slice(),
+            .buffer => this.buffer.slice(),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SliceWithUnderlyingStringOrBuffer {
+        _ = exception;
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var str = bun.String.tryFromJS(value, global) orelse return null;
+                return SliceWithUnderlyingStringOrBuffer{ .SliceWithUnderlyingString = str.toSlice(allocator) };
+            },
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => SliceWithUnderlyingStringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value),
+            },
+            else => null,
+        };
+    }
+};
+
 /// Like StringOrBuffer but actually returns a Node.js Buffer
 pub const StringOrNodeBuffer = union(Tag) {
     string: string,
@@ -399,6 +461,20 @@ pub const SliceOrBuffer = union(Tag) {
             },
             .buffer => {},
         }
+    }
+
+    pub fn toThreadSafe(this: *SliceOrBuffer) void {
+        var buffer: ?Buffer = null;
+        if (this.* == .buffer) {
+            buffer = this.buffer;
+            this.buffer.buffer.value.ensureStillAlive();
+        }
+        defer {
+            if (buffer) |buf| {
+                buf.buffer.value.unprotect();
+            }
+        }
+        this.ensureCloned(bun.default_allocator) catch unreachable;
     }
 
     pub const Tag = enum { string, buffer };
@@ -650,6 +726,10 @@ pub const PathLike = union(Tag) {
         if (this.* == .slice_with_underlying_string) {
             this.slice_with_underlying_string.toThreadSafe();
         }
+
+        if (this.* == .buffer) {
+            this.buffer.buffer.value.protect();
+        }
     }
 
     pub fn deinitAndUnprotect(this: *const PathLike) void {
@@ -801,11 +881,7 @@ pub const Valid = struct {
 
     pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         switch (zig_str.len) {
-            0 => {
-                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
-                return false;
-            },
-            1...bun.MAX_PATH_BYTES => return true,
+            0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
@@ -823,11 +899,7 @@ pub const Valid = struct {
 
     pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         switch (len) {
-            0 => {
-                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
-                return false;
-            },
-            1...bun.MAX_PATH_BYTES => return true,
+            0...bun.MAX_PATH_BYTES => return true,
             else => {
                 // TODO: should this be an EINVAL?
                 JSC.throwInvalidArguments(
@@ -2198,22 +2270,14 @@ pub const Path = struct {
         base.setOutputEncoding();
         name_.setOutputEncoding();
         ext.setOutputEncoding();
-        var entries = [10]JSC.ZigString{
-            JSC.ZigString.init("dir"),
-            JSC.ZigString.init("root"),
-            JSC.ZigString.init("base"),
-            JSC.ZigString.init("name"),
-            JSC.ZigString.init("ext"),
-            dir,
-            root,
-            base,
-            name_,
-            ext,
-        };
 
-        var keys: []JSC.ZigString = entries[0..5];
-        var values: []JSC.ZigString = entries[5..10];
-        return JSC.JSValue.fromEntries(globalThis, keys.ptr, values.ptr, 5, true);
+        var result = JSC.JSValue.createEmptyObject(globalThis, 5);
+        result.put(globalThis, JSC.ZigString.static("dir"), dir.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("root"), root.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("base"), base.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("name"), name_.toValueGC(globalThis));
+        result.put(globalThis, JSC.ZigString.static("ext"), ext.toValueGC(globalThis));
+        return result;
     }
     pub fn relative(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

@@ -68,6 +68,7 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc_buffer: bun.ByteList,
 
+    has_pending_unref: bool = false,
     pub const SignalCode = bun.SignalCode;
 
     pub const IPCMode = enum {
@@ -82,7 +83,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .SeqCst);
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
@@ -92,7 +93,7 @@ pub const Subprocess = struct {
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
         @fence(.Release);
-        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none, .Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null and this.ipc == .none and this.has_pending_unref, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -111,8 +112,10 @@ pub const Subprocess = struct {
         }
     }
 
+    /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
+
         if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
@@ -1462,25 +1465,61 @@ pub const Subprocess = struct {
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 
             // pidfd_nonblock only supported in 5.10+
-            const pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+            var pidfd_flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
                 std.os.O.NONBLOCK
             else
                 0;
 
-            const fd = std.os.linux.pidfd_open(
-                pid,
+            var rc = std.os.linux.pidfd_open(
+                @intCast(pid),
                 pidfd_flags,
             );
 
-            switch (std.os.linux.getErrno(fd)) {
-                .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
-                else => |err| {
-                    globalThis.throwValue(bun.sys.Error.fromCode(err, .open).toJSC(globalThis));
-                    var status: u32 = 0;
-                    // ensure we don't leak the child process on error
-                    _ = std.os.linux.waitpid(pid, &status, 0);
-                    return .zero;
-                },
+            while (true) {
+                switch (std.os.linux.getErrno(rc)) {
+                    .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
+                    .INTR => {
+                        rc = std.os.linux.pidfd_open(
+                            @intCast(pid),
+                            pidfd_flags,
+                        );
+                        continue;
+                    },
+                    else => |err| {
+                        if (err == .INVAL) {
+                            if (pidfd_flags != 0) {
+                                rc = std.os.linux.pidfd_open(
+                                    @intCast(pid),
+                                    0,
+                                );
+                                pidfd_flags = 0;
+                                continue;
+                            }
+                        }
+
+                        const error_instance = brk2: {
+                            if (err == .NOSYS) {
+                                break :brk2 globalThis.createErrorInstance(
+                                    \\"pidfd_open(2)" system call is not supported by your Linux kernel
+                                    \\To fix this error, either:
+                                    \\- Upgrade your Linux kernel to a newer version (current: {})
+                                    \\- Ensure the seccomp filter allows "pidfd_open"
+                                ,
+                                    .{
+                                        kernel.fmt(""),
+                                    },
+                                );
+                            }
+
+                            break :brk2 bun.sys.Error.fromCode(err, .open).toJSC(globalThis);
+                        };
+                        globalThis.throwValue(error_instance);
+                        var status: u32 = 0;
+                        // ensure we don't leak the child process on error
+                        _ = std.os.linux.waitpid(pid, &status, 0);
+                        return .zero;
+                    },
+                }
             }
         };
 
@@ -1682,14 +1721,16 @@ pub const Subprocess = struct {
                 this.waitpid_err = err;
             },
             .result => |result| {
-                if (std.os.W.IFEXITED(result.status)) {
-                    this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
-                }
+                if (result.pid != 0) {
+                    if (std.os.W.IFEXITED(result.status)) {
+                        this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
+                    }
 
-                if (std.os.W.IFSIGNALED(result.status)) {
-                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
-                } else if (std.os.W.IFSTOPPED(result.status)) {
-                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                    if (std.os.W.IFSIGNALED(result.status)) {
+                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
+                    } else if (std.os.W.IFSTOPPED(result.status)) {
+                        this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
+                    }
                 }
 
                 if (!this.hasExited()) {
@@ -1767,8 +1808,29 @@ pub const Subprocess = struct {
             }
         }
 
-        if (this.hasExited())
-            this.unref();
+        if (this.hasExited()) {
+            const Holder = struct {
+                process: *Subprocess,
+                task: JSC.AnyTask,
+
+                pub fn unref(self: *@This()) void {
+                    // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
+                    self.process.unref();
+                    self.process.has_pending_unref = false;
+                    self.process.updateHasPendingActivity();
+                    bun.default_allocator.destroy(self);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch @panic("OOM");
+            this.has_pending_unref = true;
+            holder.* = .{
+                .process = this,
+                .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+            };
+
+            this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+        }
     }
 
     const os = std.os;

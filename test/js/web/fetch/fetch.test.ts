@@ -1596,3 +1596,44 @@ it("same-origin status code 302 should not strip headers", async () => {
   expect(redirected).toBe(true);
   server.stop(true);
 });
+
+it.each([
+  ["/a/b", "/c", "/c"],
+  ["/a/b", "c", "/a/c"],
+  ["/a/b", "/c/d", "/c/d"],
+  ["/a/b", "c/d", "/a/c/d"],
+  ["/a/b", "../c", "/c"],
+  ["/a/b", "../c/d", "/c/d"],
+  ["/a/b", "../../../c", "/c"],
+  // slash
+  ["/a/b/", "/c", "/c"],
+  ["/a/b/", "c", "/a/b/c"],
+  ["/a/b/", "/c/d", "/c/d"],
+  ["/a/b/", "c/d", "/a/b/c/d"],
+  ["/a/b/", "../c", "/a/c"],
+  ["/a/b/", "../c/d", "/a/c/d"],
+  ["/a/b/", "../../../c", "/c"],
+])("should handle relative location in the redirect ('%s', '%s'), issue#5635", async (pathname, location, expected) => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request: Request) {
+      const url = new URL(request.url);
+      if (url.pathname == pathname) {
+        return new Response("redirecting", {
+          headers: {
+            "Location": location,
+          },
+          status: 302,
+        });
+      }
+      return new Response("Not Found", {
+        status: 404,
+      });
+    },
+  });
+
+  const { url, redirected } = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+  expect(redirected).toBe(true);
+  expect(new URL(url).pathname).toStrictEqual(expected);
+  server.stop(true);
+});

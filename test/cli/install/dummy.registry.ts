@@ -43,7 +43,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
     );
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
-    const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
+    const name = request.url.slice(request.url.replaceAll("%2f", "/").indexOf("/", root_url.length) + 1);
     const versions: Record<string, Pkg> = {};
     let version;
     for (version in info) {

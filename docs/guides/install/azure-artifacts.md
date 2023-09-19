@@ -8,6 +8,8 @@ To use it with `bun install`, add a `bunfig.toml` file to your project with the 
 
 ### Configure with bunfig.toml
 
+Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`.
+
 ```toml#bunfig.toml
 [install.registry]
 url = "https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry"
@@ -15,8 +17,6 @@ username = "my-azure-artifacts-user"
 # Bun v1.0.3+ supports using an environment variable here
 password = "$NPM_PASSWORD"
 ```
-
-Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`.
 
 Set the `$NPM_PASSWORD` environment variable to your Azure Artifacts npm registry password and Bun will automatically replace it with the correct value. You can also choose not to use an environment variable and instead hardcode your password in the `bunfig.toml` file, but be careful not to commit it to source control.
 
@@ -29,7 +29,7 @@ Like with the `npm` CLI, the environment variable to use is `NPM_CONFIG_REGISTRY
 
 The URL should include `:username` and `:_password` as query parameters. For example:
 
-```bash
+```bash#shell
 NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry/:username=my-azure-artifacts-user:_password=my-azure-artifacts-password
 ```
 

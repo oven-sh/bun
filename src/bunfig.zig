@@ -208,9 +208,9 @@ pub const Bunfig = struct {
                     try this.loadPreload(allocator, expr);
                 }
 
-                if (json.get("disableTelemetry")) |expr| {
+                if (json.get("telemetry")) |expr| {
                     try this.expect(expr, .e_boolean);
-                    Analytics.disabled = expr.data.e_boolean.value;
+                    Analytics.disabled = !expr.data.e_boolean.value;
                 }
             }
 

@@ -75,3 +75,10 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 - `FORCE_COLOR`
 - If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
+
+---
+
+- `DO_NOT_TRACK`
+- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
+
+{% /table %}

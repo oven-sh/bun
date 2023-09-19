@@ -488,6 +488,13 @@ pub const Bundler = struct {
             else => {},
         }
 
+        if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
+            // https://do-not-track.dev/
+            if (strings.eqlComptime(dnt, "1")) {
+                Analytics.disabled = true;
+            }
+        }
+
         Analytics.is_ci = Analytics.is_ci or this.env.isCI();
 
         if (strings.eqlComptime(this.env.map.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {

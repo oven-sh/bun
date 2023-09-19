@@ -11003,13 +11003,10 @@ pub const Chunk = struct {
                                 };
 
                                 const pre_norm_file_path = if (from_chunk_dir.len == 0) file_path else bun.path.relative(from_chunk_dir, file_path);
-                                const cheap_normalizer = cheapPrefixNormalizer(
-                                    if (import_prefix.len == 0 and !strings.hasPrefixComptime(pre_norm_file_path, "../"))
-                                        "./"
-                                    else
-                                        import_prefix,
-                                    pre_norm_file_path
-                                );
+                                const cheap_normalizer = cheapPrefixNormalizer(if (import_prefix.len == 0 and !strings.hasPrefixComptime(pre_norm_file_path, "../"))
+                                    "./"
+                                else
+                                    import_prefix, pre_norm_file_path);
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
                             .none => {},
@@ -11045,13 +11042,10 @@ pub const Chunk = struct {
                                 };
 
                                 const pre_norm_file_path = if (from_chunk_dir.len == 0) file_path else bun.path.relative(from_chunk_dir, file_path);
-                                const cheap_normalizer = cheapPrefixNormalizer(
-                                    if (import_prefix.len == 0 and !strings.hasPrefixComptime(pre_norm_file_path, "../"))
-                                        "./"
-                                    else
-                                        import_prefix,
-                                    pre_norm_file_path
-                                );
+                                const cheap_normalizer = cheapPrefixNormalizer(if (import_prefix.len == 0 and !strings.hasPrefixComptime(pre_norm_file_path, "../"))
+                                    "./"
+                                else
+                                    import_prefix, pre_norm_file_path);
 
                                 if (cheap_normalizer[0].len > 0) {
                                     @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);

@@ -256,7 +256,7 @@ const NetworkTask = struct {
             // Not all registries support scoped package names when fetching the manifest.
             // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
             // Other registries like AWS codeartifact only support the former.
-            // "npm" CLI requests the the manifest with the encoded name.
+            // "npm" CLI requests the manifest with the encoded name.
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());

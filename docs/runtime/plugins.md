@@ -61,7 +61,7 @@ Plugins are primarily used to extend Bun with loaders for additional file types.
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "YAML",
   async setup(build) {
     const { load } = await import("js-yaml");
@@ -84,15 +84,20 @@ plugin({
 });
 ```
 
-With this plugin, data can be directly imported from `.yaml` files.
+Register this file in `preload`:
+
+```toml#bunfig.toml
+preload = ["./yamlPlugin.ts"]
+```
+
+Once the plugin is registed, `.yaml` and `.yml` files can be directly imported.
 
 {% codetabs %}
 
 ```ts#index.ts
-import "./yamlPlugin.ts"
-import {name, releaseYear} from "./data.yml"
+import data from "./data.yml"
 
-console.log(name, releaseYear);
+console.log(data);
 ```
 
 ```yaml#data.yml

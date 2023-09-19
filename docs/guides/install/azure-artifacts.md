@@ -17,7 +17,7 @@ password = "$NPM_PASSWORD"
 
 Make sure to replace `my-azure-artifacts-user` with your Azure Artifacts username, such as `jarred1234`.
 
-The `$NPM_PASSWORD` should be replaced with your Azure Artifacts npm registry password.
+Set the `$NPM_PASSWORD` environment variable to your Azure Artifacts npm registry password and Bun will automatically replace it with the correct value. You can also choose not to use an environment variable and instead hardcode your password in the `bunfig.toml` file, but be careful not to commit it to source control.
 
 Note: **password must not be base64 encoded**. In [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) instructions for `.npmrc`, they say to base64 encode the password. Do not do this for `bun install`. Bun will automatically base64 encode the password for you if needed.
 

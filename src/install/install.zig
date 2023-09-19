@@ -358,6 +358,10 @@ const NetworkTask = struct {
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -437,6 +441,9 @@ const NetworkTask = struct {
             null,
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
 
         this.callback = .{ .extract = tarball };
     }

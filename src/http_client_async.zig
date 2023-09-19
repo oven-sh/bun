@@ -2289,10 +2289,6 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 };
             }
 
-            if (this.verbose) {
-                printRequest(request);
-            }
-
             const headers_len = list.items.len;
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0 and !this.proxy_tunneling) {
@@ -2326,6 +2322,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
             this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
+
+            if (has_sent_headers and this.verbose) {
+                printRequest(request);
+            }
 
             if (has_sent_headers and this.state.request_body.len > 0) {
                 this.state.request_body = this.state.request_body[this.state.request_sent_len - headers_len ..];

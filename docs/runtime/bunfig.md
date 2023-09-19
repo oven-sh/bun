@@ -269,6 +269,9 @@ Valid values are:
 
 {% table %}
 
+- Value
+- Description
+
 ---
 
 - `"auto"`
@@ -277,12 +280,12 @@ Valid values are:
 ---
 
 - `"force"`
-- Always auto-install dependencies, even if `node_modules` exists
+- Always auto-install dependencies, even if `node_modules` exists.
 
 ---
 
 - `"disable"`
-- Never auto-install dependencies
+- Never auto-install dependencies.
 
 ---
 

@@ -973,7 +973,6 @@ pub const RunCommand = struct {
                         var shebang: string = shebang_buf[0..shebang_size];
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
-                        if (shebang.len == 0) break :possibly_open_with_bun_js;
                         if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
                             const filename = std.fs.path.basename(first_arg);

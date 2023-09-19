@@ -84,7 +84,7 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # so if that's resolved, it won't build for C++
 REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
 REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
-CLANG_FORMAT = $(shell which clang-format-15 2>/dev/null || which clang-format 2>/dev/null)
+CLANG_FORMAT = $(shell which clang-format-16 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -177,7 +177,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-15 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
+AR = $(shell which llvm-ar-16 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -274,7 +274,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-15 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-16 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -811,7 +811,7 @@ fmt-cpp:
 
 .PHONY: fmt-zig
 fmt-zig:
-	cd src && zig fmt **/*.zig
+	cd src && $(ZIG) fmt **/*.zig
 
 .PHONY: fmt
 fmt: fmt-cpp fmt-zig
@@ -945,7 +945,7 @@ headers:
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
-	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp 
+	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp
 
 .PHONY: jsc-bindings-headers
 jsc-bindings-headers: headers
@@ -1482,7 +1482,7 @@ bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 
 wasm-return1:
-	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
+	$(ZIG) build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 generate-classes:
 	bun src/bun.js/scripts/generate-classes.ts
@@ -1518,7 +1518,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1529,7 +1529,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1540,7 +1540,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1551,7 +1551,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1562,7 +1562,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1573,7 +1573,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1584,7 +1584,7 @@ $(OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1596,7 +1596,7 @@ $(OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
@@ -1610,7 +1610,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1625,7 +1625,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1638,7 +1638,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
@@ -1654,7 +1654,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1669,7 +1669,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1684,7 +1684,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/js/out/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1697,7 +1697,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1712,7 +1712,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-exceptions \
 		-I$(SRC_DIR) \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
@@ -1825,7 +1825,7 @@ endif
 build-unit: # to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
-	zig test  $(realpath $(testpath)) \
+	$(ZIG) test  $(realpath $(testpath)) \
 	$(testfilterflag) \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
@@ -1843,7 +1843,7 @@ build-unit: # to build your unit tests
 run-all-unit-tests: # to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
-	zig test src/main.zig \
+	$(ZIG) test src/main.zig \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
 	--test-no-exec \
@@ -1891,7 +1891,7 @@ cold-jsc-start:
 		${MMD_IF_LOCAL} \
 		-fno-exceptions \
 		-fno-rtti \
-		-ferror-limit=1000 \
+		-ferror-limit=10 \
 		$(LIBICONV_PATH) \
 		$(DEFAULT_LINKER_FLAGS) \
 		$(PLATFORM_LINKER_FLAGS) \
@@ -1915,9 +1915,14 @@ vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
+.PHONY: static-hash-table
+static-hash-table:
+	bun src/js/_codegen/static-hash-tables.ts
+
 .PHONY: cpp
 cpp: ## compile src/js/builtins + all c++ code then link
 	@make clean-bindings js
+	@make static-hash-table
 	@make bindings -j$(CPU_COUNT)
 	@make link
 

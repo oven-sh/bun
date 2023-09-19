@@ -83,7 +83,7 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
         sourceCodeBuilder.append(";\n"_s);
     }
     globalObject->putDirect(vm, ident, object, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
-    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
+    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
 }
 
 }
@@ -500,6 +500,81 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
+    return napi_ok;
+}
+
+#if !COMPILER(MSVC)
+__attribute__((visibility("default")))
+#endif
+extern "C" napi_status
+node_api_create_external_string_latin1(napi_env env,
+    char* str,
+    size_t length,
+    napi_finalize finalize_callback,
+    void* finalize_hint,
+    napi_value* result,
+    bool* copied)
+{
+    // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
+    if (UNLIKELY(!str || !result)) {
+        return napi_invalid_arg;
+    }
+
+    length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
+    WTF::ExternalStringImpl& impl = WTF::ExternalStringImpl::create(reinterpret_cast<LChar*>(str), static_cast<unsigned int>(length), finalize_hint, [finalize_callback](void* hint, void* str, unsigned length) {
+        if (finalize_callback) {
+            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobal()), nullptr, hint);
+        }
+    });
+    JSGlobalObject* globalObject = toJS(env);
+    // globalObject is allowed to be null here
+    if (UNLIKELY(!globalObject)) {
+        globalObject = Bun__getDefaultGlobal();
+    }
+
+    JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
+    ensureStillAliveHere(out);
+    *result = toNapi(out);
+    ensureStillAliveHere(out);
+
+    return napi_ok;
+}
+
+#if !COMPILER(MSVC)
+__attribute__((visibility("default")))
+#endif
+
+extern "C" napi_status
+node_api_create_external_string_utf16(napi_env env,
+    char16_t* str,
+    size_t length,
+    napi_finalize finalize_callback,
+    void* finalize_hint,
+    napi_value* result,
+    bool* copied)
+{
+    // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
+    if (UNLIKELY(!str || !result)) {
+        return napi_invalid_arg;
+    }
+
+    length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
+    WTF::ExternalStringImpl& impl = WTF::ExternalStringImpl::create(reinterpret_cast<UChar*>(str), static_cast<unsigned int>(length), finalize_hint, [finalize_callback](void* hint, void* str, unsigned length) {
+        if (finalize_callback) {
+            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobal()), nullptr, hint);
+        }
+    });
+    JSGlobalObject* globalObject = toJS(env);
+    // globalObject is allowed to be null here
+    if (UNLIKELY(!globalObject)) {
+        globalObject = Bun__getDefaultGlobal();
+    }
+
+    JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
+    ensureStillAliveHere(out);
+    *result = toNapi(out);
+    ensureStillAliveHere(out);
+
     return napi_ok;
 }
 

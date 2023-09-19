@@ -73,7 +73,7 @@ You can use the following configurations to debug JavaScript and TypeScript file
       "name": "Attach to Bun",
 
       // The URL of the WebSocket inspector to attach to.
-      // This value can be retreived by using `bun --inspect`.
+      // This value can be retrieved by using `bun --inspect`.
       "url": "ws://localhost:6499/",
     }
   ]
@@ -89,12 +89,10 @@ You can use the following configurations to customize the behavior of the Bun ex
   // The path to the `bun` executable.
   "bun.runtime": "/path/to/bun",
 
-  "bun.debugTerminal": {
-    // If support for Bun should be added to the default "JavaScript Debug Terminal".
-    "enabled": true,
-
-    // If the debugger should stop on the first line of the program.
-    "stopOnEntry": false,
-  }
+  // If support for Bun should be added to the default "JavaScript Debug Terminal".
+  "bun.debugTerminal.enabled": true,
+  
+  // If the debugger should stop on the first line of the program.
+  "bun.debugTerminal.stopOnEntry": false,
 }
 ```

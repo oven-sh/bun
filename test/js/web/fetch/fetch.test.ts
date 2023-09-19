@@ -5,6 +5,7 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { join } from "path";
 import { gc, withoutAggressiveGC, gcTick } from "harness";
+import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
@@ -1414,4 +1415,63 @@ it("cloned response headers are independent after accessing", () => {
   const cloned = response.clone();
   cloned.headers.set("content-type", "text/plain");
   expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+});
+
+it("should work with http 100 continue", async () => {
+  let server: net.Server | undefined;
+  try {
+    server = net.createServer(socket => {
+      socket.on("data", data => {
+        const lines = data.toString().split("\r\n");
+        for (const line of lines) {
+          if (line.length == 0) {
+            socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+            socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!");
+            break;
+          }
+        }
+      });
+    });
+
+    const { promise: start, resolve } = Promise.withResolvers();
+    server.listen(8080, resolve);
+
+    await start;
+
+    const address = server.address() as net.AddressInfo;
+    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    expect(result).toBe("Hello, World!");
+  } finally {
+    server?.close();
+  }
+});
+
+it("should work with http 100 continue on the same buffer", async () => {
+  let server: net.Server | undefined;
+  try {
+    server = net.createServer(socket => {
+      socket.on("data", data => {
+        const lines = data.toString().split("\r\n");
+        for (const line of lines) {
+          if (line.length == 0) {
+            socket.write(
+              "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHello, World!",
+            );
+            break;
+          }
+        }
+      });
+    });
+
+    const { promise: start, resolve } = Promise.withResolvers();
+    server.listen(8080, resolve);
+
+    await start;
+
+    const address = server.address() as net.AddressInfo;
+    const result = await fetch(`http://localhost:${address.port}`).then(r => r.text());
+    expect(result).toBe("Hello, World!");
+  } finally {
+    server?.close();
+  }
 });

@@ -87,7 +87,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return NodeBuiltinsMap.has(str);
+        return bun.JSC.HardcodedModule.Aliases.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{

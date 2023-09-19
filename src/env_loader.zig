@@ -35,7 +35,12 @@ pub const Loader = struct {
 
     did_load_process: bool = false,
 
-    const empty_string_value: string = "\"\"";
+    pub fn has(this: *const Loader, input: []const u8) bool {
+        const value = this.map.get(input) orelse return false;
+        if (value.len == 0) return false;
+
+        return !strings.eqlComptime(value, "\"\"") and !strings.eqlComptime(value, "''") and !strings.eqlComptime(value, "0") and !strings.eqlComptime(value, "false");
+    }
 
     pub fn isProduction(this: *const Loader) bool {
         const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
@@ -167,7 +172,12 @@ pub const Loader = struct {
     }
 
     pub fn getAuto(this: *const Loader, key: string) string {
-        return this.get(key) orelse key;
+        // If it's "" or "$", it's not a variable
+        if (key.len < 2 or key[0] != '$') {
+            return key;
+        }
+
+        return this.get(key[1..]) orelse key;
     }
 
     /// Load values from the environment into Define.
@@ -297,7 +307,7 @@ pub const Loader = struct {
                     }
                 } else {
                     while (iter.next()) |entry| {
-                        const value: string = if (entry.value_ptr.value.len == 0) empty_string_value else entry.value_ptr.value;
+                        const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
@@ -351,15 +361,11 @@ pub const Loader = struct {
                 var key = env[0..i];
                 var value = env[i + 1 ..];
                 if (key.len > 0) {
-                    if (value.len > 0) {
-                        this.map.put(key, value) catch unreachable;
-                    } else {
-                        this.map.put(key, empty_string_value) catch unreachable;
-                    }
+                    this.map.put(key, value) catch unreachable;
                 }
             } else {
                 if (env.len > 0) {
-                    this.map.put(env, empty_string_value) catch unreachable;
+                    this.map.put(env, "") catch unreachable;
                 }
             }
         }

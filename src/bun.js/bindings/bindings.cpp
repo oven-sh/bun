@@ -19,6 +19,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -225,6 +226,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
                         return AsymmetricMatcherResult::PASS;
                     }
                 }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
             }
         }
 
@@ -2063,7 +2105,7 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     JSC::VM& vm = globalObject->vm();
 
     JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, origin.fileSystemPath(),
+        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());

@@ -68,6 +68,17 @@ pub const Registry = struct {
 
         pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
             var registry = registry_;
+
+            // Support $ENV_VAR for registry URLs
+            if (strings.startsWithChar(registry_.url, '$')) {
+                // If it became "$ENV_VAR/", then we need to remove the trailing slash
+                if (env.get(strings.trim(registry_.url[1..], "/"))) |replaced_url| {
+                    if (replaced_url.len > 1) {
+                        registry.url = replaced_url;
+                    }
+                }
+            }
+
             var url = URL.parse(registry.url);
             var auth: string = "";
 

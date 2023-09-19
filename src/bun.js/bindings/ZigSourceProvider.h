@@ -69,9 +69,10 @@ public:
 
 private:
     SourceProvider(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
+        JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTFMove(sourceURL), String(), startPosition, sourceType)
+        : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_source(sourceImpl)
     {
 

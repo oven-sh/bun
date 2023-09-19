@@ -273,8 +273,8 @@ const NetworkTask = struct {
 
             if (tmp.tag == .Dead) {
                 const msg = .{
-                    .fmt = "Failed to join registry \"{s}\" and package \"{s}\" URLs",
-                    .args = .{ scope.url.href, name },
+                    .fmt = "Failed to join registry {} and package {} URLs",
+                    .args = .{ strings.QuotedFormatter{ .text = scope.url.href }, strings.QuotedFormatter{ .text = name } },
                 };
 
                 if (warn_on_error)
@@ -3806,10 +3806,10 @@ pub const PackageManager = struct {
                             switch (response.status_code) {
                                 404 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
+                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{}{s} 404<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 
@@ -3823,10 +3823,10 @@ pub const PackageManager = struct {
                                 },
                                 401 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
+                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 

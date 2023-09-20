@@ -2,10 +2,12 @@
 name: Build an app with Qwik and Bun
 ---
 
-Initialize a new Qwik app with `bunx create-qwik`. The `create-qwik` package detects when you are using `bunx` and will automatically install dependencies using `bun`.
+Initialize a new Qwik app with `bunx create-qwik`.
+
+The `create-qwik` package detects when you are using `bunx` and will automatically install dependencies using `bun`.
 
 ```sh
-$ bunx create-qwik
+$ bun create qwik
 
       ............
     .::: :--------:.
@@ -81,23 +83,24 @@ $ bunx create-qwik
 
 ---
 
-To start the server with bun, run the command `bun start` or `bun dev`.
+Run `bun run dev` to start the development server.
 
 ```sh
-$ bun start
-  $ vite --open --mode ssr
+$ bun run dev
+  $ vite--mode ssr
 
-    VITE v4.4.7  ready in 1190 ms
+  VITE v4.4.7  ready in 1190 ms
 
-    ➜  Local:   http://localhost:5173/
-    ➜  Network: use --host to expose
-    ➜  press h to show help
-
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h to show help
 ```
 
 ---
 
 Open [http://localhost:5173](http://localhost:5173) with your browser to see the result. Qwik will hot-reload your app as you edit your source files.
+
+{% image src="https://github.com/oven-sh/bun/assets/3084745/ec35f2f7-03dd-4c90-851e-fb4ad150bb28" alt="Qwik screenshot" /%}
 
 ---
 

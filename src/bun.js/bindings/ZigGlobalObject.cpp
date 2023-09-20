@@ -315,21 +315,16 @@ static bool skipNextComputeErrorInfo = false;
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(errorInstance->globalObject());
-    if (!globalObject) {
-        // Happens in node:vm
-        globalObject = jsDynamicCast<Zig::GlobalObject*>(Bun__getDefaultGlobal());
-    }
+    auto* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-            name = instance->sanitizedNameString(globalObject);
-            message = instance->sanitizedMessageString(globalObject);
-        }
+    // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+    if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
     }
 
     WTF::StringBuilder sb;
@@ -383,20 +378,23 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
             memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-
             remappedFrames[i].position.line = thisLine;
             remappedFrames[i].position.column_start = thisColumn;
+
             String sourceURLForFrame = frame.sourceURL(vm);
 
-            if (!sourceURLForFrame.isEmpty()) {
-                remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
-            } else {
-                // https://github.com/oven-sh/bun/issues/3595
-                remappedFrames[i].source_url = BunStringEmpty;
-            }
+            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+            if (globalObject) {
+                if (!sourceURLForFrame.isEmpty()) {
+                    remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+                } else {
+                    // https://github.com/oven-sh/bun/issues/3595
+                    remappedFrames[i].source_url = BunStringEmpty;
+                }
 
-            // This ensures the lifetime of the sourceURL is accounted for correctly
-            Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+                // This ensures the lifetime of the sourceURL is accounted for correctly
+                Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
+            }
 
             if (!hasSet) {
                 hasSet = true;
@@ -404,11 +402,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 column = thisColumn;
                 sourceURL = frame.sourceURL(vm);
 
-                if (errorInstance) {
-                    if (remappedFrames[i].remapped) {
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
-                    }
+                if (remappedFrames[i].remapped) {
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
+                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
                 }
             }
 
@@ -499,10 +495,13 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
 
     auto* lexicalGlobalObject = errorInstance->globalObject();
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    if (!globalObject) {
-        globalObject = Bun__getDefaultGlobal();
-        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
 
+    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+    if (!globalObject) {
+        // node:vm will use a different JSGlobalObject
+        globalObject = Bun__getDefaultGlobal();
+
+        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
         if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
             if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
                 return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
@@ -2548,8 +2547,10 @@ void GlobalObject::createCallSitesFromFrames(Zig::GlobalObject* globalObject, JS
      * will return undefined."." */
     bool encounteredStrictFrame = false;
 
+    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
     JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
     size_t framesCount = stackTrace.size();
+
     for (size_t i = 0; i < framesCount; i++) {
         CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
         callSites->putDirectIndex(lexicalGlobalObject, i, callSite);

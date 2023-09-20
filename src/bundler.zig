@@ -1302,7 +1302,7 @@ pub const Bundler = struct {
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
                 if (loader.isTypeScript()) {
-                    if (bundler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| {
+                    if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |dir_info| {
                         if (dir_info.tsconfig_json) |tsconfig| {
                             opts.features.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                         }

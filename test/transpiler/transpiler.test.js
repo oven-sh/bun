@@ -1984,6 +1984,24 @@ console.log(resolve.length)
       // expectParseError("\u200Ca", 'Unexpected "\\u200c"');
       // expectParseError("\u200Da", 'Unexpected "\\u200d"');
     });
+
+    // TODO: Remember to update these when proper full DCE toggle is implemented
+    // Currently this only tests top level DCE which the REPL depends on
+    describe("dead code elimination", () => {
+      const transpilerNoDCE = new Bun.Transpiler({ experimentalDeadCodeElimination: false });
+      it("should DCE with experimentalDeadCodeElimination: true or by default", () => {
+        expect(parsed('123', true, false)).toBe('');
+        expect(parsed('[-1, 2n, null]', true, false)).toBe('');
+        expect(parsed('true', true, false)).toBe('');
+        expect(parsed('!0', true, false)).toBe('');
+      });
+      it("should not DCE with experimentalDeadCodeElimination: false", () => {
+        expect(parsed('123', true, false, transpilerNoDCE)).toBe('123');
+        expect(parsed('[1, 2n, null]', true, false, transpilerNoDCE)).toBe('[1, 2n, null]');
+        expect(parsed('true', true, false, transpilerNoDCE)).toBe('true');
+        expect(parsed('!0', true, false, transpilerNoDCE)).toBe('true');
+      });
+    });
   });
 
   it("private identifiers", () => {

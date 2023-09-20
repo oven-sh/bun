@@ -541,8 +541,9 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     if (object.get(globalThis, "minifyWhitespace")) |flag| {
         transpiler.minify_whitespace = flag.toBoolean();
     }
-
-    if (object.get(globalThis, "deadCodeElimination")) |flag| {
+    // TODO: Currently only disables top level DCE, this is marked as experimental and undocumented to signal that.
+    // It should be made a full DCE toggle in the future and documented, but for now it satisfies the REPL's needs.
+    if (object.get(globalThis, "experimentalDeadCodeElimination")) |flag| {
         transpiler.dead_code_elimination = flag.toBoolean();
     }
 

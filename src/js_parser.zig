@@ -1437,6 +1437,7 @@ pub const SideEffects = enum(u1) {
     }
 
     pub fn simplifyBoolean(p: anytype, expr: Expr) Expr {
+        if (!p.options.features.dead_code_elimination) return expr;
         switch (expr.data) {
             .e_unary => |e| {
                 if (e.op == .un_not) {
@@ -1484,6 +1485,7 @@ pub const SideEffects = enum(u1) {
     }
 
     pub fn simpifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
+        if (!p.options.features.dead_code_elimination) return expr;
         switch (expr.data) {
             .e_null, .e_undefined, .e_missing, .e_boolean, .e_number, .e_big_int, .e_string, .e_this, .e_reg_exp, .e_function, .e_arrow, .e_import_meta => {
                 return null;
@@ -13568,7 +13570,7 @@ fn NewParser_(
                             .name = part,
                             .name_loc = loc,
 
-                            .can_be_removed_if_unused = true,
+                            .can_be_removed_if_unused = p.options.features.dead_code_elimination,
                         },
                         loc,
                     );
@@ -14031,6 +14033,7 @@ fn NewParser_(
         }
 
         fn bindingCanBeRemovedIfUnused(p: *P, binding: Binding) bool {
+            if (!p.options.features.dead_code_elimination) return false;
             switch (binding.data) {
                 .b_array => |bi| {
                     for (bi.items) |*item| {
@@ -14069,6 +14072,7 @@ fn NewParser_(
         }
 
         fn stmtsCanBeRemovedIfUnused(p: *P, stmts: []Stmt) bool {
+            if (!p.options.features.dead_code_elimination) return false;
             for (stmts) |stmt| {
                 switch (stmt.data) {
                     // These never have side effects
@@ -16129,6 +16133,7 @@ fn NewParser_(
         }
 
         pub fn classCanBeRemovedIfUnused(p: *P, class: *G.Class) bool {
+            if (!p.options.features.dead_code_elimination) return false;
             if (class.extends) |*extends| {
                 if (!p.exprCanBeRemovedIfUnused(extends)) {
                     return false;
@@ -16167,6 +16172,7 @@ fn NewParser_(
         // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
         // This is to improve the reliability of fast refresh between page loads.
         pub fn exprCanBeRemovedIfUnused(p: *P, expr: *const Expr) bool {
+            if (!p.options.features.dead_code_elimination) return false;
             switch (expr.data) {
                 .e_null,
                 .e_undefined,
@@ -17555,7 +17561,8 @@ fn NewParser_(
                     }
                 },
                 .s_expr => |data| {
-                    const should_trim_primitive = !p.options.features.minify_syntax and !data.value.isPrimitiveLiteral();
+                    const should_trim_primitive = p.options.features.dead_code_elimination and
+                        (p.options.features.minify_syntax and data.value.isPrimitiveLiteral());
                     p.stmt_expr_value = data.value.data;
                     defer p.stmt_expr_value = .{ .e_missing = .{} };
 

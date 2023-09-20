@@ -1364,6 +1364,7 @@ pub const BundleOptions = struct {
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
+    emit_decorator_metadata: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 

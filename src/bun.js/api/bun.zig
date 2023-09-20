@@ -782,11 +782,16 @@ fn doResolveWithArgs(
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
+    const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
+        bun.JSC.URL.pathFromFileURL(specifier)
+    else
+        specifier;
+
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
             &errorable,
             ctx.ptr(),
-            specifier,
+            specifier_decoded,
             from,
             &query_string,
             is_esm,
@@ -795,7 +800,7 @@ fn doResolveWithArgs(
         VirtualMachine.resolveForAPI(
             &errorable,
             ctx.ptr(),
-            specifier,
+            specifier_decoded,
             from,
             &query_string,
             is_esm,

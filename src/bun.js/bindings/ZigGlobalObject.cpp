@@ -3870,7 +3870,22 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
 {
     ErrorableString res;
     res.success = false;
-    BunString keyZ = Bun::toString(globalObject, key);
+    BunString keyZ;
+    if (key.isString()) {
+        auto moduleName = jsCast<JSString*>(key)->value(globalObject);
+        if (moduleName.startsWith("file://"_s)) {
+            auto url = WTF::URL(moduleName);
+            if (url.isValid() && !url.isEmpty()) {
+                keyZ = Bun::toString(url.fileSystemPath());
+            } else {
+                keyZ = Bun::toString(moduleName);
+            }
+        } else {
+            keyZ = Bun::toString(moduleName);
+        }
+    } else {
+        keyZ = Bun::toString(globalObject, key);
+    }
     BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
@@ -3902,7 +3917,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
 
     auto sourceURL = sourceOrigin.url();
     ErrorableString resolved;
-    auto moduleNameZ = Bun::toString(globalObject, moduleNameValue);
+    BunString moduleNameZ;
+
+    auto moduleName = moduleNameValue->value(globalObject);
+    if (moduleName.startsWith("file://"_s)) {
+        auto url = WTF::URL(moduleName);
+        if (url.isValid() && !url.isEmpty()) {
+            moduleNameZ = Bun::toString(url.fileSystemPath());
+        } else {
+            moduleNameZ = Bun::toString(moduleName);
+        }
+    } else {
+        moduleNameZ = Bun::toString(moduleName);
+    }
     auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toString(sourceURL.fileSystemPath());
     ZigString queryString = { 0, 0 };
     resolved.success = false;

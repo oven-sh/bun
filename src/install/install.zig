@@ -1697,6 +1697,7 @@ pub const PackageManager = struct {
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     onWake: WakeHandler = .{},
+    ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1715,6 +1716,14 @@ pub const PackageManager = struct {
 
     pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
         return this.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
+        return this.env.isCI();
+    }
+
+    pub inline fn isContinuousIntegration(this: *PackageManager) bool {
+        return this.ci_mode.get();
     }
 
     pub const WakeHandler = struct {
@@ -1884,6 +1893,37 @@ pub const PackageManager = struct {
         try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
         this.preinstall_state.expandToCapacity();
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
+    }
+
+    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+        switch (resolution.tag) {
+            Resolution.Tag.npm => {
+                if (resolution.value.npm.version.tag.hasPre())
+                    // TODO:
+                    return null;
+
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
+                    // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                    if (this.isContinuousIntegration())
+                        return null;
+
+                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
+                        this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
+                        break :brk this.manifests.getPtr(name_hash).?;
+                    }
+
+                    return null;
+                };
+
+                if (manifest.findByDistTag("latest")) |latest_version| {
+                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
+                    return latest_version.version;
+                }
+
+                return null;
+            },
+            else => return null,
+        }
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {

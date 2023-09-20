@@ -18,7 +18,7 @@ afterEach(async () => {
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const processes = Array.from({ length: 3 }, (_, i) => {
     return spawn({
-      cmd: [bunExe(), "x", "bun@1.0." + i, "--version"],
+      cmd: [bunExe(), "x", "semver@7.5." + i, "--help"],
       cwd: x_dir,
       stdout: "pipe",
       stdin: "ignore",
@@ -29,8 +29,10 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
 
   const results = await Promise.all(processes.map(p => p.exited));
   expect(results).toEqual([0, 0, 0]);
-  const outputs = await Promise.all(processes.map(p => new Response(p.stdout).text()));
-  expect(outputs).toEqual(["1.0.0\n", "1.0.1\n", "1.0.2\n"]);
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
+    a.substring(0, a.indexOf("\n")),
+  );
+  expect(outputs).toEqual(["SemVer 7.5.0", "SemVer 7.5.1", "SemVer 7.5.2"]);
 });
 
 it("should install and run default (latest) version", async () => {

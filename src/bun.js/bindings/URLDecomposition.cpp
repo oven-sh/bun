@@ -37,7 +37,7 @@ String URLDecomposition::origin() const
         return fullURL.protocolHostAndPort();
     if(fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();
-        URL subUrl { URL {}, path };
+        const URL subUrl { URL {}, path };
         if(subUrl.isValid()) {
             if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
                 return subUrl.protocolHostAndPort();

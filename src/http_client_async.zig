@@ -3479,6 +3479,7 @@ pub fn handleResponseMetadata(
                         this.redirect = url_buf;
                     } else {
                         var url_buf = URLBufferPool.get(default_allocator);
+                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
                         const original_url = this.url;
 
                         const new_url_ = bun.JSC.URL.join(
@@ -3487,9 +3488,8 @@ pub fn handleResponseMetadata(
                         );
                         defer new_url_.deref();
 
-                        const new_url = new_url_.byteSlice();
-                        @memcpy(url_buf.data[0..new_url.len], new_url);
-                        this.url = URL.parse(url_buf.data[0..new_url.len]);
+                        const new_url = new_url_.toUTF8(fba.allocator());
+                        this.url = URL.parse(new_url.slice());
 
                         is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;

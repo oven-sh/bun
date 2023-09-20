@@ -63,3 +63,38 @@ describe("bun:test", () => {
     expect(undefined).not.toBeDefined();
   });
 });
+
+// inference should work when data is passed directly in
+describe.each([
+  ["a", true, 5],
+  ["b", false, "asdf"],
+])("test.each", (a, b, c) => {
+  expectType<string>(a);
+  expectType<boolean>(b);
+  expectType<number | string>(c);
+});
+test.each([
+  ["a", true, 5],
+  ["b", false, "asdf"],
+])("test.each", (a, b, c) => {
+  expectType<string>(a);
+  expectType<boolean>(b);
+  expectType<number | string>(c);
+});
+
+const data = [
+  ["a", true, 5],
+  ["b", false, "asdf"],
+];
+
+// inference won't work when data can't be inferred
+describe.each(data)("test.each", (a, b, c) => {
+  expectType<string | number | boolean>(a);
+  expectType<string | number | boolean>(b);
+  expectType<string | number | boolean>(c);
+});
+
+// inference won't work when data can't be inferred
+test.each(data)("test.each", data => {
+  expectType<(string | number | boolean)[]>(data);
+});

@@ -174,7 +174,7 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends ReadonlyArray<unknown>>(
+    each<T extends readonly [any?, ...any[]]>(
       table: ReadonlyArray<T>,
     ): (
       label: string,
@@ -419,7 +419,7 @@ declare module "bun:test" {
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends ReadonlyArray<unknown>>(
+    each<T extends readonly [any, ...any[]]>(
       table: ReadonlyArray<T>,
     ): (
       label: string,
@@ -430,7 +430,7 @@ declare module "bun:test" {
       table: ReadonlyArray<T>,
     ): (
       label: string,
-      fn: (arg: T, done: (err?: unknown) => void) => void | Promise<unknown>,
+      fn: (...args: ReadonlyArray<T>) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };

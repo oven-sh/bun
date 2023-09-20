@@ -2143,7 +2143,7 @@ pub const ModuleLoader = struct {
         const path = Fs.Path.init(specifier);
 
         const loader = if (loader_ != ._none)
-            options.Loader.fromString(@tagName(loader_)).?
+            options.Loader.fromAPI(loader_)
         else
             jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -2162,7 +2162,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                options.Loader.fromString(@tagName(loader)).?,
+                loader,
                 &log,
                 &virtual_source,
                 ret,

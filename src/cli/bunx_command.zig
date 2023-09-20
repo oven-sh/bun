@@ -284,15 +284,22 @@ pub const BunxCommand = struct {
         const passthrough = passthrough_list.items;
 
         if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
+            var destination_: ?[:0]const u8 = null;
+
+            // Only use the system-installed version if there is no version specified
+            if (update_request.version.literal.isEmpty()) {
+                destination_ = bun.which(
+                    &path_buf,
+                    PATH_FOR_BIN_DIRS,
+                    this_bundler.fs.top_level_dir,
+                    initial_bin_name,
+                );
+            }
+
             // Similar to "npx":
             //
             //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-            if (bun.which(
-                &path_buf,
-                PATH_FOR_BIN_DIRS,
-                this_bundler.fs.top_level_dir,
-                initial_bin_name,
-            ) orelse bun.which(
+            if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
                 this_bundler.fs.top_level_dir,
@@ -316,12 +323,17 @@ pub const BunxCommand = struct {
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
-                    if (bun.which(
-                        &path_buf,
-                        PATH_FOR_BIN_DIRS,
-                        this_bundler.fs.top_level_dir,
-                        package_name_for_bin,
-                    ) orelse bun.which(
+                    // Only use the system-installed version if there is no version specified
+                    if (update_request.version.literal.isEmpty()) {
+                        destination_ = bun.which(
+                            &path_buf,
+                            PATH_FOR_BIN_DIRS,
+                            this_bundler.fs.top_level_dir,
+                            package_name_for_bin,
+                        );
+                    }
+
+                    if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
                         this_bundler.fs.top_level_dir,

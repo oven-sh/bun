@@ -15,6 +15,24 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
+it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+  const processes = Array.from({ length: 3 }, (_, i) => {
+    return spawn({
+      cmd: [bunExe(), "x", "bun@1.0." + i, "--version"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "inherit",
+      env,
+    });
+  });
+
+  const results = await Promise.all(processes.map(p => p.exited));
+  expect(results).toEqual([0, 0, 0]);
+  const outputs = await Promise.all(processes.map(p => new Response(p.stdout).text()));
+  expect(outputs).toEqual(["1.0.0\n", "1.0.1\n", "1.0.2\n"]);
+});
+
 it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],

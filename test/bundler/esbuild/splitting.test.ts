@@ -609,4 +609,25 @@ describe("bundler", () => {
       stdout: "42 true 42",
     },
   });
+  itBundled("splitting/EntrypointRelativeImportOtherEntrypointOutsideRootIssue5700", {
+    files: {
+      "/src/a.js": /* js */ `
+        import greet from './greet/hello'
+        greet('world')
+      `,
+      "/src/greet/hello.js": /* js */ `
+        export default function greet(name) {
+          console.log("hello", name)
+        }
+      `,
+    },
+    entryPoints: ["/src/a.js", "/src/greet/hello.js"],
+    outputPaths: ["/out/a.js", "/out/greet/hello.js"],
+    outdir: "/out",
+    splitting: true,
+    run: {
+      file: '/out/a.js',
+      stdout: "hello world",
+    },
+  });
 });

@@ -17,7 +17,7 @@ RUN apt-get update -qq \
     && case "${arch##*-}" in \
       amd64) build="x64-baseline";; \
       arm64) build="aarch64";; \
-      *) echo "error: unsupported architecture: ($arch)"; exit 1 ;; \
+      *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
     esac \
     && version="$BUN_VERSION" \
     && case "$version" in \
@@ -33,7 +33,7 @@ RUN apt-get update -qq \
       -fsSLO \
       --compressed \
       --retry 5 \
-      || (echo "error: unknown release: ($tag)" && exit 1) \
+      || (echo "error: failed to download: $tag" && exit 1) \
     && for key in \
       "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59" \
     ; do \
@@ -45,17 +45,18 @@ RUN apt-get update -qq \
       --compressed \
       --retry 5 \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
-      || (echo "error: failed to verify release: ($tag)" && exit 1) \
+      || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
-      || (echo "error: failed to verify release: ($tag)" && exit 1) \
+      || (echo "error: failed to verify: $tag" && exit 1) \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
-    && chmod +x /usr/local/bin/bun \
-    && which bun \
-    && bun --version
+    && chmod +x /usr/local/bin/bun
 
 FROM debian:bullseye
+
+COPY docker-entrypoint.sh /usr/local/bin
+COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
 
 RUN groupadd bun \
       --gid 1000 \
@@ -63,11 +64,12 @@ RUN groupadd bun \
       --uid 1000 \
       --gid bun \
       --shell /bin/sh \
-      --create-home
+      --create-home \
+    && ln /usr/local/bin/bun /usr/local/bin/bunx \
+    && which bun \
+    && which bunx \
+    && bun --version
 
-COPY docker-entrypoint.sh /usr/local/bin
-COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
-RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
-
+WORKDIR /home/bun/app
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/bun"]

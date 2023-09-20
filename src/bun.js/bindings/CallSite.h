@@ -38,6 +38,14 @@ private:
 public:
     using Base = JSC::JSNonFinalObject;
 
+    static CallSite* createWithFrame(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::StackFrame& stackFrame, bool encounteredStrictFrame)
+    {
+        JSC::VM& vm = globalObject->vm();
+        CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
+        callSite->finishCreationWithFrame(vm, globalObject, stackFrame, encounteredStrictFrame);
+        return callSite;
+    }
+
     static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
     {
         JSC::VM& vm = globalObject->vm();
@@ -92,6 +100,7 @@ private:
     }
 
     void finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreationWithFrame(VM& vm, JSC::JSGlobalObject* globalObject, JSC::StackFrame& stackFrame, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

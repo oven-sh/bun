@@ -438,8 +438,57 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     return sb.toString();
 }
 
+void createCallSitesFromFrames(JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackTrace, JSArray* callSites)
+{
+    bool encounteredStrictFrame = false;
+    GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+
+    JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
+    size_t framesCount = stackTrace.size();
+    for (size_t i = 0; i < framesCount; i++) {
+        CallSite* callSite = CallSite::createWithFrame(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
+        callSites->putDirectIndex(lexicalGlobalObject, i, callSite);
+
+        if (!encounteredStrictFrame) {
+            encounteredStrictFrame = callSite->isStrict();
+        }
+    }
+}
+
 static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(errorInstance->globalObject());
+    JSGlobalObject* lexicalGlobalObject = jsDynamicCast<JSGlobalObject*>(globalObject);
+    auto errorConstructor = globalObject->errorConstructor();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(globalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
+    if (prepareStackTrace && prepareStackTrace.isCallable()) {
+        CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
+        if (prepareStackTraceCallData.type != CallData::Type::None) {
+            // create the call site from the Vector<StackFrame>
+            JSArray* callSites = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), stackTrace.size());
+
+            createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
+
+            MarkedArgumentBuffer args;
+            args.append(errorInstance);
+            args.append(callSites);
+            ASSERT(!args.hasOverflowed());
+
+            JSValue result = profiledCall(
+                lexicalGlobalObject,
+                ProfilingReason::Other,
+                prepareStackTrace,
+                prepareStackTraceCallData,
+                errorConstructor,
+                args);
+            RETURN_IF_EXCEPTION(scope, String());
+
+            errorInstance->putDirect(vm, vm.propertyNames->stack, result, 0);
+            return String();
+        }
+    }
     return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
@@ -2441,7 +2490,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
+void createCallSitesFromStackTrace(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
@@ -2581,7 +2630,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         stackTrace.size());
 
     // Create the call sites (one per frame)
-    GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
+    createCallSitesFromStackTrace(lexicalGlobalObject, stackTrace, callSites);
 
     /* Format the stack trace.
      * Note that v8 won't actually format the stack trace here, but will create a "stack" accessor

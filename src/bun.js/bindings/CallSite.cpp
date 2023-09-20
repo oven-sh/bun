@@ -75,6 +75,46 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     }
 }
 
+void CallSite::finishCreationWithFrame(VM& vm, JSC::JSGlobalObject* globalObject, JSC::StackFrame& stackFrame, bool encounteredStrictFrame)
+{
+    Base::finishCreation(vm);
+
+    bool isStrictFrame = encounteredStrictFrame;
+    if (!isStrictFrame) {
+        JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
+        if (codeBlock) {
+            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
+        }
+    }
+
+    JSObject* calleeObject = jsCast<JSObject*>(stackFrame.callee());
+
+    m_thisValue.set(vm, this, JSC::jsUndefined());
+    if (isStrictFrame) {
+        m_function.set(vm, this, JSC::jsUndefined());
+        m_flags |= static_cast<unsigned int>(Flags::IsStrict);
+    } else {
+        m_function.set(vm, this, stackFrame.callee());
+    }
+
+    // m_functionName.set(vm, this, stackFrame.functionName(vm));
+    // m_sourceURL.set(vm, this, stackFrame.sourceURL(vm));
+
+    unsigned int line = 0;
+    unsigned int column = 0;
+    stackFrame.computeLineAndColumn(line, column);
+    m_lineNumber = jsNumber(line + 1);
+    m_columnNumber = jsNumber(column + 1);
+
+    if (!stackFrame.codeBlock()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsNative);
+    } else {
+        if (stackFrame.codeBlock()->codeType() == EvalCode) {
+            m_flags |= static_cast<unsigned int>(Flags::IsEval);
+        }
+    }
+}
+
 template<typename Visitor>
 void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

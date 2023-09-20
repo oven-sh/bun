@@ -10,7 +10,7 @@ Bun implements a minimal version of the [Web Workers API](https://developer.mozi
 
 Like in browsers, [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) is a global. Use it to create a new worker thread.
 
-From the main thread:
+### From the main thread
 
 ```js#Main_thread
 const workerURL = new URL("worker.ts", import.meta.url).href;
@@ -22,16 +22,25 @@ worker.onmessage = event => {
 };
 ```
 
-Worker thread:
+### Worker thread
 
 ```ts#worker.ts_(Worker_thread)
+// prevents TS errors
+declare var self: Worker;
+
 self.onmessage = (event: MessageEvent) => {
   console.log(event.data);
   postMessage("world");
 };
 ```
 
-You can use `import`/`export` syntax in your worker code. Unlike in browsers, there's no need to specify `{type: "module"}` to use ES Modules.
+To prevent TypeScript errors when using `self`, add this line to the top of your worker file.
+
+```ts
+declare var self: Worker;
+```
+
+You can use `import` and `export` syntax in your worker code. Unlike in browsers, there's no need to specify `{type: "module"}` to use ES Modules.
 
 To simplify error handling, the initial script to load is resolved at the time `new Worker(url)` is called.
 

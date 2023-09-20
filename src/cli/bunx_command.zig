@@ -159,7 +159,8 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
+    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
+        var ctx = ctx_;
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
 
@@ -219,6 +220,9 @@ pub const BunxCommand = struct {
             Output.prettyErrorln("<r><red>error<r><d>:<r> Only one package can be installed & run at a time right now", .{});
             Global.exit(1);
         }
+
+        // Don't log stuff
+        ctx.debug.silent = true;
 
         var update_request = update_requests[0];
 
@@ -280,15 +284,22 @@ pub const BunxCommand = struct {
         const passthrough = passthrough_list.items;
 
         if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
+            var destination_: ?[:0]const u8 = null;
+
+            // Only use the system-installed version if there is no version specified
+            if (update_request.version.literal.isEmpty()) {
+                destination_ = bun.which(
+                    &path_buf,
+                    PATH_FOR_BIN_DIRS,
+                    this_bundler.fs.top_level_dir,
+                    initial_bin_name,
+                );
+            }
+
             // Similar to "npx":
             //
             //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-            if (bun.which(
-                &path_buf,
-                PATH_FOR_BIN_DIRS,
-                this_bundler.fs.top_level_dir,
-                initial_bin_name,
-            ) orelse bun.which(
+            if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
                 this_bundler.fs.top_level_dir,
@@ -312,12 +323,17 @@ pub const BunxCommand = struct {
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
-                    if (bun.which(
-                        &path_buf,
-                        PATH_FOR_BIN_DIRS,
-                        this_bundler.fs.top_level_dir,
-                        package_name_for_bin,
-                    ) orelse bun.which(
+                    // Only use the system-installed version if there is no version specified
+                    if (update_request.version.literal.isEmpty()) {
+                        destination_ = bun.which(
+                            &path_buf,
+                            PATH_FOR_BIN_DIRS,
+                            this_bundler.fs.top_level_dir,
+                            package_name_for_bin,
+                        );
+                    }
+
+                    if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
                         this_bundler.fs.top_level_dir,
@@ -408,13 +424,9 @@ pub const BunxCommand = struct {
 
         // Similar to "npx":
         //
-        //  1. Try the bin in the current node_modules and then we try the bin in the global cache
+        //  1. Try the bin in the global cache
+        //     Do not try $PATH because we already checked it above if we should
         if (bun.which(
-            &path_buf,
-            PATH_FOR_BIN_DIRS,
-            this_bundler.fs.top_level_dir,
-            initial_bin_name,
-        ) orelse bun.which(
             &path_buf,
             bunx_cache_dir,
             this_bundler.fs.top_level_dir,
@@ -434,17 +446,10 @@ pub const BunxCommand = struct {
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, update_request.name)) |package_name_for_bin| {
-
-            // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
-                    &path_buf,
-                    PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
-                    package_name_for_bin,
-                ) orelse bun.which(
                     &path_buf,
                     bunx_cache_dir,
                     this_bundler.fs.top_level_dir,

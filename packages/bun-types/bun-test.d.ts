@@ -114,7 +114,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
-  ): Mock<() => T[K]>;
+  ): Mock<T[K] extends AnyFunction ? T[K] : never>;
 
   /**
    * Describes a group of related tests.

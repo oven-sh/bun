@@ -128,18 +128,16 @@ The biggest difference between CommonJS and ES Modules is that CommonJS modules 
 - Browsers do not have native support for CommonJS modules, but they do have native support for ES Modules via `<script type="module">`.
 - CommonJS modules are not statically analyzable, while ES Modules only allow static imports and exports.
 
-
 **CommonJS Modules:** These are a type of module system used in JavaScript. One key feature of CommonJS modules is that they load and execute synchronously. This means that when you import a CommonJS module, the code in that module runs immediately, and your program waits for it to finish before moving on to the next task. It's similar to reading a book from start to finish without skipping pages.
 
 **ES Modules (ESM):** These are another type of module system introduced in JavaScript. They have a slightly different behavior compared to CommonJS. In ESM, static imports (imports made using `import` statements) are synchronous, just like CommonJS. This means that when you import an ESM using a regular `import` statement, the code in that module runs immediately, and your program proceeds in a step-by-step manner. Think of it like reading a book page by page.
 
-**Async Imports with `import()`:** Now, here comes the part that might be confusing. ES Modules also support a feature where you can import modules dynamically using the `import()` function. This dynamic import is asynchronous, which means it doesn't block the main program execution. Instead, it fetches and loads the module in the background while your program continues to run. Once the module is ready, you can use it. This is like getting additional information from a book while you're still reading it, without having to pause your reading.
+**Dynamic imports:** Now, here comes the part that might be confusing. ES Modules also support importing modules on the fly via the `import()` function. This is called a "dynamic import" and it's asynchronous, so it doesn't block the main program execution. Instead, it fetches and loads the module in the background while your program continues to run. Once the module is ready, you can use it. This is like getting additional information from a book while you're still reading it, without having to pause your reading.
 
 **In summary:**
 
 - CommonJS modules and static ES Modules (`import` statements) work in a similar synchronous way, like reading a book from start to finish.
 - ES Modules also offer the option to import modules asynchronously using the `import()` function. This is like looking up additional information in the middle of reading the book without stopping.
-
 
 {% /details %}
 

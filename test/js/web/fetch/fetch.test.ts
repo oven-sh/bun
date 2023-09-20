@@ -1597,43 +1597,62 @@ it("same-origin status code 302 should not strip headers", async () => {
   server.stop(true);
 });
 
-it.each([
-  ["/a/b", "/c", "/c"],
-  ["/a/b", "c", "/a/c"],
-  ["/a/b", "/c/d", "/c/d"],
-  ["/a/b", "c/d", "/a/c/d"],
-  ["/a/b", "../c", "/c"],
-  ["/a/b", "../c/d", "/c/d"],
-  ["/a/b", "../../../c", "/c"],
-  // slash
-  ["/a/b/", "/c", "/c"],
-  ["/a/b/", "c", "/a/b/c"],
-  ["/a/b/", "/c/d", "/c/d"],
-  ["/a/b/", "c/d", "/a/b/c/d"],
-  ["/a/b/", "../c", "/a/c"],
-  ["/a/b/", "../c/d", "/a/c/d"],
-  ["/a/b/", "../../../c", "/c"],
-])("should handle relative location in the redirect ('%s', '%s'), issue#5635", async (pathname, location, expected) => {
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request: Request) {
-      const url = new URL(request.url);
-      if (url.pathname == pathname) {
-        return new Response("redirecting", {
-          headers: {
-            "Location": location,
-          },
-          status: 302,
+describe("should handle relative location in the redirect, issue#5635", () => {
+  var server: Server;
+  beforeAll(async () => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        return new Response("Not Found", {
+          status: 404,
         });
-      }
-      return new Response("Not Found", {
-        status: 404,
-      });
-    },
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
   });
 
-  const { url, redirected } = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
-  expect(redirected).toBe(true);
-  expect(new URL(url).pathname).toStrictEqual(expected);
-  server.stop(true);
+  it.each([
+    ["/a/b", "/c", "/c"],
+    ["/a/b", "c", "/a/c"],
+    ["/a/b", "/c/d", "/c/d"],
+    ["/a/b", "c/d", "/a/c/d"],
+    ["/a/b", "../c", "/c"],
+    ["/a/b", "../c/d", "/c/d"],
+    ["/a/b", "../../../c", "/c"],
+    // slash
+    ["/a/b/", "/c", "/c"],
+    ["/a/b/", "c", "/a/b/c"],
+    ["/a/b/", "/c/d", "/c/d"],
+    ["/a/b/", "c/d", "/a/b/c/d"],
+    ["/a/b/", "../c", "/a/c"],
+    ["/a/b/", "../c/d", "/a/c/d"],
+    ["/a/b/", "../../../c", "/c"],
+  ])("('%s', '%s')", async (pathname, location, expected) => {
+    server.reload({
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname == pathname) {
+          return new Response("redirecting", {
+            headers: {
+              "Location": location,
+            },
+            status: 302,
+          });
+        } else if (url.pathname == expected) {
+          return new Response("Fine.");
+        }
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+
+    const resp = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+    expect(resp.redirected).toBe(true);
+    expect(new URL(resp.url).pathname).toStrictEqual(expected);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("Fine.");
+  });
 });

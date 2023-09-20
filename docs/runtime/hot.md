@@ -104,6 +104,10 @@ Bun provides the following simplified API for implementing HTTP servers. Refer t
 ```ts#server.ts
 import {serve} from "bun";
 
+declare global {
+  var count: number | undefined;
+}
+
 globalThis.count ??= 0;
 globalThis.count++;
 

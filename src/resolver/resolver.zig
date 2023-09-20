@@ -187,6 +187,8 @@ pub const Result = struct {
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
 
+    emit_decorator_metadata: bool = false,
+
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: StoredFileDescriptorType = 0,
@@ -965,6 +967,7 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
+                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
             }
 
             // If you use mjs or mts, then you're using esm

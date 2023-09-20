@@ -441,6 +441,7 @@ pub const Bundler = struct {
                 if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
                     if (root_dir.tsconfig_json) |tsconfig| {
                         bundler.options.jsx = tsconfig.jsx;
+                        bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     }
                 }
             }
@@ -780,6 +781,7 @@ pub const Bundler = struct {
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
                         .macro_remappings = bundler.options.macro_remap,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
@@ -899,6 +901,7 @@ pub const Bundler = struct {
                         .file_hash = null,
                         .macro_remappings = bundler.options.macro_remap,
                         .jsx = resolve_result.jsx,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -1188,6 +1191,7 @@ pub const Bundler = struct {
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
+        emit_decorator_metadata: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1301,15 +1305,8 @@ pub const Bundler = struct {
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
-                if (loader.isTypeScript()) {
-                    if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |dir_info| {
-                        if (dir_info.tsconfig_json) |tsconfig| {
-                            opts.features.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                        }
-                    }
-                }
-
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
+                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();

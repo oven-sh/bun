@@ -2223,7 +2223,7 @@ declare module "bun" {
      * });
      *
      * // Update the server to return a different response
-     * server.update({
+     * server.reload({
      *   fetch(request) {
      *     return new Response("Hello World v2")
      *   }

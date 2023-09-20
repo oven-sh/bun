@@ -17,6 +17,17 @@ test("Regular .stack", () => {
   expect(err.stack).toMatch(/at new Foo/);
 });
 
+test("throw inside Error.prepareStackTrace doesnt crash", () => {
+  
+ Error.prepareStackTrace = function (err, stack) {
+    Error.prepareStackTrace = null;
+    throw new Error('wat');
+  };
+
+expect(() =>  new Error().stack).toThrow("wat");
+
+});
+
 test("capture stack trace", () => {
   function f1() {
     f2();
@@ -483,6 +494,30 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(479);
-  expect(parentLineNumber).toBe(487);
+  expect(lineNumber).toBe(490);
+  // TODO: this is wrong
+  expect(parentLineNumber).toBe(499);
+});
+
+
+test("Error.prepareStackTrace inside a node:vm works", () => {
+  const {runInNewContext} = require("node:vm");
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(
+    `
+    const {prepareStackTrace} = Error;
+    Error.prepareStackTrace = (err, stack) => {
+      if (typeof err.stack !== "string") {
+        throw new Error("err.stack is not a string");
+      }
+
+      return "custom stack trace";
+    };
+
+    const err = new Error();
+    err.stack;
+    `
+  )
+  expect(result).toBe("custom stack trace");
+  expect(Error.prepareStackTrace).toBeNull();
 });

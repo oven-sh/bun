@@ -591,8 +591,8 @@ pub const GarbageCollectionController = struct {
                 // avoid GCing again if the memory is still high creating a new threshold
                 this.gc_heap_size_threshold = @max(MINUMUM_HEAP_SIZE_THRESHOLD, this.gc_last_heap_size * 2);
             } else {
-                // this shows that memory is very high, so and we will avoid GCing again because of performance reasons
-                // at this point JSC should be able to control memory better than we can
+                // this shows that memory usage is very high (probably a memory leak)
+                // at this point collectAsync should be able to control memory better than we can
                 this.gc_heap_size_threshold = MAXIMUM_HEAP_SIZE_THRESHOLD;
             }
         } else {

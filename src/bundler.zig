@@ -435,14 +435,14 @@ pub const Bundler = struct {
         );
 
         if (auto_jsx) {
-            // If we don't explicitly pass JSX, try to get it from the root tsconfig
-            if (bundler.options.transform_options.jsx == null) {
-                // Most of the time, this will already be cached
-                if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
-                    if (root_dir.tsconfig_json) |tsconfig| {
+            // Most of the time, this will already be cached
+            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+                if (root_dir.tsconfig_json) |tsconfig| {
+                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                    if (bundler.options.transform_options.jsx == null) {
                         bundler.options.jsx = tsconfig.jsx;
-                        bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     }
+                    bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                 }
             }
         }

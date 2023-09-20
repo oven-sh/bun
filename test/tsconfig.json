@@ -8,7 +8,6 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
     "noEmit": true,
     "composite": true,
     "strict": true,

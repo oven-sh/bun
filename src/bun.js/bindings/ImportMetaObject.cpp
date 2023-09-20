@@ -336,7 +336,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 
     // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
-    if (UNLIKELY(specifier.startsWith("node:")) || UNLIKELY(specifier.startsWith("bun:"))) {
+    if (UNLIKELY(specifier.startsWith("node:"_s)) || UNLIKELY(specifier.startsWith("bun:"_s))) {
         return JSValue::encode(jsString(vm, specifier));
     }
 

@@ -5,7 +5,7 @@ Bun reads your `.env` files automatically and provides idiomatic ways to read an
 Bun reads the following files automatically (listed in order of increasing precedence).
 
 - `.env`
-- `.env.production` or `.env.development` (depending on value of `NODE_ENV`)
+- `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
 ```txt#.env

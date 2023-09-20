@@ -445,10 +445,15 @@ pub const ConcurrentTask = struct {
 
 const AsyncIO = @import("root").bun.AsyncIO;
 
+/// Minumum threadshold until we run GC aggressively
+const MINUMUM_HEAP_SIZE_THRESHOLD = 64 * 1024 * 1024;
+const MAXIMUM_HEAP_SIZE_THRESHOLD = std.math.maxInt(usize) / 2 - 1;
+
 // This type must be unique per JavaScript thread
 pub const GarbageCollectionController = struct {
     gc_timer: *uws.Timer = undefined,
     gc_last_heap_size: usize = 0,
+    gc_heap_size_threshold: usize = MINUMUM_HEAP_SIZE_THRESHOLD,
     gc_last_heap_size_on_repeating_timer: usize = 0,
     heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
     gc_timer_state: GCTimerState = GCTimerState.pending,
@@ -577,8 +582,23 @@ pub const GarbageCollectionController = struct {
     pub fn performGC(this: *GarbageCollectionController) void {
         if (this.disabled) return;
         var vm = this.bunVM().global.vm();
-        vm.collectAsync();
-        this.gc_last_heap_size = vm.blockBytesAllocated();
+        if (this.gc_last_heap_size >= this.gc_heap_size_threshold and this.gc_last_heap_size < MAXIMUM_HEAP_SIZE_THRESHOLD) {
+            // agressive GC
+            _ = vm.runGC(true);
+
+            this.gc_last_heap_size = vm.blockBytesAllocated();
+            if (this.gc_last_heap_size <= MAXIMUM_HEAP_SIZE_THRESHOLD) {
+                // avoid GCing again if the memory is still high creating a new threshold
+                this.gc_heap_size_threshold = @max(MINUMUM_HEAP_SIZE_THRESHOLD, this.gc_last_heap_size * 2);
+            } else {
+                // this shows that memory is very high, so and we will avoid GCing again because of performance reasons
+                // at this point JSC should be able to control memory better than we can
+                this.gc_heap_size_threshold = MAXIMUM_HEAP_SIZE_THRESHOLD;
+            }
+        } else {
+            vm.collectAsync();
+            this.gc_last_heap_size = vm.blockBytesAllocated();
+        }
     }
 
     pub const GCTimerState = enum {

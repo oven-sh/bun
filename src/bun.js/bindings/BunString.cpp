@@ -381,7 +381,7 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString *relativeStr)
+extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
 {
     auto base = Bun::toWTFString(*baseStr);
     auto relative = Bun::toWTFString(*relativeStr);

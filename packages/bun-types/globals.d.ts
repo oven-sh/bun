@@ -303,23 +303,23 @@ interface ImportMeta {
    */
   readonly file: string;
   /**
-   * Resolve a module ID the same as if you imported it
-   *
-   * On failure, throws a `ResolveMessage`
+   * Resolve a module ID the same as if you imported it. Returns a `file:` URL string. If a relative
+   * or absolute file path is given, this will always succeed.
    */
-  resolve(moduleId: string): Promise<string>;
+  resolve(moduleId: string): string;
   /**
-   * Resolve a `moduleId` as though it were imported from `parent`
-   *
-   * On failure, throws a `ResolveMessage`
+   * Resolve a module ID as though it were imported from `parent`. Returns a `file:` URL string. If
+   * a relative or absolute file path is given, this will always succeed.
    */
   // tslint:disable-next-line:unified-signatures
-  resolve(moduleId: string, parent: string): Promise<string>;
+  resolve(moduleId: string, parent: string): string;
 
   /**
    * Resolve a module ID the same as if you imported it
    *
    * The `parent` argument is optional, and defaults to the current module's path.
+   *
+   * Will throw if the module does not exist.
    */
   resolveSync(moduleId: string, parent?: string): string;
 
@@ -359,9 +359,7 @@ interface ImportMeta {
 }
 
 /**
- * NodeJS-style `require` function
- *
- * Internally, uses `import.meta.require`
+ * NodeJS-style `require` function. Supports loading ES modules that do not use top-level `await`.
  *
  * @param moduleId - The module ID to resolve
  */

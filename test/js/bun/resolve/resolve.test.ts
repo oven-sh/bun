@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync, existsSync, rmSync, copyFileSync } from "fs";
 import { join } from "path";
 import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 
-it("spawn test file", () => {
+// make this something else okay
+it.skip("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 

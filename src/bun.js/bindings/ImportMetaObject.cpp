@@ -269,44 +269,88 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 {
     JSC::VM& vm = globalObject->vm();
 
-    switch (callFrame->argumentCount()) {
-    case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        // not "requires" because "require" could be confusing
-        JSC::throwTypeError(globalObject, scope, "import.meta.resolve needs 1 argument (a string)"_s);
-        scope.release();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    auto thisValue = callFrame->thisValue();
+    auto specifierValue = callFrame->argument(0);
+    // 1. Set specifier to ? ToString(specifier).
+    auto specifier = specifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+
+    // Node.js allows a second argument for parent
+    JSValue from;
+    if (callFrame->argumentCount() >= 2) {
+        auto fromValue = callFrame->uncheckedArgument(1);
+
+        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                    auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
+                    if (pathsArray->length() > 0) {
+                        fromValue = pathsArray->getIndex(globalObject, 0);
+                        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                    }
+                }
+            }
+        }
+
+        if (fromValue.isString()) {
+            from = fromValue;
+        } else
+            goto use_default_from;
+    } else {
+    use_default_from:
+        JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(thisValue);
+        if (UNLIKELY(!thisObject)) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        }
+
+        auto clientData = WebCore::clientData(vm);
+        JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+
+        if (LIKELY(pathProperty && pathProperty.isString())) {
+            from = pathProperty;
+        } else {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        }
+    }
+
+    // from.toWTFString() *should* always be the fast case, since above we check that it's a string.
+    auto fromWTFString = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+
+    // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
+    if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)) {
+        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+        if (!fromURL.isValid()) {
+            JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        }
+
+        WTF::URL url(fromURL, specifier);
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+    }
+
+    // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
+    if (UNLIKELY(specifier.startsWith("node:")) || UNLIKELY(specifier.startsWith("bun:"))) {
+        return JSValue::encode(jsString(vm, specifier));
+    }
+
+    // Run it through the module resolver, errors at this point are actual errors.
+    auto a = Bun::toString(specifier);
+    auto b = Bun::toString(fromWTFString);
+    auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
+    if (!result.isString()) {
+        JSC::throwException(globalObject, scope, result);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    default: {
-        JSC::JSValue moduleName = callFrame->argument(0);
 
-        if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolve expects a string"_s);
-            scope.release();
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-
-        JSC__JSValue from;
-
-        if (callFrame->argumentCount() > 1 && callFrame->argument(1).isString()) {
-            from = JSC::JSValue::encode(callFrame->argument(1));
-        } else {
-            JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
-            if (UNLIKELY(!thisObject)) {
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-                JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-
-            auto clientData = WebCore::clientData(vm);
-
-            from = JSC::JSValue::encode(thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName()));
-        }
-
-        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from, true);
-    }
-    }
+    // Stringified URL to a file, going off assumption that all modules would be file URLs
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, makeString("file://"_s, result.toWTFString(globalObject)))));
 }
 
 enum class ImportMetaPropertyOffset : uint32_t {

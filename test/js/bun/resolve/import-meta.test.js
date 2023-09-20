@@ -197,3 +197,13 @@ it("import non exist error code", async () => {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");
   }
 });
+
+it("import.meta.resolve", () => {
+  expect(import.meta.resolve("./relative-filepath.js")).toBe(
+    new URL("./relative-filepath.js", import.meta.url).toString(),
+  );
+  expect(import.meta.resolve("../relative-filepath.js")).toBe(
+    new URL("../relative-filepath.js", import.meta.url).toString(),
+  );
+  expect(import.meta.resolve(".../relative-filepath.js")).toBe();
+});

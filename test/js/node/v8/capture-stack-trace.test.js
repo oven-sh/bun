@@ -460,14 +460,29 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
-test.todo("err.stack should invoke prepareStackTrace", () => {
-  // This is V8's behavior.
-  let prevPrepareStackTrace = Error.prepareStackTrace;
-  let wasCalled = false;
-  Error.prepareStackTrace = (e, s) => {
-    wasCalled = true;
-  };
-  const e = new Error();
-  e.stack;
-  expect(wasCalled).toBe(true);
+test("err.stack should invoke prepareStackTrace", () => {
+  var lineNumber = -1;
+  var functionName = "";
+  var parentLineNumber = -1;
+  function functionWithAName() {
+    // This is V8's behavior.
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+
+    Error.prepareStackTrace = (e, s) => {
+      lineNumber = s[0].getLineNumber();
+      functionName = s[0].getFunctionName();
+      parentLineNumber = s[1].getLineNumber();
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+      expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+    };
+    const e = new Error();
+    e.stack;
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  functionWithAName();
+
+  expect(functionName).toBe("functionWithAName");
+  expect(lineNumber).toBe(479);
+  expect(parentLineNumber).toBe(487);
 });

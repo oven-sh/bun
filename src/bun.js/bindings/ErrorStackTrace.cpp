@@ -131,8 +131,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     : m_vm(vm)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL(nullptr)
-    , m_functionName(nullptr)
+    , m_sourceURL()
+    , m_functionName()
     , m_isWasmFrame(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
@@ -163,8 +163,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_callFrame(nullptr)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL(nullptr)
-    , m_functionName(nullptr)
+    , m_sourceURL()
+    , m_functionName()
     , m_isWasmFrame(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
@@ -193,7 +193,7 @@ JSC::JSString* JSCStackFrame::sourceURL()
         m_sourceURL = retrieveSourceURL();
     }
 
-    return m_sourceURL;
+    return jsString(this->m_vm, m_sourceURL);
 }
 
 JSC::JSString* JSCStackFrame::functionName()
@@ -202,7 +202,7 @@ JSC::JSString* JSCStackFrame::functionName()
         m_functionName = retrieveFunctionName();
     }
 
-    return m_functionName;
+    return jsString(this->m_vm, m_functionName);
 }
 
 JSC::JSString* JSCStackFrame::typeName()
@@ -211,7 +211,7 @@ JSC::JSString* JSCStackFrame::typeName()
         m_typeName = retrieveTypeName();
     }
 
-    return m_typeName;
+    return jsString(this->m_vm, m_typeName);
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
@@ -223,91 +223,61 @@ JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
     return (SourcePositionsState::Calculated == m_sourcePositionsState) ? &m_sourcePositions : nullptr;
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveSourceURL()
+ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 {
     static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
     static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
 
     if (m_isWasmFrame) {
-        return jsOwnedString(m_vm, sourceURLWasmString);
+        return String(sourceURLWasmString);
     }
 
     if (!m_codeBlock) {
-        return jsOwnedString(m_vm, sourceURLNativeString);
+        return String(sourceURLNativeString);
     }
 
-    String sourceURL = m_codeBlock->ownerExecutable()->sourceURL();
-    return sourceURL.isNull() ? m_vm.smallStrings.emptyString() : JSC::jsString(m_vm, sourceURL);
+    return m_codeBlock->ownerExecutable()->sourceURL();
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveFunctionName()
+ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
     static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
     static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
     static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 
     if (m_isWasmFrame) {
-        return jsString(m_vm, JSC::Wasm::makeString(m_wasmFunctionIndexOrName));
+        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
     }
 
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode:
-            return JSC::jsOwnedString(m_vm, functionNameEvalCodeString);
+            return String(functionNameEvalCodeString);
         case JSC::ModuleCode:
-            return JSC::jsOwnedString(m_vm, functionNameModuleCodeString);
+            return String(functionNameModuleCodeString);
         case JSC::FunctionCode:
             break;
         case JSC::GlobalCode:
-            return JSC::jsOwnedString(m_vm, functionNameGlobalCodeString);
+            return String(functionNameGlobalCodeString);
         default:
             ASSERT_NOT_REACHED();
         }
     }
 
-    if (!m_callee || !m_callee->isObject()) {
-        return m_vm.smallStrings.emptyString();
+    String name;
+    if (m_callee) {
+        if (m_callee->isObject())
+            name = getCalculatedDisplayName(m_vm, jsCast<JSObject*>(m_callee)).impl();
     }
 
-    JSC::JSObject* calleeAsObject = JSC::jsCast<JSC::JSObject*>(m_callee);
-
-    // First, try the "displayName" property
-    JSC::JSValue displayName = calleeAsObject->getDirect(m_vm, m_vm.propertyNames->displayName);
-    if (displayName && isJSString(displayName)) {
-        return JSC::asString(displayName);
-    }
-
-    // Our addition - if there's no "dispalyName" property, try the "name" property
-    JSC::JSValue name = calleeAsObject->getDirect(m_vm, m_vm.propertyNames->name);
-    if (name && isJSString(name)) {
-        return JSC::asString(name);
-    }
-
-    /* For functions (either JSFunction or InternalFunction), fallback to their "native" name property.
-     * Based on JSC::getCalculatedDisplayName, "inlining" the
-     * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(calleeAsObject)) {
-        // Based on JSC::JSFunction::calculatedDisplayName, skipping the "displayName" property check
-        WTF::String actualName = function->name(m_vm);
-        if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            return JSC::jsString(m_vm, actualName);
-        }
-
-        return JSC::jsString(m_vm, function->jsExecutable()->name().string());
-    }
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(calleeAsObject)) {
-        // Based on JSC::InternalFunction::calculatedDisplayName, skipping the "displayName" property check
-        return JSC::jsString(m_vm, function->name());
-    }
-
-    return m_vm.smallStrings.emptyString();
+    return name.isNull() ? emptyString() : name;
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveTypeName()
+ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
 {
     JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(m_callee);
     // return JSC::jsTypeStringForValue(m_globalObjectcalleeObject->toThis()
-    return jsString(m_vm, makeString(calleeObject->className()));
+    return calleeObject->className();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)

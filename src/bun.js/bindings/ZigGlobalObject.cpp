@@ -315,14 +315,6 @@ static bool skipNextComputeErrorInfo = false;
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
-    if (!errorInstance) {
-        return String();
-    }
-
-    if (skipNextComputeErrorInfo) {
-        return String();
-    }
-
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(errorInstance->globalObject());
     if (!globalObject) {
         // Happens in node:vm
@@ -438,8 +430,91 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     return sb.toString();
 }
 
+static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
+    if (stackTraceLimit == 0) {
+        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
+    }
+
+    JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
+
+    // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
+    JSC::JSArray* callSites = JSC::JSArray::create(vm,
+        globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+        stackTrace.size());
+
+    // Create the call sites (one per frame)
+    GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
+
+    /* Format the stack trace.
+     * Note that v8 won't actually format the stack trace here, but will create a "stack" accessor
+     * on the error object, which will format the stack trace on the first access. For now, since
+     * we're not being used internally by JSC, we can assume callers of Error.captureStackTrace in
+     * node are interested in the (formatted) stack. */
+
+    size_t framesCount = stackTrace.size();
+    ZigStackFrame remappedFrames[framesCount];
+    for (int i = 0; i < framesCount; i++) {
+        memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
+        remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+        if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
+            remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
+            remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;
+        } else {
+            remappedFrames[i].position.line = -1;
+            remappedFrames[i].position.column_start = -1;
+        }
+    }
+
+    // remap line and column start to original source
+    // XXX: this function does not fully populate the fields of ZigStackFrame,
+    // be careful reading the fields below.
+    Bun__remapStackFramePositions(lexicalGlobalObject, remappedFrames, framesCount);
+
+    for (size_t i = 0; i < framesCount; i++) {
+        JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
+        CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
+        if (remappedFrames[i].remapped) {
+            int32_t remappedColumnStart = remappedFrames[i].position.column_start;
+            JSC::JSValue columnNumber = JSC::jsNumber(remappedColumnStart);
+            callSite->setColumnNumber(columnNumber);
+
+            int32_t remappedLine = remappedFrames[i].position.line;
+            JSC::JSValue lineNumber = JSC::jsNumber(remappedLine);
+            callSite->setLineNumber(lineNumber);
+        }
+    }
+
+    globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
+
+    RETURN_IF_EXCEPTION(scope, String());
+    return String();
+}
+
 static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
+    if (skipNextComputeErrorInfo) {
+        return String();
+    }
+
+    if (!errorInstance) {
+        return String();
+    }
+
+    auto* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    // TODO: node:vm support
+    if (globalObject) {
+        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
+            if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+            }
+        }
+    }
+
     return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
@@ -804,6 +879,28 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 void GlobalObject::setConsole(void* console)
 {
     this->setConsoleClient(new Zig::ConsoleClient(console));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue value = jsUndefined();
+    if (thisObject->m_errorConstructorPrepareStackTraceValue) {
+        value = thisObject->m_errorConstructorPrepareStackTraceValue.get();
+    }
+    return JSValue::encode(value);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    thisObject->m_errorConstructorPrepareStackTraceValue.set(vm, thisObject, JSValue::decode(encodedValue));
+    return true;
 }
 
 #pragma mark - Globals
@@ -2463,41 +2560,20 @@ void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
-JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
+void GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue errorValue = this->get(this, JSC::Identifier::fromString(vm, "Error"_s));
-    if (UNLIKELY(scope.exception())) {
-        return JSValue();
-    }
 
-    if (!errorValue || errorValue.isUndefined() || !errorValue.isObject()) {
-        return JSValue(jsEmptyString(vm));
-    }
-
-    auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);
+    auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(this);
 
     /* If the user has set a callable Error.prepareStackTrace - use it to format the stack trace. */
-    JSC::JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-    if (prepareStackTrace && prepareStackTrace.isCallable()) {
-        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
-
-        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(errorObject);
-            arguments.append(callSites);
-            ASSERT(!arguments.hasOverflowed());
-
-            JSC::JSValue result = profiledCall(
-                lexicalGlobalObject,
-                JSC::ProfilingReason::Other,
-                prepareStackTrace,
-                prepareStackTraceCallData,
-                errorConstructor,
-                arguments);
-            RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
-            return result;
+    JSC::JSValue prepareStackTrace = jsUndefined();
+    if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
+        if (auto prepare = this->m_errorConstructorPrepareStackTraceValue.get()) {
+            prepareStackTrace = prepare;
         }
+    } else {
+        prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
     }
 
     // default formatting
@@ -2525,7 +2601,40 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
         }
     }
 
-    return JSC::JSValue(jsString(vm, sb.toString()));
+    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
+    skipNextComputeErrorInfo = true;
+    if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
+        skipNextComputeErrorInfo = true;
+        errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
+    }
+    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
+
+    // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
+    // it will display the stack as a formatted string, so we have to do the same.
+    errorObject->putDirect(vm, vm.propertyNames->stack, JSC::JSValue(jsString(vm, sb.toString())), 0);
+
+    if (prepareStackTrace && prepareStackTrace.isCallable()) {
+        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
+
+        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
+            JSC::MarkedArgumentBuffer arguments;
+            arguments.append(errorObject);
+            arguments.append(callSites);
+
+            JSC::JSValue result = profiledCall(
+                lexicalGlobalObject,
+                JSC::ProfilingReason::Other,
+                prepareStackTrace,
+                prepareStackTraceCallData,
+                errorConstructor,
+                arguments);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (result.isUndefinedOrNull()) {
+                result = jsUndefined();
+            }
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+        }
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2623,22 +2732,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         }
     }
 
-    JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
+    globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-
-    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
-    skipNextComputeErrorInfo = true;
-    if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
-        skipNextComputeErrorInfo = true;
-        errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
-    }
-    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
-
-    if (formattedStackTrace.isUndefinedOrNull()) {
-        formattedStackTrace = JSC::jsUndefined();
-    }
-
-    errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, 0);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
         // we make a separate copy of the StackTrace unfortunately so that we
@@ -3572,11 +3667,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     JSC::JSObject* errorConstructor = this->errorConstructor();
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | 0);
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, noop_setter), 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
@@ -3640,6 +3736,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nodeModuleOverriddenResolveFilename);
 
     visitor.append(thisObject->m_nextTickQueue);
+    visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

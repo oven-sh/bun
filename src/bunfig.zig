@@ -216,6 +216,11 @@ pub const Bunfig = struct {
                 if (json.get("preload")) |expr| {
                     try this.loadPreload(allocator, expr);
                 }
+
+                if (json.get("telemetry")) |expr| {
+                    try this.expect(expr, .e_boolean);
+                    Analytics.disabled = !expr.data.e_boolean.value;
+                }
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {

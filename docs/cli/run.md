@@ -64,6 +64,17 @@ To run a file in watch mode, use the `--watch` flag.
 $ bun --watch run index.tsx
 ```
 
+{% callout %}
+**Note** — When using `bun run`, put Bun flags like `--watch` immediately after `bun`.
+
+```bash
+$ bun --watch run dev # ✔️ do this
+$ bun run dev --watch # ❌ don't do this
+```
+
+Flags that occur at the end of the command will be ignores and passed through to the `"dev"` script itself.
+{% /callout %}
+
 ### `--smol`
 
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.

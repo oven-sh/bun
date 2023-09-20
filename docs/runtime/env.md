@@ -5,7 +5,7 @@ Bun reads your `.env` files automatically and provides idiomatic ways to read an
 Bun reads the following files automatically (listed in order of increasing precedence).
 
 - `.env`
-- `.env.production` or `.env.development` (depending on value of `NODE_ENV`)
+- `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
 ```txt#.env
@@ -79,6 +79,6 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `DO_NOT_TRACK`
-- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
+- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
 
 {% /table %}

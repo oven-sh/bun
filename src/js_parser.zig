@@ -70,7 +70,7 @@ const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
-const StringHashMapUnamanged = bun.StringHashMapUnmanaged;
+const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 
@@ -439,6 +439,155 @@ pub const TypeScript = struct {
         };
     }
 
+    pub const Metadata = union(enum) {
+        m_none: void,
+
+        m_never: void,
+        m_unknown: void,
+        m_any: void,
+        m_void: void,
+        m_null: void,
+        m_undefined: void,
+        m_function: void,
+        m_array: void,
+        m_boolean: void,
+        m_string: void,
+        m_object: void,
+        m_number: void,
+        m_bigint: void,
+        m_symbol: void,
+        m_promise: void,
+        m_identifier: Ref,
+        m_dot: List(Ref),
+
+        pub const default: @This() = .m_none;
+
+        // the logic in finishUnion, mergeUnion, finishIntersection and mergeIntersection is
+        // translated from:
+        // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
+
+        /// Return the final union type if possible, or return null to continue merging.
+        ///
+        /// If the current type is m_never, m_null, or m_undefined assign the current type
+        /// to m_none and return null to ensure it's always replaced by the next type.
+        pub fn finishUnion(current: *@This(), p: anytype) ?@This() {
+            return switch (current.*) {
+                .m_identifier => |ref| {
+                    if (strings.eqlComptime(p.loadNameFromRef(ref), "Object")) {
+                        return .m_object;
+                    }
+                    return null;
+                },
+
+                .m_unknown,
+                .m_any,
+                .m_object,
+                => .m_object,
+
+                .m_never,
+                .m_null,
+                .m_undefined,
+                => {
+                    current.* = .m_none;
+                    return null;
+                },
+
+                else => null,
+            };
+        }
+
+        pub fn mergeUnion(result: *@This(), left: @This()) void {
+            if (left != .m_none) {
+                if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
+                    result.* = switch (result.*) {
+                        .m_never,
+                        .m_undefined,
+                        .m_null,
+                        => left,
+
+                        else => .m_object,
+                    };
+                } else {
+                    switch (result.*) {
+                        .m_identifier => |ref| {
+                            if (!ref.eql(left.m_identifier)) {
+                                result.* = .m_object;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            } else {
+                // always take the next value if left is m_none
+            }
+        }
+
+        /// Return the final intersection type if possible, or return null to continue merging.
+        ///
+        /// If the current type is m_unknown, m_null, or m_undefined assign the current type
+        /// to m_none and return null to ensure it's always replaced by the next type.
+        pub fn finishIntersection(current: *@This(), p: anytype) ?@This() {
+            return switch (current.*) {
+                .m_identifier => |ref| {
+                    if (strings.eqlComptime(p.loadNameFromRef(ref), "Object")) {
+                        return .m_object;
+                    }
+                    return null;
+                },
+
+                // ensure m_never is the final type
+                .m_never => .m_never,
+
+                .m_any,
+                .m_object,
+                => .m_object,
+
+                .m_unknown,
+                .m_null,
+                .m_undefined,
+                => {
+                    current.* = .m_none;
+                    return null;
+                },
+
+                else => null,
+            };
+        }
+
+        pub fn mergeIntersection(result: *@This(), left: @This()) void {
+            if (left != .m_none) {
+                if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
+                    result.* = switch (result.*) {
+                        .m_unknown,
+                        .m_undefined,
+                        .m_null,
+                        => left,
+
+                        // ensure m_never is the final type
+                        .m_never => .m_never,
+
+                        else => .m_object,
+                    };
+                } else {
+                    switch (result.*) {
+                        .m_identifier => |ref| {
+                            if (!ref.eql(left.m_identifier)) {
+                                result.* = .m_object;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            } else {
+                // make sure intersection of only m_unknown serializes to "undefined"
+                // instead of "Object"
+                if (result.* == .m_unknown) {
+                    result.* = .m_undefined;
+                }
+            }
+        }
+    };
+
     pub fn isTSArrowFnJSX(p: anytype) !bool {
         var oldLexer = std.mem.toBytes(p.lexer);
 
@@ -664,19 +813,19 @@ pub const TypeScript = struct {
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
 
-            .{ "keyof", .prefix },
-            .{ "readonly", .prefix },
+            .{ "keyof", .prefix_keyof },
+            .{ "readonly", .prefix_readonly },
 
-            .{ "any", .primitive },
-            .{ "never", .primitive },
-            .{ "unknown", .primitive },
-            .{ "undefined", .primitive },
-            .{ "object", .primitive },
-            .{ "number", .primitive },
-            .{ "string", .primitive },
-            .{ "boolean", .primitive },
-            .{ "bigint", .primitive },
-            .{ "symbol", .primitive },
+            .{ "any", .primitive_any },
+            .{ "never", .primitive_never },
+            .{ "unknown", .primitive_unknown },
+            .{ "undefined", .primitive_undefined },
+            .{ "object", .primitive_object },
+            .{ "number", .primitive_number },
+            .{ "string", .primitive_string },
+            .{ "boolean", .primitive_boolean },
+            .{ "bigint", .primitive_bigint },
+            .{ "symbol", .primitive_symbol },
 
             .{ "infer", .infer },
         });
@@ -685,17 +834,30 @@ pub const TypeScript = struct {
             unique,
             abstract,
             asserts,
-            prefix,
-            primitive,
+            prefix_keyof,
+            prefix_readonly,
+            primitive_any,
+            primitive_never,
+            primitive_unknown,
+            primitive_undefined,
+            primitive_object,
+            primitive_number,
+            primitive_string,
+            primitive_boolean,
+            primitive_bigint,
+            primitive_symbol,
             infer,
         };
     };
 
-    pub const SkipTypeOptions = struct {
-        is_return_type: bool = false,
-        is_index_signature: bool = false,
-        allow_tuple_labels: bool = false,
-        disallow_conditional_types: bool = false,
+    pub const SkipTypeOptions = enum {
+        is_return_type,
+        is_index_signature,
+        allow_tuple_labels,
+        disallow_conditional_types,
+
+        pub const Bitset = std.enums.EnumSet(@This());
+        pub const empty = Bitset.initEmpty();
     };
 };
 
@@ -1398,8 +1560,9 @@ const StaticSymbolName = struct {
         pub const __HMRClient = NewStaticSymbol("Bun");
         pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
         pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
-        pub const __decorateClass = NewStaticSymbol("__decorateClass");
-        pub const __decorateParam = NewStaticSymbol("__decorateParam");
+        pub const __legacyDecorateClassTS = NewStaticSymbol("__legacyDecorateClassTS");
+        pub const __legacyDecorateParamTS = NewStaticSymbol("__legacyDecorateParamTS");
+        pub const __legacyMetadataTS = NewStaticSymbol("__legacyMetadataTS");
         pub const @"$$typeof" = NewStaticSymbol("$$typeof");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
@@ -2437,6 +2600,7 @@ const FnOrArrowDataParse = struct {
     is_typescript_declare: bool = false,
 
     has_argument_decorators: bool = false,
+    has_decorators: bool = false,
 
     is_return_disallowed: bool = false,
     is_this_disallowed: bool = false,
@@ -2573,6 +2737,7 @@ const PropertyOpts = struct {
     is_ts_abstract: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
     has_argument_decorators: bool = false,
+    has_class_decorators: bool = false,
 };
 
 pub const ScanPassResult = struct {
@@ -4304,7 +4469,7 @@ fn NewParser_(
 
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
-        known_enum_values: Map(Ref, StringHashMapUnamanged(f64)) = .{},
+        known_enum_values: Map(Ref, StringHashMapUnmanaged(f64)) = .{},
         local_type_names: StringBoolMap = StringBoolMap{},
 
         // This is the reference to the generated function argument for the namespace,
@@ -6737,7 +6902,7 @@ fn NewParser_(
                     try p.lexer.next();
                     if (p.lexer.token == T.t_colon) {
                         try p.lexer.next();
-                        try p.skipTypeScriptType(js_ast.Op.Level.lowest);
+                        try p.skipTypeScriptType(.lowest);
                     }
                     if (p.lexer.token != T.t_comma) {
                         break;
@@ -6765,6 +6930,7 @@ fn NewParser_(
                 var is_identifier = p.lexer.token == T.t_identifier;
                 var text = p.lexer.identifier;
                 var arg = try p.parseBinding();
+                var ts_metadata = TypeScript.Metadata.default;
 
                 if (comptime is_typescript_enabled) {
                     if (is_identifier and opts.is_constructor) {
@@ -6804,7 +6970,11 @@ fn NewParser_(
                     // "function foo(a: any) {}"
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
-                        try p.skipTypeScriptType(.lowest);
+                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators or arg_has_decorators)) {
+                            ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                        } else {
+                            try p.skipTypeScriptType(.lowest);
+                        }
                     }
                 }
 
@@ -6825,6 +6995,7 @@ fn NewParser_(
 
                     // We need to track this because it affects code generation
                     .is_typescript_ctor_field = is_typescript_ctor_field,
+                    .ts_metadata = ts_metadata,
                 }) catch unreachable;
 
                 if (p.lexer.token != .t_comma) {
@@ -6864,9 +7035,18 @@ fn NewParser_(
             p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
             // "function foo(): any {}"
-            if (is_typescript_enabled and p.lexer.token == .t_colon) {
-                try p.lexer.next();
-                try p.skipTypescriptReturnType();
+            if (is_typescript_enabled) {
+                if (p.lexer.token == .t_colon) {
+                    try p.lexer.next();
+
+                    if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                        func.return_ts_metadata = try p.skipTypescriptReturnTypeWithMetadata();
+                    } else {
+                        try p.skipTypescriptReturnType();
+                    }
+                } else if (func.flags.contains(.is_async) and p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                    func.return_ts_metadata = .m_promise;
+                }
             }
 
             // "function foo(): any;"
@@ -6881,10 +7061,15 @@ fn NewParser_(
             return func;
         }
 
-        // pub fn parseBinding(p: *P)
-
         pub inline fn skipTypescriptReturnType(p: *P) anyerror!void {
-            try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_return_type = true });
+            var result = TypeScript.Metadata.default;
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, &result);
+        }
+
+        pub inline fn skipTypescriptReturnTypeWithMetadata(p: *P) anyerror!TypeScript.Metadata {
+            var result = TypeScript.Metadata.default;
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), true, &result);
+            return result;
         }
 
         pub fn parseTypeScriptDecorators(p: *P) ![]ExprNodeIndex {
@@ -6912,7 +7097,15 @@ fn NewParser_(
 
         inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             p.markTypeScriptOnly();
-            try p.skipTypeScriptTypeWithOpts(level, .{});
+            var result = TypeScript.Metadata.default;
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, &result);
+        }
+
+        inline fn skipTypeScriptTypeWithMetadata(p: *P, level: js_ast.Op.Level) anyerror!TypeScript.Metadata {
+            p.markTypeScriptOnly();
+            var result = TypeScript.Metadata.default;
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, true, &result);
+            return result;
         }
 
         fn skipTypeScriptBinding(p: *P) anyerror!void {
@@ -7057,41 +7250,77 @@ fn NewParser_(
         //     let x = (y: any): (y) => {return 0};
         //     let x = (y: any): asserts y is (y) => {};
         //
-        fn skipTypeScriptParenOrFnType(p: *P) anyerror!void {
+        fn skipTypeScriptParenOrFnType(p: *P, comptime get_metadata: bool, result: *TypeScript.Metadata) anyerror!void {
             p.markTypeScriptOnly();
 
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
                 try p.skipTypescriptReturnType();
+                if (comptime get_metadata)
+                    result.* = .m_function;
             } else {
                 try p.lexer.expect(.t_open_paren);
-                try p.skipTypeScriptType(.lowest);
+                if (comptime get_metadata) {
+                    result.* = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                } else {
+                    try p.skipTypeScriptType(.lowest);
+                }
                 try p.lexer.expect(.t_close_paren);
             }
         }
 
-        fn skipTypeScriptTypeWithOpts(p: *P, level: js_ast.Op.Level, opts: TypeScript.SkipTypeOptions) anyerror!void {
+        fn skipTypeScriptTypeWithOpts(
+            p: *P,
+            level: js_ast.Op.Level,
+            opts: TypeScript.SkipTypeOptions.Bitset,
+            comptime get_metadata: bool,
+            result: *TypeScript.Metadata,
+        ) anyerror!void {
             p.markTypeScriptOnly();
 
             while (true) {
                 switch (p.lexer.token) {
-                    .t_numeric_literal,
-                    .t_big_integer_literal,
-                    .t_string_literal,
-                    .t_no_substitution_template_literal,
-                    .t_true,
-                    .t_false,
-                    .t_null,
-                    .t_void,
-                    => {
+                    .t_numeric_literal => {
                         try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_number;
+                        }
                     },
-
+                    .t_big_integer_literal => {
+                        try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_bigint;
+                        }
+                    },
+                    .t_string_literal, .t_no_substitution_template_literal => {
+                        try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_string;
+                        }
+                    },
+                    .t_true, .t_false => {
+                        try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_boolean;
+                        }
+                    },
+                    .t_null => {
+                        try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_null;
+                        }
+                    },
+                    .t_void => {
+                        try p.lexer.next();
+                        if (comptime get_metadata) {
+                            result.* = .m_void;
+                        }
+                    },
                     .t_const => {
                         const r = p.lexer.range();
                         try p.lexer.next();
 
                         // ["const: number]"
-                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                        if (opts.contains(.allow_tuple_labels) and p.lexer.token == .t_colon) {
                             try p.log.addRangeError(p.source, r, "Unexpected \"const\"");
                         }
                     },
@@ -7105,6 +7334,10 @@ fn NewParser_(
                             try p.skipTypeScriptType(.lowest);
                             return;
                         }
+
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
+                        }
                     },
                     .t_minus => {
                         // "-123"
@@ -7113,8 +7346,14 @@ fn NewParser_(
 
                         if (p.lexer.token == .t_big_integer_literal) {
                             try p.lexer.next();
+                            if (comptime get_metadata) {
+                                result.* = .m_bigint;
+                            }
                         } else {
                             try p.lexer.expect(.t_numeric_literal);
+                            if (comptime get_metadata) {
+                                result.* = .m_number;
+                            }
                         }
                     },
                     .t_ampersand, .t_bar => {
@@ -7127,7 +7366,7 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // "[import: number]"
-                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                        if (opts.contains(.allow_tuple_labels) and p.lexer.token == .t_colon) {
                             return;
                         }
 
@@ -7155,21 +7394,21 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // "[new: number]"
-                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                        if (opts.contains(.allow_tuple_labels) and p.lexer.token == .t_colon) {
                             return;
                         }
 
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-                        try p.skipTypeScriptParenOrFnType();
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_less_than => {
                         // "<T>() => Foo<T>"
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-                        try p.skipTypeScriptParenOrFnType();
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_open_paren => {
                         // "(number | string)"
-                        try p.skipTypeScriptParenOrFnType();
+                        try p.skipTypeScriptParenOrFnType(get_metadata, result);
                     },
                     .t_identifier => {
                         const kind = TypeScript.Identifier.IMap.get(p.lexer.identifier) orelse .normal;
@@ -7177,7 +7416,7 @@ fn NewParser_(
                         var check_type_parameters = true;
 
                         switch (kind) {
-                            .prefix => {
+                            .prefix_keyof => {
                                 try p.lexer.next();
 
                                 // Valid:
@@ -7188,8 +7427,26 @@ fn NewParser_(
                                 // Invalid:
                                 //   "A extends B ? keyof : string"
                                 //
-                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.contains(.is_index_signature) and !opts.contains(.allow_tuple_labels))) {
                                     try p.skipTypeScriptType(.prefix);
+                                }
+
+                                if (comptime get_metadata) {
+                                    result.* = .m_object;
+                                }
+
+                                break;
+                            },
+                            .prefix_readonly => {
+                                try p.lexer.next();
+
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.contains(.is_index_signature) and !opts.contains(.allow_tuple_labels))) {
+                                    try p.skipTypeScriptType(.prefix);
+                                }
+
+                                // assume array or tuple literal
+                                if (comptime get_metadata) {
+                                    result.* = .m_array;
                                 }
 
                                 break;
@@ -7201,7 +7458,7 @@ fn NewParser_(
                                 // "type Foo = Bar extends [infer T extends string] ? T : null"
                                 // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
                                 // "type Foo = { [infer in Bar]: number }"
-                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.is_index_signature and !opts.allow_tuple_labels)) {
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.contains(.is_index_signature) and !opts.contains(.allow_tuple_labels))) {
                                     try p.lexer.expect(.t_identifier);
                                     if (p.lexer.token == .t_extends) {
                                         _ = p.trySkipTypeScriptConstraintOfInferTypeWithBacktracking(opts);
@@ -7232,15 +7489,90 @@ fn NewParser_(
 
                                 // "function assert(x: boolean): asserts x"
                                 // "function assert(x: boolean): asserts x is boolean"
-                                if (opts.is_return_type and !p.lexer.has_newline_before and (p.lexer.token == .t_identifier or p.lexer.token == .t_this)) {
+                                if (opts.contains(.is_return_type) and !p.lexer.has_newline_before and (p.lexer.token == .t_identifier or p.lexer.token == .t_this)) {
                                     try p.lexer.next();
                                 }
                             },
-                            .primitive => {
+                            .primitive_any => {
                                 try p.lexer.next();
                                 check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_any;
+                                }
+                            },
+                            .primitive_never => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_never;
+                                }
+                            },
+                            .primitive_unknown => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_unknown;
+                                }
+                            },
+                            .primitive_undefined => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_undefined;
+                                }
+                            },
+                            .primitive_object => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_object;
+                                }
+                            },
+                            .primitive_number => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_number;
+                                }
+                            },
+                            .primitive_string => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_string;
+                                }
+                            },
+                            .primitive_boolean => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_boolean;
+                                }
+                            },
+                            .primitive_bigint => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_bigint;
+                                }
+                            },
+                            .primitive_symbol => {
+                                try p.lexer.next();
+                                check_type_parameters = false;
+                                if (comptime get_metadata) {
+                                    result.* = .m_symbol;
+                                }
                             },
                             else => {
+                                if (comptime get_metadata) {
+                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    if (p.known_enum_values.contains(find_result.ref)) {
+                                        result.* = .m_number;
+                                    } else {
+                                        result.* = .{ .m_identifier = find_result.ref };
+                                    }
+                                }
+
                                 try p.lexer.next();
                             },
                         }
@@ -7261,8 +7593,13 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // "[typeof: number]"
-                        if (opts.allow_tuple_labels and p.lexer.token == .t_colon) {
+                        if (opts.contains(.allow_tuple_labels) and p.lexer.token == .t_colon) {
                             return;
+                        }
+
+                        // always `Object`
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
                         }
 
                         if (p.lexer.token == .t_import) {
@@ -7296,13 +7633,16 @@ fn NewParser_(
                         // "[first: number, second: string]"
                         try p.lexer.next();
 
+                        if (comptime get_metadata) {
+                            result.* = .m_array;
+                        }
+
                         while (p.lexer.token != .t_close_bracket) {
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
-                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions{
-                                .allow_tuple_labels = true,
-                            });
+                            var dummy_result = TypeScript.Metadata.default;
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, &dummy_result);
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -7319,10 +7659,12 @@ fn NewParser_(
                     },
                     .t_open_brace => {
                         try p.skipTypeScriptObjectType();
+                        if (comptime get_metadata) {
+                            result.* = .m_object;
+                        }
                     },
                     .t_template_head => {
                         // "`${'a' | 'b'}-${'c' | 'd'}`"
-
                         while (true) {
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
@@ -7333,11 +7675,14 @@ fn NewParser_(
                                 break;
                             }
                         }
+                        if (comptime get_metadata) {
+                            result.* = .m_string;
+                        }
                     },
 
                     else => {
                         // "[function: number]"
-                        if (opts.allow_tuple_labels and p.lexer.isIdentifierOrKeyword()) {
+                        if (opts.contains(.allow_tuple_labels) and p.lexer.isIdentifierOrKeyword()) {
                             if (p.lexer.token != .t_function) {
                                 try p.lexer.unexpected();
                             }
@@ -7362,8 +7707,22 @@ fn NewParser_(
                         if (level.gte(.bitwise_or)) {
                             return;
                         }
+
                         try p.lexer.next();
-                        try p.skipTypeScriptType(.bitwise_or);
+
+                        if (comptime get_metadata) {
+                            var left = result.*;
+                            if (left.finishUnion(p)) |final| {
+                                // finish skipping the rest of the type without collecting type metadata.
+                                result.* = final;
+                                try p.skipTypeScriptType(.bitwise_or);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeUnion(left);
+                            }
+                        } else {
+                            try p.skipTypeScriptType(.bitwise_or);
+                        }
                     },
                     .t_ampersand => {
                         if (level.gte(.bitwise_and)) {
@@ -7371,7 +7730,20 @@ fn NewParser_(
                         }
 
                         try p.lexer.next();
-                        try p.skipTypeScriptType(.bitwise_and);
+
+                        if (comptime get_metadata) {
+                            var left = result.*;
+                            if (left.finishIntersection(p)) |final| {
+                                // finish skipping the rest of the type without collecting type metadata.
+                                result.* = final;
+                                try p.skipTypeScriptType(.bitwise_and);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeIntersection(left);
+                            }
+                        } else {
+                            try p.skipTypeScriptType(.bitwise_and);
+                        }
                     },
                     .t_exclamation => {
                         // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
@@ -7390,6 +7762,22 @@ fn NewParser_(
                         if (!p.lexer.isIdentifierOrKeyword()) {
                             try p.lexer.expect(.t_identifier);
                         }
+
+                        if (comptime get_metadata) {
+                            if (result.* == .m_identifier) {
+                                var dot = List(Ref).initCapacity(p.allocator, 2) catch unreachable;
+                                dot.appendAssumeCapacity(result.m_identifier);
+                                const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                dot.appendAssumeCapacity(find_result.ref);
+                                result.* = .{ .m_dot = dot };
+                            } else if (result.* == .m_dot) {
+                                if (p.lexer.isIdentifierOrKeyword()) {
+                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    result.m_dot.append(p.allocator, find_result.ref) catch unreachable;
+                                }
+                            }
+                        }
+
                         try p.lexer.next();
 
                         // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
@@ -7403,26 +7791,56 @@ fn NewParser_(
                             return;
                         }
                         try p.lexer.next();
+                        var skipped = false;
                         if (p.lexer.token != .t_close_bracket) {
+                            skipped = true;
                             try p.skipTypeScriptType(.lowest);
                         }
                         try p.lexer.expect(.t_close_bracket);
+
+                        if (comptime get_metadata) {
+                            if (result.* == .m_none) {
+                                result.* = .m_array;
+                            } else {
+                                // if something was skipped, it is object type
+                                if (skipped) {
+                                    result.* = .m_object;
+                                } else {
+                                    result.* = .m_array;
+                                }
+                            }
+                        }
                     },
                     .t_extends => {
                         // "{ x: number \n extends: boolean }" must not become a single type
-                        if (p.lexer.has_newline_before or opts.disallow_conditional_types) {
+                        if (p.lexer.has_newline_before or opts.contains(.disallow_conditional_types)) {
                             return;
                         }
 
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        try p.skipTypeScriptTypeWithOpts(.lowest, .{ .disallow_conditional_types = true });
+                        var extends_type = TypeScript.Metadata.default;
+                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), get_metadata, &extends_type);
 
-                        try p.lexer.expect(.t_question);
-                        try p.skipTypeScriptType(.lowest);
-                        try p.lexer.expect(.t_colon);
-                        try p.skipTypeScriptType(.lowest);
+                        if (comptime get_metadata) {
+                            // intersection
+                            try p.lexer.expect(.t_question);
+                            var left = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                            try p.lexer.expect(.t_colon);
+                            if (left.finishIntersection(p)) |final| {
+                                result.* = final;
+                                try p.skipTypeScriptType(.lowest);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeIntersection(left);
+                            }
+                        } else {
+                            try p.lexer.expect(.t_question);
+                            try p.skipTypeScriptType(.lowest);
+                            try p.lexer.expect(.t_colon);
+                            try p.skipTypeScriptType(.lowest);
+                        }
                     },
                     else => {
                         return;
@@ -7452,7 +7870,8 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    try p.skipTypeScriptTypeWithOpts(.lowest, .{ .is_index_signature = true });
+                    var metadata = TypeScript.Metadata.default;
+                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, &metadata);
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -11122,13 +11541,12 @@ fn NewParser_(
                 return result;
             }
 
-            pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions) anyerror!bool {
+            pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) anyerror!bool {
                 try p.lexer.expect(.t_extends);
-                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions{
-                    .disallow_conditional_types = true,
-                });
+                var metadata = TypeScript.Metadata.default;
+                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &metadata);
 
-                if (!flags.disallow_conditional_types and p.lexer.token == .t_question) {
+                if (!flags.contains(.disallow_conditional_types) and p.lexer.token == .t_question) {
                     return error.Backtrack;
                 }
 
@@ -11181,7 +11599,7 @@ fn NewParser_(
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking, bool);
         }
 
-        pub fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions) bool {
+        pub fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) bool {
             return Backtracking.lexerBacktrackerWithArgs(p, Backtracking.skipTypeScriptConstraintOfInferTypeWithBacktracking, .{ p, flags }, bool);
         }
 
@@ -11621,6 +12039,7 @@ fn NewParser_(
                 (p.lexer.token != .t_open_paren or has_definite_assignment_assertion_operator))
             {
                 var initializer: ?Expr = null;
+                var ts_metadata = TypeScript.Metadata.default;
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if (!is_computed) {
@@ -11639,7 +12058,11 @@ fn NewParser_(
                     // Skip over types
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
-                        try p.skipTypeScriptType(.lowest);
+                        if (p.options.features.emit_decorator_metadata and opts.is_class and opts.ts_decorators.len > 0) {
+                            ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                        } else {
+                            try p.skipTypeScriptType(.lowest);
+                        }
                     }
                 }
 
@@ -11693,6 +12116,7 @@ fn NewParser_(
                     }),
                     .key = key,
                     .initializer = initializer,
+                    .ts_metadata = ts_metadata,
                 };
             }
 
@@ -11739,6 +12163,7 @@ fn NewParser_(
                     .allow_super_property = true,
                     .allow_ts_decorators = opts.allow_ts_decorators,
                     .is_constructor = is_constructor,
+                    .has_decorators = opts.ts_decorators.len > 0 or (opts.has_class_decorators and is_constructor),
 
                     // Only allow omitting the body if we're parsing TypeScript class
                     .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
@@ -11816,6 +12241,7 @@ fn NewParser_(
                     }),
                     .key = key,
                     .value = value,
+                    .ts_metadata = .m_function,
                 };
             }
 
@@ -11895,6 +12321,7 @@ fn NewParser_(
                 const first_decorator_loc = p.lexer.loc();
                 if (opts.allow_ts_decorators) {
                     opts.ts_decorators = try p.parseTypeScriptDecorators();
+                    opts.has_class_decorators = class_opts.ts_decorators.len > 0;
                     has_decorators = has_decorators or opts.ts_decorators.len > 0;
                 } else {
                     opts.ts_decorators = &[_]Expr{};
@@ -18123,7 +18550,7 @@ fn NewParser_(
 
                     // Track values so they can be used by constant folding. We need to follow
                     // links here in case the enum was merged with a preceding namespace
-                    var values_so_far = StringHashMapUnamanged(f64){};
+                    var values_so_far = StringHashMapUnmanaged(f64){};
 
                     p.known_enum_values.put(allocator, data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
                     p.known_enum_values.put(allocator, data.arg, values_so_far) catch unreachable;
@@ -18765,7 +19192,7 @@ fn NewParser_(
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(i)) }, arg_decorator.loc);
                                                 args[1] = arg_decorator;
-                                                decorators.append(p.callRuntime(arg_decorator.loc, "__decorateParam", args)) catch unreachable;
+                                                decorators.append(p.callRuntime(arg_decorator.loc, "__legacyDecorateParamTS", args)) catch unreachable;
                                                 if (is_constructor) {
                                                     class.ts_decorators.update(decorators);
                                                 } else {
@@ -18792,7 +19219,12 @@ fn NewParser_(
                                 else => bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?}),
                             };
 
-                            const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;
+                            // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
+                            // the if statement.
+                            const descriptor_kind: Expr = if (!prop.flags.contains(.is_method))
+                                p.newExpr(E.Undefined{}, loc)
+                            else
+                                p.newExpr(E.Null{}, loc);
 
                             var target: Expr = undefined;
                             if (prop.flags.contains(.is_static)) {
@@ -18802,13 +19234,60 @@ fn NewParser_(
                                 target = p.newExpr(E.Dot{ .target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
                             }
 
+                            var array = prop.ts_decorators.listManaged(p.allocator);
+
+                            if (p.options.features.emit_decorator_metadata) {
+                                {
+                                    // design:type
+                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                    args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                    args[1] = p.serializeMetadata(prop.ts_metadata) catch unreachable;
+                                    array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                }
+                                {
+                                    // design:paramtypes and design:returntype if method
+                                    if (prop.flags.contains(.is_method)) {
+                                        if (prop.value) |prop_value| {
+                                            {
+                                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+
+                                                const method_args = prop_value.data.e_function.func.args;
+
+                                                if (method_args.len > 0) {
+                                                    var args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
+
+                                                    for (method_args, 0..) |method_arg, i| {
+                                                        args_array[i] = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
+                                                    }
+
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                } else {
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                                }
+
+                                                array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                            }
+                                            {
+                                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
+
+                                                args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
+
+                                                array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             const args = p.allocator.alloc(Expr, 4) catch unreachable;
-                            args[0] = p.newExpr(E.Array{ .items = prop.ts_decorators }, loc);
+                            args[0] = p.newExpr(E.Array{ .items = ExprNodeList.init(array.items) }, loc);
                             args[1] = target;
                             args[2] = descriptor_key;
-                            args[3] = p.newExpr(E.Number{ .value = descriptor_kind }, loc);
+                            args[3] = descriptor_kind;
 
-                            const decorator = p.callRuntime(prop.key.?.loc, "__decorateClass", args);
+                            const decorator = p.callRuntime(prop.key.?.loc, "__legacyDecorateClassTS", args);
                             const decorator_stmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
 
                             if (prop.flags.contains(.is_static)) {
@@ -18916,13 +19395,38 @@ fn NewParser_(
                     stmts.appendSliceAssumeCapacity(instance_decorators.items);
                     stmts.appendSliceAssumeCapacity(static_decorators.items);
                     if (class.ts_decorators.len > 0) {
+                        var array = class.ts_decorators.listManaged(p.allocator);
+
+                        if (p.options.features.emit_decorator_metadata) {
+                            if (constructor_function != null) {
+                                // design:paramtypes
+                                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+
+                                const constructor_args = constructor_function.?.func.args;
+                                if (constructor_args.len > 0) {
+                                    var param_array = p.allocator.alloc(Expr, constructor_args.len) catch unreachable;
+
+                                    for (constructor_args, 0..) |constructor_arg, i| {
+                                        param_array[i] = p.serializeMetadata(constructor_arg.ts_metadata) catch unreachable;
+                                    }
+
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, logger.Loc.Empty);
+                                } else {
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                }
+
+                                array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
+                            }
+                        }
+
                         const args = p.allocator.alloc(Expr, 2) catch unreachable;
-                        args[0] = p.newExpr(E.Array{ .items = class.ts_decorators }, stmt.loc);
+                        args[0] = p.newExpr(E.Array{ .items = ExprNodeList.init(array.items) }, stmt.loc);
                         args[1] = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
 
                         stmts.appendAssumeCapacity(Stmt.assign(
                             p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
-                            p.callRuntime(stmt.loc, "__decorateClass", args),
+                            p.callRuntime(stmt.loc, "__legacyDecorateClassTS", args),
                             p.allocator,
                         ));
 
@@ -18937,6 +19441,220 @@ fn NewParser_(
                     return stmts;
                 },
             }
+        }
+
+        fn serializeMetadata(p: *P, ts_metadata: TypeScript.Metadata) !Expr {
+            return switch (ts_metadata) {
+                .m_none => p.newExpr(
+                    E.Undefined{},
+                    logger.Loc.Empty,
+                ),
+
+                .m_any,
+                .m_unknown,
+                .m_object,
+                => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+
+                .m_never,
+                .m_undefined,
+                .m_null,
+                .m_void,
+                => p.newExpr(
+                    E.Undefined{},
+                    logger.Loc.Empty,
+                ),
+
+                .m_string => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "String") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_number => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Number") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_function => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Function") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_boolean => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Boolean") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+                .m_array => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Array") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+
+                .m_bigint => p.maybeDefinedHelper(
+                    p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "BigInt") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                ),
+
+                .m_symbol => p.maybeDefinedHelper(
+                    p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "Symbol") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                ),
+
+                .m_promise => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Promise") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
+                ),
+
+                .m_identifier => |ref| {
+                    p.recordUsage(ref);
+                    return p.maybeDefinedHelper(p.newExpr(
+                        E.Identifier{ .ref = ref },
+                        logger.Loc.Empty,
+                    ));
+                },
+
+                .m_dot => |_refs| {
+                    var refs = _refs;
+                    std.debug.assert(refs.items.len >= 2);
+                    defer refs.deinit(p.allocator);
+
+                    var dots = p.newExpr(
+                        E.Dot{
+                            .name = p.loadNameFromRef(refs.items[refs.items.len - 1]),
+                            .name_loc = logger.Loc.Empty,
+                            .target = undefined,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    var current_expr = &dots.data.e_dot.target;
+                    var i: usize = refs.items.len - 2;
+                    while (i > 0) {
+                        current_expr.* = p.newExpr(E.Dot{
+                            .name = p.loadNameFromRef(refs.items[i]),
+                            .name_loc = logger.Loc.Empty,
+                            .target = undefined,
+                        }, logger.Loc.Empty);
+                        current_expr = &current_expr.data.e_dot.target;
+                        i -= 1;
+                    }
+
+                    current_expr.* = p.newExpr(
+                        E.Identifier{
+                            .ref = refs.items[0],
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const dot_identifier = current_expr.*;
+                    var current_dot = dots;
+
+                    var maybe_defined_dots = p.newExpr(
+                        E.Binary{
+                            .op = .bin_logical_or,
+                            .right = try p.checkIfDefinedHelper(current_dot),
+                            .left = undefined,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    if (i < refs.items.len - 2) {
+                        current_dot = current_dot.data.e_dot.target;
+                    }
+                    current_expr = &maybe_defined_dots.data.e_binary.left;
+
+                    while (i < refs.items.len - 2) {
+                        current_expr.* = p.newExpr(
+                            E.Binary{
+                                .op = .bin_logical_or,
+                                .right = try p.checkIfDefinedHelper(current_dot),
+                                .left = undefined,
+                            },
+                            logger.Loc.Empty,
+                        );
+
+                        current_expr = &current_expr.data.e_binary.left;
+                        i += 1;
+                        if (i < refs.items.len - 2) {
+                            current_dot = current_dot.data.e_dot.target;
+                        }
+                    }
+
+                    current_expr.* = try p.checkIfDefinedHelper(dot_identifier);
+
+                    var root = p.newExpr(
+                        E.If{
+                            .yes = p.newExpr(
+                                E.Identifier{
+                                    .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .no = dots,
+                            .test_ = maybe_defined_dots,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    return root;
+                },
+            };
+        }
+
+        fn checkIfDefinedHelper(p: *P, expr: Expr) !Expr {
+            return p.newExpr(
+                E.Binary{
+                    .op = .bin_strict_eq,
+                    .left = p.newExpr(
+                        E.Unary{
+                            .op = .un_typeof,
+                            .value = expr,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                    .right = p.newExpr(
+                        E.String{ .data = "undefined" },
+                        logger.Loc.Empty,
+                    ),
+                },
+                logger.Loc.Empty,
+            );
+        }
+
+        fn maybeDefinedHelper(p: *P, identifier_expr: Expr) !Expr {
+            return p.newExpr(
+                E.If{
+                    .test_ = try p.checkIfDefinedHelper(identifier_expr),
+                    .yes = p.newExpr(
+                        E.Identifier{
+                            .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                    .no = identifier_expr,
+                },
+                logger.Loc.Empty,
+            );
         }
 
         fn visitForLoopInit(p: *P, stmt: Stmt, is_in_or_of: bool) Stmt {

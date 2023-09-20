@@ -2192,6 +2192,8 @@ pub const Path = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
+        defer arena.deinit();
+
         var arena_allocator = arena.allocator();
         var stack_fallback_allocator = std.heap.stackFallback(
             ((32 * @sizeOf(string)) + 1024),
@@ -2199,18 +2201,27 @@ pub const Path = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
-        defer arena.deinit();
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var count: usize = 0;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             to_join[i] = zig_str.toSlice(allocator).slice();
+            count += to_join[i].len;
+        }
+
+        var buf_to_use: []u8 = &buf;
+        if (count * 2 >= buf.len) {
+            buf_to_use = allocator.alloc(u8, count * 2) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
         }
 
         const out = if (!isWindows)
-            PathHandler.joinStringBuf(&buf, to_join, .posix)
+            PathHandler.joinStringBuf(buf_to_use, to_join, .posix)
         else
-            PathHandler.joinStringBuf(&buf, to_join, .windows);
+            PathHandler.joinStringBuf(buf_to_use, to_join, .windows);
 
         var str = bun.String.create(out);
         defer str.deref();

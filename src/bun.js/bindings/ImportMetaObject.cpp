@@ -349,8 +349,12 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    // Stringified URL to a file, going off assumption that all modules would be file URLs
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, makeString("file://"_s, result.toWTFString(globalObject)))));
+    auto resultString = result.toWTFString(globalObject);
+    if (resultString.startsWith("/"_s)) {
+        // file path -> url
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
+    }
+    return JSValue::encode(result);
 }
 
 enum class ImportMetaPropertyOffset : uint32_t {

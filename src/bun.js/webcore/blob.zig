@@ -3673,11 +3673,7 @@ pub const Blob = struct {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
-        if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toJSONObject(global);
-        } else {
-            return ZigString.init(buf).toJSONObject(global);
-        }
+        return ZigString.init(buf).toJSONObject(global);
     }
 
     pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

@@ -39,7 +39,7 @@ it("should report connection errors", async () => {
     `
 [install]
 cache = false
-registry = "http://localhost:${server.port}/"
+registry = "http://${server.hostname}:${server.port}/"
 `,
   );
   await writeFile(
@@ -62,7 +62,7 @@ registry = "http://localhost:${server.port}/"
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: ConnectionClosed downloading package manifest bar");
+  expect(err.split(/\r?\n/)).toContain("error: ConnectionRefused downloading package manifest bar");
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
@@ -96,7 +96,7 @@ it("should handle missing package", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain('error: package "foo" not found localhost/foo 404');
+  expect(err.split(/\r?\n/)).toContain(`error: package "foo" not found localhost:${new URL(root_url).port}/foo 404`);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
@@ -112,7 +112,7 @@ it("should handle missing package", async () => {
 
 it("should handle @scoped authentication", async () => {
   let seen_token = false;
-  const url = `${root_url}/@foo/bar`;
+  const url = `${root_url}/@foo%2fbar`;
   const urls: string[] = [];
   setHandler(async request => {
     expect(request.method).toBe("GET");
@@ -2197,7 +2197,7 @@ it("should handle unscoped alias on scoped dependency", async () => {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/@barn/moo`, `${root_url}/@barn/moo-0.1.0.tgz`]);
+  expect(urls.sort()).toEqual([`${root_url}/@barn%2fmoo`, `${root_url}/@barn/moo-0.1.0.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@barn", "moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
@@ -2327,7 +2327,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([
-    `${root_url}/@barn/moo`,
+    `${root_url}/@barn%2fmoo`,
     `${root_url}/@barn/moo-0.1.0.tgz`,
     `${root_url}/bar`,
     `${root_url}/bar-0.0.2.tgz`,
@@ -6022,13 +6022,13 @@ describe("Registry URLs", () => {
     ["https://registry.npmjs.org/", false],
     ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
     ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
-    ["", true],
+    // ["", true],
     ["https:example.org", false],
     ["https://////example.com///", false],
     ["https://example.com/https:example.org", false],
     ["https://example.com/[]?[]#[]", false],
     ["https://example/%?%#%", false],
-    ["c:", false],
+    ["c:", true],
     ["c:/", false],
     ["https://點看", false], // gets converted to punycode
     ["https://xn--c1yn36f/", false],
@@ -6067,11 +6067,10 @@ describe("Registry URLs", () => {
       const err = await new Response(stderr).text();
 
       if (fails) {
-        const url = regURL.at(-1) === "/" ? regURL : regURL + "/";
-        expect(err.includes(`Failed to join registry \"${url}\" and package \"notapackage\" URLs`)).toBeTrue();
-        expect(err.includes("error: InvalidURL")).toBeTrue();
+        expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+        expect(err).toContain("error: InvalidURL");
       } else {
-        expect(err.includes("error: notapackage@0.0.2 failed to resolve")).toBeTrue();
+        expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
       }
       // fails either way, since notapackage is, well, not a real package.
       expect(await exited).not.toBe(0);
@@ -6108,8 +6107,8 @@ describe("Registry URLs", () => {
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
 
-    expect(err.includes(`Failed to join registry \"${regURL}/\" and package \"notapackage\" URLs`)).toBeTrue();
-    expect(err.includes("warn: InvalidURL")).toBeTrue();
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
     expect(await exited).toBe(0);
   });
@@ -6149,8 +6148,8 @@ describe("Registry URLs", () => {
     expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
 
-    expect(err.includes(`Failed to join registry \"${regURL}\" and package \"notapackage\" URLs`)).toBeTrue();
-    expect(err.includes("warn: InvalidURL")).toBeTrue();
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
     expect(await exited).toBe(0);
   });

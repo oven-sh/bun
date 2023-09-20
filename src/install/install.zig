@@ -252,16 +252,29 @@ const NetworkTask = struct {
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
+
+            // Not all registries support scoped package names when fetching the manifest.
+            // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
+            // Other registries like AWS codeartifact only support the former.
+            // "npm" CLI requests the manifest with the encoded name.
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
+            var encoded_name = name;
+            if (strings.containsChar(name, '/')) {
+                encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
+            }
+
             const tmp = bun.JSC.URL.join(
                 bun.String.fromUTF8(scope.url.href),
-                bun.String.fromUTF8(name),
+                bun.String.fromUTF8(encoded_name),
             );
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
                 const msg = .{
-                    .fmt = "Failed to join registry \"{s}\" and package \"{s}\" URLs",
-                    .args = .{ scope.url.href, name },
+                    .fmt = "Failed to join registry {} and package {} URLs",
+                    .args = .{ strings.QuotedFormatter{ .text = scope.url.href }, strings.QuotedFormatter{ .text = name } },
                 };
 
                 if (warn_on_error)
@@ -345,6 +358,10 @@ const NetworkTask = struct {
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -424,6 +441,9 @@ const NetworkTask = struct {
             null,
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
 
         this.callback = .{ .extract = tarball };
     }
@@ -3786,10 +3806,10 @@ pub const PackageManager = struct {
                             switch (response.status_code) {
                                 404 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
+                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{}{s} 404<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 
@@ -3803,10 +3823,10 @@ pub const PackageManager = struct {
                                 },
                                 401 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
+                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 

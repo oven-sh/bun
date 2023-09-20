@@ -1475,3 +1475,124 @@ it("should work with http 100 continue on the same buffer", async () => {
     server?.close();
   }
 });
+
+describe("should strip headers", () => {
+  it("status code 303", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": "/redirected",
+            },
+            status: 303,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+      method: "POST",
+      headers: {
+        "I-Am-Here": "yes",
+      },
+    });
+
+    expect(headers.get("I-Am-Here")).toBeNull();
+    expect(url).toEndWith("/redirected");
+    expect(redirected).toBe(true);
+    server.stop(true);
+  });
+
+  it("cross-origin status code 302", async () => {
+    const server1 = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": `http://${server2.hostname}:${server2.port}/redirected`,
+            },
+            status: 302,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const server2 = Bun.serve({
+      port: 0,
+      async fetch(request: Request, server) {
+        if (request.url.endsWith("/redirect")) {
+          return new Response("hello", {
+            headers: {
+              ...request.headers,
+              "Location": `http://${server.hostname}:${server.port}/redirected`,
+            },
+            status: 302,
+          });
+        }
+
+        return new Response("hello", {
+          headers: request.headers,
+        });
+      },
+    });
+
+    const { headers, url, redirected } = await fetch(`http://${server1.hostname}:${server1.port}/redirect`, {
+      method: "GET",
+      headers: {
+        "Authorization": "yes",
+      },
+    });
+
+    expect(headers.get("Authorization")).toBeNull();
+    expect(url).toEndWith("/redirected");
+    expect(redirected).toBe(true);
+    server1.stop(true);
+    server2.stop(true);
+  });
+});
+
+it("same-origin status code 302 should not strip headers", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request: Request, server) {
+      if (request.url.endsWith("/redirect")) {
+        return new Response("hello", {
+          headers: {
+            ...request.headers,
+            "Location": `http://${server.hostname}:${server.port}/redirected`,
+          },
+          status: 302,
+        });
+      }
+
+      return new Response("hello", {
+        headers: request.headers,
+      });
+    },
+  });
+
+  const { headers, url, redirected } = await fetch(`http://${server.hostname}:${server.port}/redirect`, {
+    method: "GET",
+    headers: {
+      "Authorization": "yes",
+    },
+  });
+
+  expect(headers.get("Authorization")).toEqual("yes");
+  expect(url).toEndWith("/redirected");
+  expect(redirected).toBe(true);
+  server.stop(true);
+});

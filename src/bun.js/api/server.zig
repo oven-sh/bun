@@ -5393,24 +5393,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                     .unix => |unix| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(
-                                &output_buf,
-                                "Failed to listen on unix socket {}",
-                                .{
-                                    strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
-                                },
-                            ) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                 }
             }

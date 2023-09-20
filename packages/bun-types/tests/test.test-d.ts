@@ -6,7 +6,12 @@ import {
   afterAll,
   beforeEach,
   afterEach,
+  spyOn,
 } from "bun:test";
+import { expectType } from "tsd";
+
+const spy = spyOn(console, "log");
+expectType<any[][]>(spy.mock.calls);
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
 

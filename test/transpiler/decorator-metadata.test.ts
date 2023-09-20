@@ -7,6 +7,7 @@ describe("decorator metadata", () => {
     class Swag {}
     class A_1 {}
 
+    // @ts-ignore
     @d1
     class A {
       constructor(
@@ -31,9 +32,12 @@ describe("decorator metadata", () => {
         p18: `123`,
         p19: true,
         p20: false,
+        // @ts-ignore
         p21: Map,
+        // @ts-ignore
         p22: Set,
         p23: Known,
+        // @ts-ignore
         p24: Unknown,
         p25: never & string,
         p26: string & never,
@@ -91,11 +95,17 @@ describe("decorator metadata", () => {
         p78: Swag & any,
         p79: Swag | Swag,
         p80: Swag & Swag,
+        // @ts-ignore
         p81: Unknown | Known,
+        // @ts-ignore
         p82: Known | Unknown,
+        // @ts-ignore
         p83: Unknown & Known,
+        // @ts-ignore
         p84: Known & Unknown,
+        // @ts-ignore
         p85: Unknown | Unknown,
+        // @ts-ignore
         p86: Unknown & Unknown,
         p87: never | never,
         p88: never & never,
@@ -366,22 +376,24 @@ describe("decorator metadata", () => {
   });
   test("design: type, paramtypes, returntype", () => {
     function d1() {}
-
+    // @ts-ignore
     @d1
     class A {
+      // @ts-ignore
       constructor(@d1 arg1: string) {}
-
+      // @ts-ignore
       @d1
+      // @ts-ignore
       method1(@d1 arg1: number): boolean {
         return true;
       }
-
+      // @ts-ignore
       @d1
       prop1: () => {};
-
+      // @ts-ignore
       @d1
       prop2: "foo" = "foo";
-
+      // @ts-ignore
       @d1
       prop3: symbol;
     }
@@ -418,11 +430,65 @@ describe("decorator metadata", () => {
   test("class with only constructor argument decorators", () => {
     function d1() {}
     class A {
+      // @ts-ignore
       constructor(@d1 arg1: string) {}
     }
 
     expect(Reflect.getMetadata("design:type", A)).toBeUndefined();
     expect(Reflect.getMetadata("design:paramtypes", A)[0]).toBe(String);
     expect(Reflect.getMetadata("design:returntype", A)).toBeUndefined();
+  });
+
+  test("more types", () => {
+    type B = "hello" | "world";
+    const b = 2;
+    const c = ["hello", "world"] as const;
+    type Loser = `hello ${B}`; // "hello hello" | "hello world"
+    function d1() {}
+
+    class A {
+      constructor(
+        // @ts-ignore
+        @d1 p0: `hello ${B}`,
+        // @ts-ignore
+        p1: keyof Something,
+        p2: typeof b,
+        p3: readonly ["hello", "world"],
+        p4: typeof c,
+        p5: readonly [number, string],
+        // prettier-ignore
+        p6: (string | string),
+        // prettier-ignore
+        p7: (string & string),
+        p8: boolean extends true ? "a" : "b",
+        // @ts-ignore
+        p9: Loser extends Loser ? string : Foo,
+        p10: { [keyof in string]: number },
+        // @ts-ignore
+        p11: blah extends blahblah ? number : void,
+      ) {}
+
+      // @ts-ignore
+      @d1
+      async method1() {
+        return true;
+      }
+    }
+
+    const paramtypes = Reflect.getMetadata("design:paramtypes", A);
+    expect(paramtypes[0]).toBe(String);
+    expect(paramtypes[1]).toBe(Object);
+    expect(paramtypes[2]).toBe(Object);
+    expect(paramtypes[3]).toBe(Array);
+    expect(paramtypes[4]).toBe(Object);
+    expect(paramtypes[5]).toBe(Array);
+    expect(paramtypes[6]).toBe(String);
+    expect(paramtypes[7]).toBe(String);
+    expect(paramtypes[8]).toBe(String);
+    expect(paramtypes[9]).toBe(Object);
+    expect(paramtypes[10]).toBe(Object);
+    expect(paramtypes[11]).toBe(Object);
+
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method1")).toBe(Promise);
   });
 });

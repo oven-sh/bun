@@ -440,7 +440,6 @@ pub const TypeScript = struct {
     }
 
     pub const Metadata = union(enum) {
-        // `Object`
         m_none: void,
 
         m_never: void,
@@ -457,6 +456,7 @@ pub const TypeScript = struct {
         m_number: void,
         m_bigint: void,
         m_symbol: void,
+        m_promise: void,
         m_identifier: Ref,
         m_dot: List(Ref),
 
@@ -813,8 +813,8 @@ pub const TypeScript = struct {
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
 
-            .{ "keyof", .prefix },
-            .{ "readonly", .prefix },
+            .{ "keyof", .prefix_keyof },
+            .{ "readonly", .prefix_readonly },
 
             .{ "any", .primitive_any },
             .{ "never", .primitive_never },
@@ -834,7 +834,8 @@ pub const TypeScript = struct {
             unique,
             abstract,
             asserts,
-            prefix,
+            prefix_keyof,
+            prefix_readonly,
             primitive_any,
             primitive_never,
             primitive_unknown,
@@ -7034,13 +7035,17 @@ fn NewParser_(
             p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
             // "function foo(): any {}"
-            if (is_typescript_enabled and p.lexer.token == .t_colon) {
-                try p.lexer.next();
+            if (is_typescript_enabled) {
+                if (p.lexer.token == .t_colon) {
+                    try p.lexer.next();
 
-                if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
-                    func.return_ts_metadata = try p.skipTypescriptReturnTypeWithMetadata();
-                } else {
-                    try p.skipTypescriptReturnType();
+                    if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                        func.return_ts_metadata = try p.skipTypescriptReturnTypeWithMetadata();
+                    } else {
+                        try p.skipTypescriptReturnType();
+                    }
+                } else if (func.flags.contains(.is_async) and p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                    func.return_ts_metadata = .m_promise;
                 }
             }
 
@@ -7411,7 +7416,7 @@ fn NewParser_(
                         var check_type_parameters = true;
 
                         switch (kind) {
-                            .prefix => {
+                            .prefix_keyof => {
                                 try p.lexer.next();
 
                                 // Valid:
@@ -7424,6 +7429,24 @@ fn NewParser_(
                                 //
                                 if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.contains(.is_index_signature) and !opts.contains(.allow_tuple_labels))) {
                                     try p.skipTypeScriptType(.prefix);
+                                }
+
+                                if (comptime get_metadata) {
+                                    result.* = .m_object;
+                                }
+
+                                break;
+                            },
+                            .prefix_readonly => {
+                                try p.lexer.next();
+
+                                if ((p.lexer.token != .t_colon and p.lexer.token != .t_in) or (!opts.contains(.is_index_signature) and !opts.contains(.allow_tuple_labels))) {
+                                    try p.skipTypeScriptType(.prefix);
+                                }
+
+                                // assume array or tuple literal
+                                if (comptime get_metadata) {
+                                    result.* = .m_array;
                                 }
 
                                 break;
@@ -7797,13 +7820,27 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        var dummy_result = TypeScript.Metadata.default;
-                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &dummy_result);
+                        var extends_type = TypeScript.Metadata.default;
+                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), get_metadata, &extends_type);
 
-                        try p.lexer.expect(.t_question);
-                        try p.skipTypeScriptType(.lowest);
-                        try p.lexer.expect(.t_colon);
-                        try p.skipTypeScriptType(.lowest);
+                        if (comptime get_metadata) {
+                            // intersection
+                            try p.lexer.expect(.t_question);
+                            var left = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                            try p.lexer.expect(.t_colon);
+                            if (left.finishIntersection(p)) |final| {
+                                result.* = final;
+                                try p.skipTypeScriptType(.lowest);
+                            } else {
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                result.mergeIntersection(left);
+                            }
+                        } else {
+                            try p.lexer.expect(.t_question);
+                            try p.skipTypeScriptType(.lowest);
+                            try p.lexer.expect(.t_colon);
+                            try p.skipTypeScriptType(.lowest);
+                        }
                     },
                     else => {
                         return;
@@ -19479,6 +19516,13 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     ),
+                ),
+
+                .m_promise => p.newExpr(
+                    E.Identifier{
+                        .ref = (p.findSymbol(logger.Loc.Empty, "Promise") catch unreachable).ref,
+                    },
+                    logger.Loc.Empty,
                 ),
 
                 .m_identifier => |ref| {

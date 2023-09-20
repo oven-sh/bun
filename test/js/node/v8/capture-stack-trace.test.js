@@ -505,7 +505,6 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
   Error.prepareStackTrace = null;
   const result = runInNewContext(
     `
-    const {prepareStackTrace} = Error;
     Error.prepareStackTrace = (err, stack) => {
       if (typeof err.stack !== "string") {
         throw new Error("err.stack is not a string");

@@ -101,7 +101,7 @@ function testRunInContext(
     expect(typeof result).toBe("function");
     expect(result()).toBe("bar");
   });
-  test.skip("can throw a syntax error", () => {
+  test("can throw a syntax error", () => {
     const context = createContext({});
     const result = () => fn("!?", context);
     expect(result).toThrow({

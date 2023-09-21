@@ -450,7 +450,6 @@ void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
 
     /* (regular) sockets are the only polls which are not freed immediately */
-    us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
     if(fallthrough){
         us_free(timer);
     }else {

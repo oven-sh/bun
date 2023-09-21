@@ -669,7 +669,7 @@ pub const TestCommand = struct {
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,
             .fs = vm.bundler.fs,
-            .filter_names = ctx.positionals[1..],
+            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
         const dir_to_scan = brk: {

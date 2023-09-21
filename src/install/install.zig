@@ -6189,7 +6189,7 @@ pub const PackageManager = struct {
     ) !void {
         var update_requests = try UpdateRequest.Array.init(0);
 
-        if (manager.options.positionals.len == 1) {
+        if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));

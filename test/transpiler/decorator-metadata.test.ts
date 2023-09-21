@@ -491,4 +491,56 @@ describe("decorator metadata", () => {
 
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method1")).toBe(Promise);
   });
+
+  test("rest parameters and defaults", () => {
+    function d1(target: any) {}
+    function d2(target: any, key: string) {}
+
+    @d1
+    class A {
+      @d2
+      // @ts-ignore
+      prop0: any[];
+
+      // @ts-ignore
+      constructor(a0) {}
+
+      @d2
+      // @ts-ignore
+      prop1;
+
+      @d2
+      method1() {}
+
+      @d2
+      // @ts-ignore
+      method2(...a0) {}
+
+      @d2
+      method3(a0: number, ...a1: []) {}
+
+      @d2
+      method4(...a0: any[]) {}
+    }
+
+    expect(Reflect.getMetadata("design:type", A.prototype, "prop0")).toBe(Array);
+    expect(Reflect.getMetadata("design:type", A.prototype, "prop1")).toBe(Object);
+
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method1")).toHaveLength(0);
+    expect(Reflect.getMetadata("design:type", A.prototype, "method1")).toBe(Function);
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method1")).toBeUndefined();
+
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method2")[0]).toBe(Object);
+    expect(Reflect.getMetadata("design:type", A.prototype, "method2")).toBe(Function);
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method2")).toBeUndefined();
+
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method3")[0]).toBe(Number);
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method3")[1]).toBe(Object);
+    expect(Reflect.getMetadata("design:type", A.prototype, "method3")).toBe(Function);
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method3")).toBeUndefined();
+
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method4")[0]).toBe(Object);
+    expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
+  });
 });

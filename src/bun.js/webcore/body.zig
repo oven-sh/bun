@@ -1136,7 +1136,9 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toJSON(globalObject, .share));
+            const result = blob.toJSON(globalObject, .share);
+
+            return JSC.JSPromise.wrap(globalObject, result);
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {

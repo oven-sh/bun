@@ -309,28 +309,41 @@ pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
-pub export fn napi_get_value_double(globalObject: napi_env, value: napi_value, result: *f64) napi_status {
+pub export fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status {
     log("napi_get_value_double", .{});
-    result.* = value.coerce(f64, globalObject);
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
+    result.* = value.coerceToDouble(env);
     return .ok;
 }
-pub export fn napi_get_value_int32(globalObject: napi_env, value: napi_value, result: *i32) napi_status {
+pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
     log("napi_get_value_int32", .{});
-    result.* = value.coerce(i32, globalObject);
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
+    result.* = value.to(i32);
     return .ok;
 }
 pub export fn napi_get_value_uint32(_: napi_env, value: napi_value, result: *u32) napi_status {
     log("napi_get_value_uint32", .{});
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
     result.* = value.to(u32);
     return .ok;
 }
 pub export fn napi_get_value_int64(_: napi_env, value: napi_value, result: *i64) napi_status {
     log("napi_get_value_int64", .{});
+    if (!value.isNumber()) {
+        return .number_expected;
+    }
     result.* = value.to(i64);
     return .ok;
 }
 pub export fn napi_get_value_bool(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_get_value_bool", .{});
+
     result.* = value.to(bool);
     return .ok;
 }

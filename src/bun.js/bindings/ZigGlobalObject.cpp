@@ -3922,6 +3922,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     BunString moduleNameZ;
 
     auto moduleName = moduleNameValue->value(globalObject);
+#if BUN_DEBUG
+    auto startRefCount = moduleName.impl()->refCount();
+#endif
     if (moduleName.startsWith("file://"_s)) {
         auto url = WTF::URL(moduleName);
         if (url.isValid() && !url.isEmpty()) {
@@ -3938,6 +3941,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
     moduleNameZ.deref();
     sourceOriginZ.deref();
+#if BUN_DEBUG
+    // TODO: ASSERT doesnt work right now
+    RELEASE_ASSERT(startRefCount == moduleName.impl()->refCount());
+#endif
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);

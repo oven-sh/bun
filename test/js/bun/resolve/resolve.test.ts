@@ -101,6 +101,19 @@ it("file url in import resolves", async () => {
   expect(stdout.toString("utf8")).toBe("1\n");
 });
 
+it("invalid file url in import throws error", async () => {
+  const dir = tempDirWithFiles("fileurl", {});
+  writeFileSync(`${dir}/test.js`, `import {foo} from 'file://\0invalid url';\nconsole.log(foo);`);
+
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).not.toBe(0);
+  expect(stderr.toString("utf8")).toContain("file://\0invalid url");
+});
+
 it("file url in await import resolves", async () => {
   const dir = tempDirWithFiles("fileurl", {
     "index.js": "export const foo = 1;",

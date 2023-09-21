@@ -55,9 +55,9 @@ function extractScriptsFromPackageJson(document: vscode.TextDocument) {
   const range = new vscode.Range(document.positionAt(startIndex), document.positionAt(endIndex));
 
   const scripts = matches[1].split(/,\s*/).map(script => {
-    const elements = script.match(/"([^"\\]|\\.|\\\n)*"/g)
-    if(elements?.length != 2) return null
-    const [name, command] = elements
+    const elements = script.match(/"([^"\\]|\\.|\\\n)*"/g);
+    if (elements?.length != 2) return null;
+    const [name, command] = elements;
     return {
       name: name.replace('"', "").trim(),
       command: command.replace(/(?<!\\)"/g, "").trim(),

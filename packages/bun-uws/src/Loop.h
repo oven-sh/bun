@@ -126,7 +126,7 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 
         /* Stop and free dateTimer first */
-        us_timer_close(loopData->dateTimer);
+        us_timer_close(loopData->dateTimer, 0);
 
         loopData->~LoopData();
         /* uSockets will track whether this loop is owned by us or a borrowed alien loop */

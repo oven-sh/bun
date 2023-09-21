@@ -105,6 +105,7 @@ pub const TestRunner = struct {
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
         var this = timer.ext(TestRunner).?;
+        defer timer.deinit(true);
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported) {

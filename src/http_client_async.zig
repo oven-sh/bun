@@ -751,12 +751,12 @@ pub const HTTPThread = struct {
             if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                 if (http.client.isHTTPS()) {
                     const socket = uws.SocketTLS.from(socket_ptr.value);
-                    if(socket.isEstablished() and !socket.isClosed() and !socket.isShutdown()) {
+                    if (socket.isEstablished() and !socket.isClosed() and !socket.isShutdown()) {
                         socket.shutdownRead();
                     }
                 } else {
                     const socket = uws.SocketTCP.from(socket_ptr.value);
-                    if(socket.isEstablished() and !socket.isClosed() and !socket.isShutdown()) {
+                    if (socket.isEstablished() and !socket.isClosed() and !socket.isShutdown()) {
                         socket.shutdownRead();
                     }
                 }
@@ -1072,7 +1072,7 @@ pub fn onClose(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Closed  {s}\n", .{client.url.href});
-    
+
     const in_progress = client.state.stage != .done and client.state.stage != .fail;
 
     if (in_progress) {

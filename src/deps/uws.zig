@@ -647,18 +647,12 @@ pub const Timer = opaque {
     pub fn create(loop: *Loop, ptr: anytype) *Timer {
         const Type = @TypeOf(ptr);
 
-        // never fallthrough poll
-        // the problem is uSockets hardcodes it on the other end
-        // so we can never free non-fallthrough polls
         return us_create_timer(loop, 0, @sizeOf(Type));
     }
 
     pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
         const Type = @TypeOf(ptr);
 
-        // never fallthrough poll
-        // the problem is uSockets hardcodes it on the other end
-        // so we can never free non-fallthrough polls
         return us_create_timer(loop, 1, @sizeOf(Type));
     }
 
@@ -669,9 +663,9 @@ pub const Timer = opaque {
         @as(*@TypeOf(ptr), @ptrCast(@alignCast(value_ptr))).* = ptr;
     }
 
-    pub fn deinit(this: *Timer) void {
+    pub fn deinit(this: *Timer, comptime fallthrough: bool) void {
         debug("Timer.deinit()", .{});
-        us_timer_close(this);
+        us_timer_close(this, @intFromBool(fallthrough));
     }
 
     pub fn ext(this: *Timer, comptime Type: type) ?*Type {
@@ -915,7 +909,7 @@ const uintmax_t = c_ulong;
 
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
-extern fn us_timer_close(timer: ?*Timer) void;
+extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
 extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
 extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {

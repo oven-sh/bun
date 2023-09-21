@@ -26,11 +26,7 @@ const invalid = Buffer.from([0xc0]);
 const bigText = Buffer.from("a".repeat(1 * 1024 * 1024));
 const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
-function AbortSinalTimeout(ms: number) {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms);
-  return controller.signal;
-}
+
 describe("fetch() with streaming", () => {
   it(`should be able to fail properly when reading from readable stream`, async () => {
     let server: Server | null = null;
@@ -63,7 +59,7 @@ describe("fetch() with streaming", () => {
       });
 
       const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url, { signal: AbortSinalTimeout(20) });
+      const res = await fetch(server_url, { signal: AbortSignal.timeout(20) });
       try {
         const reader = res.body?.getReader();
         while (true) {
@@ -72,8 +68,8 @@ describe("fetch() with streaming", () => {
         }
         expect(true).toBe("unreachable");
       } catch (err: any) {
-        if (err.name !== "AbortError") throw err;
-        expect(err.message).toBe("The operation was aborted.");
+        if (err.name !== "TimeoutError") throw err;
+        expect(err.message).toBe("The operation timed out.");
       }
     } finally {
       server?.stop();
@@ -1105,7 +1101,7 @@ describe("fetch() with streaming", () => {
         });
         try {
           const res = await fetch(`http://${server.hostname}:${server.port}`, {
-            signal: AbortSinalTimeout(1000),
+            signal: AbortSignal.timeout(1000),
           });
           gcTick(false);
           const reader = res.body?.getReader();
@@ -1126,7 +1122,7 @@ describe("fetch() with streaming", () => {
           gcTick(false);
           expect(buffer.toString("utf8")).toBe("unreachable");
         } catch (err) {
-          expect((err as Error).name).toBe("AbortError");
+          expect((err as Error).name).toBe("TimeoutError");
         }
       } finally {
         server?.stop(true);

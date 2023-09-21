@@ -3488,11 +3488,14 @@ pub fn handleResponseMetadata(
                         );
                         defer new_url_.deref();
 
-                        if (new_url_.utf8ByteLength() > url_buf.data.len) {
-                            return error.RedirectURLTooLong;
+                        if (new_url_.isEmpty()) {
+                            return error.InvalidRedirectURL;
                         }
-                        const new_url = new_url_.toUTF8(fba.allocator());
-                        this.url = URL.parse(new_url.slice());
+
+                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
+                            return error.RedirectURLTooLong;
+                        };
+                        this.url = URL.parse(new_url);
 
                         is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;

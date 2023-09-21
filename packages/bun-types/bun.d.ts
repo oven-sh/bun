@@ -150,6 +150,10 @@ declare module "bun" {
   export function write(
     destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
+    options?: {
+      /** If writing to a PathLike, set the permissions of the file. */
+      mode?: number;
+    },
   ): Promise<number>;
 
   /**

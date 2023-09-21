@@ -1937,14 +1937,21 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const synchronous_loader = loader orelse
-            // Unknown extensions are to be treated as file loader
-            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
-            options.Loader.file
-        else
-            // Unless it's potentially the main module
-            // This is important so that "bun run ./foo-i-have-no-extension" works
-            options.Loader.js;
+        const synchronous_loader = loader orelse loader: {
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
+                // Extensionless files in this context are treated as the JS loader
+                if (path.name.ext.len == 0) {
+                    break :loader options.Loader.tsx;
+                }
+
+                // Unknown extensions are to be treated as file loader
+                break :loader options.Loader.file;
+            } else {
+                // Unless it's potentially the main module
+                // This is important so that "bun run ./foo-i-have-no-extension" works
+                break :loader options.Loader.tsx;
+            }
+        };
 
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(

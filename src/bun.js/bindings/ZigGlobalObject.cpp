@@ -282,20 +282,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::usePromiseWithResolversMethod() = true;
         JSC::Options::useV8DateParser() = true;
 
-#if OS(LINUX) || OS(FREEBSD)
-        // The current implementation of WTF::ramSize() on Linux does not account for cgroups.
-        // We need to fix that, but for now we can use uv_get_constrained_memory() to get the
-        // memory limit imposed by cgroups.
-        uint64_t constrainedMemorySize = uv_get_constrained_memory();
-        if (
-            // 0 means it's not available
-            constrainedMemorySize > 0 &&
-            // When not run in a container, it might return max uint64_t
-            constrainedMemorySize < WTF::ramSize()) {
-            JSC::Options::forceRAMSize() = constrainedMemorySize;
-        }
-#endif
-
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif

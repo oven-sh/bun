@@ -14,8 +14,6 @@
  * ```
  */
 
-type id<T> = T;
-type flatten<T> = id<{ [k in keyof T]: T[k] }>;
 declare module "bun:test" {
   type AnyFunction = (...args: any) => any;
   /**

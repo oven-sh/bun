@@ -65,6 +65,14 @@ describe("bun:test", () => {
 });
 
 // inference should work when data is passed directly in
+test.each([
+  ["a", true, 5],
+  ["b", false, 1234],
+])("test.each", (a, b, c) => {
+  expectType<string>(a);
+  expectType<boolean>(b);
+  expectType<number | string>(c);
+});
 describe.each([
   ["a", true, 5],
   ["b", false, "asdf"],
@@ -73,28 +81,34 @@ describe.each([
   expectType<boolean>(b);
   expectType<number | string>(c);
 });
-test.each([
-  ["a", true, 5],
-  ["b", false, "asdf"],
-])("test.each", (a, b, c) => {
-  expectType<string>(a);
-  expectType<boolean>(b);
-  expectType<number | string>(c);
-});
 
+// no inference on data
 const data = [
   ["a", true, 5],
   ["b", false, "asdf"],
 ];
-
-// inference won't work when data can't be inferred
+test.each(data)("test.each", (...args) => {
+  expectType<string | number | boolean>(args[0]);
+});
 describe.each(data)("test.each", (a, b, c) => {
   expectType<string | number | boolean>(a);
   expectType<string | number | boolean>(b);
   expectType<string | number | boolean>(c);
 });
 
-// inference won't work when data can't be inferred
-test.each(data)("test.each", data => {
-  expectType<(string | number | boolean)[]>(data);
+// as const
+const dataAsConst = [
+  ["a", true, 5],
+  ["b", false, "asdf"],
+] as const;
+
+test.each(dataAsConst)("test.each", (...args) => {
+  expectType<string>(args[0]);
+  expectType<boolean>(args[1]);
+  expectType<string | number>(args[2]);
+});
+describe.each(dataAsConst)("test.each", (...args) => {
+  expectType<string>(args[0]);
+  expectType<boolean>(args[1]);
+  expectType<string | number>(args[2]);
 });

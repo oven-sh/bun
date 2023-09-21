@@ -3488,6 +3488,9 @@ pub fn handleResponseMetadata(
                         );
                         defer new_url_.deref();
 
+                        if (new_url_.utf8ByteLength() > url_buf.data.len) {
+                            return error.RedirectURLTooLong;
+                        }
                         const new_url = new_url_.toUTF8(fba.allocator());
                         this.url = URL.parse(new_url.slice());
 

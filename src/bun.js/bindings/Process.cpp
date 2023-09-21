@@ -22,6 +22,7 @@
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
+#include "uv_get_constrained_memory.h"
 
 #pragma mark - Node.js Process
 
@@ -1328,6 +1329,16 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(LINUX) || OS(FREEBSD)
+    return JSValue::encode(jsDoubleNumber(static_cast<double>(uv_get_constrained_memory())));
+#else
+    return JSValue::encode(jsUndefined());
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1864,6 +1875,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
   connected                        processConnected                         CustomAccessor
+  constrainedMemory                Process_functionConstrainedMemory        Function 0
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor

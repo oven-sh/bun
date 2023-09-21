@@ -487,3 +487,13 @@ it("dlopen args parsing", () => {
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
 });
+
+it("process.constrainedMemory()", () => {
+  if (process.platform === "linux") {
+    // On Linux, it returns 0 if the kernel doesn't support it
+    expect(process.constrainedMemory() >= 0).toBe(true);
+  } else {
+    // On unsupported platforms, it returns undefined
+    expect(process.constrainedMemory()).toBeUndefined();
+  }
+});

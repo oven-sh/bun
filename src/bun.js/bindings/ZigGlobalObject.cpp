@@ -136,6 +136,7 @@
 
 #include "BunObject.h"
 #include "JSNextTickQueue.h"
+#include "uv_get_constrained_memory.h"
 
 using namespace Bun;
 
@@ -280,6 +281,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useResizableArrayBuffer() = true;
         JSC::Options::usePromiseWithResolversMethod() = true;
         JSC::Options::useV8DateParser() = true;
+
+#if OS(LINUX) || OS(FREEBSD)
+        uint64_t constrainedMemorySize = uv_get_constrained_memory();
+        if (constrainedMemorySize > 0) {
+            JSC::Options::forceRAMSize() = constrainedMemorySize;
+        }
+#endif
 
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;

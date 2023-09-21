@@ -346,6 +346,63 @@ static JSValue createChildren(VM& vm, JSObject* object)
     return constructEmptyArray(object->globalObject(), nullptr, 0);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
+    if (!moduleObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    String sourceString = callframe->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+
+    String filenameString = callframe->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+
+    String wrappedString = makeString(
+        "(function(module,exports,require,__dirname,__filename){"_s,
+        sourceString,
+        "\n}).call($_BunCommonJSModule_$.module.exports, $_BunCommonJSModule_$.module, $_BunCommonJSModule_$.module.exports, ($_BunCommonJSModule_$.module.require = $_BunCommonJSModule_$.module.require.bind($_BunCommonJSModule_$.module), $_BunCommonJSModule_$.module.require.path = $_BunCommonJSModule_$.module.id, $_BunCommonJSModule_$.module.require.resolve = $_BunCommonJSModule_$.module.require.resolve.bind($_BunCommonJSModule_$.module.id), $_BunCommonJSModule_$.module.require), $_BunCommonJSModule_$.__dirname, $_BunCommonJSModule_$.__filename);"_s);
+
+    SourceCode sourceCode = makeSource(
+        WTFMove(wrappedString),
+        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+        JSC::SourceTaintedOrigin::Untainted,
+        filenameString,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+    JSSourceCode* jsSourceCode = JSSourceCode::create(vm, WTFMove(sourceCode));
+    moduleObject->sourceCode.set(vm, moduleObject, jsSourceCode);
+
+    auto index = filenameString.reverseFind('/', filenameString.length());
+    String dirnameString;
+    if (index != WTF::notFound) {
+        dirnameString = filenameString.substring(0, index);
+    } else {
+        dirnameString = "/"_s;
+    }
+
+    WTF::NakedPtr<JSC::Exception> exception;
+    evaluateCommonJSModuleOnce(
+        vm,
+        jsCast<Zig::GlobalObject*>(globalObject),
+        moduleObject,
+        jsString(vm, dirnameString),
+        jsString(vm, filenameString),
+        exception);
+
+    if (exception) {
+        throwException(globalObject, throwScope, exception.get());
+        exception.clear();
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
@@ -354,6 +411,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {

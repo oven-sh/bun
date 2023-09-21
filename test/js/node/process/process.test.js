@@ -103,7 +103,7 @@ it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // the default timezone is Etc/UTC
-  if (!"TZ" in process.env) {
+  if (!("TZ" in process.env)) {
     expect(origTimezone).toBe("Etc/UTC");
   }
 

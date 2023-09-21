@@ -1057,21 +1057,39 @@ pub const Printer = struct {
 
                     if (!installed.isSet(package_id)) continue;
 
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        }
-                    };
+                    if (PackageManager.instance.laterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version| {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                            }
+                        };
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                                later_version.fmt(string_buf),
+                            },
+                        );
+                    } else {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            }
+                        };
 
-                    try writer.print(
-                        fmt,
-                        .{
-                            package_name,
-                            resolved[package_id].fmt(string_buf),
-                        },
-                    );
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
                 }
             } else {
                 outer: for (dependencies_buffer, resolutions_buffer, 0..) |dependency, package_id, dep_id| {

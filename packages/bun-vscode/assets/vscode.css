@@ -28,8 +28,6 @@
 .mtks { text-decoration: line-through; }
 .mtks.mtku { text-decoration: underline line-through; text-underline-position: under; }
 
-
-
 .bunlock {
     display: flex;
     flex-direction: row;
@@ -48,6 +46,7 @@
 	font-family: var(--vscode-editor-font-family);
 	background-color: var(--vscode-editor-background);
 }
+
 .lines > span {
     margin-top: 1px;
     margin-bottom: 1px;

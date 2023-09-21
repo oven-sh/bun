@@ -15,6 +15,26 @@ afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
 });
 
+it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+  const processes = Array.from({ length: 3 }, (_, i) => {
+    return spawn({
+      cmd: [bunExe(), "x", "semver@7.5." + i, "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "inherit",
+      env,
+    });
+  });
+
+  const results = await Promise.all(processes.map(p => p.exited));
+  expect(results).toEqual([0, 0, 0]);
+  const outputs = (await Promise.all(processes.map(p => new Response(p.stdout).text()))).map(a =>
+    a.substring(0, a.indexOf("\n")),
+  );
+  expect(outputs).toEqual(["SemVer 7.5.0", "SemVer 7.5.1", "SemVer 7.5.2"]);
+});
+
 it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],

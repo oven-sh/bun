@@ -70,3 +70,20 @@ test("Overwriting _resolveFilename", () => {
   expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
   expect(exitCode).toBe(0);
 });
+
+test("Module.prototype._compile", () => {
+  const module = new Module("module id goes here");
+  const starting_exports = module.exports;
+  const r = module._compile(
+    "module.exports = { module, exports, require, __filename, __dirname }",
+    "/file/path/goes/here.js",
+  );
+  expect(r).toBe(undefined);
+  expect(module.exports).not.toBe(starting_exports);
+  const { module: m, exports: e, require: req, __filename: fn, __dirname: dn } = module.exports;
+  expect(m).toBe(module);
+  expect(e).toBe(starting_exports);
+  expect(req).toBe(module.require);
+  expect(fn).toBe("/file/path/goes/here.js");
+  expect(dn).toBe("/file/path/goes");
+});

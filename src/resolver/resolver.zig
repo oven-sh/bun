@@ -187,6 +187,8 @@ pub const Result = struct {
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
 
+    emit_decorator_metadata: bool = false,
+
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: StoredFileDescriptorType = 0,
@@ -965,6 +967,7 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
+                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
             }
 
             // If you use mjs or mts, then you're using esm
@@ -3904,6 +3907,7 @@ pub const Resolver = struct {
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.popOrNull()) |parent_config| {
+                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;

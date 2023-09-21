@@ -18,7 +18,7 @@ registry = "https://username:password@registry.npmjs.org"
 
 ---
 
-Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](/docs/cli/run#environment-variables) for more information.
+Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](/docs/runtime/env) for more information.
 
 ```toml#bunfig.toml
 [install]

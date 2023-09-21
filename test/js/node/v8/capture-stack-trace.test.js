@@ -17,6 +17,15 @@ test("Regular .stack", () => {
   expect(err.stack).toMatch(/at new Foo/);
 });
 
+test("throw inside Error.prepareStackTrace doesnt crash", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    Error.prepareStackTrace = null;
+    throw new Error("wat");
+  };
+
+  expect(() => new Error().stack).toThrow("wat");
+});
+
 test("capture stack trace", () => {
   function f1() {
     f2();
@@ -460,14 +469,51 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
-test.todo("err.stack should invoke prepareStackTrace", () => {
-  // This is V8's behavior.
-  let prevPrepareStackTrace = Error.prepareStackTrace;
-  let wasCalled = false;
-  Error.prepareStackTrace = (e, s) => {
-    wasCalled = true;
-  };
-  const e = new Error();
-  e.stack;
-  expect(wasCalled).toBe(true);
+test("err.stack should invoke prepareStackTrace", () => {
+  var lineNumber = -1;
+  var functionName = "";
+  var parentLineNumber = -1;
+  function functionWithAName() {
+    // This is V8's behavior.
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+
+    Error.prepareStackTrace = (e, s) => {
+      lineNumber = s[0].getLineNumber();
+      functionName = s[0].getFunctionName();
+      parentLineNumber = s[1].getLineNumber();
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+      expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+    };
+    const e = new Error();
+    e.stack;
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  functionWithAName();
+
+  expect(functionName).toBe("functionWithAName");
+  expect(lineNumber).toBe(490);
+  // TODO: this is wrong
+  expect(parentLineNumber).toBe(499);
+});
+
+test("Error.prepareStackTrace inside a node:vm works", () => {
+  const { runInNewContext } = require("node:vm");
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(
+    `
+    Error.prepareStackTrace = (err, stack) => {
+      if (typeof err.stack !== "string") {
+        throw new Error("err.stack is not a string");
+      }
+
+      return "custom stack trace";
+    };
+
+    const err = new Error();
+    err.stack;
+    `,
+  );
+  expect(result).toBe("custom stack trace");
+  expect(Error.prepareStackTrace).toBeNull();
 });

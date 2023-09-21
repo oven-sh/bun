@@ -1,6 +1,6 @@
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "svelte loader",
   async setup(builder) {
     var { compile } = await import("svelte/compiler");

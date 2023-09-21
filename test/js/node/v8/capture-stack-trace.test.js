@@ -18,14 +18,12 @@ test("Regular .stack", () => {
 });
 
 test("throw inside Error.prepareStackTrace doesnt crash", () => {
-  
- Error.prepareStackTrace = function (err, stack) {
+  Error.prepareStackTrace = function (err, stack) {
     Error.prepareStackTrace = null;
-    throw new Error('wat');
+    throw new Error("wat");
   };
 
-expect(() =>  new Error().stack).toThrow("wat");
-
+  expect(() => new Error().stack).toThrow("wat");
 });
 
 test("capture stack trace", () => {
@@ -499,9 +497,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   expect(parentLineNumber).toBe(499);
 });
 
-
 test("Error.prepareStackTrace inside a node:vm works", () => {
-  const {runInNewContext} = require("node:vm");
+  const { runInNewContext } = require("node:vm");
   Error.prepareStackTrace = null;
   const result = runInNewContext(
     `
@@ -515,8 +512,8 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
 
     const err = new Error();
     err.stack;
-    `
-  )
+    `,
+  );
   expect(result).toBe("custom stack trace");
   expect(Error.prepareStackTrace).toBeNull();
 });

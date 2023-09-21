@@ -135,7 +135,6 @@ var FakeSocket = class Socket extends Duplex {
   _is_encrypted = undefined;
   isServer = false;
 
-
   address() {
     return {
       address: this.localAddress,
@@ -606,8 +605,7 @@ class IncomingMessage extends Readable {
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
-    if(url.protocol === "https:")
-      socket._is_encrypted = true;
+    if (url.protocol === "https:") socket._is_encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;

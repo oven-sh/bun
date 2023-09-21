@@ -3451,7 +3451,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
     if (!stdout)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, 0);
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stdout);
 }
 
@@ -3467,7 +3467,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     if (!stdout)
         return JSValue::encode({});
 
-    console->putDirect(vm, property, stdout, 0);
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stdout);
 }
 

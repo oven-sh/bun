@@ -3439,6 +3439,38 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     return JSValue::encode(result);
 }
 
+// `console._stdout` is equal to `process.stdout`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, 0);
+    return JSValue::encode(stdout);
+}
+
+// `console._stderr` is equal to `process.stderr`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, 0);
+    return JSValue::encode(stdout);
+}
+
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName property))
@@ -3676,7 +3708,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, noop_setter), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)

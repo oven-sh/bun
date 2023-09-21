@@ -64,3 +64,13 @@ describe("console.Console", () => {
     expect(await errValue()).toBe("uh oh!\n");
   });
 });
+
+test("console._stdout", () => {
+  // @ts-ignore
+  expect(console._stdout).toBe(process.stdout);
+});
+
+test("console._stderr", () => {
+  // @ts-ignore
+  expect(console._stderr).toBe(process.stderr);
+});

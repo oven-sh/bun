@@ -802,7 +802,7 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
-        return fromJSWithAllocator(ctx, arguments, arguments.arena.allocator(), exception);
+        return fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception);
     }
     pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
         const arg = arguments.next() orelse return null;

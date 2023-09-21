@@ -198,7 +198,7 @@ pub const StatWatcher = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "filename must be a string or TypedArray",

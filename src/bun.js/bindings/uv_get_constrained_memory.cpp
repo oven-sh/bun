@@ -25,6 +25,8 @@
 
 #if OS(LINUX) || OS(FREEBSD)
 
+#include <fcntl.h>
+
 static int uv__open_cloexec(const char* path, int flags)
 {
     int fd;

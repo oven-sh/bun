@@ -287,7 +287,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // We need to fix that, but for now we can use uv_get_constrained_memory() to get the
         // memory limit imposed by cgroups.
         uint64_t constrainedMemorySize = uv_get_constrained_memory();
-        if (constrainedMemorySize > 0) {
+        if (
+            // 0 means it's not available
+            constrainedMemorySize > 0 &&
+            // When not run in a container, it might return max uint64_t
+            constrainedMemorySize < WTF::ramSize()) {
             JSC::Options::forceRAMSize() = constrainedMemorySize;
         }
 #endif

@@ -1207,3 +1207,8 @@ it("#5859 json", async () => {
   expect(await response.text()).toBe("FAIL");
   await server.stop(true);
 });
+
+it("#5859 arrayBuffer", async () => {
+  await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
+  expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
+});

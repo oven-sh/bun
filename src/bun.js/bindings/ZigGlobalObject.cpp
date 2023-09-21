@@ -136,7 +136,6 @@
 
 #include "BunObject.h"
 #include "JSNextTickQueue.h"
-#include "uv_get_constrained_memory.h"
 
 using namespace Bun;
 

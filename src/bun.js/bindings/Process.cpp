@@ -22,7 +22,6 @@
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
-#include "uv_get_constrained_memory.h"
 
 #pragma mark - Node.js Process
 

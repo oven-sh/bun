@@ -105,7 +105,6 @@ pub const TestRunner = struct {
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
         var this = timer.ext(TestRunner).?;
-        defer timer.deinit(true);
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported) {
@@ -1435,7 +1434,6 @@ pub const TestRunnerTask = struct {
         vm.clearOnException();
 
         this.ref.unref(vm);
-
         // there is a double free here involving async before/after callbacks
         //
         // Fortunately:

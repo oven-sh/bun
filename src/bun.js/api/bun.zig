@@ -785,7 +785,8 @@ fn doResolveWithArgs(
     const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
         bun.JSC.URL.pathFromFileURL(specifier)
     else
-        specifier;
+        specifier.dupeRef();
+    defer specifier_decoded.deref();
 
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(

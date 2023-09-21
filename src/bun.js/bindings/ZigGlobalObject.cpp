@@ -3876,19 +3876,21 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toString(url.fileSystemPath());
+                keyZ = Bun::toStringRef(url.fileSystemPath());
             } else {
-                keyZ = Bun::toString(moduleName);
+                keyZ = Bun::toStringRef(moduleName);
             }
         } else {
-            keyZ = Bun::toString(moduleName);
+            keyZ = Bun::toStringRef(moduleName);
         }
     } else {
-        keyZ = Bun::toString(globalObject, key);
+        keyZ = Bun::toStringRef(globalObject, key);
     }
-    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
+    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
+    keyZ.deref();
+    referrerZ.deref();
 
     if (res.success) {
         if (queryString.len > 0) {
@@ -3923,17 +3925,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     if (moduleName.startsWith("file://"_s)) {
         auto url = WTF::URL(moduleName);
         if (url.isValid() && !url.isEmpty()) {
-            moduleNameZ = Bun::toString(url.fileSystemPath());
+            moduleNameZ = Bun::toStringRef(url.fileSystemPath());
         } else {
-            moduleNameZ = Bun::toString(moduleName);
+            moduleNameZ = Bun::toStringRef(moduleName);
         }
     } else {
-        moduleNameZ = Bun::toString(moduleName);
+        moduleNameZ = Bun::toStringRef(moduleName);
     }
-    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toString(sourceURL.fileSystemPath());
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd : Bun::toStringRef(sourceURL.fileSystemPath());
     ZigString queryString = { 0, 0 };
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
+    moduleNameZ.deref();
+    sourceOriginZ.deref();
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);

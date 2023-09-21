@@ -190,22 +190,6 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString fromString(WTF::String& wtfString)
-{
-    if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
-
-BunString fromString(WTF::StringImpl* wtfString)
-{
-    if (wtfString->isEmpty())
-        return { BunStringTag::Empty };
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
-}
-
 }
 
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, BunString* bunString)
@@ -252,7 +236,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
     str.impl()->ref();
-    return Bun::fromString(str);
+    return Bun::toString(str);
 }
 
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)

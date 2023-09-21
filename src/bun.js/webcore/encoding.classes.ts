@@ -16,9 +16,6 @@ export default [
       fatal: {
         getter: "getFatal",
       },
-      ignoreBOM: {
-        getter: "getIgnoreBOM",
-      },
 
       decode: {
         fn: "decode",

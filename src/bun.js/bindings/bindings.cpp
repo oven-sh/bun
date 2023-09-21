@@ -1396,15 +1396,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,

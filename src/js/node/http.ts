@@ -132,8 +132,9 @@ var FakeSocket = class Socket extends Duplex {
   remoteAddress: string | null = null;
   remotePort;
   timeout = 0;
-
+  _is_encrypted = undefined;
   isServer = false;
+
 
   address() {
     return {
@@ -154,6 +155,10 @@ var FakeSocket = class Socket extends Duplex {
   _destroy(err, callback) {}
 
   _final(callback) {}
+
+  get encrypted() {
+    return this._is_encrypted;
+  }
 
   get localAddress() {
     return "127.0.0.1";
@@ -601,6 +606,8 @@ class IncomingMessage extends Readable {
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
+    if(url.protocol === "https:")
+      socket._is_encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;

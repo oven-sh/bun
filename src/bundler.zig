@@ -398,8 +398,8 @@ pub const Bundler = struct {
             DotEnv.instance = env_loader;
         }
 
-        // only print elapsed time when loglevel is verbose or debug
-        env_loader.quiet = !log.level.atLeast(.debug);
+        // hide elapsed time when loglevel is warn or error
+        env_loader.quiet = !log.level.atLeast(.info);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{

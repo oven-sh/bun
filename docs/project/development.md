@@ -46,7 +46,7 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm16 clang16 lld
+$ sudo pacman -S llvm clang lld
 
 ```
 

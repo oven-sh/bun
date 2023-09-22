@@ -218,8 +218,7 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp",
-    "*.def": "cpp"
+    "codecvt": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

@@ -136,6 +136,35 @@ describe("copyFileSync", () => {
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
 
+  it("constants are right", () => {
+    expect(fs.constants.COPYFILE_EXCL).toBe(1);
+    expect(fs.constants.COPYFILE_FICLONE).toBe(2);
+    expect(fs.constants.COPYFILE_FICLONE_FORCE).toBe(4);
+  });
+
+  it("FICLONE option does not error ever", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.FICLONE/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+  });
+
+  it("COPYFILE_EXCL works", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.COPYFILE_EXCL/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    expect(() => {
+      copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    }).toThrow();
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
@@ -212,7 +241,7 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.mkdirSync/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
@@ -1032,6 +1061,25 @@ describe("rmdir", () => {
       expect(existsSync(path)).toBe(false);
       done();
     });
+  });
+
+  it("removes a dir x 512", async () => {
+    var queue = new Array(512);
+    var paths = new Array(512);
+    for (let i = 0; i < 512; i++) {
+      const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
+      try {
+        mkdirSync(path);
+      } catch (e) {}
+      paths[i] = path;
+      queue[i] = promises.rmdir(path);
+    }
+
+    await Promise.all(queue);
+
+    for (let i = 0; i < 512; i++) {
+      expect(existsSync(paths[i])).toBe(false);
+    }
   });
   it("does not remove a dir with a file in it", async () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;

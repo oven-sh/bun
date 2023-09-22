@@ -132,7 +132,6 @@ var FakeSocket = class Socket extends Duplex {
   remoteAddress: string | null = null;
   remotePort;
   timeout = 0;
-
   isServer = false;
 
   address() {
@@ -601,6 +600,7 @@ class IncomingMessage extends Readable {
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
+    if (url.protocol === "https:") socket.encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;

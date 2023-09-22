@@ -1062,6 +1062,25 @@ describe("rmdir", () => {
       done();
     });
   });
+
+  it("removes a dir x 512", async () => {
+    var queue = new Array(512);
+    var paths = new Array(512);
+    for (let i = 0; i < 512; i++) {
+      const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
+      try {
+        mkdirSync(path);
+      } catch (e) {}
+      paths[i] = path;
+      queue[i] = promises.rmdir(path);
+    }
+
+    await Promise.all(queue);
+
+    for (let i = 0; i < 512; i++) {
+      expect(existsSync(paths[i])).toBe(false);
+    }
+  });
   it("does not remove a dir with a file in it", async () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {

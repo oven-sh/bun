@@ -55,7 +55,7 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        JSValue exportsObject, JSValue parent);
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,

@@ -432,7 +432,12 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-declare function $createCommonJSModule(id: string, exports: any, parent: CommonJSModuleRecord): CommonJSModuleRecord;
+declare function $createCommonJSModule(
+  id: string,
+  exports: any,
+  hasEvaluated: boolean,
+  parent: CommonJSModuleRecord,
+): CommonJSModuleRecord;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

@@ -206,12 +206,14 @@ $$capture_start$$(${fn.async ? "async " : ""}${
   }
 
   return {
-    functions: bundledFunctions,
+    functions: bundledFunctions.sort((a, b) => a.name.localeCompare(b.name)),
     internal,
   };
 }
 
-const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"));
+const filesToProcess = readdirSync(SRC_DIR)
+  .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
+  .sort();
 
 const files: Array<{ basename: string; functions: BundledBuiltin[]; internal: boolean }> = [];
 async function processFile(x: string) {

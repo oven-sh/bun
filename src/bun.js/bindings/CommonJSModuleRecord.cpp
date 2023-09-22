@@ -534,19 +534,22 @@ JSCommonJSModule* JSCommonJSModule::create(
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
-    RELEASE_ASSERT(callframe->argumentCount() == 3);
+    RELEASE_ASSERT(callframe->argumentCount() == 4);
 
     auto id = callframe->uncheckedArgument(0).toWTFString(globalObject);
     JSValue object = callframe->uncheckedArgument(1);
-    JSValue parent = callframe->uncheckedArgument(2);
+    JSValue hasEvaluated = callframe->uncheckedArgument(2);
+    ASSERT(hasEvaluated.isBoolean());
+    JSValue parent = callframe->uncheckedArgument(3);
 
-    return JSValue::encode(JSCommonJSModule::create(jsCast<Zig::GlobalObject*>(globalObject), id, object, parent));
+    return JSValue::encode(JSCommonJSModule::create(jsCast<Zig::GlobalObject*>(globalObject), id, object, hasEvaluated.isTrue(), parent));
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     JSValue exportsObject,
+    bool hasEvaluated,
     JSValue parent)
 {
     auto& vm = globalObject->vm();
@@ -567,6 +570,7 @@ JSCommonJSModule* JSCommonJSModule::create(
         WebCore::clientData(vm)->builtinNames().exportsPublicName(),
         exportsObject,
         exportsObject.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+    out->hasEvaluated = hasEvaluated;
     out->m_parent.set(vm, out, parent);
 
     return out;

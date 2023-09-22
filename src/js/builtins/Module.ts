@@ -33,7 +33,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, this);
+  const mod = $createCommonJSModule(id, {}, false, this);
   $requireMap.$set(id, mod);
 
   // This is where we load the module. We will see if Module._load and

@@ -6894,6 +6894,7 @@ fn NewParser_(
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
             p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
+            var rest_arg: bool = false;
             var arg_has_decorators: bool = false;
             var args = List(G.Arg){};
             while (p.lexer.token != T.t_close_paren) {
@@ -6923,6 +6924,7 @@ fn NewParser_(
                 if (!func.flags.contains(.has_rest_arg) and p.lexer.token == T.t_dot_dot_dot) {
                     // p.markSyntaxFeature
                     try p.lexer.next();
+                    rest_arg = true;
                     func.flags.insert(.has_rest_arg);
                 }
 
@@ -6970,9 +6972,17 @@ fn NewParser_(
                     // "function foo(a: any) {}"
                     if (p.lexer.token == .t_colon) {
                         try p.lexer.next();
-                        if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators or arg_has_decorators)) {
-                            ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                        if (!rest_arg) {
+                            if (p.options.features.emit_decorator_metadata and
+                                opts.allow_ts_decorators and
+                                (opts.has_argument_decorators or opts.has_decorators or arg_has_decorators))
+                            {
+                                ts_metadata = try p.skipTypeScriptTypeWithMetadata(.lowest);
+                            } else {
+                                try p.skipTypeScriptType(.lowest);
+                            }
                         } else {
+                            // rest parameter is always object, leave metadata as m_none
                             try p.skipTypeScriptType(.lowest);
                         }
                     }
@@ -7015,6 +7025,7 @@ fn NewParser_(
                 }
 
                 try p.lexer.next();
+                rest_arg = false;
             }
             if (args.items.len > 0) {
                 func.args = args.items;
@@ -7044,8 +7055,12 @@ fn NewParser_(
                     } else {
                         try p.skipTypescriptReturnType();
                     }
-                } else if (func.flags.contains(.is_async) and p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
-                    func.return_ts_metadata = .m_promise;
+                } else if (p.options.features.emit_decorator_metadata and opts.allow_ts_decorators and (opts.has_argument_decorators or opts.has_decorators)) {
+                    if (func.flags.contains(.is_async)) {
+                        func.return_ts_metadata = .m_promise;
+                    } else {
+                        func.return_ts_metadata = .m_undefined;
+                    }
                 }
             }
 
@@ -19445,11 +19460,7 @@ fn NewParser_(
 
         fn serializeMetadata(p: *P, ts_metadata: TypeScript.Metadata) !Expr {
             return switch (ts_metadata) {
-                .m_none => p.newExpr(
-                    E.Undefined{},
-                    logger.Loc.Empty,
-                ),
-
+                .m_none,
                 .m_any,
                 .m_unknown,
                 .m_object,

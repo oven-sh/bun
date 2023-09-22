@@ -15,59 +15,59 @@ class FunctionExecutable;
 }
 
 namespace WebCore {
-/* BundlerPlugin.ts */
-// runSetupFunction
-#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNSETUPFUNCTION 1
-extern const char* const s_bundlerPluginRunSetupFunctionCode;
-extern const int s_bundlerPluginRunSetupFunctionCodeLength;
-extern const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility;
-extern const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility;
+/* CountQueuingStrategy.ts */
+// highWaterMark
+#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_HIGHWATERMARK 1
+extern const char* const s_countQueuingStrategyHighWaterMarkCode;
+extern const int s_countQueuingStrategyHighWaterMarkCodeLength;
+extern const JSC::ConstructAbility s_countQueuingStrategyHighWaterMarkCodeConstructAbility;
+extern const JSC::ConstructorKind s_countQueuingStrategyHighWaterMarkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategyHighWaterMarkCodeImplementationVisibility;
 
-// runOnResolvePlugins
-#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONRESOLVEPLUGINS 1
-extern const char* const s_bundlerPluginRunOnResolvePluginsCode;
-extern const int s_bundlerPluginRunOnResolvePluginsCodeLength;
-extern const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility;
-extern const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility;
+// size
+#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_SIZE 1
+extern const char* const s_countQueuingStrategySizeCode;
+extern const int s_countQueuingStrategySizeCodeLength;
+extern const JSC::ConstructAbility s_countQueuingStrategySizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_countQueuingStrategySizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategySizeCodeImplementationVisibility;
 
-// runOnLoadPlugins
-#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONLOADPLUGINS 1
-extern const char* const s_bundlerPluginRunOnLoadPluginsCode;
-extern const int s_bundlerPluginRunOnLoadPluginsCodeLength;
-extern const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility;
-extern const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility;
+// initializeCountQueuingStrategy
+#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_INITIALIZECOUNTQUEUINGSTRATEGY 1
+extern const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode;
+extern const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength;
+extern const JSC::ConstructAbility s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructAbility;
+extern const JSC::ConstructorKind s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategyInitializeCountQueuingStrategyCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_DATA(macro) \
-    macro(runSetupFunction, bundlerPluginRunSetupFunction, 2) \
-    macro(runOnResolvePlugins, bundlerPluginRunOnResolvePlugins, 5) \
-    macro(runOnLoadPlugins, bundlerPluginRunOnLoadPlugins, 4) \
+#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_DATA(macro) \
+    macro(highWaterMark, countQueuingStrategyHighWaterMark, 0) \
+    macro(size, countQueuingStrategySize, 0) \
+    macro(initializeCountQueuingStrategy, countQueuingStrategyInitializeCountQueuingStrategy, 1) \
 
-#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(macro) \
-    macro(bundlerPluginRunSetupFunctionCode, runSetupFunction, ASCIILiteral(), s_bundlerPluginRunSetupFunctionCodeLength) \
-    macro(bundlerPluginRunOnResolvePluginsCode, runOnResolvePlugins, ASCIILiteral(), s_bundlerPluginRunOnResolvePluginsCodeLength) \
-    macro(bundlerPluginRunOnLoadPluginsCode, runOnLoadPlugins, ASCIILiteral(), s_bundlerPluginRunOnLoadPluginsCodeLength) \
+#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(macro) \
+    macro(countQueuingStrategyHighWaterMarkCode, highWaterMark, "get highWaterMark"_s, s_countQueuingStrategyHighWaterMarkCodeLength) \
+    macro(countQueuingStrategySizeCode, size, ASCIILiteral(), s_countQueuingStrategySizeCodeLength) \
+    macro(countQueuingStrategyInitializeCountQueuingStrategyCode, initializeCountQueuingStrategy, ASCIILiteral(), s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength) \
 
-#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(macro) \
-    macro(runSetupFunction) \
-    macro(runOnResolvePlugins) \
-    macro(runOnLoadPlugins) \
+#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(macro) \
+    macro(highWaterMark) \
+    macro(size) \
+    macro(initializeCountQueuingStrategy) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class BundlerPluginBuiltinsWrapper : private JSC::WeakHandleOwner {
+class CountQueuingStrategyBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit BundlerPluginBuiltinsWrapper(JSC::VM& vm)
+    explicit CountQueuingStrategyBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -75,28 +75,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* BundlerPluginBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* CountQueuingStrategyBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -106,13 +106,13 @@ inline JSC::UnlinkedFunctionExecutable* BundlerPluginBuiltinsWrapper::name##Exec
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void BundlerPluginBuiltinsWrapper::exportNames()
+inline void CountQueuingStrategyBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 /* ByteLengthQueuingStrategy.ts */
@@ -213,6 +213,1124 @@ inline void ByteLengthQueuingStrategyBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
     WEBCORE_FOREACH_BYTELENGTHQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* WritableStreamDefaultWriter.ts */
+// initializeWritableStreamDefaultWriter
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_INITIALIZEWRITABLESTREAMDEFAULTWRITER 1
+extern const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode;
+extern const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeImplementationVisibility;
+
+// closed
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_CLOSED 1
+extern const char* const s_writableStreamDefaultWriterClosedCode;
+extern const int s_writableStreamDefaultWriterClosedCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterClosedCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterClosedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterClosedCodeImplementationVisibility;
+
+// desiredSize
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_DESIREDSIZE 1
+extern const char* const s_writableStreamDefaultWriterDesiredSizeCode;
+extern const int s_writableStreamDefaultWriterDesiredSizeCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterDesiredSizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterDesiredSizeCodeImplementationVisibility;
+
+// ready
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_READY 1
+extern const char* const s_writableStreamDefaultWriterReadyCode;
+extern const int s_writableStreamDefaultWriterReadyCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterReadyCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterReadyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReadyCodeImplementationVisibility;
+
+// abort
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_ABORT 1
+extern const char* const s_writableStreamDefaultWriterAbortCode;
+extern const int s_writableStreamDefaultWriterAbortCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterAbortCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterAbortCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterAbortCodeImplementationVisibility;
+
+// close
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_CLOSE 1
+extern const char* const s_writableStreamDefaultWriterCloseCode;
+extern const int s_writableStreamDefaultWriterCloseCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterCloseCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterCloseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterCloseCodeImplementationVisibility;
+
+// releaseLock
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_RELEASELOCK 1
+extern const char* const s_writableStreamDefaultWriterReleaseLockCode;
+extern const int s_writableStreamDefaultWriterReleaseLockCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterReleaseLockCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterReleaseLockCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReleaseLockCodeImplementationVisibility;
+
+// write
+#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_WRITE 1
+extern const char* const s_writableStreamDefaultWriterWriteCode;
+extern const int s_writableStreamDefaultWriterWriteCodeLength;
+extern const JSC::ConstructAbility s_writableStreamDefaultWriterWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamDefaultWriterWriteCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterWriteCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_DATA(macro) \
+    macro(initializeWritableStreamDefaultWriter, writableStreamDefaultWriterInitializeWritableStreamDefaultWriter, 1) \
+    macro(closed, writableStreamDefaultWriterClosed, 0) \
+    macro(desiredSize, writableStreamDefaultWriterDesiredSize, 0) \
+    macro(ready, writableStreamDefaultWriterReady, 0) \
+    macro(abort, writableStreamDefaultWriterAbort, 1) \
+    macro(close, writableStreamDefaultWriterClose, 0) \
+    macro(releaseLock, writableStreamDefaultWriterReleaseLock, 0) \
+    macro(write, writableStreamDefaultWriterWrite, 1) \
+
+#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(macro) \
+    macro(writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode, initializeWritableStreamDefaultWriter, ASCIILiteral(), s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength) \
+    macro(writableStreamDefaultWriterClosedCode, closed, "get closed"_s, s_writableStreamDefaultWriterClosedCodeLength) \
+    macro(writableStreamDefaultWriterDesiredSizeCode, desiredSize, "get desiredSize"_s, s_writableStreamDefaultWriterDesiredSizeCodeLength) \
+    macro(writableStreamDefaultWriterReadyCode, ready, "get ready"_s, s_writableStreamDefaultWriterReadyCodeLength) \
+    macro(writableStreamDefaultWriterAbortCode, abort, ASCIILiteral(), s_writableStreamDefaultWriterAbortCodeLength) \
+    macro(writableStreamDefaultWriterCloseCode, close, ASCIILiteral(), s_writableStreamDefaultWriterCloseCodeLength) \
+    macro(writableStreamDefaultWriterReleaseLockCode, releaseLock, ASCIILiteral(), s_writableStreamDefaultWriterReleaseLockCodeLength) \
+    macro(writableStreamDefaultWriterWriteCode, write, ASCIILiteral(), s_writableStreamDefaultWriterWriteCodeLength) \
+
+#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeWritableStreamDefaultWriter) \
+    macro(closed) \
+    macro(desiredSize) \
+    macro(ready) \
+    macro(abort) \
+    macro(close) \
+    macro(releaseLock) \
+    macro(write) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class WritableStreamDefaultWriterBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit WritableStreamDefaultWriterBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* WritableStreamDefaultWriterBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void WritableStreamDefaultWriterBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* ReadableByteStreamInternals.ts */
+// privateInitializeReadableByteStreamController
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLEBYTESTREAMCONTROLLER 1
+extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode;
+extern const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeImplementationVisibility;
+
+// readableStreamByteStreamControllerStart
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMBYTESTREAMCONTROLLERSTART 1
+extern const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode;
+extern const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeImplementationVisibility;
+
+// privateInitializeReadableStreamBYOBRequest
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLESTREAMBYOBREQUEST 1
+extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode;
+extern const int s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeImplementationVisibility;
+
+// isReadableByteStreamController
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLEBYTESTREAMCONTROLLER 1
+extern const char* const s_readableByteStreamInternalsIsReadableByteStreamControllerCode;
+extern const int s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeImplementationVisibility;
+
+// isReadableStreamBYOBRequest
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLESTREAMBYOBREQUEST 1
+extern const char* const s_readableByteStreamInternalsIsReadableStreamBYOBRequestCode;
+extern const int s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeImplementationVisibility;
+
+// isReadableStreamBYOBReader
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLESTREAMBYOBREADER 1
+extern const char* const s_readableByteStreamInternalsIsReadableStreamBYOBReaderCode;
+extern const int s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeImplementationVisibility;
+
+// readableByteStreamControllerCancel
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCANCEL 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCancelCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeImplementationVisibility;
+
+// readableByteStreamControllerError
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERERROR 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerErrorCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeImplementationVisibility;
+
+// readableByteStreamControllerClose
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCLOSE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCloseCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeImplementationVisibility;
+
+// readableByteStreamControllerClearPendingPullIntos
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCLEARPENDINGPULLINTOS 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeImplementationVisibility;
+
+// readableByteStreamControllerGetDesiredSize
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERGETDESIREDSIZE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeImplementationVisibility;
+
+// readableStreamHasBYOBReader
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMHASBYOBREADER 1
+extern const char* const s_readableByteStreamInternalsReadableStreamHasBYOBReaderCode;
+extern const int s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeImplementationVisibility;
+
+// readableStreamHasDefaultReader
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMHASDEFAULTREADER 1
+extern const char* const s_readableByteStreamInternalsReadableStreamHasDefaultReaderCode;
+extern const int s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeImplementationVisibility;
+
+// readableByteStreamControllerHandleQueueDrain
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERHANDLEQUEUEDRAIN 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeImplementationVisibility;
+
+// readableByteStreamControllerPull
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPULL 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeImplementationVisibility;
+
+// readableByteStreamControllerShouldCallPull
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERSHOULDCALLPULL 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeImplementationVisibility;
+
+// readableByteStreamControllerCallPullIfNeeded
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCALLPULLIFNEEDED 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeImplementationVisibility;
+
+// transferBufferToCurrentRealm
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_TRANSFERBUFFERTOCURRENTREALM 1
+extern const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode;
+extern const int s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeImplementationVisibility;
+
+// readableStreamReaderKind
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMREADERKIND 1
+extern const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode;
+extern const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamReaderKindCodeImplementationVisibility;
+
+// readableByteStreamControllerEnqueue
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeImplementationVisibility;
+
+// readableByteStreamControllerEnqueueChunk
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUECHUNK 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeImplementationVisibility;
+
+// readableByteStreamControllerRespondWithNewView
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDWITHNEWVIEW 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeImplementationVisibility;
+
+// readableByteStreamControllerRespond
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPOND 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeImplementationVisibility;
+
+// readableByteStreamControllerRespondInternal
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINTERNAL 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeImplementationVisibility;
+
+// readableByteStreamControllerRespondInReadableState
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINREADABLESTATE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeImplementationVisibility;
+
+// readableByteStreamControllerRespondInClosedState
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINCLOSEDSTATE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeImplementationVisibility;
+
+// readableByteStreamControllerProcessPullDescriptors
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPROCESSPULLDESCRIPTORS 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeImplementationVisibility;
+
+// readableByteStreamControllerFillDescriptorFromQueue
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERFILLDESCRIPTORFROMQUEUE 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeImplementationVisibility;
+
+// readableByteStreamControllerShiftPendingDescriptor
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERSHIFTPENDINGDESCRIPTOR 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeImplementationVisibility;
+
+// readableByteStreamControllerInvalidateBYOBRequest
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERINVALIDATEBYOBREQUEST 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeImplementationVisibility;
+
+// readableByteStreamControllerCommitDescriptor
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCOMMITDESCRIPTOR 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeImplementationVisibility;
+
+// readableByteStreamControllerConvertDescriptor
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCONVERTDESCRIPTOR 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeImplementationVisibility;
+
+// readableStreamFulfillReadIntoRequest
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMFULFILLREADINTOREQUEST 1
+extern const char* const s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode;
+extern const int s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeImplementationVisibility;
+
+// readableStreamBYOBReaderRead
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMBYOBREADERREAD 1
+extern const char* const s_readableByteStreamInternalsReadableStreamBYOBReaderReadCode;
+extern const int s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeImplementationVisibility;
+
+// readableByteStreamControllerPullInto
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPULLINTO 1
+extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCode;
+extern const int s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeImplementationVisibility;
+
+// readableStreamAddReadIntoRequest
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMADDREADINTOREQUEST 1
+extern const char* const s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCode;
+extern const int s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_DATA(macro) \
+    macro(privateInitializeReadableByteStreamController, readableByteStreamInternalsPrivateInitializeReadableByteStreamController, 3) \
+    macro(readableStreamByteStreamControllerStart, readableByteStreamInternalsReadableStreamByteStreamControllerStart, 1) \
+    macro(privateInitializeReadableStreamBYOBRequest, readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequest, 2) \
+    macro(isReadableByteStreamController, readableByteStreamInternalsIsReadableByteStreamController, 1) \
+    macro(isReadableStreamBYOBRequest, readableByteStreamInternalsIsReadableStreamBYOBRequest, 1) \
+    macro(isReadableStreamBYOBReader, readableByteStreamInternalsIsReadableStreamBYOBReader, 1) \
+    macro(readableByteStreamControllerCancel, readableByteStreamInternalsReadableByteStreamControllerCancel, 2) \
+    macro(readableByteStreamControllerError, readableByteStreamInternalsReadableByteStreamControllerError, 2) \
+    macro(readableByteStreamControllerClose, readableByteStreamInternalsReadableByteStreamControllerClose, 1) \
+    macro(readableByteStreamControllerClearPendingPullIntos, readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntos, 1) \
+    macro(readableByteStreamControllerGetDesiredSize, readableByteStreamInternalsReadableByteStreamControllerGetDesiredSize, 1) \
+    macro(readableStreamHasBYOBReader, readableByteStreamInternalsReadableStreamHasBYOBReader, 1) \
+    macro(readableStreamHasDefaultReader, readableByteStreamInternalsReadableStreamHasDefaultReader, 1) \
+    macro(readableByteStreamControllerHandleQueueDrain, readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrain, 1) \
+    macro(readableByteStreamControllerPull, readableByteStreamInternalsReadableByteStreamControllerPull, 1) \
+    macro(readableByteStreamControllerShouldCallPull, readableByteStreamInternalsReadableByteStreamControllerShouldCallPull, 1) \
+    macro(readableByteStreamControllerCallPullIfNeeded, readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeeded, 1) \
+    macro(transferBufferToCurrentRealm, readableByteStreamInternalsTransferBufferToCurrentRealm, 1) \
+    macro(readableStreamReaderKind, readableByteStreamInternalsReadableStreamReaderKind, 1) \
+    macro(readableByteStreamControllerEnqueue, readableByteStreamInternalsReadableByteStreamControllerEnqueue, 2) \
+    macro(readableByteStreamControllerEnqueueChunk, readableByteStreamInternalsReadableByteStreamControllerEnqueueChunk, 4) \
+    macro(readableByteStreamControllerRespondWithNewView, readableByteStreamInternalsReadableByteStreamControllerRespondWithNewView, 2) \
+    macro(readableByteStreamControllerRespond, readableByteStreamInternalsReadableByteStreamControllerRespond, 2) \
+    macro(readableByteStreamControllerRespondInternal, readableByteStreamInternalsReadableByteStreamControllerRespondInternal, 2) \
+    macro(readableByteStreamControllerRespondInReadableState, readableByteStreamInternalsReadableByteStreamControllerRespondInReadableState, 3) \
+    macro(readableByteStreamControllerRespondInClosedState, readableByteStreamInternalsReadableByteStreamControllerRespondInClosedState, 2) \
+    macro(readableByteStreamControllerProcessPullDescriptors, readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptors, 1) \
+    macro(readableByteStreamControllerFillDescriptorFromQueue, readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueue, 2) \
+    macro(readableByteStreamControllerShiftPendingDescriptor, readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptor, 1) \
+    macro(readableByteStreamControllerInvalidateBYOBRequest, readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequest, 1) \
+    macro(readableByteStreamControllerCommitDescriptor, readableByteStreamInternalsReadableByteStreamControllerCommitDescriptor, 2) \
+    macro(readableByteStreamControllerConvertDescriptor, readableByteStreamInternalsReadableByteStreamControllerConvertDescriptor, 1) \
+    macro(readableStreamFulfillReadIntoRequest, readableByteStreamInternalsReadableStreamFulfillReadIntoRequest, 3) \
+    macro(readableStreamBYOBReaderRead, readableByteStreamInternalsReadableStreamBYOBReaderRead, 2) \
+    macro(readableByteStreamControllerPullInto, readableByteStreamInternalsReadableByteStreamControllerPullInto, 2) \
+    macro(readableStreamAddReadIntoRequest, readableByteStreamInternalsReadableStreamAddReadIntoRequest, 1) \
+
+#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(macro) \
+    macro(readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode, privateInitializeReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamByteStreamControllerStartCode, readableStreamByteStreamControllerStart, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength) \
+    macro(readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode, privateInitializeReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength) \
+    macro(readableByteStreamInternalsIsReadableByteStreamControllerCode, isReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength) \
+    macro(readableByteStreamInternalsIsReadableStreamBYOBRequestCode, isReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength) \
+    macro(readableByteStreamInternalsIsReadableStreamBYOBReaderCode, isReadableStreamBYOBReader, ASCIILiteral(), s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerCancelCode, readableByteStreamControllerCancel, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerErrorCode, readableByteStreamControllerError, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerCloseCode, readableByteStreamControllerClose, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode, readableByteStreamControllerClearPendingPullIntos, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode, readableByteStreamControllerGetDesiredSize, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamHasBYOBReaderCode, readableStreamHasBYOBReader, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamHasDefaultReaderCode, readableStreamHasDefaultReader, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode, readableByteStreamControllerHandleQueueDrain, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerPullCode, readableByteStreamControllerPull, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode, readableByteStreamControllerShouldCallPull, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode, readableByteStreamControllerCallPullIfNeeded, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength) \
+    macro(readableByteStreamInternalsTransferBufferToCurrentRealmCode, transferBufferToCurrentRealm, ASCIILiteral(), s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamReaderKindCode, readableStreamReaderKind, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamReaderKindCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueCode, readableByteStreamControllerEnqueue, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode, readableByteStreamControllerEnqueueChunk, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode, readableByteStreamControllerRespondWithNewView, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerRespondCode, readableByteStreamControllerRespond, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode, readableByteStreamControllerRespondInternal, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode, readableByteStreamControllerRespondInReadableState, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode, readableByteStreamControllerRespondInClosedState, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode, readableByteStreamControllerProcessPullDescriptors, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode, readableByteStreamControllerFillDescriptorFromQueue, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode, readableByteStreamControllerShiftPendingDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode, readableByteStreamControllerInvalidateBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode, readableByteStreamControllerCommitDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode, readableByteStreamControllerConvertDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode, readableStreamFulfillReadIntoRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamBYOBReaderReadCode, readableStreamBYOBReaderRead, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength) \
+    macro(readableByteStreamInternalsReadableByteStreamControllerPullIntoCode, readableByteStreamControllerPullInto, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamAddReadIntoRequestCode, readableStreamAddReadIntoRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength) \
+
+#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(privateInitializeReadableByteStreamController) \
+    macro(readableStreamByteStreamControllerStart) \
+    macro(privateInitializeReadableStreamBYOBRequest) \
+    macro(isReadableByteStreamController) \
+    macro(isReadableStreamBYOBRequest) \
+    macro(isReadableStreamBYOBReader) \
+    macro(readableByteStreamControllerCancel) \
+    macro(readableByteStreamControllerError) \
+    macro(readableByteStreamControllerClose) \
+    macro(readableByteStreamControllerClearPendingPullIntos) \
+    macro(readableByteStreamControllerGetDesiredSize) \
+    macro(readableStreamHasBYOBReader) \
+    macro(readableStreamHasDefaultReader) \
+    macro(readableByteStreamControllerHandleQueueDrain) \
+    macro(readableByteStreamControllerPull) \
+    macro(readableByteStreamControllerShouldCallPull) \
+    macro(readableByteStreamControllerCallPullIfNeeded) \
+    macro(transferBufferToCurrentRealm) \
+    macro(readableStreamReaderKind) \
+    macro(readableByteStreamControllerEnqueue) \
+    macro(readableByteStreamControllerEnqueueChunk) \
+    macro(readableByteStreamControllerRespondWithNewView) \
+    macro(readableByteStreamControllerRespond) \
+    macro(readableByteStreamControllerRespondInternal) \
+    macro(readableByteStreamControllerRespondInReadableState) \
+    macro(readableByteStreamControllerRespondInClosedState) \
+    macro(readableByteStreamControllerProcessPullDescriptors) \
+    macro(readableByteStreamControllerFillDescriptorFromQueue) \
+    macro(readableByteStreamControllerShiftPendingDescriptor) \
+    macro(readableByteStreamControllerInvalidateBYOBRequest) \
+    macro(readableByteStreamControllerCommitDescriptor) \
+    macro(readableByteStreamControllerConvertDescriptor) \
+    macro(readableStreamFulfillReadIntoRequest) \
+    macro(readableStreamBYOBReaderRead) \
+    macro(readableByteStreamControllerPullInto) \
+    macro(readableStreamAddReadIntoRequest) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ReadableByteStreamInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ReadableByteStreamInternalsBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ReadableByteStreamInternalsBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ReadableByteStreamInternalsBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+class ReadableByteStreamInternalsBuiltinFunctions {
+public:
+    explicit ReadableByteStreamInternalsBuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
+
+    void init(JSC::JSGlobalObject&);
+    template<typename Visitor> void visit(Visitor&);
+
+public:
+    JSC::VM& m_vm;
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \
+    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+};
+
+inline void ReadableByteStreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
+{
+#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \
+    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(EXPORT_FUNCTION)
+#undef EXPORT_FUNCTION
+}
+
+template<typename Visitor>
+inline void ReadableByteStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
+{
+#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
+#undef VISIT_FUNCTION
+}
+
+template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
+    /* ImportMetaObject.ts */
+// loadCJS2ESM
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADCJS2ESM 1
+extern const char* const s_importMetaObjectLoadCJS2ESMCode;
+extern const int s_importMetaObjectLoadCJS2ESMCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectLoadCJS2ESMCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectLoadCJS2ESMCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectLoadCJS2ESMCodeImplementationVisibility;
+
+// requireESM
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREESM 1
+extern const char* const s_importMetaObjectRequireESMCode;
+extern const int s_importMetaObjectRequireESMCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility;
+
+// internalRequire
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_INTERNALREQUIRE 1
+extern const char* const s_importMetaObjectInternalRequireCode;
+extern const int s_importMetaObjectInternalRequireCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility;
+
+// createRequireCache
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_CREATEREQUIRECACHE 1
+extern const char* const s_importMetaObjectCreateRequireCacheCode;
+extern const int s_importMetaObjectCreateRequireCacheCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility;
+
+// main
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_MAIN 1
+extern const char* const s_importMetaObjectMainCode;
+extern const int s_importMetaObjectMainCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
+    macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
+    macro(requireESM, importMetaObjectRequireESM, 1) \
+    macro(internalRequire, importMetaObjectInternalRequire, 1) \
+    macro(createRequireCache, importMetaObjectCreateRequireCache, 0) \
+    macro(main, importMetaObjectMain, 0) \
+
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
+    macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
+    macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
+    macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
+    macro(importMetaObjectCreateRequireCacheCode, createRequireCache, ASCIILiteral(), s_importMetaObjectCreateRequireCacheCodeLength) \
+    macro(importMetaObjectMainCode, main, "get main"_s, s_importMetaObjectMainCodeLength) \
+
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(loadCJS2ESM) \
+    macro(requireESM) \
+    macro(internalRequire) \
+    macro(createRequireCache) \
+    macro(main) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ImportMetaObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ImportMetaObjectBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ImportMetaObjectBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ImportMetaObjectBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* ReadableStreamDefaultReader.ts */
+// initializeReadableStreamDefaultReader
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_INITIALIZEREADABLESTREAMDEFAULTREADER 1
+extern const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode;
+extern const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeImplementationVisibility;
+
+// cancel
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CANCEL 1
+extern const char* const s_readableStreamDefaultReaderCancelCode;
+extern const int s_readableStreamDefaultReaderCancelCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderCancelCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderCancelCodeImplementationVisibility;
+
+// readMany
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READMANY 1
+extern const char* const s_readableStreamDefaultReaderReadManyCode;
+extern const int s_readableStreamDefaultReaderReadManyCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility;
+
+// read
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READ 1
+extern const char* const s_readableStreamDefaultReaderReadCode;
+extern const int s_readableStreamDefaultReaderReadCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadCodeImplementationVisibility;
+
+// releaseLock
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_RELEASELOCK 1
+extern const char* const s_readableStreamDefaultReaderReleaseLockCode;
+extern const int s_readableStreamDefaultReaderReleaseLockCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderReleaseLockCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderReleaseLockCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReleaseLockCodeImplementationVisibility;
+
+// closed
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CLOSED 1
+extern const char* const s_readableStreamDefaultReaderClosedCode;
+extern const int s_readableStreamDefaultReaderClosedCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderClosedCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderClosedCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_DATA(macro) \
+    macro(initializeReadableStreamDefaultReader, readableStreamDefaultReaderInitializeReadableStreamDefaultReader, 1) \
+    macro(cancel, readableStreamDefaultReaderCancel, 1) \
+    macro(readMany, readableStreamDefaultReaderReadMany, 0) \
+    macro(read, readableStreamDefaultReaderRead, 0) \
+    macro(releaseLock, readableStreamDefaultReaderReleaseLock, 0) \
+    macro(closed, readableStreamDefaultReaderClosed, 0) \
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(macro) \
+    macro(readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode, initializeReadableStreamDefaultReader, ASCIILiteral(), s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength) \
+    macro(readableStreamDefaultReaderCancelCode, cancel, ASCIILiteral(), s_readableStreamDefaultReaderCancelCodeLength) \
+    macro(readableStreamDefaultReaderReadManyCode, readMany, ASCIILiteral(), s_readableStreamDefaultReaderReadManyCodeLength) \
+    macro(readableStreamDefaultReaderReadCode, read, ASCIILiteral(), s_readableStreamDefaultReaderReadCodeLength) \
+    macro(readableStreamDefaultReaderReleaseLockCode, releaseLock, ASCIILiteral(), s_readableStreamDefaultReaderReleaseLockCodeLength) \
+    macro(readableStreamDefaultReaderClosedCode, closed, "get closed"_s, s_readableStreamDefaultReaderClosedCodeLength) \
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeReadableStreamDefaultReader) \
+    macro(cancel) \
+    macro(readMany) \
+    macro(read) \
+    macro(releaseLock) \
+    macro(closed) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ReadableStreamDefaultReaderBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ReadableStreamDefaultReaderBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ReadableStreamDefaultReaderBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ReadableStreamDefaultReaderBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* ReadableStreamBYOBRequest.ts */
+// initializeReadableStreamBYOBRequest
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_INITIALIZEREADABLESTREAMBYOBREQUEST 1
+extern const char* const s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode;
+extern const int s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeImplementationVisibility;
+
+// respond
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_RESPOND 1
+extern const char* const s_readableStreamBYOBRequestRespondCode;
+extern const int s_readableStreamBYOBRequestRespondCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondCodeImplementationVisibility;
+
+// respondWithNewView
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_RESPONDWITHNEWVIEW 1
+extern const char* const s_readableStreamBYOBRequestRespondWithNewViewCode;
+extern const int s_readableStreamBYOBRequestRespondWithNewViewCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondWithNewViewCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondWithNewViewCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondWithNewViewCodeImplementationVisibility;
+
+// view
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_VIEW 1
+extern const char* const s_readableStreamBYOBRequestViewCode;
+extern const int s_readableStreamBYOBRequestViewCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBRequestViewCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBRequestViewCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestViewCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_DATA(macro) \
+    macro(initializeReadableStreamBYOBRequest, readableStreamBYOBRequestInitializeReadableStreamBYOBRequest, 2) \
+    macro(respond, readableStreamBYOBRequestRespond, 1) \
+    macro(respondWithNewView, readableStreamBYOBRequestRespondWithNewView, 1) \
+    macro(view, readableStreamBYOBRequestView, 0) \
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(macro) \
+    macro(readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode, initializeReadableStreamBYOBRequest, ASCIILiteral(), s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength) \
+    macro(readableStreamBYOBRequestRespondCode, respond, ASCIILiteral(), s_readableStreamBYOBRequestRespondCodeLength) \
+    macro(readableStreamBYOBRequestRespondWithNewViewCode, respondWithNewView, ASCIILiteral(), s_readableStreamBYOBRequestRespondWithNewViewCodeLength) \
+    macro(readableStreamBYOBRequestViewCode, view, "get view"_s, s_readableStreamBYOBRequestViewCodeLength) \
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeReadableStreamBYOBRequest) \
+    macro(respond) \
+    macro(respondWithNewView) \
+    macro(view) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ReadableStreamBYOBRequestBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ReadableStreamBYOBRequestBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ReadableStreamBYOBRequestBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ReadableStreamBYOBRequestBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* ProcessObjectInternals.ts */
+// getStdioWriteStream
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
+extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
+extern const int s_processObjectInternalsGetStdioWriteStreamCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility;
+
+// getStdinStream
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDINSTREAM 1
+extern const char* const s_processObjectInternalsGetStdinStreamCode;
+extern const int s_processObjectInternalsGetStdinStreamCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
+
+// initializeNextTickQueue
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_INITIALIZENEXTTICKQUEUE 1
+extern const char* const s_processObjectInternalsInitializeNextTickQueueCode;
+extern const int s_processObjectInternalsInitializeNextTickQueueCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
+    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
+    macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
+    macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
+
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
+    macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
+    macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
+    macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
+
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getStdioWriteStream) \
+    macro(getStdinStream) \
+    macro(initializeNextTickQueue) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ProcessObjectInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ProcessObjectInternalsBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ProcessObjectInternalsBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ProcessObjectInternalsBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 /* WritableStreamInternals.ts */
@@ -855,7 +1973,394 @@ inline void WritableStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 
 template void WritableStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void WritableStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* TransformStreamInternals.ts */
+    /* ReadableStream.ts */
+// initializeReadableStream
+#define WEBCORE_BUILTIN_READABLESTREAM_INITIALIZEREADABLESTREAM 1
+extern const char* const s_readableStreamInitializeReadableStreamCode;
+extern const int s_readableStreamInitializeReadableStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamInitializeReadableStreamCodeImplementationVisibility;
+
+// readableStreamToArray
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAY 1
+extern const char* const s_readableStreamReadableStreamToArrayCode;
+extern const int s_readableStreamReadableStreamToArrayCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayCodeImplementationVisibility;
+
+// readableStreamToText
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOTEXT 1
+extern const char* const s_readableStreamReadableStreamToTextCode;
+extern const int s_readableStreamReadableStreamToTextCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToTextCodeImplementationVisibility;
+
+// readableStreamToArrayBuffer
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAYBUFFER 1
+extern const char* const s_readableStreamReadableStreamToArrayBufferCode;
+extern const int s_readableStreamReadableStreamToArrayBufferCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility;
+
+// readableStreamToFormData
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOFORMDATA 1
+extern const char* const s_readableStreamReadableStreamToFormDataCode;
+extern const int s_readableStreamReadableStreamToFormDataCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToFormDataCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToFormDataCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToFormDataCodeImplementationVisibility;
+
+// readableStreamToJSON
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
+extern const char* const s_readableStreamReadableStreamToJSONCode;
+extern const int s_readableStreamReadableStreamToJSONCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToJSONCodeImplementationVisibility;
+
+// readableStreamToBlob
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOBLOB 1
+extern const char* const s_readableStreamReadableStreamToBlobCode;
+extern const int s_readableStreamReadableStreamToBlobCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility;
+
+// consumeReadableStream
+#define WEBCORE_BUILTIN_READABLESTREAM_CONSUMEREADABLESTREAM 1
+extern const char* const s_readableStreamConsumeReadableStreamCode;
+extern const int s_readableStreamConsumeReadableStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamConsumeReadableStreamCodeImplementationVisibility;
+
+// createEmptyReadableStream
+#define WEBCORE_BUILTIN_READABLESTREAM_CREATEEMPTYREADABLESTREAM 1
+extern const char* const s_readableStreamCreateEmptyReadableStreamCode;
+extern const int s_readableStreamCreateEmptyReadableStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCreateEmptyReadableStreamCodeImplementationVisibility;
+
+// createNativeReadableStream
+#define WEBCORE_BUILTIN_READABLESTREAM_CREATENATIVEREADABLESTREAM 1
+extern const char* const s_readableStreamCreateNativeReadableStreamCode;
+extern const int s_readableStreamCreateNativeReadableStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCreateNativeReadableStreamCodeImplementationVisibility;
+
+// cancel
+#define WEBCORE_BUILTIN_READABLESTREAM_CANCEL 1
+extern const char* const s_readableStreamCancelCode;
+extern const int s_readableStreamCancelCodeLength;
+extern const JSC::ConstructAbility s_readableStreamCancelCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCancelCodeImplementationVisibility;
+
+// getReader
+#define WEBCORE_BUILTIN_READABLESTREAM_GETREADER 1
+extern const char* const s_readableStreamGetReaderCode;
+extern const int s_readableStreamGetReaderCodeLength;
+extern const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamGetReaderCodeImplementationVisibility;
+
+// pipeThrough
+#define WEBCORE_BUILTIN_READABLESTREAM_PIPETHROUGH 1
+extern const char* const s_readableStreamPipeThroughCode;
+extern const int s_readableStreamPipeThroughCodeLength;
+extern const JSC::ConstructAbility s_readableStreamPipeThroughCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamPipeThroughCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamPipeThroughCodeImplementationVisibility;
+
+// pipeTo
+#define WEBCORE_BUILTIN_READABLESTREAM_PIPETO 1
+extern const char* const s_readableStreamPipeToCode;
+extern const int s_readableStreamPipeToCodeLength;
+extern const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility;
+
+// tee
+#define WEBCORE_BUILTIN_READABLESTREAM_TEE 1
+extern const char* const s_readableStreamTeeCode;
+extern const int s_readableStreamTeeCodeLength;
+extern const JSC::ConstructAbility s_readableStreamTeeCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamTeeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamTeeCodeImplementationVisibility;
+
+// locked
+#define WEBCORE_BUILTIN_READABLESTREAM_LOCKED 1
+extern const char* const s_readableStreamLockedCode;
+extern const int s_readableStreamLockedCodeLength;
+extern const JSC::ConstructAbility s_readableStreamLockedCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementationVisibility;
+
+// values
+#define WEBCORE_BUILTIN_READABLESTREAM_VALUES 1
+extern const char* const s_readableStreamValuesCode;
+extern const int s_readableStreamValuesCodeLength;
+extern const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility;
+
+// lazyAsyncIterator
+#define WEBCORE_BUILTIN_READABLESTREAM_LAZYASYNCITERATOR 1
+extern const char* const s_readableStreamLazyAsyncIteratorCode;
+extern const int s_readableStreamLazyAsyncIteratorCodeLength;
+extern const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
+    macro(initializeReadableStream, readableStreamInitializeReadableStream, 3) \
+    macro(readableStreamToArray, readableStreamReadableStreamToArray, 1) \
+    macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
+    macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
+    macro(readableStreamToFormData, readableStreamReadableStreamToFormData, 3) \
+    macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
+    macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
+    macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
+    macro(createEmptyReadableStream, readableStreamCreateEmptyReadableStream, 0) \
+    macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
+    macro(cancel, readableStreamCancel, 1) \
+    macro(getReader, readableStreamGetReader, 1) \
+    macro(pipeThrough, readableStreamPipeThrough, 2) \
+    macro(pipeTo, readableStreamPipeTo, 1) \
+    macro(tee, readableStreamTee, 0) \
+    macro(locked, readableStreamLocked, 0) \
+    macro(values, readableStreamValues, 1) \
+    macro(lazyAsyncIterator, readableStreamLazyAsyncIterator, 0) \
+
+#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(macro) \
+    macro(readableStreamInitializeReadableStreamCode, initializeReadableStream, ASCIILiteral(), s_readableStreamInitializeReadableStreamCodeLength) \
+    macro(readableStreamReadableStreamToArrayCode, readableStreamToArray, ASCIILiteral(), s_readableStreamReadableStreamToArrayCodeLength) \
+    macro(readableStreamReadableStreamToTextCode, readableStreamToText, ASCIILiteral(), s_readableStreamReadableStreamToTextCodeLength) \
+    macro(readableStreamReadableStreamToArrayBufferCode, readableStreamToArrayBuffer, ASCIILiteral(), s_readableStreamReadableStreamToArrayBufferCodeLength) \
+    macro(readableStreamReadableStreamToFormDataCode, readableStreamToFormData, ASCIILiteral(), s_readableStreamReadableStreamToFormDataCodeLength) \
+    macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
+    macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
+    macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
+    macro(readableStreamCreateEmptyReadableStreamCode, createEmptyReadableStream, ASCIILiteral(), s_readableStreamCreateEmptyReadableStreamCodeLength) \
+    macro(readableStreamCreateNativeReadableStreamCode, createNativeReadableStream, ASCIILiteral(), s_readableStreamCreateNativeReadableStreamCodeLength) \
+    macro(readableStreamCancelCode, cancel, ASCIILiteral(), s_readableStreamCancelCodeLength) \
+    macro(readableStreamGetReaderCode, getReader, ASCIILiteral(), s_readableStreamGetReaderCodeLength) \
+    macro(readableStreamPipeThroughCode, pipeThrough, ASCIILiteral(), s_readableStreamPipeThroughCodeLength) \
+    macro(readableStreamPipeToCode, pipeTo, ASCIILiteral(), s_readableStreamPipeToCodeLength) \
+    macro(readableStreamTeeCode, tee, ASCIILiteral(), s_readableStreamTeeCodeLength) \
+    macro(readableStreamLockedCode, locked, "get locked"_s, s_readableStreamLockedCodeLength) \
+    macro(readableStreamValuesCode, values, ASCIILiteral(), s_readableStreamValuesCodeLength) \
+    macro(readableStreamLazyAsyncIteratorCode, lazyAsyncIterator, ASCIILiteral(), s_readableStreamLazyAsyncIteratorCodeLength) \
+
+#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeReadableStream) \
+    macro(readableStreamToArray) \
+    macro(readableStreamToText) \
+    macro(readableStreamToArrayBuffer) \
+    macro(readableStreamToFormData) \
+    macro(readableStreamToJSON) \
+    macro(readableStreamToBlob) \
+    macro(consumeReadableStream) \
+    macro(createEmptyReadableStream) \
+    macro(createNativeReadableStream) \
+    macro(cancel) \
+    macro(getReader) \
+    macro(pipeThrough) \
+    macro(pipeTo) \
+    macro(tee) \
+    macro(locked) \
+    macro(values) \
+    macro(lazyAsyncIterator) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ReadableStreamBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ReadableStreamBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ReadableStreamBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ReadableStreamBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* TransformStreamDefaultController.ts */
+// initializeTransformStreamDefaultController
+#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_INITIALIZETRANSFORMSTREAMDEFAULTCONTROLLER 1
+extern const char* const s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode;
+extern const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength;
+extern const JSC::ConstructAbility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeImplementationVisibility;
+
+// desiredSize
+#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_DESIREDSIZE 1
+extern const char* const s_transformStreamDefaultControllerDesiredSizeCode;
+extern const int s_transformStreamDefaultControllerDesiredSizeCodeLength;
+extern const JSC::ConstructAbility s_transformStreamDefaultControllerDesiredSizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamDefaultControllerDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerDesiredSizeCodeImplementationVisibility;
+
+// enqueue
+#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_ENQUEUE 1
+extern const char* const s_transformStreamDefaultControllerEnqueueCode;
+extern const int s_transformStreamDefaultControllerEnqueueCodeLength;
+extern const JSC::ConstructAbility s_transformStreamDefaultControllerEnqueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamDefaultControllerEnqueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerEnqueueCodeImplementationVisibility;
+
+// error
+#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_ERROR 1
+extern const char* const s_transformStreamDefaultControllerErrorCode;
+extern const int s_transformStreamDefaultControllerErrorCodeLength;
+extern const JSC::ConstructAbility s_transformStreamDefaultControllerErrorCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamDefaultControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerErrorCodeImplementationVisibility;
+
+// terminate
+#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_TERMINATE 1
+extern const char* const s_transformStreamDefaultControllerTerminateCode;
+extern const int s_transformStreamDefaultControllerTerminateCodeLength;
+extern const JSC::ConstructAbility s_transformStreamDefaultControllerTerminateCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamDefaultControllerTerminateCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerTerminateCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
+    macro(initializeTransformStreamDefaultController, transformStreamDefaultControllerInitializeTransformStreamDefaultController, 0) \
+    macro(desiredSize, transformStreamDefaultControllerDesiredSize, 0) \
+    macro(enqueue, transformStreamDefaultControllerEnqueue, 1) \
+    macro(error, transformStreamDefaultControllerError, 1) \
+    macro(terminate, transformStreamDefaultControllerTerminate, 0) \
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(macro) \
+    macro(transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode, initializeTransformStreamDefaultController, ASCIILiteral(), s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength) \
+    macro(transformStreamDefaultControllerDesiredSizeCode, desiredSize, "get desiredSize"_s, s_transformStreamDefaultControllerDesiredSizeCodeLength) \
+    macro(transformStreamDefaultControllerEnqueueCode, enqueue, ASCIILiteral(), s_transformStreamDefaultControllerEnqueueCodeLength) \
+    macro(transformStreamDefaultControllerErrorCode, error, ASCIILiteral(), s_transformStreamDefaultControllerErrorCodeLength) \
+    macro(transformStreamDefaultControllerTerminateCode, terminate, ASCIILiteral(), s_transformStreamDefaultControllerTerminateCodeLength) \
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeTransformStreamDefaultController) \
+    macro(desiredSize) \
+    macro(enqueue) \
+    macro(error) \
+    macro(terminate) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class TransformStreamDefaultControllerBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit TransformStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* TransformStreamDefaultControllerBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void TransformStreamDefaultControllerBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* TransformStreamInternals.ts */
 // isTransformStream
 #define WEBCORE_BUILTIN_TRANSFORMSTREAMINTERNALS_ISTRANSFORMSTREAM 1
 extern const char* const s_transformStreamInternalsIsTransformStreamCode;
@@ -1154,59 +2659,37 @@ inline void TransformStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void TransformStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* ProcessObjectInternals.ts */
-// getStdioWriteStream
-#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
-extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
-extern const int s_processObjectInternalsGetStdioWriteStreamCodeLength;
-extern const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility;
+    /* EventSource.ts */
+// getEventSource
+#define WEBCORE_BUILTIN_EVENTSOURCE_GETEVENTSOURCE 1
+extern const char* const s_eventSourceGetEventSourceCode;
+extern const int s_eventSourceGetEventSourceCodeLength;
+extern const JSC::ConstructAbility s_eventSourceGetEventSourceCodeConstructAbility;
+extern const JSC::ConstructorKind s_eventSourceGetEventSourceCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_eventSourceGetEventSourceCodeImplementationVisibility;
 
-// getStdinStream
-#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDINSTREAM 1
-extern const char* const s_processObjectInternalsGetStdinStreamCode;
-extern const int s_processObjectInternalsGetStdinStreamCodeLength;
-extern const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
+#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_DATA(macro) \
+    macro(getEventSource, eventSourceGetEventSource, 0) \
 
-// initializeNextTickQueue
-#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_INITIALIZENEXTTICKQUEUE 1
-extern const char* const s_processObjectInternalsInitializeNextTickQueueCode;
-extern const int s_processObjectInternalsInitializeNextTickQueueCodeLength;
-extern const JSC::ConstructAbility s_processObjectInternalsInitializeNextTickQueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_processObjectInternalsInitializeNextTickQueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_processObjectInternalsInitializeNextTickQueueCodeImplementationVisibility;
+#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(macro) \
+    macro(eventSourceGetEventSourceCode, getEventSource, ASCIILiteral(), s_eventSourceGetEventSourceCodeLength) \
 
-#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
-    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
-    macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
-    macro(initializeNextTickQueue, processObjectInternalsInitializeNextTickQueue, 4) \
-
-#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
-    macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
-    macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
-    macro(processObjectInternalsInitializeNextTickQueueCode, initializeNextTickQueue, ASCIILiteral(), s_processObjectInternalsInitializeNextTickQueueCodeLength) \
-
-#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
-    macro(getStdioWriteStream) \
-    macro(getStdinStream) \
-    macro(initializeNextTickQueue) \
+#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getEventSource) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class ProcessObjectInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
+class EventSourceBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit ProcessObjectInternalsBuiltinsWrapper(JSC::VM& vm)
+    explicit EventSourceBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -1214,28 +2697,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ProcessObjectInternalsBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* EventSourceBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -1245,68 +2728,68 @@ inline JSC::UnlinkedFunctionExecutable* ProcessObjectInternalsBuiltinsWrapper::n
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void ProcessObjectInternalsBuiltinsWrapper::exportNames()
+inline void EventSourceBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* TransformStream.ts */
-// initializeTransformStream
-#define WEBCORE_BUILTIN_TRANSFORMSTREAM_INITIALIZETRANSFORMSTREAM 1
-extern const char* const s_transformStreamInitializeTransformStreamCode;
-extern const int s_transformStreamInitializeTransformStreamCodeLength;
-extern const JSC::ConstructAbility s_transformStreamInitializeTransformStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamInitializeTransformStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamInitializeTransformStreamCodeImplementationVisibility;
+/* ConsoleObject.ts */
+// asyncIterator
+#define WEBCORE_BUILTIN_CONSOLEOBJECT_ASYNCITERATOR 1
+extern const char* const s_consoleObjectAsyncIteratorCode;
+extern const int s_consoleObjectAsyncIteratorCodeLength;
+extern const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility;
+extern const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility;
 
-// readable
-#define WEBCORE_BUILTIN_TRANSFORMSTREAM_READABLE 1
-extern const char* const s_transformStreamReadableCode;
-extern const int s_transformStreamReadableCodeLength;
-extern const JSC::ConstructAbility s_transformStreamReadableCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamReadableCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamReadableCodeImplementationVisibility;
+// write
+#define WEBCORE_BUILTIN_CONSOLEOBJECT_WRITE 1
+extern const char* const s_consoleObjectWriteCode;
+extern const int s_consoleObjectWriteCodeLength;
+extern const JSC::ConstructAbility s_consoleObjectWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_consoleObjectWriteCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_consoleObjectWriteCodeImplementationVisibility;
 
-// writable
-#define WEBCORE_BUILTIN_TRANSFORMSTREAM_WRITABLE 1
-extern const char* const s_transformStreamWritableCode;
-extern const int s_transformStreamWritableCodeLength;
-extern const JSC::ConstructAbility s_transformStreamWritableCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamWritableCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamWritableCodeImplementationVisibility;
+// createConsoleConstructor
+#define WEBCORE_BUILTIN_CONSOLEOBJECT_CREATECONSOLECONSTRUCTOR 1
+extern const char* const s_consoleObjectCreateConsoleConstructorCode;
+extern const int s_consoleObjectCreateConsoleConstructorCodeLength;
+extern const JSC::ConstructAbility s_consoleObjectCreateConsoleConstructorCodeConstructAbility;
+extern const JSC::ConstructorKind s_consoleObjectCreateConsoleConstructorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_consoleObjectCreateConsoleConstructorCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_DATA(macro) \
-    macro(initializeTransformStream, transformStreamInitializeTransformStream, 0) \
-    macro(readable, transformStreamReadable, 0) \
-    macro(writable, transformStreamWritable, 0) \
+#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_DATA(macro) \
+    macro(asyncIterator, consoleObjectAsyncIterator, 0) \
+    macro(write, consoleObjectWrite, 1) \
+    macro(createConsoleConstructor, consoleObjectCreateConsoleConstructor, 1) \
 
-#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(macro) \
-    macro(transformStreamInitializeTransformStreamCode, initializeTransformStream, ASCIILiteral(), s_transformStreamInitializeTransformStreamCodeLength) \
-    macro(transformStreamReadableCode, readable, "get readable"_s, s_transformStreamReadableCodeLength) \
-    macro(transformStreamWritableCode, writable, ASCIILiteral(), s_transformStreamWritableCodeLength) \
+#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(macro) \
+    macro(consoleObjectAsyncIteratorCode, asyncIterator, "[Symbol.asyncIterator]"_s, s_consoleObjectAsyncIteratorCodeLength) \
+    macro(consoleObjectWriteCode, write, ASCIILiteral(), s_consoleObjectWriteCodeLength) \
+    macro(consoleObjectCreateConsoleConstructorCode, createConsoleConstructor, ASCIILiteral(), s_consoleObjectCreateConsoleConstructorCodeLength) \
 
-#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeTransformStream) \
-    macro(readable) \
-    macro(writable) \
+#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(asyncIterator) \
+    macro(write) \
+    macro(createConsoleConstructor) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class TransformStreamBuiltinsWrapper : private JSC::WeakHandleOwner {
+class ConsoleObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit TransformStreamBuiltinsWrapper(JSC::VM& vm)
+    explicit ConsoleObjectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -1314,28 +2797,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* TransformStreamBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* ConsoleObjectBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -1345,13 +2828,13 @@ inline JSC::UnlinkedFunctionExecutable* TransformStreamBuiltinsWrapper::name##Ex
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void TransformStreamBuiltinsWrapper::exportNames()
+inline void ConsoleObjectBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 /* Module.ts */
@@ -1463,6 +2946,95 @@ inline void ModuleBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
     WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* JSBufferConstructor.ts */
+// from
+#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_FROM 1
+extern const char* const s_jsBufferConstructorFromCode;
+extern const int s_jsBufferConstructorFromCodeLength;
+extern const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility;
+
+// isBuffer
+#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_ISBUFFER 1
+extern const char* const s_jsBufferConstructorIsBufferCode;
+extern const int s_jsBufferConstructorIsBufferCodeLength;
+extern const JSC::ConstructAbility s_jsBufferConstructorIsBufferCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferConstructorIsBufferCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferConstructorIsBufferCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_DATA(macro) \
+    macro(from, jsBufferConstructorFrom, 1) \
+    macro(isBuffer, jsBufferConstructorIsBuffer, 1) \
+
+#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(macro) \
+    macro(jsBufferConstructorFromCode, from, ASCIILiteral(), s_jsBufferConstructorFromCodeLength) \
+    macro(jsBufferConstructorIsBufferCode, isBuffer, ASCIILiteral(), s_jsBufferConstructorIsBufferCodeLength) \
+
+#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(macro) \
+    macro(from) \
+    macro(isBuffer) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class JSBufferConstructorBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit JSBufferConstructorBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* JSBufferConstructorBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void JSBufferConstructorBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 /* JSBufferPrototype.ts */
@@ -2391,48 +3963,235 @@ inline void ReadableByteStreamControllerBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* UtilInspect.ts */
-// getStylizeWithColor
-#define WEBCORE_BUILTIN_UTILINSPECT_GETSTYLIZEWITHCOLOR 1
-extern const char* const s_utilInspectGetStylizeWithColorCode;
-extern const int s_utilInspectGetStylizeWithColorCodeLength;
-extern const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility;
-extern const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility;
+/* StreamInternals.ts */
+// markPromiseAsHandled
+#define WEBCORE_BUILTIN_STREAMINTERNALS_MARKPROMISEASHANDLED 1
+extern const char* const s_streamInternalsMarkPromiseAsHandledCode;
+extern const int s_streamInternalsMarkPromiseAsHandledCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility;
 
-// stylizeWithNoColor
-#define WEBCORE_BUILTIN_UTILINSPECT_STYLIZEWITHNOCOLOR 1
-extern const char* const s_utilInspectStylizeWithNoColorCode;
-extern const int s_utilInspectStylizeWithNoColorCodeLength;
-extern const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility;
-extern const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility;
+// shieldingPromiseResolve
+#define WEBCORE_BUILTIN_STREAMINTERNALS_SHIELDINGPROMISERESOLVE 1
+extern const char* const s_streamInternalsShieldingPromiseResolveCode;
+extern const int s_streamInternalsShieldingPromiseResolveCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_DATA(macro) \
-    macro(getStylizeWithColor, utilInspectGetStylizeWithColor, 1) \
-    macro(stylizeWithNoColor, utilInspectStylizeWithNoColor, 1) \
+// promiseInvokeOrNoopMethodNoCatch
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPMETHODNOCATCH 1
+extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode;
+extern const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(macro) \
-    macro(utilInspectGetStylizeWithColorCode, getStylizeWithColor, ASCIILiteral(), s_utilInspectGetStylizeWithColorCodeLength) \
-    macro(utilInspectStylizeWithNoColorCode, stylizeWithNoColor, ASCIILiteral(), s_utilInspectStylizeWithNoColorCodeLength) \
+// promiseInvokeOrNoopNoCatch
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPNOCATCH 1
+extern const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode;
+extern const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(getStylizeWithColor) \
-    macro(stylizeWithNoColor) \
+// promiseInvokeOrNoopMethod
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPMETHOD 1
+extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode;
+extern const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility;
+
+// promiseInvokeOrNoop
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOP 1
+extern const char* const s_streamInternalsPromiseInvokeOrNoopCode;
+extern const int s_streamInternalsPromiseInvokeOrNoopCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility;
+
+// promiseInvokeOrFallbackOrNoop
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORFALLBACKORNOOP 1
+extern const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode;
+extern const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility;
+
+// validateAndNormalizeQueuingStrategy
+#define WEBCORE_BUILTIN_STREAMINTERNALS_VALIDATEANDNORMALIZEQUEUINGSTRATEGY 1
+extern const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode;
+extern const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility;
+
+// createFIFO
+#define WEBCORE_BUILTIN_STREAMINTERNALS_CREATEFIFO 1
+extern const char* const s_streamInternalsCreateFIFOCode;
+extern const int s_streamInternalsCreateFIFOCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility;
+
+// newQueue
+#define WEBCORE_BUILTIN_STREAMINTERNALS_NEWQUEUE 1
+extern const char* const s_streamInternalsNewQueueCode;
+extern const int s_streamInternalsNewQueueCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility;
+
+// dequeueValue
+#define WEBCORE_BUILTIN_STREAMINTERNALS_DEQUEUEVALUE 1
+extern const char* const s_streamInternalsDequeueValueCode;
+extern const int s_streamInternalsDequeueValueCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility;
+
+// enqueueValueWithSize
+#define WEBCORE_BUILTIN_STREAMINTERNALS_ENQUEUEVALUEWITHSIZE 1
+extern const char* const s_streamInternalsEnqueueValueWithSizeCode;
+extern const int s_streamInternalsEnqueueValueWithSizeCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility;
+
+// peekQueueValue
+#define WEBCORE_BUILTIN_STREAMINTERNALS_PEEKQUEUEVALUE 1
+extern const char* const s_streamInternalsPeekQueueValueCode;
+extern const int s_streamInternalsPeekQueueValueCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility;
+
+// resetQueue
+#define WEBCORE_BUILTIN_STREAMINTERNALS_RESETQUEUE 1
+extern const char* const s_streamInternalsResetQueueCode;
+extern const int s_streamInternalsResetQueueCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility;
+
+// extractSizeAlgorithm
+#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTSIZEALGORITHM 1
+extern const char* const s_streamInternalsExtractSizeAlgorithmCode;
+extern const int s_streamInternalsExtractSizeAlgorithmCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility;
+
+// extractHighWaterMark
+#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTHIGHWATERMARK 1
+extern const char* const s_streamInternalsExtractHighWaterMarkCode;
+extern const int s_streamInternalsExtractHighWaterMarkCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility;
+
+// extractHighWaterMarkFromQueuingStrategyInit
+#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTHIGHWATERMARKFROMQUEUINGSTRATEGYINIT 1
+extern const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode;
+extern const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility;
+
+// createFulfilledPromise
+#define WEBCORE_BUILTIN_STREAMINTERNALS_CREATEFULFILLEDPROMISE 1
+extern const char* const s_streamInternalsCreateFulfilledPromiseCode;
+extern const int s_streamInternalsCreateFulfilledPromiseCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility;
+
+// toDictionary
+#define WEBCORE_BUILTIN_STREAMINTERNALS_TODICTIONARY 1
+extern const char* const s_streamInternalsToDictionaryCode;
+extern const int s_streamInternalsToDictionaryCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_DATA(macro) \
+    macro(markPromiseAsHandled, streamInternalsMarkPromiseAsHandled, 1) \
+    macro(shieldingPromiseResolve, streamInternalsShieldingPromiseResolve, 1) \
+    macro(promiseInvokeOrNoopMethodNoCatch, streamInternalsPromiseInvokeOrNoopMethodNoCatch, 3) \
+    macro(promiseInvokeOrNoopNoCatch, streamInternalsPromiseInvokeOrNoopNoCatch, 3) \
+    macro(promiseInvokeOrNoopMethod, streamInternalsPromiseInvokeOrNoopMethod, 3) \
+    macro(promiseInvokeOrNoop, streamInternalsPromiseInvokeOrNoop, 3) \
+    macro(promiseInvokeOrFallbackOrNoop, streamInternalsPromiseInvokeOrFallbackOrNoop, 5) \
+    macro(validateAndNormalizeQueuingStrategy, streamInternalsValidateAndNormalizeQueuingStrategy, 2) \
+    macro(createFIFO, streamInternalsCreateFIFO, 0) \
+    macro(newQueue, streamInternalsNewQueue, 0) \
+    macro(dequeueValue, streamInternalsDequeueValue, 1) \
+    macro(enqueueValueWithSize, streamInternalsEnqueueValueWithSize, 3) \
+    macro(peekQueueValue, streamInternalsPeekQueueValue, 1) \
+    macro(resetQueue, streamInternalsResetQueue, 1) \
+    macro(extractSizeAlgorithm, streamInternalsExtractSizeAlgorithm, 1) \
+    macro(extractHighWaterMark, streamInternalsExtractHighWaterMark, 2) \
+    macro(extractHighWaterMarkFromQueuingStrategyInit, streamInternalsExtractHighWaterMarkFromQueuingStrategyInit, 1) \
+    macro(createFulfilledPromise, streamInternalsCreateFulfilledPromise, 1) \
+    macro(toDictionary, streamInternalsToDictionary, 3) \
+
+#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(macro) \
+    macro(streamInternalsMarkPromiseAsHandledCode, markPromiseAsHandled, ASCIILiteral(), s_streamInternalsMarkPromiseAsHandledCodeLength) \
+    macro(streamInternalsShieldingPromiseResolveCode, shieldingPromiseResolve, ASCIILiteral(), s_streamInternalsShieldingPromiseResolveCodeLength) \
+    macro(streamInternalsPromiseInvokeOrNoopMethodNoCatchCode, promiseInvokeOrNoopMethodNoCatch, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength) \
+    macro(streamInternalsPromiseInvokeOrNoopNoCatchCode, promiseInvokeOrNoopNoCatch, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength) \
+    macro(streamInternalsPromiseInvokeOrNoopMethodCode, promiseInvokeOrNoopMethod, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopMethodCodeLength) \
+    macro(streamInternalsPromiseInvokeOrNoopCode, promiseInvokeOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopCodeLength) \
+    macro(streamInternalsPromiseInvokeOrFallbackOrNoopCode, promiseInvokeOrFallbackOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength) \
+    macro(streamInternalsValidateAndNormalizeQueuingStrategyCode, validateAndNormalizeQueuingStrategy, ASCIILiteral(), s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength) \
+    macro(streamInternalsCreateFIFOCode, createFIFO, ASCIILiteral(), s_streamInternalsCreateFIFOCodeLength) \
+    macro(streamInternalsNewQueueCode, newQueue, ASCIILiteral(), s_streamInternalsNewQueueCodeLength) \
+    macro(streamInternalsDequeueValueCode, dequeueValue, ASCIILiteral(), s_streamInternalsDequeueValueCodeLength) \
+    macro(streamInternalsEnqueueValueWithSizeCode, enqueueValueWithSize, ASCIILiteral(), s_streamInternalsEnqueueValueWithSizeCodeLength) \
+    macro(streamInternalsPeekQueueValueCode, peekQueueValue, ASCIILiteral(), s_streamInternalsPeekQueueValueCodeLength) \
+    macro(streamInternalsResetQueueCode, resetQueue, ASCIILiteral(), s_streamInternalsResetQueueCodeLength) \
+    macro(streamInternalsExtractSizeAlgorithmCode, extractSizeAlgorithm, ASCIILiteral(), s_streamInternalsExtractSizeAlgorithmCodeLength) \
+    macro(streamInternalsExtractHighWaterMarkCode, extractHighWaterMark, ASCIILiteral(), s_streamInternalsExtractHighWaterMarkCodeLength) \
+    macro(streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode, extractHighWaterMarkFromQueuingStrategyInit, ASCIILiteral(), s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength) \
+    macro(streamInternalsCreateFulfilledPromiseCode, createFulfilledPromise, ASCIILiteral(), s_streamInternalsCreateFulfilledPromiseCodeLength) \
+    macro(streamInternalsToDictionaryCode, toDictionary, ASCIILiteral(), s_streamInternalsToDictionaryCodeLength) \
+
+#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(markPromiseAsHandled) \
+    macro(shieldingPromiseResolve) \
+    macro(promiseInvokeOrNoopMethodNoCatch) \
+    macro(promiseInvokeOrNoopNoCatch) \
+    macro(promiseInvokeOrNoopMethod) \
+    macro(promiseInvokeOrNoop) \
+    macro(promiseInvokeOrFallbackOrNoop) \
+    macro(validateAndNormalizeQueuingStrategy) \
+    macro(createFIFO) \
+    macro(newQueue) \
+    macro(dequeueValue) \
+    macro(enqueueValueWithSize) \
+    macro(peekQueueValue) \
+    macro(resetQueue) \
+    macro(extractSizeAlgorithm) \
+    macro(extractHighWaterMark) \
+    macro(extractHighWaterMarkFromQueuingStrategyInit) \
+    macro(createFulfilledPromise) \
+    macro(toDictionary) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class UtilInspectBuiltinsWrapper : private JSC::WeakHandleOwner {
+class StreamInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit UtilInspectBuiltinsWrapper(JSC::VM& vm)
+    explicit StreamInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -2440,28 +4199,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* UtilInspectBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* StreamInternalsBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -2471,68 +4230,124 @@ inline JSC::UnlinkedFunctionExecutable* UtilInspectBuiltinsWrapper::name##Execut
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void UtilInspectBuiltinsWrapper::exportNames()
+inline void StreamInternalsBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* ConsoleObject.ts */
-// asyncIterator
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_ASYNCITERATOR 1
-extern const char* const s_consoleObjectAsyncIteratorCode;
-extern const int s_consoleObjectAsyncIteratorCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility;
+class StreamInternalsBuiltinFunctions {
+public:
+    explicit StreamInternalsBuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
 
-// write
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_WRITE 1
-extern const char* const s_consoleObjectWriteCode;
-extern const int s_consoleObjectWriteCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectWriteCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectWriteCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectWriteCodeImplementationVisibility;
+    void init(JSC::JSGlobalObject&);
+    template<typename Visitor> void visit(Visitor&);
 
-// createConsoleConstructor
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_CREATECONSOLECONSTRUCTOR 1
-extern const char* const s_consoleObjectCreateConsoleConstructorCode;
-extern const int s_consoleObjectCreateConsoleConstructorCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectCreateConsoleConstructorCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectCreateConsoleConstructorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectCreateConsoleConstructorCodeImplementationVisibility;
+public:
+    JSC::VM& m_vm;
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_DATA(macro) \
-    macro(asyncIterator, consoleObjectAsyncIterator, 0) \
-    macro(write, consoleObjectWrite, 1) \
-    macro(createConsoleConstructor, consoleObjectCreateConsoleConstructor, 1) \
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \
+    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+};
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(macro) \
-    macro(consoleObjectAsyncIteratorCode, asyncIterator, "[Symbol.asyncIterator]"_s, s_consoleObjectAsyncIteratorCodeLength) \
-    macro(consoleObjectWriteCode, write, ASCIILiteral(), s_consoleObjectWriteCodeLength) \
-    macro(consoleObjectCreateConsoleConstructorCode, createConsoleConstructor, ASCIILiteral(), s_consoleObjectCreateConsoleConstructorCodeLength) \
+inline void StreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
+{
+#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \
+    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(EXPORT_FUNCTION)
+#undef EXPORT_FUNCTION
+}
 
-#define WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(asyncIterator) \
-    macro(write) \
-    macro(createConsoleConstructor) \
+template<typename Visitor>
+inline void StreamInternalsBuiltinFunctions::visit(Visitor& visitor)
+{
+#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
+#undef VISIT_FUNCTION
+}
+
+template void StreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
+template void StreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
+    /* ReadableStreamDefaultController.ts */
+// initializeReadableStreamDefaultController
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_INITIALIZEREADABLESTREAMDEFAULTCONTROLLER 1
+extern const char* const s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode;
+extern const int s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeImplementationVisibility;
+
+// enqueue
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_ENQUEUE 1
+extern const char* const s_readableStreamDefaultControllerEnqueueCode;
+extern const int s_readableStreamDefaultControllerEnqueueCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultControllerEnqueueCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultControllerEnqueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerEnqueueCodeImplementationVisibility;
+
+// error
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_ERROR 1
+extern const char* const s_readableStreamDefaultControllerErrorCode;
+extern const int s_readableStreamDefaultControllerErrorCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultControllerErrorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerErrorCodeImplementationVisibility;
+
+// close
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_CLOSE 1
+extern const char* const s_readableStreamDefaultControllerCloseCode;
+extern const int s_readableStreamDefaultControllerCloseCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultControllerCloseCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultControllerCloseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerCloseCodeImplementationVisibility;
+
+// desiredSize
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_DESIREDSIZE 1
+extern const char* const s_readableStreamDefaultControllerDesiredSizeCode;
+extern const int s_readableStreamDefaultControllerDesiredSizeCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultControllerDesiredSizeCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultControllerDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerDesiredSizeCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
+    macro(initializeReadableStreamDefaultController, readableStreamDefaultControllerInitializeReadableStreamDefaultController, 4) \
+    macro(enqueue, readableStreamDefaultControllerEnqueue, 1) \
+    macro(error, readableStreamDefaultControllerError, 1) \
+    macro(close, readableStreamDefaultControllerClose, 0) \
+    macro(desiredSize, readableStreamDefaultControllerDesiredSize, 0) \
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(macro) \
+    macro(readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode, initializeReadableStreamDefaultController, ASCIILiteral(), s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength) \
+    macro(readableStreamDefaultControllerEnqueueCode, enqueue, ASCIILiteral(), s_readableStreamDefaultControllerEnqueueCodeLength) \
+    macro(readableStreamDefaultControllerErrorCode, error, ASCIILiteral(), s_readableStreamDefaultControllerErrorCodeLength) \
+    macro(readableStreamDefaultControllerCloseCode, close, ASCIILiteral(), s_readableStreamDefaultControllerCloseCodeLength) \
+    macro(readableStreamDefaultControllerDesiredSizeCode, desiredSize, "get desiredSize"_s, s_readableStreamDefaultControllerDesiredSizeCodeLength) \
+
+#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeReadableStreamDefaultController) \
+    macro(enqueue) \
+    macro(error) \
+    macro(close) \
+    macro(desiredSize) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class ConsoleObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
+class ReadableStreamDefaultControllerBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit ConsoleObjectBuiltinsWrapper(JSC::VM& vm)
+    explicit ReadableStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -2540,28 +4355,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ConsoleObjectBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* ReadableStreamDefaultControllerBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -2571,13 +4386,335 @@ inline JSC::UnlinkedFunctionExecutable* ConsoleObjectBuiltinsWrapper::name##Exec
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void ConsoleObjectBuiltinsWrapper::exportNames()
+inline void ReadableStreamDefaultControllerBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* BundlerPlugin.ts */
+// runSetupFunction
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNSETUPFUNCTION 1
+extern const char* const s_bundlerPluginRunSetupFunctionCode;
+extern const int s_bundlerPluginRunSetupFunctionCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility;
+
+// runOnResolvePlugins
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONRESOLVEPLUGINS 1
+extern const char* const s_bundlerPluginRunOnResolvePluginsCode;
+extern const int s_bundlerPluginRunOnResolvePluginsCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility;
+
+// runOnLoadPlugins
+#define WEBCORE_BUILTIN_BUNDLERPLUGIN_RUNONLOADPLUGINS 1
+extern const char* const s_bundlerPluginRunOnLoadPluginsCode;
+extern const int s_bundlerPluginRunOnLoadPluginsCodeLength;
+extern const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility;
+extern const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_DATA(macro) \
+    macro(runSetupFunction, bundlerPluginRunSetupFunction, 2) \
+    macro(runOnResolvePlugins, bundlerPluginRunOnResolvePlugins, 5) \
+    macro(runOnLoadPlugins, bundlerPluginRunOnLoadPlugins, 4) \
+
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(macro) \
+    macro(bundlerPluginRunSetupFunctionCode, runSetupFunction, ASCIILiteral(), s_bundlerPluginRunSetupFunctionCodeLength) \
+    macro(bundlerPluginRunOnResolvePluginsCode, runOnResolvePlugins, ASCIILiteral(), s_bundlerPluginRunOnResolvePluginsCodeLength) \
+    macro(bundlerPluginRunOnLoadPluginsCode, runOnLoadPlugins, ASCIILiteral(), s_bundlerPluginRunOnLoadPluginsCodeLength) \
+
+#define WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(macro) \
+    macro(runSetupFunction) \
+    macro(runOnResolvePlugins) \
+    macro(runOnLoadPlugins) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class BundlerPluginBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit BundlerPluginBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* BundlerPluginBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void BundlerPluginBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* TransformStream.ts */
+// initializeTransformStream
+#define WEBCORE_BUILTIN_TRANSFORMSTREAM_INITIALIZETRANSFORMSTREAM 1
+extern const char* const s_transformStreamInitializeTransformStreamCode;
+extern const int s_transformStreamInitializeTransformStreamCodeLength;
+extern const JSC::ConstructAbility s_transformStreamInitializeTransformStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamInitializeTransformStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamInitializeTransformStreamCodeImplementationVisibility;
+
+// readable
+#define WEBCORE_BUILTIN_TRANSFORMSTREAM_READABLE 1
+extern const char* const s_transformStreamReadableCode;
+extern const int s_transformStreamReadableCodeLength;
+extern const JSC::ConstructAbility s_transformStreamReadableCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamReadableCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamReadableCodeImplementationVisibility;
+
+// writable
+#define WEBCORE_BUILTIN_TRANSFORMSTREAM_WRITABLE 1
+extern const char* const s_transformStreamWritableCode;
+extern const int s_transformStreamWritableCodeLength;
+extern const JSC::ConstructAbility s_transformStreamWritableCodeConstructAbility;
+extern const JSC::ConstructorKind s_transformStreamWritableCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamWritableCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_DATA(macro) \
+    macro(initializeTransformStream, transformStreamInitializeTransformStream, 0) \
+    macro(readable, transformStreamReadable, 0) \
+    macro(writable, transformStreamWritable, 0) \
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(macro) \
+    macro(transformStreamInitializeTransformStreamCode, initializeTransformStream, ASCIILiteral(), s_transformStreamInitializeTransformStreamCodeLength) \
+    macro(transformStreamReadableCode, readable, "get readable"_s, s_transformStreamReadableCodeLength) \
+    macro(transformStreamWritableCode, writable, ASCIILiteral(), s_transformStreamWritableCodeLength) \
+
+#define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeTransformStream) \
+    macro(readable) \
+    macro(writable) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class TransformStreamBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit TransformStreamBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* TransformStreamBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void TransformStreamBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* ReadableStreamBYOBReader.ts */
+// initializeReadableStreamBYOBReader
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_INITIALIZEREADABLESTREAMBYOBREADER 1
+extern const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode;
+extern const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeImplementationVisibility;
+
+// cancel
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_CANCEL 1
+extern const char* const s_readableStreamBYOBReaderCancelCode;
+extern const int s_readableStreamBYOBReaderCancelCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBReaderCancelCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBReaderCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderCancelCodeImplementationVisibility;
+
+// read
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_READ 1
+extern const char* const s_readableStreamBYOBReaderReadCode;
+extern const int s_readableStreamBYOBReaderReadCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBReaderReadCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBReaderReadCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderReadCodeImplementationVisibility;
+
+// releaseLock
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_RELEASELOCK 1
+extern const char* const s_readableStreamBYOBReaderReleaseLockCode;
+extern const int s_readableStreamBYOBReaderReleaseLockCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBReaderReleaseLockCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBReaderReleaseLockCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderReleaseLockCodeImplementationVisibility;
+
+// closed
+#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_CLOSED 1
+extern const char* const s_readableStreamBYOBReaderClosedCode;
+extern const int s_readableStreamBYOBReaderClosedCodeLength;
+extern const JSC::ConstructAbility s_readableStreamBYOBReaderClosedCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamBYOBReaderClosedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderClosedCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_DATA(macro) \
+    macro(initializeReadableStreamBYOBReader, readableStreamBYOBReaderInitializeReadableStreamBYOBReader, 1) \
+    macro(cancel, readableStreamBYOBReaderCancel, 1) \
+    macro(read, readableStreamBYOBReaderRead, 1) \
+    macro(releaseLock, readableStreamBYOBReaderReleaseLock, 0) \
+    macro(closed, readableStreamBYOBReaderClosed, 0) \
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(macro) \
+    macro(readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode, initializeReadableStreamBYOBReader, ASCIILiteral(), s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength) \
+    macro(readableStreamBYOBReaderCancelCode, cancel, ASCIILiteral(), s_readableStreamBYOBReaderCancelCodeLength) \
+    macro(readableStreamBYOBReaderReadCode, read, ASCIILiteral(), s_readableStreamBYOBReaderReadCodeLength) \
+    macro(readableStreamBYOBReaderReleaseLockCode, releaseLock, ASCIILiteral(), s_readableStreamBYOBReaderReleaseLockCodeLength) \
+    macro(readableStreamBYOBReaderClosedCode, closed, "get closed"_s, s_readableStreamBYOBReaderClosedCodeLength) \
+
+#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(macro) \
+    macro(initializeReadableStreamBYOBReader) \
+    macro(cancel) \
+    macro(read) \
+    macro(releaseLock) \
+    macro(closed) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ReadableStreamBYOBReaderBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ReadableStreamBYOBReaderBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
+        WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ReadableStreamBYOBReaderBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ReadableStreamBYOBReaderBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 /* ReadableStreamInternals.ts */
@@ -3385,81 +5522,48 @@ inline void ReadableStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 
 template void ReadableStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void ReadableStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* TransformStreamDefaultController.ts */
-// initializeTransformStreamDefaultController
-#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_INITIALIZETRANSFORMSTREAMDEFAULTCONTROLLER 1
-extern const char* const s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode;
-extern const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength;
-extern const JSC::ConstructAbility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeImplementationVisibility;
+    /* UtilInspect.ts */
+// getStylizeWithColor
+#define WEBCORE_BUILTIN_UTILINSPECT_GETSTYLIZEWITHCOLOR 1
+extern const char* const s_utilInspectGetStylizeWithColorCode;
+extern const int s_utilInspectGetStylizeWithColorCodeLength;
+extern const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility;
+extern const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility;
 
-// desiredSize
-#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_DESIREDSIZE 1
-extern const char* const s_transformStreamDefaultControllerDesiredSizeCode;
-extern const int s_transformStreamDefaultControllerDesiredSizeCodeLength;
-extern const JSC::ConstructAbility s_transformStreamDefaultControllerDesiredSizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamDefaultControllerDesiredSizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerDesiredSizeCodeImplementationVisibility;
+// stylizeWithNoColor
+#define WEBCORE_BUILTIN_UTILINSPECT_STYLIZEWITHNOCOLOR 1
+extern const char* const s_utilInspectStylizeWithNoColorCode;
+extern const int s_utilInspectStylizeWithNoColorCodeLength;
+extern const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility;
+extern const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility;
 
-// enqueue
-#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_ENQUEUE 1
-extern const char* const s_transformStreamDefaultControllerEnqueueCode;
-extern const int s_transformStreamDefaultControllerEnqueueCodeLength;
-extern const JSC::ConstructAbility s_transformStreamDefaultControllerEnqueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamDefaultControllerEnqueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerEnqueueCodeImplementationVisibility;
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_DATA(macro) \
+    macro(getStylizeWithColor, utilInspectGetStylizeWithColor, 1) \
+    macro(stylizeWithNoColor, utilInspectStylizeWithNoColor, 1) \
 
-// error
-#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_ERROR 1
-extern const char* const s_transformStreamDefaultControllerErrorCode;
-extern const int s_transformStreamDefaultControllerErrorCodeLength;
-extern const JSC::ConstructAbility s_transformStreamDefaultControllerErrorCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamDefaultControllerErrorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerErrorCodeImplementationVisibility;
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(macro) \
+    macro(utilInspectGetStylizeWithColorCode, getStylizeWithColor, ASCIILiteral(), s_utilInspectGetStylizeWithColorCodeLength) \
+    macro(utilInspectStylizeWithNoColorCode, stylizeWithNoColor, ASCIILiteral(), s_utilInspectStylizeWithNoColorCodeLength) \
 
-// terminate
-#define WEBCORE_BUILTIN_TRANSFORMSTREAMDEFAULTCONTROLLER_TERMINATE 1
-extern const char* const s_transformStreamDefaultControllerTerminateCode;
-extern const int s_transformStreamDefaultControllerTerminateCodeLength;
-extern const JSC::ConstructAbility s_transformStreamDefaultControllerTerminateCodeConstructAbility;
-extern const JSC::ConstructorKind s_transformStreamDefaultControllerTerminateCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerTerminateCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
-    macro(initializeTransformStreamDefaultController, transformStreamDefaultControllerInitializeTransformStreamDefaultController, 0) \
-    macro(desiredSize, transformStreamDefaultControllerDesiredSize, 0) \
-    macro(enqueue, transformStreamDefaultControllerEnqueue, 1) \
-    macro(error, transformStreamDefaultControllerError, 1) \
-    macro(terminate, transformStreamDefaultControllerTerminate, 0) \
-
-#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(macro) \
-    macro(transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode, initializeTransformStreamDefaultController, ASCIILiteral(), s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength) \
-    macro(transformStreamDefaultControllerDesiredSizeCode, desiredSize, "get desiredSize"_s, s_transformStreamDefaultControllerDesiredSizeCodeLength) \
-    macro(transformStreamDefaultControllerEnqueueCode, enqueue, ASCIILiteral(), s_transformStreamDefaultControllerEnqueueCodeLength) \
-    macro(transformStreamDefaultControllerErrorCode, error, ASCIILiteral(), s_transformStreamDefaultControllerErrorCodeLength) \
-    macro(transformStreamDefaultControllerTerminateCode, terminate, ASCIILiteral(), s_transformStreamDefaultControllerTerminateCodeLength) \
-
-#define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeTransformStreamDefaultController) \
-    macro(desiredSize) \
-    macro(enqueue) \
-    macro(error) \
-    macro(terminate) \
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getStylizeWithColor) \
+    macro(stylizeWithNoColor) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class TransformStreamDefaultControllerBuiltinsWrapper : private JSC::WeakHandleOwner {
+class UtilInspectBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit TransformStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
+    explicit UtilInspectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -3467,28 +5571,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* TransformStreamDefaultControllerBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* UtilInspectBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -3498,2042 +5602,16 @@ inline JSC::UnlinkedFunctionExecutable* TransformStreamDefaultControllerBuiltins
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void TransformStreamDefaultControllerBuiltinsWrapper::exportNames()
+inline void UtilInspectBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* ReadableStreamBYOBReader.ts */
-// initializeReadableStreamBYOBReader
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_INITIALIZEREADABLESTREAMBYOBREADER 1
-extern const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode;
-extern const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeImplementationVisibility;
-
-// cancel
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_CANCEL 1
-extern const char* const s_readableStreamBYOBReaderCancelCode;
-extern const int s_readableStreamBYOBReaderCancelCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBReaderCancelCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBReaderCancelCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderCancelCodeImplementationVisibility;
-
-// read
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_READ 1
-extern const char* const s_readableStreamBYOBReaderReadCode;
-extern const int s_readableStreamBYOBReaderReadCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBReaderReadCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBReaderReadCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderReadCodeImplementationVisibility;
-
-// releaseLock
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_RELEASELOCK 1
-extern const char* const s_readableStreamBYOBReaderReleaseLockCode;
-extern const int s_readableStreamBYOBReaderReleaseLockCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBReaderReleaseLockCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBReaderReleaseLockCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderReleaseLockCodeImplementationVisibility;
-
-// closed
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_CLOSED 1
-extern const char* const s_readableStreamBYOBReaderClosedCode;
-extern const int s_readableStreamBYOBReaderClosedCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBReaderClosedCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBReaderClosedCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBReaderClosedCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_DATA(macro) \
-    macro(initializeReadableStreamBYOBReader, readableStreamBYOBReaderInitializeReadableStreamBYOBReader, 1) \
-    macro(cancel, readableStreamBYOBReaderCancel, 1) \
-    macro(read, readableStreamBYOBReaderRead, 1) \
-    macro(releaseLock, readableStreamBYOBReaderReleaseLock, 0) \
-    macro(closed, readableStreamBYOBReaderClosed, 0) \
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(macro) \
-    macro(readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode, initializeReadableStreamBYOBReader, ASCIILiteral(), s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength) \
-    macro(readableStreamBYOBReaderCancelCode, cancel, ASCIILiteral(), s_readableStreamBYOBReaderCancelCodeLength) \
-    macro(readableStreamBYOBReaderReadCode, read, ASCIILiteral(), s_readableStreamBYOBReaderReadCodeLength) \
-    macro(readableStreamBYOBReaderReleaseLockCode, releaseLock, ASCIILiteral(), s_readableStreamBYOBReaderReleaseLockCodeLength) \
-    macro(readableStreamBYOBReaderClosedCode, closed, "get closed"_s, s_readableStreamBYOBReaderClosedCodeLength) \
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeReadableStreamBYOBReader) \
-    macro(cancel) \
-    macro(read) \
-    macro(releaseLock) \
-    macro(closed) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableStreamBYOBReaderBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableStreamBYOBReaderBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableStreamBYOBReaderBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableStreamBYOBReaderBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* JSBufferConstructor.ts */
-// from
-#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_FROM 1
-extern const char* const s_jsBufferConstructorFromCode;
-extern const int s_jsBufferConstructorFromCodeLength;
-extern const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility;
-
-// isBuffer
-#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_ISBUFFER 1
-extern const char* const s_jsBufferConstructorIsBufferCode;
-extern const int s_jsBufferConstructorIsBufferCodeLength;
-extern const JSC::ConstructAbility s_jsBufferConstructorIsBufferCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferConstructorIsBufferCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_jsBufferConstructorIsBufferCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_DATA(macro) \
-    macro(from, jsBufferConstructorFrom, 1) \
-    macro(isBuffer, jsBufferConstructorIsBuffer, 1) \
-
-#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(macro) \
-    macro(jsBufferConstructorFromCode, from, ASCIILiteral(), s_jsBufferConstructorFromCodeLength) \
-    macro(jsBufferConstructorIsBufferCode, isBuffer, ASCIILiteral(), s_jsBufferConstructorIsBufferCodeLength) \
-
-#define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(macro) \
-    macro(from) \
-    macro(isBuffer) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class JSBufferConstructorBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit JSBufferConstructorBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* JSBufferConstructorBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void JSBufferConstructorBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ReadableStreamDefaultReader.ts */
-// initializeReadableStreamDefaultReader
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_INITIALIZEREADABLESTREAMDEFAULTREADER 1
-extern const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode;
-extern const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeImplementationVisibility;
-
-// cancel
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CANCEL 1
-extern const char* const s_readableStreamDefaultReaderCancelCode;
-extern const int s_readableStreamDefaultReaderCancelCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderCancelCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderCancelCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderCancelCodeImplementationVisibility;
-
-// readMany
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READMANY 1
-extern const char* const s_readableStreamDefaultReaderReadManyCode;
-extern const int s_readableStreamDefaultReaderReadManyCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility;
-
-// read
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READ 1
-extern const char* const s_readableStreamDefaultReaderReadCode;
-extern const int s_readableStreamDefaultReaderReadCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadCodeImplementationVisibility;
-
-// releaseLock
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_RELEASELOCK 1
-extern const char* const s_readableStreamDefaultReaderReleaseLockCode;
-extern const int s_readableStreamDefaultReaderReleaseLockCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderReleaseLockCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderReleaseLockCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReleaseLockCodeImplementationVisibility;
-
-// closed
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CLOSED 1
-extern const char* const s_readableStreamDefaultReaderClosedCode;
-extern const int s_readableStreamDefaultReaderClosedCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultReaderClosedCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderClosedCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_DATA(macro) \
-    macro(initializeReadableStreamDefaultReader, readableStreamDefaultReaderInitializeReadableStreamDefaultReader, 1) \
-    macro(cancel, readableStreamDefaultReaderCancel, 1) \
-    macro(readMany, readableStreamDefaultReaderReadMany, 0) \
-    macro(read, readableStreamDefaultReaderRead, 0) \
-    macro(releaseLock, readableStreamDefaultReaderReleaseLock, 0) \
-    macro(closed, readableStreamDefaultReaderClosed, 0) \
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(macro) \
-    macro(readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode, initializeReadableStreamDefaultReader, ASCIILiteral(), s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength) \
-    macro(readableStreamDefaultReaderCancelCode, cancel, ASCIILiteral(), s_readableStreamDefaultReaderCancelCodeLength) \
-    macro(readableStreamDefaultReaderReadManyCode, readMany, ASCIILiteral(), s_readableStreamDefaultReaderReadManyCodeLength) \
-    macro(readableStreamDefaultReaderReadCode, read, ASCIILiteral(), s_readableStreamDefaultReaderReadCodeLength) \
-    macro(readableStreamDefaultReaderReleaseLockCode, releaseLock, ASCIILiteral(), s_readableStreamDefaultReaderReleaseLockCodeLength) \
-    macro(readableStreamDefaultReaderClosedCode, closed, "get closed"_s, s_readableStreamDefaultReaderClosedCodeLength) \
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeReadableStreamDefaultReader) \
-    macro(cancel) \
-    macro(readMany) \
-    macro(read) \
-    macro(releaseLock) \
-    macro(closed) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableStreamDefaultReaderBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableStreamDefaultReaderBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableStreamDefaultReaderBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableStreamDefaultReaderBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* StreamInternals.ts */
-// markPromiseAsHandled
-#define WEBCORE_BUILTIN_STREAMINTERNALS_MARKPROMISEASHANDLED 1
-extern const char* const s_streamInternalsMarkPromiseAsHandledCode;
-extern const int s_streamInternalsMarkPromiseAsHandledCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility;
-
-// shieldingPromiseResolve
-#define WEBCORE_BUILTIN_STREAMINTERNALS_SHIELDINGPROMISERESOLVE 1
-extern const char* const s_streamInternalsShieldingPromiseResolveCode;
-extern const int s_streamInternalsShieldingPromiseResolveCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility;
-
-// promiseInvokeOrNoopMethodNoCatch
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPMETHODNOCATCH 1
-extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode;
-extern const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility;
-
-// promiseInvokeOrNoopNoCatch
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPNOCATCH 1
-extern const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode;
-extern const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility;
-
-// promiseInvokeOrNoopMethod
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOPMETHOD 1
-extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode;
-extern const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility;
-
-// promiseInvokeOrNoop
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOP 1
-extern const char* const s_streamInternalsPromiseInvokeOrNoopCode;
-extern const int s_streamInternalsPromiseInvokeOrNoopCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility;
-
-// promiseInvokeOrFallbackOrNoop
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORFALLBACKORNOOP 1
-extern const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode;
-extern const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility;
-
-// validateAndNormalizeQueuingStrategy
-#define WEBCORE_BUILTIN_STREAMINTERNALS_VALIDATEANDNORMALIZEQUEUINGSTRATEGY 1
-extern const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode;
-extern const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility;
-
-// createFIFO
-#define WEBCORE_BUILTIN_STREAMINTERNALS_CREATEFIFO 1
-extern const char* const s_streamInternalsCreateFIFOCode;
-extern const int s_streamInternalsCreateFIFOCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility;
-
-// newQueue
-#define WEBCORE_BUILTIN_STREAMINTERNALS_NEWQUEUE 1
-extern const char* const s_streamInternalsNewQueueCode;
-extern const int s_streamInternalsNewQueueCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility;
-
-// dequeueValue
-#define WEBCORE_BUILTIN_STREAMINTERNALS_DEQUEUEVALUE 1
-extern const char* const s_streamInternalsDequeueValueCode;
-extern const int s_streamInternalsDequeueValueCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility;
-
-// enqueueValueWithSize
-#define WEBCORE_BUILTIN_STREAMINTERNALS_ENQUEUEVALUEWITHSIZE 1
-extern const char* const s_streamInternalsEnqueueValueWithSizeCode;
-extern const int s_streamInternalsEnqueueValueWithSizeCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility;
-
-// peekQueueValue
-#define WEBCORE_BUILTIN_STREAMINTERNALS_PEEKQUEUEVALUE 1
-extern const char* const s_streamInternalsPeekQueueValueCode;
-extern const int s_streamInternalsPeekQueueValueCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility;
-
-// resetQueue
-#define WEBCORE_BUILTIN_STREAMINTERNALS_RESETQUEUE 1
-extern const char* const s_streamInternalsResetQueueCode;
-extern const int s_streamInternalsResetQueueCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility;
-
-// extractSizeAlgorithm
-#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTSIZEALGORITHM 1
-extern const char* const s_streamInternalsExtractSizeAlgorithmCode;
-extern const int s_streamInternalsExtractSizeAlgorithmCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility;
-
-// extractHighWaterMark
-#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTHIGHWATERMARK 1
-extern const char* const s_streamInternalsExtractHighWaterMarkCode;
-extern const int s_streamInternalsExtractHighWaterMarkCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility;
-
-// extractHighWaterMarkFromQueuingStrategyInit
-#define WEBCORE_BUILTIN_STREAMINTERNALS_EXTRACTHIGHWATERMARKFROMQUEUINGSTRATEGYINIT 1
-extern const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode;
-extern const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility;
-
-// createFulfilledPromise
-#define WEBCORE_BUILTIN_STREAMINTERNALS_CREATEFULFILLEDPROMISE 1
-extern const char* const s_streamInternalsCreateFulfilledPromiseCode;
-extern const int s_streamInternalsCreateFulfilledPromiseCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility;
-
-// toDictionary
-#define WEBCORE_BUILTIN_STREAMINTERNALS_TODICTIONARY 1
-extern const char* const s_streamInternalsToDictionaryCode;
-extern const int s_streamInternalsToDictionaryCodeLength;
-extern const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility;
-extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_DATA(macro) \
-    macro(markPromiseAsHandled, streamInternalsMarkPromiseAsHandled, 1) \
-    macro(shieldingPromiseResolve, streamInternalsShieldingPromiseResolve, 1) \
-    macro(promiseInvokeOrNoopMethodNoCatch, streamInternalsPromiseInvokeOrNoopMethodNoCatch, 3) \
-    macro(promiseInvokeOrNoopNoCatch, streamInternalsPromiseInvokeOrNoopNoCatch, 3) \
-    macro(promiseInvokeOrNoopMethod, streamInternalsPromiseInvokeOrNoopMethod, 3) \
-    macro(promiseInvokeOrNoop, streamInternalsPromiseInvokeOrNoop, 3) \
-    macro(promiseInvokeOrFallbackOrNoop, streamInternalsPromiseInvokeOrFallbackOrNoop, 5) \
-    macro(validateAndNormalizeQueuingStrategy, streamInternalsValidateAndNormalizeQueuingStrategy, 2) \
-    macro(createFIFO, streamInternalsCreateFIFO, 0) \
-    macro(newQueue, streamInternalsNewQueue, 0) \
-    macro(dequeueValue, streamInternalsDequeueValue, 1) \
-    macro(enqueueValueWithSize, streamInternalsEnqueueValueWithSize, 3) \
-    macro(peekQueueValue, streamInternalsPeekQueueValue, 1) \
-    macro(resetQueue, streamInternalsResetQueue, 1) \
-    macro(extractSizeAlgorithm, streamInternalsExtractSizeAlgorithm, 1) \
-    macro(extractHighWaterMark, streamInternalsExtractHighWaterMark, 2) \
-    macro(extractHighWaterMarkFromQueuingStrategyInit, streamInternalsExtractHighWaterMarkFromQueuingStrategyInit, 1) \
-    macro(createFulfilledPromise, streamInternalsCreateFulfilledPromise, 1) \
-    macro(toDictionary, streamInternalsToDictionary, 3) \
-
-#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(macro) \
-    macro(streamInternalsMarkPromiseAsHandledCode, markPromiseAsHandled, ASCIILiteral(), s_streamInternalsMarkPromiseAsHandledCodeLength) \
-    macro(streamInternalsShieldingPromiseResolveCode, shieldingPromiseResolve, ASCIILiteral(), s_streamInternalsShieldingPromiseResolveCodeLength) \
-    macro(streamInternalsPromiseInvokeOrNoopMethodNoCatchCode, promiseInvokeOrNoopMethodNoCatch, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength) \
-    macro(streamInternalsPromiseInvokeOrNoopNoCatchCode, promiseInvokeOrNoopNoCatch, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength) \
-    macro(streamInternalsPromiseInvokeOrNoopMethodCode, promiseInvokeOrNoopMethod, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopMethodCodeLength) \
-    macro(streamInternalsPromiseInvokeOrNoopCode, promiseInvokeOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopCodeLength) \
-    macro(streamInternalsPromiseInvokeOrFallbackOrNoopCode, promiseInvokeOrFallbackOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength) \
-    macro(streamInternalsValidateAndNormalizeQueuingStrategyCode, validateAndNormalizeQueuingStrategy, ASCIILiteral(), s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength) \
-    macro(streamInternalsCreateFIFOCode, createFIFO, ASCIILiteral(), s_streamInternalsCreateFIFOCodeLength) \
-    macro(streamInternalsNewQueueCode, newQueue, ASCIILiteral(), s_streamInternalsNewQueueCodeLength) \
-    macro(streamInternalsDequeueValueCode, dequeueValue, ASCIILiteral(), s_streamInternalsDequeueValueCodeLength) \
-    macro(streamInternalsEnqueueValueWithSizeCode, enqueueValueWithSize, ASCIILiteral(), s_streamInternalsEnqueueValueWithSizeCodeLength) \
-    macro(streamInternalsPeekQueueValueCode, peekQueueValue, ASCIILiteral(), s_streamInternalsPeekQueueValueCodeLength) \
-    macro(streamInternalsResetQueueCode, resetQueue, ASCIILiteral(), s_streamInternalsResetQueueCodeLength) \
-    macro(streamInternalsExtractSizeAlgorithmCode, extractSizeAlgorithm, ASCIILiteral(), s_streamInternalsExtractSizeAlgorithmCodeLength) \
-    macro(streamInternalsExtractHighWaterMarkCode, extractHighWaterMark, ASCIILiteral(), s_streamInternalsExtractHighWaterMarkCodeLength) \
-    macro(streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode, extractHighWaterMarkFromQueuingStrategyInit, ASCIILiteral(), s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength) \
-    macro(streamInternalsCreateFulfilledPromiseCode, createFulfilledPromise, ASCIILiteral(), s_streamInternalsCreateFulfilledPromiseCodeLength) \
-    macro(streamInternalsToDictionaryCode, toDictionary, ASCIILiteral(), s_streamInternalsToDictionaryCodeLength) \
-
-#define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
-    macro(markPromiseAsHandled) \
-    macro(shieldingPromiseResolve) \
-    macro(promiseInvokeOrNoopMethodNoCatch) \
-    macro(promiseInvokeOrNoopNoCatch) \
-    macro(promiseInvokeOrNoopMethod) \
-    macro(promiseInvokeOrNoop) \
-    macro(promiseInvokeOrFallbackOrNoop) \
-    macro(validateAndNormalizeQueuingStrategy) \
-    macro(createFIFO) \
-    macro(newQueue) \
-    macro(dequeueValue) \
-    macro(enqueueValueWithSize) \
-    macro(peekQueueValue) \
-    macro(resetQueue) \
-    macro(extractSizeAlgorithm) \
-    macro(extractHighWaterMark) \
-    macro(extractHighWaterMarkFromQueuingStrategyInit) \
-    macro(createFulfilledPromise) \
-    macro(toDictionary) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class StreamInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit StreamInternalsBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* StreamInternalsBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void StreamInternalsBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-class StreamInternalsBuiltinFunctions {
-public:
-    explicit StreamInternalsBuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
-
-    void init(JSC::JSGlobalObject&);
-    template<typename Visitor> void visit(Visitor&);
-
-public:
-    JSC::VM& m_vm;
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \
-    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-};
-
-inline void StreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
-{
-#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \
-    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(EXPORT_FUNCTION)
-#undef EXPORT_FUNCTION
-}
-
-template<typename Visitor>
-inline void StreamInternalsBuiltinFunctions::visit(Visitor& visitor)
-{
-#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
-    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
-#undef VISIT_FUNCTION
-}
-
-template void StreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
-template void StreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* ImportMetaObject.ts */
-// loadCJS2ESM
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADCJS2ESM 1
-extern const char* const s_importMetaObjectLoadCJS2ESMCode;
-extern const int s_importMetaObjectLoadCJS2ESMCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectLoadCJS2ESMCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectLoadCJS2ESMCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectLoadCJS2ESMCodeImplementationVisibility;
-
-// requireESM
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREESM 1
-extern const char* const s_importMetaObjectRequireESMCode;
-extern const int s_importMetaObjectRequireESMCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility;
-
-// internalRequire
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_INTERNALREQUIRE 1
-extern const char* const s_importMetaObjectInternalRequireCode;
-extern const int s_importMetaObjectInternalRequireCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility;
-
-// createRequireCache
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_CREATEREQUIRECACHE 1
-extern const char* const s_importMetaObjectCreateRequireCacheCode;
-extern const int s_importMetaObjectCreateRequireCacheCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility;
-
-// main
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_MAIN 1
-extern const char* const s_importMetaObjectMainCode;
-extern const int s_importMetaObjectMainCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
-    macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
-    macro(requireESM, importMetaObjectRequireESM, 1) \
-    macro(internalRequire, importMetaObjectInternalRequire, 1) \
-    macro(createRequireCache, importMetaObjectCreateRequireCache, 0) \
-    macro(main, importMetaObjectMain, 0) \
-
-#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
-    macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
-    macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
-    macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
-    macro(importMetaObjectCreateRequireCacheCode, createRequireCache, ASCIILiteral(), s_importMetaObjectCreateRequireCacheCodeLength) \
-    macro(importMetaObjectMainCode, main, "get main"_s, s_importMetaObjectMainCodeLength) \
-
-#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(loadCJS2ESM) \
-    macro(requireESM) \
-    macro(internalRequire) \
-    macro(createRequireCache) \
-    macro(main) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ImportMetaObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ImportMetaObjectBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ImportMetaObjectBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ImportMetaObjectBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* CountQueuingStrategy.ts */
-// highWaterMark
-#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_HIGHWATERMARK 1
-extern const char* const s_countQueuingStrategyHighWaterMarkCode;
-extern const int s_countQueuingStrategyHighWaterMarkCodeLength;
-extern const JSC::ConstructAbility s_countQueuingStrategyHighWaterMarkCodeConstructAbility;
-extern const JSC::ConstructorKind s_countQueuingStrategyHighWaterMarkCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_countQueuingStrategyHighWaterMarkCodeImplementationVisibility;
-
-// size
-#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_SIZE 1
-extern const char* const s_countQueuingStrategySizeCode;
-extern const int s_countQueuingStrategySizeCodeLength;
-extern const JSC::ConstructAbility s_countQueuingStrategySizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_countQueuingStrategySizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_countQueuingStrategySizeCodeImplementationVisibility;
-
-// initializeCountQueuingStrategy
-#define WEBCORE_BUILTIN_COUNTQUEUINGSTRATEGY_INITIALIZECOUNTQUEUINGSTRATEGY 1
-extern const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode;
-extern const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength;
-extern const JSC::ConstructAbility s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructAbility;
-extern const JSC::ConstructorKind s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_countQueuingStrategyInitializeCountQueuingStrategyCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_DATA(macro) \
-    macro(highWaterMark, countQueuingStrategyHighWaterMark, 0) \
-    macro(size, countQueuingStrategySize, 0) \
-    macro(initializeCountQueuingStrategy, countQueuingStrategyInitializeCountQueuingStrategy, 1) \
-
-#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(macro) \
-    macro(countQueuingStrategyHighWaterMarkCode, highWaterMark, "get highWaterMark"_s, s_countQueuingStrategyHighWaterMarkCodeLength) \
-    macro(countQueuingStrategySizeCode, size, ASCIILiteral(), s_countQueuingStrategySizeCodeLength) \
-    macro(countQueuingStrategyInitializeCountQueuingStrategyCode, initializeCountQueuingStrategy, ASCIILiteral(), s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength) \
-
-#define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(macro) \
-    macro(highWaterMark) \
-    macro(size) \
-    macro(initializeCountQueuingStrategy) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class CountQueuingStrategyBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit CountQueuingStrategyBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* CountQueuingStrategyBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void CountQueuingStrategyBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ReadableStreamBYOBRequest.ts */
-// initializeReadableStreamBYOBRequest
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_INITIALIZEREADABLESTREAMBYOBREQUEST 1
-extern const char* const s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode;
-extern const int s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeImplementationVisibility;
-
-// respond
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_RESPOND 1
-extern const char* const s_readableStreamBYOBRequestRespondCode;
-extern const int s_readableStreamBYOBRequestRespondCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondCodeImplementationVisibility;
-
-// respondWithNewView
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_RESPONDWITHNEWVIEW 1
-extern const char* const s_readableStreamBYOBRequestRespondWithNewViewCode;
-extern const int s_readableStreamBYOBRequestRespondWithNewViewCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondWithNewViewCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondWithNewViewCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondWithNewViewCodeImplementationVisibility;
-
-// view
-#define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_VIEW 1
-extern const char* const s_readableStreamBYOBRequestViewCode;
-extern const int s_readableStreamBYOBRequestViewCodeLength;
-extern const JSC::ConstructAbility s_readableStreamBYOBRequestViewCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamBYOBRequestViewCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestViewCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_DATA(macro) \
-    macro(initializeReadableStreamBYOBRequest, readableStreamBYOBRequestInitializeReadableStreamBYOBRequest, 2) \
-    macro(respond, readableStreamBYOBRequestRespond, 1) \
-    macro(respondWithNewView, readableStreamBYOBRequestRespondWithNewView, 1) \
-    macro(view, readableStreamBYOBRequestView, 0) \
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(macro) \
-    macro(readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode, initializeReadableStreamBYOBRequest, ASCIILiteral(), s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength) \
-    macro(readableStreamBYOBRequestRespondCode, respond, ASCIILiteral(), s_readableStreamBYOBRequestRespondCodeLength) \
-    macro(readableStreamBYOBRequestRespondWithNewViewCode, respondWithNewView, ASCIILiteral(), s_readableStreamBYOBRequestRespondWithNewViewCodeLength) \
-    macro(readableStreamBYOBRequestViewCode, view, "get view"_s, s_readableStreamBYOBRequestViewCodeLength) \
-
-#define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeReadableStreamBYOBRequest) \
-    macro(respond) \
-    macro(respondWithNewView) \
-    macro(view) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableStreamBYOBRequestBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableStreamBYOBRequestBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableStreamBYOBRequestBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableStreamBYOBRequestBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* WritableStreamDefaultWriter.ts */
-// initializeWritableStreamDefaultWriter
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_INITIALIZEWRITABLESTREAMDEFAULTWRITER 1
-extern const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode;
-extern const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeImplementationVisibility;
-
-// closed
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_CLOSED 1
-extern const char* const s_writableStreamDefaultWriterClosedCode;
-extern const int s_writableStreamDefaultWriterClosedCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterClosedCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterClosedCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterClosedCodeImplementationVisibility;
-
-// desiredSize
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_DESIREDSIZE 1
-extern const char* const s_writableStreamDefaultWriterDesiredSizeCode;
-extern const int s_writableStreamDefaultWriterDesiredSizeCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterDesiredSizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterDesiredSizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterDesiredSizeCodeImplementationVisibility;
-
-// ready
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_READY 1
-extern const char* const s_writableStreamDefaultWriterReadyCode;
-extern const int s_writableStreamDefaultWriterReadyCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterReadyCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterReadyCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReadyCodeImplementationVisibility;
-
-// abort
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_ABORT 1
-extern const char* const s_writableStreamDefaultWriterAbortCode;
-extern const int s_writableStreamDefaultWriterAbortCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterAbortCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterAbortCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterAbortCodeImplementationVisibility;
-
-// close
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_CLOSE 1
-extern const char* const s_writableStreamDefaultWriterCloseCode;
-extern const int s_writableStreamDefaultWriterCloseCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterCloseCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterCloseCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterCloseCodeImplementationVisibility;
-
-// releaseLock
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_RELEASELOCK 1
-extern const char* const s_writableStreamDefaultWriterReleaseLockCode;
-extern const int s_writableStreamDefaultWriterReleaseLockCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterReleaseLockCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterReleaseLockCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReleaseLockCodeImplementationVisibility;
-
-// write
-#define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTWRITER_WRITE 1
-extern const char* const s_writableStreamDefaultWriterWriteCode;
-extern const int s_writableStreamDefaultWriterWriteCodeLength;
-extern const JSC::ConstructAbility s_writableStreamDefaultWriterWriteCodeConstructAbility;
-extern const JSC::ConstructorKind s_writableStreamDefaultWriterWriteCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterWriteCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_DATA(macro) \
-    macro(initializeWritableStreamDefaultWriter, writableStreamDefaultWriterInitializeWritableStreamDefaultWriter, 1) \
-    macro(closed, writableStreamDefaultWriterClosed, 0) \
-    macro(desiredSize, writableStreamDefaultWriterDesiredSize, 0) \
-    macro(ready, writableStreamDefaultWriterReady, 0) \
-    macro(abort, writableStreamDefaultWriterAbort, 1) \
-    macro(close, writableStreamDefaultWriterClose, 0) \
-    macro(releaseLock, writableStreamDefaultWriterReleaseLock, 0) \
-    macro(write, writableStreamDefaultWriterWrite, 1) \
-
-#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(macro) \
-    macro(writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode, initializeWritableStreamDefaultWriter, ASCIILiteral(), s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength) \
-    macro(writableStreamDefaultWriterClosedCode, closed, "get closed"_s, s_writableStreamDefaultWriterClosedCodeLength) \
-    macro(writableStreamDefaultWriterDesiredSizeCode, desiredSize, "get desiredSize"_s, s_writableStreamDefaultWriterDesiredSizeCodeLength) \
-    macro(writableStreamDefaultWriterReadyCode, ready, "get ready"_s, s_writableStreamDefaultWriterReadyCodeLength) \
-    macro(writableStreamDefaultWriterAbortCode, abort, ASCIILiteral(), s_writableStreamDefaultWriterAbortCodeLength) \
-    macro(writableStreamDefaultWriterCloseCode, close, ASCIILiteral(), s_writableStreamDefaultWriterCloseCodeLength) \
-    macro(writableStreamDefaultWriterReleaseLockCode, releaseLock, ASCIILiteral(), s_writableStreamDefaultWriterReleaseLockCodeLength) \
-    macro(writableStreamDefaultWriterWriteCode, write, ASCIILiteral(), s_writableStreamDefaultWriterWriteCodeLength) \
-
-#define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeWritableStreamDefaultWriter) \
-    macro(closed) \
-    macro(desiredSize) \
-    macro(ready) \
-    macro(abort) \
-    macro(close) \
-    macro(releaseLock) \
-    macro(write) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class WritableStreamDefaultWriterBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit WritableStreamDefaultWriterBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* WritableStreamDefaultWriterBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void WritableStreamDefaultWriterBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ReadableStream.ts */
-// initializeReadableStream
-#define WEBCORE_BUILTIN_READABLESTREAM_INITIALIZEREADABLESTREAM 1
-extern const char* const s_readableStreamInitializeReadableStreamCode;
-extern const int s_readableStreamInitializeReadableStreamCodeLength;
-extern const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamInitializeReadableStreamCodeImplementationVisibility;
-
-// readableStreamToArray
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAY 1
-extern const char* const s_readableStreamReadableStreamToArrayCode;
-extern const int s_readableStreamReadableStreamToArrayCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayCodeImplementationVisibility;
-
-// readableStreamToText
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOTEXT 1
-extern const char* const s_readableStreamReadableStreamToTextCode;
-extern const int s_readableStreamReadableStreamToTextCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToTextCodeImplementationVisibility;
-
-// readableStreamToArrayBuffer
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAYBUFFER 1
-extern const char* const s_readableStreamReadableStreamToArrayBufferCode;
-extern const int s_readableStreamReadableStreamToArrayBufferCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility;
-
-// readableStreamToFormData
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOFORMDATA 1
-extern const char* const s_readableStreamReadableStreamToFormDataCode;
-extern const int s_readableStreamReadableStreamToFormDataCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToFormDataCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToFormDataCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToFormDataCodeImplementationVisibility;
-
-// readableStreamToJSON
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
-extern const char* const s_readableStreamReadableStreamToJSONCode;
-extern const int s_readableStreamReadableStreamToJSONCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToJSONCodeImplementationVisibility;
-
-// readableStreamToBlob
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOBLOB 1
-extern const char* const s_readableStreamReadableStreamToBlobCode;
-extern const int s_readableStreamReadableStreamToBlobCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility;
-
-// consumeReadableStream
-#define WEBCORE_BUILTIN_READABLESTREAM_CONSUMEREADABLESTREAM 1
-extern const char* const s_readableStreamConsumeReadableStreamCode;
-extern const int s_readableStreamConsumeReadableStreamCodeLength;
-extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamConsumeReadableStreamCodeImplementationVisibility;
-
-// createEmptyReadableStream
-#define WEBCORE_BUILTIN_READABLESTREAM_CREATEEMPTYREADABLESTREAM 1
-extern const char* const s_readableStreamCreateEmptyReadableStreamCode;
-extern const int s_readableStreamCreateEmptyReadableStreamCodeLength;
-extern const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamCreateEmptyReadableStreamCodeImplementationVisibility;
-
-// createNativeReadableStream
-#define WEBCORE_BUILTIN_READABLESTREAM_CREATENATIVEREADABLESTREAM 1
-extern const char* const s_readableStreamCreateNativeReadableStreamCode;
-extern const int s_readableStreamCreateNativeReadableStreamCodeLength;
-extern const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamCreateNativeReadableStreamCodeImplementationVisibility;
-
-// cancel
-#define WEBCORE_BUILTIN_READABLESTREAM_CANCEL 1
-extern const char* const s_readableStreamCancelCode;
-extern const int s_readableStreamCancelCodeLength;
-extern const JSC::ConstructAbility s_readableStreamCancelCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamCancelCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamCancelCodeImplementationVisibility;
-
-// getReader
-#define WEBCORE_BUILTIN_READABLESTREAM_GETREADER 1
-extern const char* const s_readableStreamGetReaderCode;
-extern const int s_readableStreamGetReaderCodeLength;
-extern const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamGetReaderCodeImplementationVisibility;
-
-// pipeThrough
-#define WEBCORE_BUILTIN_READABLESTREAM_PIPETHROUGH 1
-extern const char* const s_readableStreamPipeThroughCode;
-extern const int s_readableStreamPipeThroughCodeLength;
-extern const JSC::ConstructAbility s_readableStreamPipeThroughCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamPipeThroughCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamPipeThroughCodeImplementationVisibility;
-
-// pipeTo
-#define WEBCORE_BUILTIN_READABLESTREAM_PIPETO 1
-extern const char* const s_readableStreamPipeToCode;
-extern const int s_readableStreamPipeToCodeLength;
-extern const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility;
-
-// tee
-#define WEBCORE_BUILTIN_READABLESTREAM_TEE 1
-extern const char* const s_readableStreamTeeCode;
-extern const int s_readableStreamTeeCodeLength;
-extern const JSC::ConstructAbility s_readableStreamTeeCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamTeeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamTeeCodeImplementationVisibility;
-
-// locked
-#define WEBCORE_BUILTIN_READABLESTREAM_LOCKED 1
-extern const char* const s_readableStreamLockedCode;
-extern const int s_readableStreamLockedCodeLength;
-extern const JSC::ConstructAbility s_readableStreamLockedCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementationVisibility;
-
-// values
-#define WEBCORE_BUILTIN_READABLESTREAM_VALUES 1
-extern const char* const s_readableStreamValuesCode;
-extern const int s_readableStreamValuesCodeLength;
-extern const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility;
-
-// lazyAsyncIterator
-#define WEBCORE_BUILTIN_READABLESTREAM_LAZYASYNCITERATOR 1
-extern const char* const s_readableStreamLazyAsyncIteratorCode;
-extern const int s_readableStreamLazyAsyncIteratorCodeLength;
-extern const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
-    macro(initializeReadableStream, readableStreamInitializeReadableStream, 3) \
-    macro(readableStreamToArray, readableStreamReadableStreamToArray, 1) \
-    macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
-    macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
-    macro(readableStreamToFormData, readableStreamReadableStreamToFormData, 3) \
-    macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
-    macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
-    macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
-    macro(createEmptyReadableStream, readableStreamCreateEmptyReadableStream, 0) \
-    macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
-    macro(cancel, readableStreamCancel, 1) \
-    macro(getReader, readableStreamGetReader, 1) \
-    macro(pipeThrough, readableStreamPipeThrough, 2) \
-    macro(pipeTo, readableStreamPipeTo, 1) \
-    macro(tee, readableStreamTee, 0) \
-    macro(locked, readableStreamLocked, 0) \
-    macro(values, readableStreamValues, 1) \
-    macro(lazyAsyncIterator, readableStreamLazyAsyncIterator, 0) \
-
-#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(macro) \
-    macro(readableStreamInitializeReadableStreamCode, initializeReadableStream, ASCIILiteral(), s_readableStreamInitializeReadableStreamCodeLength) \
-    macro(readableStreamReadableStreamToArrayCode, readableStreamToArray, ASCIILiteral(), s_readableStreamReadableStreamToArrayCodeLength) \
-    macro(readableStreamReadableStreamToTextCode, readableStreamToText, ASCIILiteral(), s_readableStreamReadableStreamToTextCodeLength) \
-    macro(readableStreamReadableStreamToArrayBufferCode, readableStreamToArrayBuffer, ASCIILiteral(), s_readableStreamReadableStreamToArrayBufferCodeLength) \
-    macro(readableStreamReadableStreamToFormDataCode, readableStreamToFormData, ASCIILiteral(), s_readableStreamReadableStreamToFormDataCodeLength) \
-    macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
-    macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
-    macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
-    macro(readableStreamCreateEmptyReadableStreamCode, createEmptyReadableStream, ASCIILiteral(), s_readableStreamCreateEmptyReadableStreamCodeLength) \
-    macro(readableStreamCreateNativeReadableStreamCode, createNativeReadableStream, ASCIILiteral(), s_readableStreamCreateNativeReadableStreamCodeLength) \
-    macro(readableStreamCancelCode, cancel, ASCIILiteral(), s_readableStreamCancelCodeLength) \
-    macro(readableStreamGetReaderCode, getReader, ASCIILiteral(), s_readableStreamGetReaderCodeLength) \
-    macro(readableStreamPipeThroughCode, pipeThrough, ASCIILiteral(), s_readableStreamPipeThroughCodeLength) \
-    macro(readableStreamPipeToCode, pipeTo, ASCIILiteral(), s_readableStreamPipeToCodeLength) \
-    macro(readableStreamTeeCode, tee, ASCIILiteral(), s_readableStreamTeeCodeLength) \
-    macro(readableStreamLockedCode, locked, "get locked"_s, s_readableStreamLockedCodeLength) \
-    macro(readableStreamValuesCode, values, ASCIILiteral(), s_readableStreamValuesCodeLength) \
-    macro(readableStreamLazyAsyncIteratorCode, lazyAsyncIterator, ASCIILiteral(), s_readableStreamLazyAsyncIteratorCodeLength) \
-
-#define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeReadableStream) \
-    macro(readableStreamToArray) \
-    macro(readableStreamToText) \
-    macro(readableStreamToArrayBuffer) \
-    macro(readableStreamToFormData) \
-    macro(readableStreamToJSON) \
-    macro(readableStreamToBlob) \
-    macro(consumeReadableStream) \
-    macro(createEmptyReadableStream) \
-    macro(createNativeReadableStream) \
-    macro(cancel) \
-    macro(getReader) \
-    macro(pipeThrough) \
-    macro(pipeTo) \
-    macro(tee) \
-    macro(locked) \
-    macro(values) \
-    macro(lazyAsyncIterator) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableStreamBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableStreamBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableStreamBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableStreamBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ReadableStreamDefaultController.ts */
-// initializeReadableStreamDefaultController
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_INITIALIZEREADABLESTREAMDEFAULTCONTROLLER 1
-extern const char* const s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode;
-extern const int s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeImplementationVisibility;
-
-// enqueue
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_ENQUEUE 1
-extern const char* const s_readableStreamDefaultControllerEnqueueCode;
-extern const int s_readableStreamDefaultControllerEnqueueCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultControllerEnqueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultControllerEnqueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerEnqueueCodeImplementationVisibility;
-
-// error
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_ERROR 1
-extern const char* const s_readableStreamDefaultControllerErrorCode;
-extern const int s_readableStreamDefaultControllerErrorCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultControllerErrorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultControllerErrorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerErrorCodeImplementationVisibility;
-
-// close
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_CLOSE 1
-extern const char* const s_readableStreamDefaultControllerCloseCode;
-extern const int s_readableStreamDefaultControllerCloseCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultControllerCloseCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultControllerCloseCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerCloseCodeImplementationVisibility;
-
-// desiredSize
-#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTCONTROLLER_DESIREDSIZE 1
-extern const char* const s_readableStreamDefaultControllerDesiredSizeCode;
-extern const int s_readableStreamDefaultControllerDesiredSizeCodeLength;
-extern const JSC::ConstructAbility s_readableStreamDefaultControllerDesiredSizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamDefaultControllerDesiredSizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamDefaultControllerDesiredSizeCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
-    macro(initializeReadableStreamDefaultController, readableStreamDefaultControllerInitializeReadableStreamDefaultController, 4) \
-    macro(enqueue, readableStreamDefaultControllerEnqueue, 1) \
-    macro(error, readableStreamDefaultControllerError, 1) \
-    macro(close, readableStreamDefaultControllerClose, 0) \
-    macro(desiredSize, readableStreamDefaultControllerDesiredSize, 0) \
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(macro) \
-    macro(readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode, initializeReadableStreamDefaultController, ASCIILiteral(), s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength) \
-    macro(readableStreamDefaultControllerEnqueueCode, enqueue, ASCIILiteral(), s_readableStreamDefaultControllerEnqueueCodeLength) \
-    macro(readableStreamDefaultControllerErrorCode, error, ASCIILiteral(), s_readableStreamDefaultControllerErrorCodeLength) \
-    macro(readableStreamDefaultControllerCloseCode, close, ASCIILiteral(), s_readableStreamDefaultControllerCloseCodeLength) \
-    macro(readableStreamDefaultControllerDesiredSizeCode, desiredSize, "get desiredSize"_s, s_readableStreamDefaultControllerDesiredSizeCodeLength) \
-
-#define WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(macro) \
-    macro(initializeReadableStreamDefaultController) \
-    macro(enqueue) \
-    macro(error) \
-    macro(close) \
-    macro(desiredSize) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableStreamDefaultControllerBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableStreamDefaultControllerBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableStreamDefaultControllerBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableStreamDefaultControllerBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ReadableByteStreamInternals.ts */
-// privateInitializeReadableByteStreamController
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLEBYTESTREAMCONTROLLER 1
-extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode;
-extern const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeImplementationVisibility;
-
-// readableStreamByteStreamControllerStart
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMBYTESTREAMCONTROLLERSTART 1
-extern const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode;
-extern const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeImplementationVisibility;
-
-// privateInitializeReadableStreamBYOBRequest
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLESTREAMBYOBREQUEST 1
-extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode;
-extern const int s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeImplementationVisibility;
-
-// isReadableByteStreamController
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLEBYTESTREAMCONTROLLER 1
-extern const char* const s_readableByteStreamInternalsIsReadableByteStreamControllerCode;
-extern const int s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeImplementationVisibility;
-
-// isReadableStreamBYOBRequest
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLESTREAMBYOBREQUEST 1
-extern const char* const s_readableByteStreamInternalsIsReadableStreamBYOBRequestCode;
-extern const int s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeImplementationVisibility;
-
-// isReadableStreamBYOBReader
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLESTREAMBYOBREADER 1
-extern const char* const s_readableByteStreamInternalsIsReadableStreamBYOBReaderCode;
-extern const int s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeImplementationVisibility;
-
-// readableByteStreamControllerCancel
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCANCEL 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCancelCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeImplementationVisibility;
-
-// readableByteStreamControllerError
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERERROR 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerErrorCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeImplementationVisibility;
-
-// readableByteStreamControllerClose
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCLOSE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCloseCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeImplementationVisibility;
-
-// readableByteStreamControllerClearPendingPullIntos
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCLEARPENDINGPULLINTOS 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeImplementationVisibility;
-
-// readableByteStreamControllerGetDesiredSize
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERGETDESIREDSIZE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeImplementationVisibility;
-
-// readableStreamHasBYOBReader
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMHASBYOBREADER 1
-extern const char* const s_readableByteStreamInternalsReadableStreamHasBYOBReaderCode;
-extern const int s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeImplementationVisibility;
-
-// readableStreamHasDefaultReader
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMHASDEFAULTREADER 1
-extern const char* const s_readableByteStreamInternalsReadableStreamHasDefaultReaderCode;
-extern const int s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeImplementationVisibility;
-
-// readableByteStreamControllerHandleQueueDrain
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERHANDLEQUEUEDRAIN 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeImplementationVisibility;
-
-// readableByteStreamControllerPull
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPULL 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeImplementationVisibility;
-
-// readableByteStreamControllerShouldCallPull
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERSHOULDCALLPULL 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeImplementationVisibility;
-
-// readableByteStreamControllerCallPullIfNeeded
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCALLPULLIFNEEDED 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeImplementationVisibility;
-
-// transferBufferToCurrentRealm
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_TRANSFERBUFFERTOCURRENTREALM 1
-extern const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode;
-extern const int s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeImplementationVisibility;
-
-// readableStreamReaderKind
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMREADERKIND 1
-extern const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode;
-extern const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamReaderKindCodeImplementationVisibility;
-
-// readableByteStreamControllerEnqueue
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeImplementationVisibility;
-
-// readableByteStreamControllerEnqueueChunk
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUECHUNK 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeImplementationVisibility;
-
-// readableByteStreamControllerRespondWithNewView
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDWITHNEWVIEW 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeImplementationVisibility;
-
-// readableByteStreamControllerRespond
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPOND 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeImplementationVisibility;
-
-// readableByteStreamControllerRespondInternal
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINTERNAL 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeImplementationVisibility;
-
-// readableByteStreamControllerRespondInReadableState
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINREADABLESTATE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeImplementationVisibility;
-
-// readableByteStreamControllerRespondInClosedState
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDINCLOSEDSTATE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeImplementationVisibility;
-
-// readableByteStreamControllerProcessPullDescriptors
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPROCESSPULLDESCRIPTORS 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeImplementationVisibility;
-
-// readableByteStreamControllerFillDescriptorFromQueue
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERFILLDESCRIPTORFROMQUEUE 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeImplementationVisibility;
-
-// readableByteStreamControllerShiftPendingDescriptor
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERSHIFTPENDINGDESCRIPTOR 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeImplementationVisibility;
-
-// readableByteStreamControllerInvalidateBYOBRequest
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERINVALIDATEBYOBREQUEST 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeImplementationVisibility;
-
-// readableByteStreamControllerCommitDescriptor
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCOMMITDESCRIPTOR 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeImplementationVisibility;
-
-// readableByteStreamControllerConvertDescriptor
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCONVERTDESCRIPTOR 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeImplementationVisibility;
-
-// readableStreamFulfillReadIntoRequest
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMFULFILLREADINTOREQUEST 1
-extern const char* const s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode;
-extern const int s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeImplementationVisibility;
-
-// readableStreamBYOBReaderRead
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMBYOBREADERREAD 1
-extern const char* const s_readableByteStreamInternalsReadableStreamBYOBReaderReadCode;
-extern const int s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeImplementationVisibility;
-
-// readableByteStreamControllerPullInto
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERPULLINTO 1
-extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCode;
-extern const int s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeImplementationVisibility;
-
-// readableStreamAddReadIntoRequest
-#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMADDREADINTOREQUEST 1
-extern const char* const s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCode;
-extern const int s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength;
-extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_DATA(macro) \
-    macro(privateInitializeReadableByteStreamController, readableByteStreamInternalsPrivateInitializeReadableByteStreamController, 3) \
-    macro(readableStreamByteStreamControllerStart, readableByteStreamInternalsReadableStreamByteStreamControllerStart, 1) \
-    macro(privateInitializeReadableStreamBYOBRequest, readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequest, 2) \
-    macro(isReadableByteStreamController, readableByteStreamInternalsIsReadableByteStreamController, 1) \
-    macro(isReadableStreamBYOBRequest, readableByteStreamInternalsIsReadableStreamBYOBRequest, 1) \
-    macro(isReadableStreamBYOBReader, readableByteStreamInternalsIsReadableStreamBYOBReader, 1) \
-    macro(readableByteStreamControllerCancel, readableByteStreamInternalsReadableByteStreamControllerCancel, 2) \
-    macro(readableByteStreamControllerError, readableByteStreamInternalsReadableByteStreamControllerError, 2) \
-    macro(readableByteStreamControllerClose, readableByteStreamInternalsReadableByteStreamControllerClose, 1) \
-    macro(readableByteStreamControllerClearPendingPullIntos, readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntos, 1) \
-    macro(readableByteStreamControllerGetDesiredSize, readableByteStreamInternalsReadableByteStreamControllerGetDesiredSize, 1) \
-    macro(readableStreamHasBYOBReader, readableByteStreamInternalsReadableStreamHasBYOBReader, 1) \
-    macro(readableStreamHasDefaultReader, readableByteStreamInternalsReadableStreamHasDefaultReader, 1) \
-    macro(readableByteStreamControllerHandleQueueDrain, readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrain, 1) \
-    macro(readableByteStreamControllerPull, readableByteStreamInternalsReadableByteStreamControllerPull, 1) \
-    macro(readableByteStreamControllerShouldCallPull, readableByteStreamInternalsReadableByteStreamControllerShouldCallPull, 1) \
-    macro(readableByteStreamControllerCallPullIfNeeded, readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeeded, 1) \
-    macro(transferBufferToCurrentRealm, readableByteStreamInternalsTransferBufferToCurrentRealm, 1) \
-    macro(readableStreamReaderKind, readableByteStreamInternalsReadableStreamReaderKind, 1) \
-    macro(readableByteStreamControllerEnqueue, readableByteStreamInternalsReadableByteStreamControllerEnqueue, 2) \
-    macro(readableByteStreamControllerEnqueueChunk, readableByteStreamInternalsReadableByteStreamControllerEnqueueChunk, 4) \
-    macro(readableByteStreamControllerRespondWithNewView, readableByteStreamInternalsReadableByteStreamControllerRespondWithNewView, 2) \
-    macro(readableByteStreamControllerRespond, readableByteStreamInternalsReadableByteStreamControllerRespond, 2) \
-    macro(readableByteStreamControllerRespondInternal, readableByteStreamInternalsReadableByteStreamControllerRespondInternal, 2) \
-    macro(readableByteStreamControllerRespondInReadableState, readableByteStreamInternalsReadableByteStreamControllerRespondInReadableState, 3) \
-    macro(readableByteStreamControllerRespondInClosedState, readableByteStreamInternalsReadableByteStreamControllerRespondInClosedState, 2) \
-    macro(readableByteStreamControllerProcessPullDescriptors, readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptors, 1) \
-    macro(readableByteStreamControllerFillDescriptorFromQueue, readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueue, 2) \
-    macro(readableByteStreamControllerShiftPendingDescriptor, readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptor, 1) \
-    macro(readableByteStreamControllerInvalidateBYOBRequest, readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequest, 1) \
-    macro(readableByteStreamControllerCommitDescriptor, readableByteStreamInternalsReadableByteStreamControllerCommitDescriptor, 2) \
-    macro(readableByteStreamControllerConvertDescriptor, readableByteStreamInternalsReadableByteStreamControllerConvertDescriptor, 1) \
-    macro(readableStreamFulfillReadIntoRequest, readableByteStreamInternalsReadableStreamFulfillReadIntoRequest, 3) \
-    macro(readableStreamBYOBReaderRead, readableByteStreamInternalsReadableStreamBYOBReaderRead, 2) \
-    macro(readableByteStreamControllerPullInto, readableByteStreamInternalsReadableByteStreamControllerPullInto, 2) \
-    macro(readableStreamAddReadIntoRequest, readableByteStreamInternalsReadableStreamAddReadIntoRequest, 1) \
-
-#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(macro) \
-    macro(readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode, privateInitializeReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamByteStreamControllerStartCode, readableStreamByteStreamControllerStart, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength) \
-    macro(readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode, privateInitializeReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength) \
-    macro(readableByteStreamInternalsIsReadableByteStreamControllerCode, isReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength) \
-    macro(readableByteStreamInternalsIsReadableStreamBYOBRequestCode, isReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength) \
-    macro(readableByteStreamInternalsIsReadableStreamBYOBReaderCode, isReadableStreamBYOBReader, ASCIILiteral(), s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerCancelCode, readableByteStreamControllerCancel, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerErrorCode, readableByteStreamControllerError, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerCloseCode, readableByteStreamControllerClose, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode, readableByteStreamControllerClearPendingPullIntos, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode, readableByteStreamControllerGetDesiredSize, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamHasBYOBReaderCode, readableStreamHasBYOBReader, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamHasDefaultReaderCode, readableStreamHasDefaultReader, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode, readableByteStreamControllerHandleQueueDrain, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerPullCode, readableByteStreamControllerPull, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode, readableByteStreamControllerShouldCallPull, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode, readableByteStreamControllerCallPullIfNeeded, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength) \
-    macro(readableByteStreamInternalsTransferBufferToCurrentRealmCode, transferBufferToCurrentRealm, ASCIILiteral(), s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamReaderKindCode, readableStreamReaderKind, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamReaderKindCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueCode, readableByteStreamControllerEnqueue, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode, readableByteStreamControllerEnqueueChunk, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode, readableByteStreamControllerRespondWithNewView, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerRespondCode, readableByteStreamControllerRespond, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode, readableByteStreamControllerRespondInternal, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode, readableByteStreamControllerRespondInReadableState, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode, readableByteStreamControllerRespondInClosedState, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode, readableByteStreamControllerProcessPullDescriptors, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode, readableByteStreamControllerFillDescriptorFromQueue, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode, readableByteStreamControllerShiftPendingDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode, readableByteStreamControllerInvalidateBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode, readableByteStreamControllerCommitDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode, readableByteStreamControllerConvertDescriptor, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode, readableStreamFulfillReadIntoRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamBYOBReaderReadCode, readableStreamBYOBReaderRead, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength) \
-    macro(readableByteStreamInternalsReadableByteStreamControllerPullIntoCode, readableByteStreamControllerPullInto, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength) \
-    macro(readableByteStreamInternalsReadableStreamAddReadIntoRequestCode, readableStreamAddReadIntoRequest, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength) \
-
-#define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
-    macro(privateInitializeReadableByteStreamController) \
-    macro(readableStreamByteStreamControllerStart) \
-    macro(privateInitializeReadableStreamBYOBRequest) \
-    macro(isReadableByteStreamController) \
-    macro(isReadableStreamBYOBRequest) \
-    macro(isReadableStreamBYOBReader) \
-    macro(readableByteStreamControllerCancel) \
-    macro(readableByteStreamControllerError) \
-    macro(readableByteStreamControllerClose) \
-    macro(readableByteStreamControllerClearPendingPullIntos) \
-    macro(readableByteStreamControllerGetDesiredSize) \
-    macro(readableStreamHasBYOBReader) \
-    macro(readableStreamHasDefaultReader) \
-    macro(readableByteStreamControllerHandleQueueDrain) \
-    macro(readableByteStreamControllerPull) \
-    macro(readableByteStreamControllerShouldCallPull) \
-    macro(readableByteStreamControllerCallPullIfNeeded) \
-    macro(transferBufferToCurrentRealm) \
-    macro(readableStreamReaderKind) \
-    macro(readableByteStreamControllerEnqueue) \
-    macro(readableByteStreamControllerEnqueueChunk) \
-    macro(readableByteStreamControllerRespondWithNewView) \
-    macro(readableByteStreamControllerRespond) \
-    macro(readableByteStreamControllerRespondInternal) \
-    macro(readableByteStreamControllerRespondInReadableState) \
-    macro(readableByteStreamControllerRespondInClosedState) \
-    macro(readableByteStreamControllerProcessPullDescriptors) \
-    macro(readableByteStreamControllerFillDescriptorFromQueue) \
-    macro(readableByteStreamControllerShiftPendingDescriptor) \
-    macro(readableByteStreamControllerInvalidateBYOBRequest) \
-    macro(readableByteStreamControllerCommitDescriptor) \
-    macro(readableByteStreamControllerConvertDescriptor) \
-    macro(readableStreamFulfillReadIntoRequest) \
-    macro(readableStreamBYOBReaderRead) \
-    macro(readableByteStreamControllerPullInto) \
-    macro(readableStreamAddReadIntoRequest) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class ReadableByteStreamInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit ReadableByteStreamInternalsBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ReadableByteStreamInternalsBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void ReadableByteStreamInternalsBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-class ReadableByteStreamInternalsBuiltinFunctions {
-public:
-    explicit ReadableByteStreamInternalsBuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
-
-    void init(JSC::JSGlobalObject&);
-    template<typename Visitor> void visit(Visitor&);
-
-public:
-    JSC::VM& m_vm;
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \
-    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-};
-
-inline void ReadableByteStreamInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
-{
-#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \
-    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(EXPORT_FUNCTION)
-#undef EXPORT_FUNCTION
-}
-
-template<typename Visitor>
-inline void ReadableByteStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
-{
-#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
-    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
-#undef VISIT_FUNCTION
-}
-
-template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
-template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* WritableStreamDefaultController.ts */
+/* WritableStreamDefaultController.ts */
 // initializeWritableStreamDefaultController
 #define WEBCORE_BUILTIN_WRITABLESTREAMDEFAULTCONTROLLER_INITIALIZEWRITABLESTREAMDEFAULTCONTROLLER 1
 extern const char* const s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCode;
@@ -5622,177 +5700,99 @@ inline void WritableStreamDefaultControllerBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_WRITABLESTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* EventSource.ts */
-// getEventSource
-#define WEBCORE_BUILTIN_EVENTSOURCE_GETEVENTSOURCE 1
-extern const char* const s_eventSourceGetEventSourceCode;
-extern const int s_eventSourceGetEventSourceCodeLength;
-extern const JSC::ConstructAbility s_eventSourceGetEventSourceCodeConstructAbility;
-extern const JSC::ConstructorKind s_eventSourceGetEventSourceCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_eventSourceGetEventSourceCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_DATA(macro) \
-    macro(getEventSource, eventSourceGetEventSource, 0) \
-
-#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(macro) \
-    macro(eventSourceGetEventSourceCode, getEventSource, ASCIILiteral(), s_eventSourceGetEventSourceCodeLength) \
-
-#define WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(macro) \
-    macro(getEventSource) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class EventSourceBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit EventSourceBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
-        WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* EventSourceBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void EventSourceBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_EVENTSOURCE_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
 class JSBuiltinFunctions {
 public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
-        , m_bundlerPluginBuiltins(m_vm)
+        , m_countQueuingStrategyBuiltins(m_vm)
         , m_byteLengthQueuingStrategyBuiltins(m_vm)
-        , m_writableStreamInternalsBuiltins(m_vm)
-        , m_transformStreamInternalsBuiltins(m_vm)
+        , m_writableStreamDefaultWriterBuiltins(m_vm)
+        , m_readableByteStreamInternalsBuiltins(m_vm)
+        , m_importMetaObjectBuiltins(m_vm)
+        , m_readableStreamDefaultReaderBuiltins(m_vm)
+        , m_readableStreamBYOBRequestBuiltins(m_vm)
         , m_processObjectInternalsBuiltins(m_vm)
-        , m_transformStreamBuiltins(m_vm)
+        , m_writableStreamInternalsBuiltins(m_vm)
+        , m_readableStreamBuiltins(m_vm)
+        , m_transformStreamDefaultControllerBuiltins(m_vm)
+        , m_transformStreamInternalsBuiltins(m_vm)
+        , m_eventSourceBuiltins(m_vm)
+        , m_consoleObjectBuiltins(m_vm)
         , m_moduleBuiltins(m_vm)
+        , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
-        , m_utilInspectBuiltins(m_vm)
-        , m_consoleObjectBuiltins(m_vm)
-        , m_readableStreamInternalsBuiltins(m_vm)
-        , m_transformStreamDefaultControllerBuiltins(m_vm)
-        , m_readableStreamBYOBReaderBuiltins(m_vm)
-        , m_jsBufferConstructorBuiltins(m_vm)
-        , m_readableStreamDefaultReaderBuiltins(m_vm)
         , m_streamInternalsBuiltins(m_vm)
-        , m_importMetaObjectBuiltins(m_vm)
-        , m_countQueuingStrategyBuiltins(m_vm)
-        , m_readableStreamBYOBRequestBuiltins(m_vm)
-        , m_writableStreamDefaultWriterBuiltins(m_vm)
-        , m_readableStreamBuiltins(m_vm)
         , m_readableStreamDefaultControllerBuiltins(m_vm)
-        , m_readableByteStreamInternalsBuiltins(m_vm)
+        , m_bundlerPluginBuiltins(m_vm)
+        , m_transformStreamBuiltins(m_vm)
+        , m_readableStreamBYOBReaderBuiltins(m_vm)
+        , m_readableStreamInternalsBuiltins(m_vm)
+        , m_utilInspectBuiltins(m_vm)
         , m_writableStreamDefaultControllerBuiltins(m_vm)
-        , m_eventSourceBuiltins(m_vm)
 
   {
+        m_readableByteStreamInternalsBuiltins.exportNames();
         m_writableStreamInternalsBuiltins.exportNames();
         m_transformStreamInternalsBuiltins.exportNames();
-        m_readableStreamInternalsBuiltins.exportNames();
         m_streamInternalsBuiltins.exportNames();
-        m_readableByteStreamInternalsBuiltins.exportNames();
+        m_readableStreamInternalsBuiltins.exportNames();
     }
-    BundlerPluginBuiltinsWrapper& bundlerPluginBuiltins() { return m_bundlerPluginBuiltins; }
+    CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
     ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
-    WritableStreamInternalsBuiltinsWrapper& writableStreamInternalsBuiltins() { return m_writableStreamInternalsBuiltins; }
-    TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
+    WritableStreamDefaultWriterBuiltinsWrapper& writableStreamDefaultWriterBuiltins() { return m_writableStreamDefaultWriterBuiltins; }
+    ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
+    ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
+    ReadableStreamDefaultReaderBuiltinsWrapper& readableStreamDefaultReaderBuiltins() { return m_readableStreamDefaultReaderBuiltins; }
+    ReadableStreamBYOBRequestBuiltinsWrapper& readableStreamBYOBRequestBuiltins() { return m_readableStreamBYOBRequestBuiltins; }
     ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
-    TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
+    WritableStreamInternalsBuiltinsWrapper& writableStreamInternalsBuiltins() { return m_writableStreamInternalsBuiltins; }
+    ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
+    TransformStreamDefaultControllerBuiltinsWrapper& transformStreamDefaultControllerBuiltins() { return m_transformStreamDefaultControllerBuiltins; }
+    TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
+    EventSourceBuiltinsWrapper& eventSourceBuiltins() { return m_eventSourceBuiltins; }
+    ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     ModuleBuiltinsWrapper& moduleBuiltins() { return m_moduleBuiltins; }
+    JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
-    UtilInspectBuiltinsWrapper& utilInspectBuiltins() { return m_utilInspectBuiltins; }
-    ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
-    ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
-    TransformStreamDefaultControllerBuiltinsWrapper& transformStreamDefaultControllerBuiltins() { return m_transformStreamDefaultControllerBuiltins; }
-    ReadableStreamBYOBReaderBuiltinsWrapper& readableStreamBYOBReaderBuiltins() { return m_readableStreamBYOBReaderBuiltins; }
-    JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
-    ReadableStreamDefaultReaderBuiltinsWrapper& readableStreamDefaultReaderBuiltins() { return m_readableStreamDefaultReaderBuiltins; }
     StreamInternalsBuiltinsWrapper& streamInternalsBuiltins() { return m_streamInternalsBuiltins; }
-    ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
-    CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
-    ReadableStreamBYOBRequestBuiltinsWrapper& readableStreamBYOBRequestBuiltins() { return m_readableStreamBYOBRequestBuiltins; }
-    WritableStreamDefaultWriterBuiltinsWrapper& writableStreamDefaultWriterBuiltins() { return m_writableStreamDefaultWriterBuiltins; }
-    ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
     ReadableStreamDefaultControllerBuiltinsWrapper& readableStreamDefaultControllerBuiltins() { return m_readableStreamDefaultControllerBuiltins; }
-    ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
+    BundlerPluginBuiltinsWrapper& bundlerPluginBuiltins() { return m_bundlerPluginBuiltins; }
+    TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
+    ReadableStreamBYOBReaderBuiltinsWrapper& readableStreamBYOBReaderBuiltins() { return m_readableStreamBYOBReaderBuiltins; }
+    ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
+    UtilInspectBuiltinsWrapper& utilInspectBuiltins() { return m_utilInspectBuiltins; }
     WritableStreamDefaultControllerBuiltinsWrapper& writableStreamDefaultControllerBuiltins() { return m_writableStreamDefaultControllerBuiltins; }
-    EventSourceBuiltinsWrapper& eventSourceBuiltins() { return m_eventSourceBuiltins; }
 
 private:
     JSC::VM& m_vm;
-    BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
+    CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
     ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
-    WritableStreamInternalsBuiltinsWrapper m_writableStreamInternalsBuiltins;
-    TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
+    WritableStreamDefaultWriterBuiltinsWrapper m_writableStreamDefaultWriterBuiltins;
+    ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
+    ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
+    ReadableStreamDefaultReaderBuiltinsWrapper m_readableStreamDefaultReaderBuiltins;
+    ReadableStreamBYOBRequestBuiltinsWrapper m_readableStreamBYOBRequestBuiltins;
     ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
-    TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
+    WritableStreamInternalsBuiltinsWrapper m_writableStreamInternalsBuiltins;
+    ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;
+    TransformStreamDefaultControllerBuiltinsWrapper m_transformStreamDefaultControllerBuiltins;
+    TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
+    EventSourceBuiltinsWrapper m_eventSourceBuiltins;
+    ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     ModuleBuiltinsWrapper m_moduleBuiltins;
+    JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
-    UtilInspectBuiltinsWrapper m_utilInspectBuiltins;
-    ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
-    ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
-    TransformStreamDefaultControllerBuiltinsWrapper m_transformStreamDefaultControllerBuiltins;
-    ReadableStreamBYOBReaderBuiltinsWrapper m_readableStreamBYOBReaderBuiltins;
-    JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
-    ReadableStreamDefaultReaderBuiltinsWrapper m_readableStreamDefaultReaderBuiltins;
     StreamInternalsBuiltinsWrapper m_streamInternalsBuiltins;
-    ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
-    CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
-    ReadableStreamBYOBRequestBuiltinsWrapper m_readableStreamBYOBRequestBuiltins;
-    WritableStreamDefaultWriterBuiltinsWrapper m_writableStreamDefaultWriterBuiltins;
-    ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;
     ReadableStreamDefaultControllerBuiltinsWrapper m_readableStreamDefaultControllerBuiltins;
-    ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
+    BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
+    TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
+    ReadableStreamBYOBReaderBuiltinsWrapper m_readableStreamBYOBReaderBuiltins;
+    ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
+    UtilInspectBuiltinsWrapper m_utilInspectBuiltins;
     WritableStreamDefaultControllerBuiltinsWrapper m_writableStreamDefaultControllerBuiltins;
-    EventSourceBuiltinsWrapper m_eventSourceBuiltins;
 ;
 };
 
@@ -5802,19 +5802,19 @@ public:
 
     template<typename Visitor> void visit(Visitor&);
     void initialize(Zig::GlobalObject&);
+    ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
     WritableStreamInternalsBuiltinFunctions& writableStreamInternals() { return m_writableStreamInternals; }
     TransformStreamInternalsBuiltinFunctions& transformStreamInternals() { return m_transformStreamInternals; }
-    ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
     StreamInternalsBuiltinFunctions& streamInternals() { return m_streamInternals; }
-    ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
+    ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
 
 private:
     JSC::VM& m_vm;
+    ReadableByteStreamInternalsBuiltinFunctions m_readableByteStreamInternals;
     WritableStreamInternalsBuiltinFunctions m_writableStreamInternals;
     TransformStreamInternalsBuiltinFunctions m_transformStreamInternals;
-    ReadableStreamInternalsBuiltinFunctions m_readableStreamInternals;
     StreamInternalsBuiltinFunctions m_streamInternals;
-    ReadableByteStreamInternalsBuiltinFunctions m_readableByteStreamInternals;
+    ReadableStreamInternalsBuiltinFunctions m_readableStreamInternals;
 
 };
 

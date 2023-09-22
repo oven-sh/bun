@@ -213,3 +213,15 @@ interface BunLazyModules {
 
 /** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
 declare var $exports: any;
+
+interface CommonJSModuleRecord {
+  $require(id: string, mod: any): any;
+  children: CommonJSModuleRecord[];
+  exports: any;
+  id: string;
+  loaded: boolean;
+  parent: undefined;
+  path: string;
+  paths: string[];
+  require: typeof require;
+}

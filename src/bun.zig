@@ -1841,3 +1841,26 @@ pub fn fdi32(fd_: anytype) i32 {
 }
 
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+pub const LazyBoolValue = enum {
+    unknown,
+    no,
+    yes,
+};
+/// Create a lazily computed boolean value.
+/// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
+/// Parent must be a type which contains the field we are getting.
+pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
+    return struct {
+        value: LazyBoolValue = .unknown,
+        pub fn get(self: *@This()) bool {
+            if (self.value == .unknown) {
+                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                    true => .yes,
+                    false => .no,
+                };
+            }
+
+            return self.value == .yes;
+        }
+    };
+}

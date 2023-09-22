@@ -12,7 +12,6 @@ buildSync({
   external: ["vscode"],
   platform: "node",
   format: "cjs",
-  
   // The following settings are required to allow for extension debugging
   minify: false,
   sourcemap: true,

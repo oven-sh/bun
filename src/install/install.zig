@@ -252,16 +252,29 @@ const NetworkTask = struct {
         warn_on_error: bool,
     ) !void {
         this.url_buf = blk: {
+
+            // Not all registries support scoped package names when fetching the manifest.
+            // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
+            // Other registries like AWS codeartifact only support the former.
+            // "npm" CLI requests the manifest with the encoded name.
+            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+            var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
+            var encoded_name = name;
+            if (strings.containsChar(name, '/')) {
+                encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
+            }
+
             const tmp = bun.JSC.URL.join(
                 bun.String.fromUTF8(scope.url.href),
-                bun.String.fromUTF8(name),
+                bun.String.fromUTF8(encoded_name),
             );
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
                 const msg = .{
-                    .fmt = "Failed to join registry \"{s}\" and package \"{s}\" URLs",
-                    .args = .{ scope.url.href, name },
+                    .fmt = "Failed to join registry {} and package {} URLs",
+                    .args = .{ strings.QuotedFormatter{ .text = scope.url.href }, strings.QuotedFormatter{ .text = name } },
                 };
 
                 if (warn_on_error)
@@ -345,6 +358,10 @@ const NetworkTask = struct {
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
+
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -424,6 +441,9 @@ const NetworkTask = struct {
             null,
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        if (PackageManager.verbose_install) {
+            this.http.client.verbose = true;
+        }
 
         this.callback = .{ .extract = tarball };
     }
@@ -1677,6 +1697,7 @@ pub const PackageManager = struct {
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     onWake: WakeHandler = .{},
+    ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1695,6 +1716,14 @@ pub const PackageManager = struct {
 
     pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
         return this.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
+        return this.env.isCI();
+    }
+
+    pub inline fn isContinuousIntegration(this: *PackageManager) bool {
+        return this.ci_mode.get();
     }
 
     pub const WakeHandler = struct {
@@ -1864,6 +1893,37 @@ pub const PackageManager = struct {
         try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
         this.preinstall_state.expandToCapacity();
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
+    }
+
+    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+        switch (resolution.tag) {
+            Resolution.Tag.npm => {
+                if (resolution.value.npm.version.tag.hasPre())
+                    // TODO:
+                    return null;
+
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
+                    // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                    if (this.isContinuousIntegration())
+                        return null;
+
+                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
+                        this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
+                        break :brk this.manifests.getPtr(name_hash).?;
+                    }
+
+                    return null;
+                };
+
+                if (manifest.findByDistTag("latest")) |latest_version| {
+                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
+                    return latest_version.version;
+                }
+
+                return null;
+            },
+            else => return null,
+        }
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
@@ -3786,10 +3846,10 @@ pub const PackageManager = struct {
                             switch (response.status_code) {
                                 404 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
+                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{}{s} 404<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 
@@ -3803,10 +3863,10 @@ pub const PackageManager = struct {
                                 },
                                 401 => {
                                     if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
+                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>\n";
                                         const args = .{
                                             name.slice(),
-                                            task.http.url.displayHostname(),
+                                            task.http.url.displayHost(),
                                             task.http.url.pathname,
                                         };
 
@@ -5768,7 +5828,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
@@ -5784,7 +5844,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
@@ -6129,7 +6189,7 @@ pub const PackageManager = struct {
     ) !void {
         var update_requests = try UpdateRequest.Array.init(0);
 
-        if (manager.options.positionals.len == 1) {
+        if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));

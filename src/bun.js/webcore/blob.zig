@@ -2739,17 +2739,7 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
-        if (value.isError()) {
-            return JSC.JSPromise.rejectedPromiseValue(global, value);
-        }
-
-        if (value.jsType() == .JSPromise)
-            return value;
-
-        return JSPromise.resolvedPromiseValue(
-            global,
-            value,
-        );
+        return JSC.JSPromise.wrap(global, value);
     }
 
     pub fn getText(
@@ -3673,11 +3663,7 @@ pub const Blob = struct {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
-        if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toJSONObject(global);
-        } else {
-            return ZigString.init(buf).toJSONObject(global);
-        }
+        return ZigString.init(buf).toJSONObject(global);
     }
 
     pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

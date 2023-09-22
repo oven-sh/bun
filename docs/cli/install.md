@@ -23,9 +23,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## Manage dependencies
-
-### `bun install`
+## `bun install`
 
 To install all dependencies of a project:
 
@@ -95,7 +93,7 @@ dryRun = false
 
 {% /details %}
 
-### `bun add`
+## `bun add`
 
 To add a particular package:
 
@@ -177,7 +175,7 @@ To view a complete list of options for a given command:
 $ bun add --help
 ```
 
-### `bun remove`
+## `bun remove`
 
 To remove a dependency:
 
@@ -185,7 +183,17 @@ To remove a dependency:
 $ bun remove preact
 ```
 
-## Local packages (`bun link`)
+## `bun update`
+
+To update all dependencies to the latest version _that's compatible with the version range specified in your `package.json`_:
+
+```sh
+$ bun update
+```
+
+This will not edit your `package.json`. There's currently no command to force-update all dependencies to the latest version regardless version ranges.
+
+## `bun link`
 
 Use `bun link` in a local directory to register the current package as a "linkable" package.
 

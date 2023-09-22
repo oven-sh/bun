@@ -84,7 +84,7 @@ ZIG ?= $(shell which zig 2>/dev/null || echo -e "error: Missing zig. Please make
 # so if that's resolved, it won't build for C++
 REAL_CC = $(shell which clang-16 2>/dev/null || which clang 2>/dev/null)
 REAL_CXX = $(shell which clang++-16 2>/dev/null || which clang++ 2>/dev/null)
-CLANG_FORMAT = $(shell which clang-format-15 2>/dev/null || which clang-format 2>/dev/null)
+CLANG_FORMAT = $(shell which clang-format-16 2>/dev/null || which clang-format 2>/dev/null)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -177,7 +177,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-15 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
+AR = $(shell which llvm-ar-16 2>/dev/null || which llvm-ar 2>/dev/null || which ar 2>/dev/null)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -274,7 +274,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-15 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
+STRIP=$(shell which llvm-strip 2>/dev/null || which llvm-strip-16 2>/dev/null || which strip 2>/dev/null || echo "Missing strip")
 endif
 
 
@@ -550,7 +550,7 @@ tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
 		AR=$(AR) $(CCACHE_CC_FLAG) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CCACHE_CC_OR_CC) --ar=$(AR) --config-predefs=yes  && \
-		make -j10 && \
+		make libtcc.a -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
@@ -811,7 +811,7 @@ fmt-cpp:
 
 .PHONY: fmt-zig
 fmt-zig:
-	cd src && zig fmt **/*.zig
+	cd src && $(ZIG) fmt **/*.zig
 
 .PHONY: fmt
 fmt: fmt-cpp fmt-zig
@@ -945,7 +945,7 @@ headers:
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
-	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp 
+	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp
 
 .PHONY: jsc-bindings-headers
 jsc-bindings-headers: headers
@@ -1291,7 +1291,7 @@ jsc-build-linux-compile-config:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects" -DUSE_BUN_JSC_ADDITIONS=ON \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 
@@ -1482,7 +1482,7 @@ bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 
 wasm-return1:
-	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
+	$(ZIG) build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 generate-classes:
 	bun src/bun.js/scripts/generate-classes.ts
@@ -1825,7 +1825,7 @@ endif
 build-unit: # to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
-	zig test  $(realpath $(testpath)) \
+	$(ZIG) test  $(realpath $(testpath)) \
 	$(testfilterflag) \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
@@ -1843,7 +1843,7 @@ build-unit: # to build your unit tests
 run-all-unit-tests: # to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
-	zig test src/main.zig \
+	$(ZIG) test src/main.zig \
 	$(PACKAGE_MAP) \
 	--main-pkg-path $(BUN_DIR) \
 	--test-no-exec \

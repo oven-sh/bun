@@ -230,6 +230,47 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
+
+        if (JSC::isArray(globalObject, otherProp)) {
+            if (JSC::isArray(globalObject, expectedArrayValue)) {
+                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+
+                unsigned expectedLength = expectedArray->length();
+                unsigned otherLength = otherArray->length();
+
+                // A empty array is all array's subset
+                if (expectedLength == 0) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+
+                // O(m*n) but works for now
+                for (unsigned m = 0; m < expectedLength; m++) {
+                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                    bool found = false;
+
+                    for (unsigned n = 0; n < otherLength; n++) {
+                        JSValue otherValue = otherArray->getIndex(globalObject, n);
+                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                        Vector<std::pair<JSValue, JSValue>, 16> stack;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return AsymmetricMatcherResult::FAIL;
+                    }
+                }
+
+                return AsymmetricMatcherResult::PASS;
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;
@@ -577,7 +618,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
             return false;
         }
 
@@ -1355,15 +1396,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,

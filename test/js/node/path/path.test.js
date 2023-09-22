@@ -271,6 +271,19 @@ it("path.basename", () => {
   strictEqual(path.posix.basename(`/a/b/${controlCharFilename}`), controlCharFilename);
 });
 
+describe("path.join #5769", () => {
+  for (let length of [4096, 4095, 4097, 65_432, 65_431, 65_433]) {
+    it("length " + length, () => {
+      const tooLengthyFolderName = Array.from({ length }).fill("b").join("");
+      expect(path.join(tooLengthyFolderName)).toEqual("b".repeat(length));
+    });
+    it("length " + length + "joined", () => {
+      const tooLengthyFolderName = Array.from({ length }).fill("b");
+      expect(path.join(...tooLengthyFolderName)).toEqual("b/".repeat(length).substring(0, 2 * length - 1));
+    });
+  }
+});
+
 it("path.join", () => {
   const failures = [];
   const backslashRE = /\\/g;

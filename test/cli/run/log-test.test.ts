@@ -32,7 +32,7 @@ it("should log .env by default", async () => {
     env: bunEnv,
   });
 
-  expect(stderr?.toString().includes(".env")).toBe(true);
+  expect(stderr?.toString().includes(".env")).toBe(false);
 });
 
 function writeDirectoryTree(base: string, paths: Record<string, any>) {

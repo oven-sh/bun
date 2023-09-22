@@ -33,7 +33,7 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const c_ares = @import("./deps/c_ares.zig");
 
-const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
+const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
@@ -2289,10 +2289,6 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 };
             }
 
-            if (this.verbose) {
-                printRequest(request);
-            }
-
             const headers_len = list.items.len;
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0 and !this.proxy_tunneling) {
@@ -2326,6 +2322,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
             this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
+
+            if (has_sent_headers and this.verbose) {
+                printRequest(request);
+            }
 
             if (has_sent_headers and this.state.request_body.len > 0) {
                 this.state.request_body = this.state.request_body[this.state.request_sent_len - headers_len ..];
@@ -3407,12 +3407,16 @@ pub fn handleResponseMetadata(
         this.proxy_tunneling = false;
     }
 
+    const status_code = response.status_code;
+
     // if is no redirect or if is redirect == "manual" just proceed
-    const is_redirect = response.status_code >= 300 and response.status_code <= 399;
+    const is_redirect = status_code >= 300 and status_code <= 399;
     if (is_redirect) {
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
-            switch (response.status_code) {
+            switch (status_code) {
                 302, 301, 307, 308, 303 => {
+                    var is_same_origin = true;
+
                     if (strings.indexOf(location, "://")) |i| {
                         var url_buf = URLBufferPool.get(default_allocator);
 
@@ -3443,7 +3447,9 @@ pub fn handleResponseMetadata(
                             bun.copy(u8, &url_buf.data, location);
                         }
 
-                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                        this.url = new_url;
                         this.redirect = url_buf;
                     } else if (strings.hasPrefixComptime(location, "//")) {
                         var url_buf = URLBufferPool.get(default_allocator);
@@ -3467,49 +3473,65 @@ pub fn handleResponseMetadata(
                             url_buf_len += "https:".len;
                         }
 
-                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                        this.url = new_url;
                         this.redirect = url_buf;
                     } else {
                         var url_buf = URLBufferPool.get(default_allocator);
+                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
                         const original_url = this.url;
-                        const port = original_url.getPortAuto();
 
-                        if (port == original_url.getDefaultPort()) {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                            ) catch return error.RedirectURLTooLong);
-                        } else {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}:{d}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
-                            ) catch return error.RedirectURLTooLong);
+                        const new_url_ = bun.JSC.URL.join(
+                            bun.String.fromUTF8(original_url.href),
+                            bun.String.fromUTF8(location),
+                        );
+                        defer new_url_.deref();
+
+                        if (new_url_.isEmpty()) {
+                            return error.InvalidRedirectURL;
                         }
 
+                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
+                            return error.RedirectURLTooLong;
+                        };
+                        this.url = URL.parse(new_url);
+
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;
                         this.redirect = url_buf;
                     }
 
-                    // Note: RFC 1945 and RFC 2068 specify that the client is not allowed to change
-                    // the method on the redirected request. However, most existing user agent
-                    // implementations treat 302 as if it were a 303 response, performing a GET on
-                    // the Location field-value regardless of the original request method. The
-                    // status codes 303 and 307 have been added for servers that wish to make
-                    // unambiguously clear which kind of reaction is expected of the client.
-                    if (response.status_code == 302) {
-                        switch (this.method) {
-                            .GET, .HEAD => {},
-                            else => {
-                                this.method = .GET;
-                            },
-                        }
+                    // If one of the following is true
+                    // - internalResponse’s status is 301 or 302 and request’s method is `POST`
+                    // - internalResponse’s status is 303 and request’s method is not `GET` or `HEAD`
+                    // then:
+                    if (((status_code == 301 or status_code == 302) and this.method == .POST) or
+                        (status_code == 303 and this.method != .GET and this.method != .HEAD))
+                    {
+                        // - Set request’s method to `GET` and request’s body to null.
+                        this.method = .GET;
+                        // - For each headerName of request-body-header name, delete headerName from request’s header list.
+                        this.header_entries.len = 0;
                     }
 
-                    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
-                    if (response.status_code == 303 and this.method != .HEAD) {
-                        this.method = .GET;
+                    // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+                    // If request’s current URL’s origin is not same origin with
+                    // locationURL’s origin, then for each headerName of CORS
+                    // non-wildcard request-header name, delete headerName from
+                    // request’s header list.
+                    if (!is_same_origin and this.header_entries.len > 0) {
+                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
+                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
+                            const name = this.headerStr(name_ptr);
+                            if (name.len == "Authorization".len) {
+                                const hash = hashHeaderName(name);
+                                if (hash == authorization_header_hash) {
+                                    this.header_entries.swapRemove(i);
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     return error.Redirect;

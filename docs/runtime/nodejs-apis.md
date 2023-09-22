@@ -78,7 +78,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
+🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList` `net.Server.ref()` `net.Server.unref()` `net.Socket.ref()` `net.Socket.unref()`.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -589,7 +589,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.constrainedMemory()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`. `process.binding` is partially implemented.
+🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

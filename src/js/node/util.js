@@ -27,7 +27,7 @@ var formatRegExp = /%[sdjfoc%]/g;
 function formatWithOptions(inspectOptions, f) {
   if (!isString(f)) {
     var objects = [];
-    for (var i = 0; i < arguments.length; i++) {
+    for (var i = 1; i < arguments.length; i++) {
       objects.push(inspect(arguments[i], inspectOptions));
     }
     return objects.join(" ");

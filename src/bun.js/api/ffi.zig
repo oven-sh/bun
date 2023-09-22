@@ -317,8 +317,12 @@ pub const FFI = struct {
                 };
             };
         };
-
-        var obj = JSC.JSValue.createEmptyObject(global, symbols.values().len);
+        
+        var size = symbols.values().len;
+        if(size >= 63) {
+            size = 0;
+        }
+        var obj = JSC.JSValue.createEmptyObject(global, size);
         obj.protect();
         defer obj.unprotect();
         for (symbols.values()) |*function| {

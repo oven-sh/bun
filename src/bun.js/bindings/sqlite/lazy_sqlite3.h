@@ -71,6 +71,7 @@ typedef int (*lazy_sqlite3_deserialize_type)(
 );
 
 typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_compileoption_used_type)(const char *zOptName);
 
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
@@ -112,6 +113,7 @@ static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
 static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
 static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
+static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -152,6 +154,7 @@ static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 #define sqlite3_deserialize lazy_sqlite3_deserialize
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
+#define sqlite3_compileoption_used lazy_sqlite3_compileoption_used;
 
 static void* sqlite3_handle = nullptr;
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
@@ -204,6 +207,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_deserialize = (lazy_sqlite3_deserialize_type)dlsym(sqlite3_handle, "sqlite3_deserialize");
     lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
     lazy_sqlite3_stmt_readonly = (lazy_sqlite3_stmt_readonly_type)dlsym(sqlite3_handle, "sqlite3_stmt_readonly");
+    lazy_sqlite3_compileoption_used = (lazy_sqlite3_compileoption_used_type)dlsym(sqlite3_handle, "sqlite3_compileoption_used");
 
     return 0;
 }

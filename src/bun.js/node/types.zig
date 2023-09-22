@@ -348,11 +348,32 @@ pub const SliceWithUnderlyingStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn deinit(this: *const SliceWithUnderlyingStringOrBuffer) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => |*str| {
+                str.deinit();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *const SliceWithUnderlyingStringOrBuffer) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => |*str| {
+                str.deinit();
+            },
+            .buffer => |buffer| {
+                buffer.buffer.value.unprotect();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SliceWithUnderlyingStringOrBuffer {
         _ = exception;
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var str = bun.String.tryFromJS(value, global) orelse return null;
+                str.ref();
                 return SliceWithUnderlyingStringOrBuffer{ .SliceWithUnderlyingString = str.toSlice(allocator) };
             },
 
@@ -802,7 +823,7 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
-        return fromJSWithAllocator(ctx, arguments, arguments.arena.allocator(), exception);
+        return fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception);
     }
     pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
         const arg = arguments.next() orelse return null;
@@ -2192,6 +2213,8 @@ pub const Path = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
+        defer arena.deinit();
+
         var arena_allocator = arena.allocator();
         var stack_fallback_allocator = std.heap.stackFallback(
             ((32 * @sizeOf(string)) + 1024),
@@ -2199,18 +2222,27 @@ pub const Path = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
-        defer arena.deinit();
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var count: usize = 0;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             to_join[i] = zig_str.toSlice(allocator).slice();
+            count += to_join[i].len;
+        }
+
+        var buf_to_use: []u8 = &buf;
+        if (count * 2 >= buf.len) {
+            buf_to_use = allocator.alloc(u8, count * 2) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
         }
 
         const out = if (!isWindows)
-            PathHandler.joinStringBuf(&buf, to_join, .posix)
+            PathHandler.joinStringBuf(buf_to_use, to_join, .posix)
         else
-            PathHandler.joinStringBuf(&buf, to_join, .windows);
+            PathHandler.joinStringBuf(buf_to_use, to_join, .windows);
 
         var str = bun.String.create(out);
         defer str.deref();

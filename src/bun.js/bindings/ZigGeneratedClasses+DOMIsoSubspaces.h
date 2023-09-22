@@ -16,6 +16,7 @@ std::unique_ptr<IsoSubspace> m_subspaceForEndTag;
 std::unique_ptr<IsoSubspace> m_subspaceForExpect;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpectAny;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectAnything;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectArrayContaining;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectStringContaining;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectStringMatching;
 std::unique_ptr<IsoSubspace> m_subspaceForFFI;

@@ -369,7 +369,6 @@ CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue J
 CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__jsBoolean(bool arg0);
-CPP_DECL JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNull();
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0);

@@ -3029,10 +3029,6 @@ JSC__JSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
 };
-JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
-{
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
-}
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {

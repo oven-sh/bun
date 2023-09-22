@@ -85,7 +85,21 @@ pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) Enco
 pub inline fn INT32_TO_JSVALUE(arg_val: i32) EncodedJSValue {
     return .{ .asInt64 = @as(i64, @bitCast(@as(c_ulonglong, 18446181123756130304) | @as(c_ulonglong, @bitCast(@as(c_ulonglong, @as(u32, @bitCast(arg_val))))))) };
 }
+// See PureNaN.h in JavaScriptCore
+const pure_nan: u64 = 0x7ff8000000000000;
+const bun = @import("root").bun;
+
+inline fn isImpureNaN(arg_val: f64) bool {
+    return @as(u64, @bitCast(arg_val)) > 0xfffe000000000000;
+}
+
 pub inline fn DOUBLE_TO_JSVALUE(arg_val: f64) EncodedJSValue {
+    if (bun.Environment.allow_assert) {
+        if (isImpureNaN(arg_val)) {
+            @panic("An impure NaN value was passed to DOUBLE_TO_JSVALUE");
+        }
+    }
+
     var res: EncodedJSValue = .{ .asDouble = arg_val };
     res.asInt64 += @as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49));
     return res;

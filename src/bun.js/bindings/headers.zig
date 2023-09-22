@@ -271,7 +271,6 @@ pub extern fn JSC__JSValue__jestDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC
 pub extern fn JSC__JSValue__jestDeepMatch(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject, arg3: bool) bool;
 pub extern fn JSC__JSValue__jestStrictDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__jsBoolean(arg0: bool) JSC__JSValue;
-pub extern fn JSC__JSValue__jsDoubleNumber(arg0: f64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNull(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromChar(arg0: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromDouble(arg0: f64) JSC__JSValue;

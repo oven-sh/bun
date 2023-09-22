@@ -3840,10 +3840,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("jsTDZValue", .{});
     }
 
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return cppFn("jsDoubleNumber", .{i});
-    }
-
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
         this.getClassName(globalThis, &str);
@@ -4866,7 +4862,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "isTerminationException",
         "isUInt32AsAnyInt",
         "jsBoolean",
-        "jsDoubleNumber",
         "jsNull",
         "jsNumberFromChar",
         "jsNumberFromDouble",

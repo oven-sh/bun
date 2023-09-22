@@ -1988,22 +1988,24 @@ console.log(resolve.length)
     describe("dead code elimination", () => {
       const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
       it("should DCE with deadCodeElimination: true or by default", () => {
-        expect(parsed('123', true, false)).toBe('');
-        expect(parsed('[-1, 2n, null]', true, false)).toBe('');
-        expect(parsed('true', true, false)).toBe('');
-        expect(parsed('!0', true, false)).toBe('');
-        expect(parsed('if (!1) "dead";', true, false)).toBe('if (false)');
-        expect(parsed('if (!1) var x = 2;', true, false)).toBe('if (false)\n  var x');
-        expect(parsed('if (undefined) { let y = Math.random(); }', true, false)).toBe('if (undefined) {\n}');
+        expect(parsed("123", true, false)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("");
+        expect(parsed("true", true, false)).toBe("");
+        expect(parsed("!0", true, false)).toBe("");
+        expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
+        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {\n}");
       });
       it("should not DCE with deadCodeElimination: false", () => {
-        expect(parsed('123', true, false, transpilerNoDCE)).toBe('123');
-        expect(parsed('[1, 2n, null]', true, false, transpilerNoDCE)).toBe('[1, 2n, null]');
-        expect(parsed('true', true, false, transpilerNoDCE)).toBe('true');
-        expect(parsed('!0', true, false, transpilerNoDCE)).toBe('!0');
+        expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
+        expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
+        expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
+        expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
         expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
-        expect(parsed('if (!1) var x = 2;', true, false, transpilerNoDCE)).toBe('if (!1)\n  var x = 2');
-        expect(parsed('if (undefined) { let y = Math.random(); }', true, false, transpilerNoDCE)).toBe('if (undefined) {\n  let y = Math.random();\n}');
+        expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
+          "if (undefined) {\n  let y = Math.random();\n}",
+        );
       });
     });
   });

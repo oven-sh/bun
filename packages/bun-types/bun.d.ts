@@ -912,7 +912,7 @@ declare module "bun" {
      * **Experimental**
      *
      * Enabled by default, use this to disable dead code elimination.
-     * 
+     *
      * Some other transpiler options may still do some specific dead code elimination.
      */
     deadCodeElimination?: boolean;

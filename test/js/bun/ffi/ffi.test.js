@@ -927,3 +927,23 @@ test("can open more than 63 symbols", () => {
   expect(lib.symbols.strcasecmp(Buffer.from("ciro"), Buffer.from("CIRO"))).toBe(0);
   expect(lib.symbols.strlen(Buffer.from("bunbun", "ascii"))).toBe(6n);
 });
+
+it("dlopen fails with the right message if the lib name is Invalid", () => {
+  let errorMessage;
+  try {
+    dlopen("", {});
+  } catch (error) {
+    errorMessage = error.message;
+  }
+  expect(errorMessage).toMatch(/Invalid lib/);
+})
+
+it("dlopen fails if symbols are not provided", () => {
+  let errorMessage;
+  try {
+    dlopen(lib_path, {});
+  } catch (error) {
+    errorMessage = error.message;
+  }
+  expect(errorMessage).toMatch(/(Expected an options object with symbol|Expected at least one symbol)/);
+})

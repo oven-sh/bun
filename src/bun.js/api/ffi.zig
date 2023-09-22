@@ -283,7 +283,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Invalid library name", .{}, global);
         }
 
-        if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
+        if (!object.isObject() or object.isEmpty() or object.isUndefinedOrNull()) {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
@@ -317,9 +317,9 @@ pub const FFI = struct {
                 };
             };
         };
-        
+
         var size = symbols.values().len;
-        if(size >= 63) {
+        if (size >= 63) {
             size = 0;
         }
         var obj = JSC.JSValue.createEmptyObject(global, size);

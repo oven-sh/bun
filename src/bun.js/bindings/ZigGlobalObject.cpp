@@ -1331,7 +1331,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionATOB,
+JSC_DEFINE_HOST_FUNCTION(functionATOB,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -1354,7 +1354,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionReportError,
+JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     switch (callFrame->argumentCount()) {
@@ -1636,7 +1636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
-static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
+JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 
@@ -3353,7 +3353,7 @@ JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObjec
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
+JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();

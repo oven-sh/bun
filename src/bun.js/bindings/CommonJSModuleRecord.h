@@ -22,11 +22,12 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
 
-    mutable JSC::WriteBarrier<JSC::JSString> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_filename;
-    mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
+    mutable JSC::WriteBarrier<JSString> m_id;
+    mutable JSC::WriteBarrier<Unknown> m_filename;
+    mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
+    mutable JSC::WriteBarrier<Unknown> m_parent;
+    mutable JSC::WriteBarrier<JSSourceCode> sourceCode;
     bool ignoreESModuleAnnotation { false };
 
     static void destroy(JSC::JSCell*);
@@ -54,8 +55,7 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        JSValue exportsObject,
-        bool hasEvaluated = false);
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,

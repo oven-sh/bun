@@ -399,7 +399,7 @@ pub const Bundler = struct {
         }
 
         // only print elapsed time when loglevel is verbose or debug
-        env_loader.quiet = !log.level.atLeast(.info);
+        env_loader.quiet = !log.level.atLeast(.debug);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{

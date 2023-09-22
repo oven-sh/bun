@@ -1298,7 +1298,7 @@ function nodeToBun(item) {
     return item;
   } else {
     const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error("Invalid stdio option");
+    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
     return result;
   }
 }

@@ -3479,22 +3479,23 @@ pub fn handleResponseMetadata(
                         this.redirect = url_buf;
                     } else {
                         var url_buf = URLBufferPool.get(default_allocator);
+                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
                         const original_url = this.url;
-                        const port = original_url.getPortAuto();
 
-                        if (port == original_url.getDefaultPort()) {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                            ) catch return error.RedirectURLTooLong);
-                        } else {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}:{d}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
-                            ) catch return error.RedirectURLTooLong);
+                        const new_url_ = bun.JSC.URL.join(
+                            bun.String.fromUTF8(original_url.href),
+                            bun.String.fromUTF8(location),
+                        );
+                        defer new_url_.deref();
+
+                        if (new_url_.isEmpty()) {
+                            return error.InvalidRedirectURL;
                         }
+
+                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
+                            return error.RedirectURLTooLong;
+                        };
+                        this.url = URL.parse(new_url);
 
                         is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;

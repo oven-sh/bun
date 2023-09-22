@@ -1165,3 +1165,50 @@ it("unix socket connection throws an error on a bad domain without crashing", as
     });
   }).toThrow();
 });
+
+it("#5859 text", async () => {
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      return new Response(await req.text(), {});
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(await response.text()).toBe("�");
+  await server.stop(true);
+});
+
+it("#5859 json", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      try {
+        await req.json();
+      } catch (e) {
+        return new Response("FAIL", { status: 500 });
+      }
+
+      return new Response("SHOULD'VE FAILED", {});
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(response.ok).toBeFalse();
+  expect(await response.text()).toBe("FAIL");
+  await server.stop(true);
+});
+
+it("#5859 arrayBuffer", async () => {
+  await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
+  expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
+});

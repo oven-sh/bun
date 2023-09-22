@@ -61,7 +61,7 @@ Plugins are primarily used to extend Bun with loaders for additional file types.
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
 
-await plugin({
+plugin({
   name: "YAML",
   async setup(build) {
     const { load } = await import("js-yaml");

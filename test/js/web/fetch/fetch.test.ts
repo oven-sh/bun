@@ -1596,3 +1596,97 @@ it("same-origin status code 302 should not strip headers", async () => {
   expect(redirected).toBe(true);
   server.stop(true);
 });
+
+describe("should handle relative location in the redirect, issue#5635", () => {
+  var server: Server;
+  beforeAll(async () => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it.each([
+    ["/a/b", "/c", "/c"],
+    ["/a/b", "c", "/a/c"],
+    ["/a/b", "/c/d", "/c/d"],
+    ["/a/b", "c/d", "/a/c/d"],
+    ["/a/b", "../c", "/c"],
+    ["/a/b", "../c/d", "/c/d"],
+    ["/a/b", "../../../c", "/c"],
+    // slash
+    ["/a/b/", "/c", "/c"],
+    ["/a/b/", "c", "/a/b/c"],
+    ["/a/b/", "/c/d", "/c/d"],
+    ["/a/b/", "c/d", "/a/b/c/d"],
+    ["/a/b/", "../c", "/a/c"],
+    ["/a/b/", "../c/d", "/a/c/d"],
+    ["/a/b/", "../../../c", "/c"],
+  ])("('%s', '%s')", async (pathname, location, expected) => {
+    server.reload({
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname == pathname) {
+          return new Response("redirecting", {
+            headers: {
+              "Location": location,
+            },
+            status: 302,
+          });
+        } else if (url.pathname == expected) {
+          return new Response("Fine.");
+        }
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+
+    const resp = await fetch(`http://${server.hostname}:${server.port}${pathname}`);
+    expect(resp.redirected).toBe(true);
+    expect(new URL(resp.url).pathname).toStrictEqual(expected);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("Fine.");
+  });
+});
+
+it("should throw RedirectURLTooLong when location is too long", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request: Request) {
+      gc();
+      const url = new URL(request.url);
+      if (url.pathname == "/redirect") {
+        return new Response("redirecting", {
+          headers: {
+            "Location": "B".repeat(8193),
+          },
+          status: 302,
+        });
+      }
+      return new Response("Not Found", {
+        status: 404,
+      });
+    },
+  });
+
+  let err = undefined;
+  try {
+    gc();
+    const resp = await fetch(`http://${server.hostname}:${server.port}/redirect`);
+  } catch (error) {
+    gc();
+    err = error;
+  }
+  expect(err).not.toBeUndefined();
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toStrictEqual("RedirectURLTooLong");
+  server.stop(true);
+});

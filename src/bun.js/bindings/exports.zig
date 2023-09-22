@@ -1042,7 +1042,7 @@ pub const ZigConsoleClient = struct {
         flush: bool,
         ordered_properties: bool = false,
         quote_strings: bool = false,
-        max_depth: u16 = 8,
+        max_depth: u16 = 2,
     };
 
     pub fn format(

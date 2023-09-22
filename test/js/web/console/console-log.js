@@ -58,3 +58,17 @@ infinteLoop.bar = infinteLoop;
 console.log(infinteLoop, "am");
 
 console.log(new Array(4).fill({}));
+const nestedObject = {
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          level5: {
+            name: "Deeply nested object",
+          },
+        },
+      },
+    },
+  },
+};
+console.log(nestedObject);

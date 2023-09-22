@@ -123,6 +123,7 @@ cold-jsc-start
 cold-jsc-start.d
 
 /test.ts
+/test.js
 
 src/js/out/modules*
 src/js/out/functions*

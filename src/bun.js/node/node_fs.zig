@@ -191,7 +191,11 @@ pub const Async = struct {
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
-                this.args.deinit();
+                if (@hasDecl(ArgumentType, "deinitAndUnprotect")) {
+                    this.args.deinitAndUnprotect();
+                } else {
+                    this.args.deinit();
+                }
                 this.promise.strong.deinit();
                 bun.default_allocator.destroy(this);
             }
@@ -1936,7 +1940,13 @@ pub const Arguments = struct {
         position: ?ReadPosition = null,
         encoding: Encoding = Encoding.buffer,
 
-        pub fn deinit(_: Write) void {}
+        pub fn deinit(this: *const @This()) void {
+            this.buffer.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *@This()) void {
+            this.buffer.deinitAndUnprotect();
+        }
 
         pub fn toThreadSafe(self: *@This()) void {
             self.buffer.toThreadSafe();

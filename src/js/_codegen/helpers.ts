@@ -42,3 +42,12 @@ export function resolveSyncOrNull(specifier: string, from: string) {
     return null;
   }
 }
+
+export function checkAscii(str: string) {
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 127) {
+      throw new Error(`non-ascii character at index ${i} in "${str}"`);
+    }
+  }
+  return str;
+}

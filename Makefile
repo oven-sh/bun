@@ -406,7 +406,7 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DNOMINMAX \
 		-DIS_BUILD \
 		-DBUILDING_JSCONLY__ \
-		-DASSERT_ENABLED=0 \
+		-DASSERT_ENABLED=1 \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden
 

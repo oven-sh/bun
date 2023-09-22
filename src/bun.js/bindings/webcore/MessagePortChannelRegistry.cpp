@@ -41,7 +41,7 @@ MessagePortChannelRegistry::~MessagePortChannelRegistry()
 
 void MessagePortChannelRegistry::didCreateMessagePortChannel(const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
 {
-    LOG(MessagePorts, "Registry: Creating MessagePortChannel %p linking %s and %s", this, port1.logString().utf8().data(), port2.logString().utf8().data());
+    // LOG(MessagePorts, "Registry: Creating MessagePortChannel %p linking %s and %s", this, port1.logString().utf8().data(), port2.logString().utf8().data());
     ASSERT(isMainThread());
 
     MessagePortChannel::create(*this, port1, port2);
@@ -72,7 +72,7 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     m_openChannels.remove(channel.port1());
     m_openChannels.remove(channel.port2());
 
-    LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
+    // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }
 
 void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, ProcessIdentifier process)
@@ -105,15 +105,15 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
+    // LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
 
     auto* channel = m_openChannels.get(port);
     if (!channel)
         return;
 
 #ifndef NDEBUG
-    if (channel && channel->hasAnyMessagesPendingOrInFlight())
-        LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
+        // if (channel && channel->hasAnyMessagesPendingOrInFlight())
+        //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
 #endif
 
     channel->closePort(port);
@@ -126,12 +126,12 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
+    // LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
     auto* channel = m_openChannels.get(remoteTarget);
     if (!channel) {
-        LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
+        // LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
         return false;
     }
 
@@ -142,7 +142,7 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: Taking all messages for MessagePort %s", port.logString().utf8().data());
+    // LOG(MessagePorts, "Registry: Taking all messages for MessagePort %s", port.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
     auto* channel = m_openChannels.get(port);
@@ -158,7 +158,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
 {
     ASSERT(isMainThread());
 
-    LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
+    // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
     auto* channel = m_openChannels.get(port);

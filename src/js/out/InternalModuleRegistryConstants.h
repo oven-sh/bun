@@ -1,6 +1,11 @@
 // clang-format off
 #pragma once
 
+#if ASSERT_ENABLED
+#define ASSERT_ENABLED 0
+#define __ASSERT_ENABLED__ 1
+#endif
+
 namespace Bun {
 namespace InternalModuleRegistryConstants {
 
@@ -732,3 +737,8 @@ static constexpr ASCIILiteral ThirdpartyWSCode = "(function (){\"use strict\";//
 
 }
 }
+
+#ifdef __ASSERT_ENABLED__
+#undef __ASSERT_ENABLED__
+#define __ASSERT_ENABLED 1
+#endif

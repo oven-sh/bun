@@ -1110,7 +1110,7 @@ Structure* ProcessBindingConstants::createStructure(VM& vm, JSGlobalObject* glob
 void ProcessBindingConstants::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>

@@ -244,7 +244,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalOb
         if (LIKELY(global)) {
             auto overrideHandler = global->m_nodeModuleOverriddenResolveFilename.get();
             if (UNLIKELY(overrideHandler)) {
-                ASSERT(overrideHandler.isCallable(globalObject));
+                ASSERT(overrideHandler->isCallable());
                 MarkedArgumentBuffer args;
                 args.append(moduleName);
                 args.append(from);

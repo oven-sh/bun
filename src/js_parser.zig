@@ -1452,14 +1452,14 @@ pub const SideEffects = enum(u1) {
             .e_binary => |e| {
                 switch (e.op) {
                     .bin_logical_and => {
-                        const effects = SideEffects.toBoolean(e.right.data);
+                        const effects = SideEffects.toBoolean(p, e.right.data);
                         if (effects.ok and effects.value and effects.side_effects == .no_side_effects) {
                             // "if (anything && truthyNoSideEffects)" => "if (anything)"
                             return e.left;
                         }
                     },
                     .bin_logical_or => {
-                        const effects = SideEffects.toBoolean(e.right.data);
+                        const effects = SideEffects.toBoolean(p, e.right.data);
                         if (effects.ok and !effects.value and effects.side_effects == .no_side_effects) {
                             // "if (anything || falsyNoSideEffects)" => "if (anything)"
                             return e.left;
@@ -1748,7 +1748,8 @@ pub const SideEffects = enum(u1) {
     //
     // We can't trim the entire branch as dead or calling foo() will incorrectly
     // assign to a global variable instead.
-    pub fn shouldKeepStmtInDeadControlFlow(stmt: Stmt, allocator: Allocator) bool {
+    pub fn shouldKeepStmtInDeadControlFlow(p: anytype, stmt: Stmt, allocator: Allocator) bool {
+        if (!p.options.features.dead_code_elimination) return true;
         switch (stmt.data) {
             // Omit these statements entirely
             .s_empty, .s_expr, .s_throw, .s_return, .s_break, .s_continue, .s_class, .s_debugger => return false,
@@ -1779,7 +1780,7 @@ pub const SideEffects = enum(u1) {
 
             .s_block => |block| {
                 for (block.stmts) |child| {
-                    if (shouldKeepStmtInDeadControlFlow(child, allocator)) {
+                    if (shouldKeepStmtInDeadControlFlow(p, child, allocator)) {
                         return true;
                     }
                 }
@@ -1788,43 +1789,43 @@ pub const SideEffects = enum(u1) {
             },
 
             .s_if => |_if_| {
-                if (shouldKeepStmtInDeadControlFlow(_if_.yes, allocator)) {
+                if (shouldKeepStmtInDeadControlFlow(p, _if_.yes, allocator)) {
                     return true;
                 }
 
                 const no = _if_.no orelse return false;
 
-                return shouldKeepStmtInDeadControlFlow(no, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, no, allocator);
             },
 
             .s_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.data.s_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_while.body, allocator);
             },
 
             .s_do_while => {
-                return shouldKeepStmtInDeadControlFlow(stmt.data.s_do_while.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, stmt.data.s_do_while.body, allocator);
             },
 
             .s_for => |__for__| {
                 if (__for__.init) |init_| {
-                    if (shouldKeepStmtInDeadControlFlow(init_, allocator)) {
+                    if (shouldKeepStmtInDeadControlFlow(p, init_, allocator)) {
                         return true;
                     }
                 }
 
-                return shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
             },
 
             .s_for_in => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
             },
 
             .s_for_of => |__for__| {
-                return shouldKeepStmtInDeadControlFlow(__for__.init, allocator) or shouldKeepStmtInDeadControlFlow(__for__.body, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, __for__.init, allocator) or shouldKeepStmtInDeadControlFlow(p, __for__.body, allocator);
             },
 
             .s_label => |label| {
-                return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
+                return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
             },
             else => return true,
         }
@@ -1930,11 +1931,15 @@ pub const SideEffects = enum(u1) {
 
     pub const toTypeOf = Expr.Data.typeof;
 
-    pub fn toNullOrUndefined(exp: Expr.Data) Result {
+    pub fn toNullOrUndefined(p: anytype, exp: Expr.Data) Result {
+        if (!p.options.features.dead_code_elimination) {
+            // value should not be read if ok is false, all existing calls to this function already adhere to this
+            return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
+        }
         switch (exp) {
             // Never null or undefined
             .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
-                return Result{ .value = false, .side_effects = SideEffects.no_side_effects, .ok = true };
+                return Result{ .value = false, .side_effects = .no_side_effects, .ok = true };
             },
 
             .e_object, .e_array, .e_class => {
@@ -2018,7 +2023,7 @@ pub const SideEffects = enum(u1) {
                     },
 
                     .bin_comma => {
-                        const res = toNullOrUndefined(e.right.data);
+                        const res = toNullOrUndefined(p, e.right.data);
                         if (res.ok) {
                             return Result{ .ok = true, .value = res.value, .side_effects = SideEffects.could_have_side_effects };
                         }
@@ -2032,7 +2037,11 @@ pub const SideEffects = enum(u1) {
         return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
     }
 
-    pub fn toBoolean(exp: Expr.Data) Result {
+    pub fn toBoolean(p: anytype, exp: Expr.Data) Result {
+        if (!p.options.features.dead_code_elimination) {
+            // value should not be read if ok is false, all existing calls to this function already adhere to this
+            return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
+        }
         switch (exp) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
@@ -2066,7 +2075,7 @@ pub const SideEffects = enum(u1) {
                         return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                     },
                     .un_not => {
-                        var result = toBoolean(e_.value.data);
+                        var result = toBoolean(p, e_.value.data);
                         if (result.ok) {
                             result.value = !result.value;
                             return result;
@@ -2079,21 +2088,21 @@ pub const SideEffects = enum(u1) {
                 switch (e_.op) {
                     .bin_logical_or => {
                         // "anything || truthy" is truthy
-                        const result = toBoolean(e_.right.data);
+                        const result = toBoolean(p, e_.right.data);
                         if (result.value and result.ok) {
                             return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_logical_and => {
                         // "anything && falsy" is falsy
-                        const result = toBoolean(e_.right.data);
+                        const result = toBoolean(p, e_.right.data);
                         if (!result.value and result.ok) {
                             return Result{ .ok = true, .value = false, .side_effects = .could_have_side_effects };
                         }
                     },
                     .bin_comma => {
                         // "anything, truthy/falsy" is truthy/falsy
-                        var result = toBoolean(e_.right.data);
+                        var result = toBoolean(p, e_.right.data);
                         if (result.ok) {
                             result.side_effects = .could_have_side_effects;
                             return result;
@@ -4789,20 +4798,20 @@ fn NewParser_(
                                     }
                                 },
                                 .s_if => |if_statement| {
-                                    const result = SideEffects.toBoolean(if_statement.test_.data);
+                                    const result = SideEffects.toBoolean(p, if_statement.test_.data);
                                     if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                         break :can_remove_part false;
                                     }
                                 },
                                 .s_while => |while_statement| {
-                                    const result = SideEffects.toBoolean(while_statement.test_.data);
+                                    const result = SideEffects.toBoolean(p, while_statement.test_.data);
                                     if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                         break :can_remove_part false;
                                     }
                                 },
                                 .s_for => |for_statement| {
                                     if (for_statement.test_) |expr| {
-                                        const result = SideEffects.toBoolean(expr.data);
+                                        const result = SideEffects.toBoolean(p, expr.data);
                                         if (!(result.ok and result.side_effects == .no_side_effects and !result.value)) {
                                             break :can_remove_part false;
                                         }
@@ -12133,7 +12142,7 @@ fn NewParser_(
 
                         // Remove unnecessary optional chains
                         if (p.options.features.minify_syntax) {
-                            const result = SideEffects.toNullOrUndefined(left.data);
+                            const result = SideEffects.toNullOrUndefined(p, left.data);
                             if (result.ok and !result.value) {
                                 optional_start = null;
                             }
@@ -14906,7 +14915,7 @@ fn NewParser_(
                     // Mark the control flow as dead if the branch is never taken
                     switch (e_.op) {
                         .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(e_.left.data);
+                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
                             if (side_effects.ok and side_effects.value) {
                                 // "true || dead"
                                 const old = p.is_control_flow_dead;
@@ -14918,7 +14927,7 @@ fn NewParser_(
                             }
                         },
                         .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(e_.left.data);
+                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
                             if (side_effects.ok and !side_effects.value) {
                                 // "false && dead"
                                 const old = p.is_control_flow_dead;
@@ -14930,7 +14939,7 @@ fn NewParser_(
                             }
                         },
                         .bin_nullish_coalescing => {
-                            const side_effects = SideEffects.toNullOrUndefined(e_.left.data);
+                            const side_effects = SideEffects.toNullOrUndefined(p, e_.left.data);
                             if (side_effects.ok and !side_effects.value) {
                                 // "notNullOrUndefined ?? dead"
                                 const old = p.is_control_flow_dead;
@@ -15010,7 +15019,7 @@ fn NewParser_(
                             }
                         },
                         .bin_nullish_coalescing => {
-                            const nullorUndefined = SideEffects.toNullOrUndefined(e_.left.data);
+                            const nullorUndefined = SideEffects.toNullOrUndefined(p, e_.left.data);
                             if (nullorUndefined.ok) {
                                 if (!nullorUndefined.value) {
                                     return e_.left;
@@ -15027,7 +15036,7 @@ fn NewParser_(
                             }
                         },
                         .bin_logical_or => {
-                            const side_effects = SideEffects.toBoolean(e_.left.data);
+                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
                             if (side_effects.ok and side_effects.value) {
                                 return e_.left;
                             } else if (side_effects.ok and side_effects.side_effects == .no_side_effects) {
@@ -15042,7 +15051,7 @@ fn NewParser_(
                             }
                         },
                         .bin_logical_and => {
-                            const side_effects = SideEffects.toBoolean(e_.left.data);
+                            const side_effects = SideEffects.toBoolean(p, e_.left.data);
                             if (side_effects.ok) {
                                 if (!side_effects.value) {
                                     return e_.left;
@@ -15408,7 +15417,7 @@ fn NewParser_(
                                     if (p.options.features.minify_syntax)
                                         e_.value = SideEffects.simplifyBoolean(p, e_.value);
 
-                                    const side_effects = SideEffects.toBoolean(e_.value.data);
+                                    const side_effects = SideEffects.toBoolean(p, e_.value.data);
                                     if (side_effects.ok) {
                                         return p.newExpr(E.Boolean{ .value = !side_effects.value }, expr.loc);
                                     }
@@ -15560,7 +15569,7 @@ fn NewParser_(
 
                     e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 
-                    const side_effects = SideEffects.toBoolean(e_.test_.data);
+                    const side_effects = SideEffects.toBoolean(p, e_.test_.data);
 
                     if (!side_effects.ok) {
                         e_.yes = p.visitExpr(e_.yes);
@@ -17307,7 +17316,7 @@ fn NewParser_(
                     const orig_dead = p.is_control_flow_dead;
                     if (p.options.features.replace_exports.count() > 0) {
                         if (p.options.features.replace_exports.getPtr("default")) |entry| {
-                            p.is_control_flow_dead = entry.* != .replace;
+                            p.is_control_flow_dead = p.options.features.dead_code_elimination and (entry.* != .replace);
                             mark_for_replace = true;
                         }
                     }
@@ -17733,7 +17742,7 @@ fn NewParser_(
                     data.body = p.visitLoopBody(data.body);
 
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);
-                    const result = SideEffects.toBoolean(data.test_.data);
+                    const result = SideEffects.toBoolean(p, data.test_.data);
                     if (result.ok and result.side_effects == .no_side_effects) {
                         data.test_ = p.newExpr(E.Boolean{ .value = result.value }, data.test_.loc);
                     }
@@ -17751,7 +17760,7 @@ fn NewParser_(
                         data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                     }
 
-                    const effects = SideEffects.toBoolean(data.test_.data);
+                    const effects = SideEffects.toBoolean(p, data.test_.data);
                     if (effects.ok and !effects.value) {
                         const old = p.is_control_flow_dead;
                         p.is_control_flow_dead = true;
@@ -17783,7 +17792,7 @@ fn NewParser_(
                     if (p.options.features.minify_syntax) {
                         if (effects.ok) {
                             if (effects.value) {
-                                if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(data.no.?, p.allocator)) {
+                                if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
                                         if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
@@ -17797,7 +17806,7 @@ fn NewParser_(
                                 }
                             } else {
                                 // The test is falsy
-                                if (!SideEffects.shouldKeepStmtInDeadControlFlow(data.yes, p.allocator)) {
+                                if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
                                         if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
@@ -17852,7 +17861,7 @@ fn NewParser_(
                         if (data.test_) |test_| {
                             data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
 
-                            const result = SideEffects.toBoolean(data.test_.?.data);
+                            const result = SideEffects.toBoolean(p, data.test_.?.data);
                             if (result.ok and result.value and result.side_effects == .no_side_effects) {
                                 data.test_ = null;
                             }
@@ -17993,7 +18002,8 @@ fn NewParser_(
                 .s_function => |data| {
                     // We mark it as dead, but the value may not actually be dead
                     // We just want to be sure to not increment the usage counts for anything in the function
-                    const mark_as_dead = data.func.flags.contains(.is_export) and p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.func.name.?.ref.?);
+                    const mark_as_dead = p.options.features.dead_code_elimination and data.func.flags.contains(.is_export) and
+                        p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.func.name.?.ref.?);
                     const original_is_dead = p.is_control_flow_dead;
 
                     if (mark_as_dead) {
@@ -18043,7 +18053,8 @@ fn NewParser_(
                     return;
                 },
                 .s_class => |data| {
-                    const mark_as_dead = data.is_export and p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.class.class_name.?.ref.?);
+                    const mark_as_dead = p.options.features.dead_code_elimination and data.is_export and
+                        p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.class.class_name.?.ref.?);
                     const original_is_dead = p.is_control_flow_dead;
 
                     if (mark_as_dead) {
@@ -18295,7 +18306,7 @@ fn NewParser_(
                         if (decl.binding.data == .b_identifier) {
                             if (p.options.features.replace_exports.getPtr(p.loadNameFromRef(decl.binding.data.b_identifier.ref))) |replacer| {
                                 replacement = replacer;
-                                if (replacer.* != .replace) {
+                                if (p.options.features.dead_code_elimination and (replacer.* != .replace)) {
                                     p.is_control_flow_dead = true;
                                 }
                             }
@@ -19720,7 +19731,7 @@ fn NewParser_(
                 if (p.is_control_flow_dead) {
                     var end: usize = 0;
                     for (visited.items) |item| {
-                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
+                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, item, p.allocator)) {
                             continue;
                         }
 
@@ -19809,7 +19820,9 @@ fn NewParser_(
             var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
             for (stmts.items) |stmt| {
-                if (is_control_flow_dead and !SideEffects.shouldKeepStmtInDeadControlFlow(stmt, p.allocator)) {
+                if (is_control_flow_dead and p.options.features.dead_code_elimination and
+                    !SideEffects.shouldKeepStmtInDeadControlFlow(p, stmt, p.allocator))
+                {
                     // Strip unnecessary statements if the control flow is dead here
                     continue;
                 }

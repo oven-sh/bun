@@ -18,7 +18,7 @@ $ bun create remix
    dir   Where should we create your new project?
          ./my-app
 
-      ◼  Using basic template See https://remix.run/docs/pages/templates for more
+      ◼  Using basic template See https://remix.run/docs/en/main/guides/templates#templates for more
       ✔  Template copied
 
    git   Initialize a new git repository?

@@ -72,13 +72,13 @@ public:
     JSValue exportsObject();
     JSValue id();
 
+    DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
     static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject,
         JSC::PropertyName propertyName, JSC::JSValue value,
         JSC::PutPropertySlot& slot);
 
-    DECLARE_INFO;
     template<typename, SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 

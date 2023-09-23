@@ -2853,7 +2853,7 @@ JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm()
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {
-    return static_cast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
+    return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue

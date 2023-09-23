@@ -316,6 +316,7 @@ pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) JSValue {
+    JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;
     return .undefined;
@@ -324,14 +325,20 @@ pub export fn Bun__Process__disconnect(
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
 pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    JSC.markBinding(@src());
+
     global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
 }
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    JSC.markBinding(@src());
+
     var jsc_vm = globalObject.bunVM();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
@@ -341,6 +348,8 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    JSC.markBinding(@src());
+
     var concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
     concurrent.* = JSC.ConcurrentTask{
         .task = Task.init(task),
@@ -350,6 +359,8 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    JSC.markBinding(@src());
+
     const result = promise.result(global.vm());
     var jsc_vm = global.bunVM();
 
@@ -1027,6 +1038,8 @@ pub const VirtualMachine = struct {
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
+        JSC.markBinding(@src());
+
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
@@ -1080,6 +1093,7 @@ pub const VirtualMachine = struct {
     pub fn initWithModuleGraph(
         opts: Options,
     ) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
@@ -1176,6 +1190,7 @@ pub const VirtualMachine = struct {
     };
 
     pub fn init(opts: Options) !*VirtualMachine {
+        JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
         if (opts.log) |__log| {
@@ -1305,6 +1320,7 @@ pub const VirtualMachine = struct {
         worker: *WebWorker,
         opts: Options,
     ) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
         var log: *logger.Log = undefined;
         const allocator = opts.allocator;
         if (opts.log) |__log| {

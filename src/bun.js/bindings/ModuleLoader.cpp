@@ -138,7 +138,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
@@ -533,7 +533,7 @@ JSValue fetchCommonJSModule(
             RELEASE_AND_RETURN(scope, {});
         }
 
-        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, value.isCell() && value.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
     }

@@ -620,7 +620,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             continue;
 
                         JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
                         Process* process = jsCast<Process*>(globalObject->processObject());
 
@@ -679,7 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1168,7 +1168,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
 {
     auto& vm = jsGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto process = jsCast<Process*>(globalObject->processObject());
     auto moduleName = callFrame->argument(0).toWTFString(globalObject);
 
@@ -1624,7 +1624,7 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
     JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
         String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
 
-    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, JSC::PropertyAttribute::Function | 0);
+    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, 0);
     return memoryUsage;
 }
 
@@ -1647,14 +1647,14 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSValue nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        Bun::JSNextTickQueue* queue = Bun::JSNextTickQueue::create(globalObject);
-        globalObject->m_nextTickQueue.set(vm, globalObject, queue);
-        nextTickQueueObject = queue;
+        nextTickQueueObject = Bun::JSNextTickQueue::create(globalObject);
+        globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(nextTickQueueObject);
@@ -1896,7 +1896,6 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
   kill                             Process_functionKill                     Function 2
-  mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
   nextTick                         constructProcessNextTickFn               PropertyCallback

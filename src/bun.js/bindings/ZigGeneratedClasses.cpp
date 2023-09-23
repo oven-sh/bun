@@ -150,7 +150,7 @@ void JSAttributeIteratorPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObje
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAttributeIterator::info(), JSAttributeIteratorPrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->iteratorSymbol, JSFunction::create(vm, globalObject, 1, String("iterator"_s), AttributeIteratorPrototype__iteratorCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->iteratorSymbol, JSFunction::create(vm, globalObject, 1, String("iterator"_s), AttributeIteratorPrototype__iteratorCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -2752,7 +2752,7 @@ void JSBuildMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSBuildMessage::info(), JSBuildMessagePrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), BuildMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), BuildMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("BuildMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -18253,7 +18253,7 @@ void JSResolveMessagePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject*
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSResolveMessage::info(), JSResolveMessagePrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), ResolveMessagePrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, String("ResolveMessage"_s)), PropertyAttribute::ReadOnly | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -27082,7 +27082,7 @@ void JSTimeoutPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTimeout::info(), JSTimeoutPrototypeTableValues, *this);
-    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), TimeoutPrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    this->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSFunction::create(vm, globalObject, 1, String("toPrimitive"_s), TimeoutPrototype__toPrimitiveCallback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

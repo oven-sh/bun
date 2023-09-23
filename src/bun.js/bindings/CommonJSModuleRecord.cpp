@@ -213,7 +213,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
-    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), static_cast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), PropertyAttribute::Function | 0);
+    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), PropertyAttribute::Function | 0);
 
     return prototype;
 }
@@ -480,10 +480,11 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
-        ASSERT(inherits(info()));
-        reifyStaticProperties(vm, JSCommonJSModule::info(), JSCommonJSModulePrototypeTableValues, *this);
+        // ASSERT(inherits(info()));
 
-        this->putDirect(vm, clientData(vm)->builtinNames().requirePublicName(), (static_cast<Zig::GlobalObject*>(globalObject))->requireFunctionUnbound(), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
+        reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+
+        this->putDirect(vm, clientData(vm)->builtinNames().requirePublicName(), (jsCast<Zig::GlobalObject*>(globalObject))->requireFunctionUnbound(), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
 
         this->putDirectNativeFunction(
             vm,
@@ -494,7 +495,7 @@ public:
     }
 };
 
-const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
+const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "ModulePrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
 {

@@ -3070,6 +3070,14 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
+    m_esModuleRegistry.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
+            auto* globalObject = init.owner;
+            auto* loader = globalObject->moduleLoader();
+            JSMap* registry = jsCast<JSMap*>(loader->getDirect(init.vm, Identifier::fromString(init.vm, "registry"_s)));
+            init.set(registry);
+        });
+
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             auto& vm = init.vm;
@@ -3796,6 +3804,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
+    thisObject->m_esModuleRegistry.visit(visitor);
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);

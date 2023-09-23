@@ -343,6 +343,7 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
+const TranspilerJob = JSC.RuntimeTranspilerStore.TranspilerJob;
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -350,6 +351,7 @@ pub const Task = TaggedPointerUnion(.{
     Microtask,
     MicrotaskForDefaultGlobalObject,
     AsyncTransformTask,
+    TranspilerJob,
     ReadFileTask,
     CopyFilePromiseTask,
     WriteFileTask,
@@ -755,6 +757,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(Lstat))) => {
                     var any: *Lstat = task.get(Lstat).?;
                     any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(TranspilerJob))) => {
+                    var job: *TranspilerJob = task.get(TranspilerJob).?;
+                    job.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Fstat))) => {
                     var any: *Fstat = task.get(Fstat).?;

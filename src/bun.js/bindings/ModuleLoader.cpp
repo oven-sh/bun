@@ -63,6 +63,13 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
     return promise;
 }
 
+extern "C" bool ModuleLoader__moduleIDExistsInRequireMapOrESMRegistry(Zig::GlobalObject* globalObject, BunString* specifier)
+{
+    JSC::JSValue specifierValue = Bun::toJS(globalObject, *specifier);
+
+    return globalObject->requireMap()->has(globalObject, specifierValue) || globalObject->esModuleRegistry()->has(globalObject, specifierValue);
+}
+
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
 static JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
@@ -484,8 +491,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    auto* loader = globalObject->moduleLoader();
-    JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+    JSMap* registry = globalObject->esModuleRegistry();
 
     auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);

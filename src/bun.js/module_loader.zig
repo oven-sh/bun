@@ -188,10 +188,36 @@ pub const RuntimeTranspilerStore = struct {
     store: TranspilerJob.Store,
     enabled: bool = true,
 
+    sync_transpilation_mutex: bun.Lock = bun.Lock.init(),
+    pending_transpilations: std.StringHashMap(*TranspilerJob) = .{},
+
+    pub const SyncQueue = bun.UnboundedQueue(TranspilerJob, .next);
+
     pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
             .store = TranspilerJob.Store.init(allocator),
         };
+    }
+
+    fn createJob(this: *RuntimeTranspilerStore, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, path: Fs.Path, promise: JSC.JSValue, referrer: []const u8) *TranspilerJob {
+        var owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
+        var job: *TranspilerJob = this.store.get();
+
+        job.* = TranspilerJob{
+            .path = owned_path,
+            .globalThis = globalObject,
+            .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
+            .vm = vm,
+            .log = logger.Log.init(bun.default_allocator),
+            .loader = vm.bundler.options.loader(owned_path.name.ext),
+            .promise = if (promise != .zero) JSC.Strong.create(promise, globalObject) else .{},
+            .poll_ref = .{},
+            .fetcher = TranspilerJob.Fetcher{
+                .file = {},
+            },
+        };
+
+        return job;
     }
 
     pub fn transpile(
@@ -201,26 +227,68 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: []const u8,
     ) *anyopaque {
+        var hash_entry = this.pending_transpilations.getOrPut(path.text) catch @panic("Out of memory");
+        if (hash_entry.found_existing) {
+            var job: *TranspilerJob = hash_entry.value_ptr.*;
+            if (job.generation_number == this.generation_number.load(.Monotonic)) {
+                var promise = job.promise.get() orelse brk: {
+                    job.promise.set(JSC.JSValue.fromCell(JSC.JSInternalPromise.create(globalObject)), globalObject);
+                    break :brk job.promise.get().?;
+                };
+                debug("transpile({s}) - returning existing promise", .{path.text});
+                job.onComplete(ModuleLoader.AsyncModule.fulfill);
+                return promise.asCell();
+            } else {
+                job.cancelled.store(true, .Monotonic);
+                debug("transpile({s}) - generation number mismatch ({d} vs {d})", .{ path.text, job.generation_number, this.generation_number.loadUnchecked() });
+            }
+        }
+
         debug("transpile({s})", .{path.text});
-        var job: *TranspilerJob = this.store.get();
-        var owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         var promise = JSC.JSInternalPromise.create(globalObject);
-        job.* = TranspilerJob{
-            .path = owned_path,
-            .globalThis = globalObject,
-            .referrer = bun.default_allocator.dupe(u8, referrer) catch unreachable,
-            .vm = vm,
-            .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.bundler.options.loader(owned_path.name.ext),
-            .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
-            .poll_ref = .{},
-            .fetcher = TranspilerJob.Fetcher{
-                .file = {},
-            },
-        };
+        var job = this.createJob(vm, globalObject, path, JSC.JSValue.fromCell(promise), referrer);
+        hash_entry.value_ptr.* = job;
         job.schedule();
+
         return promise;
     }
+
+    pub const RequireQueue = struct {
+        queue: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+
+        pub fn deinit(this: *RequireQueue) void {
+            this.queue.deinit();
+        }
+
+        extern fn ModuleLoader__moduleIDExistsInRequireMapOrESMRegistry(globalObject: *JSC.JSGlobalObject, specifier: *bun.String) bool;
+
+        pub fn drain(require_queue: *RequireQueue, path: Fs.Path, vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject) void {
+            const source_dir = path.name.dirWithTrailingSlash();
+            var resolver = &vm.bundler.resolver;
+            var store = &vm.transpiler_store;
+            const referrer = path.text;
+
+            for (require_queue.keys()) |module_id| {
+                var result = resolver.resolve(source_dir, module_id, .require) catch continue;
+                if (result.is_external or result.is_standalone_module) continue;
+                var current_path = result.path() orelse continue;
+
+                if (ModuleLoader__moduleIDExistsInRequireMapOrESMRegistry(globalThis, bun.String.init(current_path.text))) {
+                    continue;
+                }
+
+                var entry = store.pending_transpilations.getOrPut(current_path.text) catch @panic("Out of memory");
+                if (entry.found_existing) {
+                    continue;
+                }
+
+                var job = store.createJob(vm, globalThis, current_path, .zero, referrer);
+                entry.value_ptr.* = job;
+                entry.key_ptr.* = job.path.text;
+                job.schedule();
+            }
+        }
+    };
 
     pub const TranspilerJob = struct {
         path: Fs.Path,
@@ -236,8 +304,32 @@ pub const RuntimeTranspilerStore = struct {
         parse_error: ?anyerror = null,
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
+        next: ?*TranspilerJob = null,
+        ref_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(1),
+        cancelled: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        require_queue: RequireQueue = RequireQueue{},
+
+        pub const Status = enum(u32) {
+            pending,
+        };
 
         pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
+        pub fn ref(this: *TranspilerJob) void {
+            std.debug.assert(this.ref_count.fetchAdd(1, .Monotonic) != 0);
+        }
+
+        pub fn unref(this: *TranspilerJob) void {
+            this.cancelled.store(true, .Monotonic);
+            this.poll_ref.disableConcurrently(this.vm);
+
+            const prev_count = this.ref_count.fetchSub(1, .Monotonic);
+            const needs_deinit = prev_count == 1;
+            std.debug.assert(prev_count != 0);
+
+            if (needs_deinit) {
+                this.deinit();
+            }
+        }
 
         pub const Fetcher = union(enum) {
             virtual_module: bun.String,
@@ -250,29 +342,49 @@ pub const RuntimeTranspilerStore = struct {
             }
         };
 
-        pub fn deinit(this: *TranspilerJob) void {
+        fn deinit(this: *TranspilerJob) void {
+            _ = this.vm.transpiler_store.pending_transpilations.remove(this.path.text);
             bun.default_allocator.free(this.path.text);
             bun.default_allocator.free(this.referrer);
-
-            this.poll_ref.disable();
             this.fetcher.deinit();
             this.loader = options.Loader.file;
             this.path = Fs.Path.empty;
             this.log.deinit();
             this.promise.deinit();
+            this.require_queue.deinit();
             this.globalThis = undefined;
+            this.resolved_source.source_code.deref();
+            this.resolved_source.specifier.deref();
+            this.vm.transpiler_store.store.put(this);
         }
 
         threadlocal var ast_memory_store: ?*js_ast.ASTMemoryAllocator = null;
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.eventLoop().enqueueTaskConcurrent(
-                JSC.ConcurrentTask.fromCallback(this, runFromJSThread),
-            );
+            this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) void {
+            if (this.isCancelled()) {
+                this.unref();
+                return;
+            }
+
+            this.onComplete(ModuleLoader.AsyncModule.fulfill);
+        }
+
+        fn drainRequireQueue(this: *TranspilerJob) void {
+            if (!this.path.isFile()) {
+                return;
+            }
+
+            this.require_queue.drain(this.path, this.vm, this.globalThis);
+            this.require_queue.deinit();
+            this.require_queue = .{};
+        }
+
+        pub fn onComplete(this: *TranspilerJob, comptime fulfill: anytype) void {
             var vm = this.vm;
             var promise = this.promise.swap();
             var globalThis = this.globalThis;
@@ -282,6 +394,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
+            this.resolved_source = ResolvedSource{};
             resolved_source.source_url = specifier.toZigString();
 
             resolved_source.tag = brk: {
@@ -303,18 +416,19 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
-            if (!vm.transpiler_store.store.hive.in(this)) {
-                this.promise.deinit();
+
+            if (parse_error == null) {
+                this.drainRequireQueue();
             }
-            this.deinit();
 
-            _ = vm.transpiler_store.store.hive.put(this);
+            this.unref();
 
-            ModuleLoader.AsyncModule.fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
+            fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
         }
 
         pub fn schedule(this: *TranspilerJob) void {
             this.poll_ref.ref(this.vm);
+            this.ref();
             JSC.WorkPool.schedule(&this.work_task);
         }
 
@@ -322,15 +436,21 @@ pub const RuntimeTranspilerStore = struct {
             @fieldParentPtr(TranspilerJob, "work_task", work_task).run();
         }
 
-        pub fn run(this: *TranspilerJob) void {
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
+        inline fn isCancelled(this: *const TranspilerJob) bool {
+            return this.cancelled.load(.Monotonic) or this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic);
+        }
 
+        pub fn run(this: *TranspilerJob) void {
             defer this.dispatchToMainThread();
-            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
-                this.parse_error = error.TranspilerJobGenerationMismatch;
+
+            if (this.isCancelled()) {
+                // Allow the job to be freed from the main thread
                 return;
             }
+            var vm = this.vm;
+
+            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
 
             if (ast_memory_store == null) {
                 ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
@@ -349,7 +469,6 @@ pub const RuntimeTranspilerStore = struct {
             const loader = this.loader;
             this.log = logger.Log.init(bun.default_allocator);
 
-            var vm = this.vm;
             var bundler: bun.Bundler = undefined;
             bundler = vm.bundler;
             var allocator = arena.allocator();
@@ -516,6 +635,13 @@ pub const RuntimeTranspilerStore = struct {
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
                     }
+
+                    continue;
+                }
+
+                if (import_record.is_top_level_require and import_record.path.isFile()) {
+                    std.debug.assert(import_record.kind == .require);
+                    this.require_queue.queue.insert(import_record.path.text) catch continue;
                 }
             }
 

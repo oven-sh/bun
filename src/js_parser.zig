@@ -11669,6 +11669,7 @@ fn NewParser_(
                 .kind = kind,
                 .range = range,
                 .path = path,
+                .is_top_level_require = kind == .require and p.current_scope.parent == null,
             };
             p.import_records.append(record) catch unreachable;
             return @as(u32, @intCast(index));

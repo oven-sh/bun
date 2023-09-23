@@ -166,6 +166,9 @@ pub const ImportRecord = struct {
     /// If true, this import can be removed if it's unused
     is_external_without_side_effects: bool = false,
 
+    /// Used for async transpilation of CommonJS modules at runtime
+    is_top_level_require: bool = false,
+
     kind: ImportKind,
 
     tag: Tag = Tag.none,

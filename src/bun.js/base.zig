@@ -1611,6 +1611,11 @@ pub const PollRef = struct {
         this.status = .done;
     }
 
+    pub fn disableConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        this.unrefConcurrently(vm);
+        @atomicStore(Status, &this.status, Status.done, .Monotonic);
+    }
+
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *PollRef, loop: *uws.Loop) void {
         if (this.status != .active)
@@ -1645,10 +1650,15 @@ pub const PollRef = struct {
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unrefConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
-        if (this.status != .active)
-            return;
-        this.status = .inactive;
-        vm.event_loop_handle.?.unrefConcurrently();
+        switch (@atomicRmw(Status, &this.status, .Xchg, .inactive, .Monotonic)) {
+            .active => {
+                vm.event_loop_handle.?.unrefConcurrently();
+            },
+            .inactive => {},
+            .done => {
+                @atomicStore(Status, &this.status, .done, .Monotonic);
+            },
+        }
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -1657,14 +1667,6 @@ pub const PollRef = struct {
             return;
         this.status = .inactive;
         vm.pending_unref_counter +|= 1;
-    }
-
-    /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unrefOnNextTickConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
-        if (this.status != .active)
-            return;
-        this.status = .inactive;
-        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
     }
 
     /// Allow a poll to keep the process alive.
@@ -1677,10 +1679,15 @@ pub const PollRef = struct {
 
     /// Allow a poll to keep the process alive.
     pub fn refConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
-        if (this.status != .inactive)
-            return;
-        this.status = .active;
-        vm.event_loop_handle.?.refConcurrently();
+        switch (@atomicRmw(Status, &this.status, .Xchg, .inactive, .Monotonic)) {
+            .active => {},
+            .inactive => {
+                vm.event_loop_handle.?.refConcurrently();
+            },
+            .done => {
+                @atomicStore(Status, &this.status, .done, .Monotonic);
+            },
+        }
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *PollRef, loop: *JSC.EventLoop) void {

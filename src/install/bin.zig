@@ -20,7 +20,7 @@ pub const Bin = extern struct {
     tag: Tag = Tag.none,
     _padding_tag: [3]u8 = .{0} ** 3,
 
-    value: Value = Value{ .none = {} },
+    value: Value = std.mem.zeroes(Value),
 
     pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
         if (comptime !Environment.allow_assert)
@@ -67,36 +67,39 @@ pub const Bin = extern struct {
     }
 
     pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
-        return switch (this.tag) {
-            .none => Bin{ .tag = .none, .value = .{ .none = {} } },
-            .file => Bin{
-                .tag = .file,
-                .value = .{ .file = builder.append(String, this.value.file.slice(buf)) },
+        var cloned = std.mem.zeroes(Bin);
+        switch (this.tag) {
+            .none => {
+                cloned.tag = .none;
+                cloned.value.none = {};
             },
-            .named_file => Bin{
-                .tag = .named_file,
-                .value = .{
+            .file => {
+                cloned.tag = .file;
+                cloned.value = .{ .file = builder.append(String, this.value.file.slice(buf)) };
+            },
+            .named_file => {
+                cloned.tag = .named_file;
+                cloned.value = .{
                     .named_file = [2]String{
                         builder.append(String, this.value.named_file[0].slice(buf)),
                         builder.append(String, this.value.named_file[1].slice(buf)),
                     },
-                },
+                };
             },
-            .dir => Bin{
-                .tag = .dir,
-                .value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) },
+            .dir => {
+                cloned.tag = .dir;
+                cloned.value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) };
             },
             .map => {
                 for (this.value.map.get(prev_external_strings), 0..) |extern_string, i| {
                     extern_strings_slice[i] = builder.append(ExternalString, extern_string.slice(buf));
                 }
 
-                return .{
-                    .tag = .map,
-                    .value = .{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) },
-                };
+                cloned.tag = .map;
+                cloned.value = .{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) };
             },
-        };
+        }
+        return cloned;
     }
 
     pub const Value = extern union {

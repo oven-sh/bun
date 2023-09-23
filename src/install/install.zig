@@ -2129,14 +2129,21 @@ pub const PackageManager = struct {
                 github_api_domain = api_domain;
             }
         }
+
+        const owner = this.lockfile.str(&repository.owner);
+        const repo = this.lockfile.str(&repository.repo);
+        const committish = this.lockfile.str(&repository.committish);
+
         return std.fmt.allocPrint(
             this.allocator,
-            "https://{s}/repos/{s}/{s}/tarball/{s}",
+            "https://{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
                 github_api_domain,
-                this.lockfile.str(&repository.owner),
-                this.lockfile.str(&repository.repo),
-                this.lockfile.str(&repository.committish),
+                owner,
+                repo,
+                // repo might be empty if dep is https://github.com/... style
+                if (repo.len > 0) "/" else "",
+                committish,
             },
         ) catch unreachable;
     }

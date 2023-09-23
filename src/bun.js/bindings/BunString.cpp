@@ -3,7 +3,7 @@
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "helpers.h"
 #include "simdutf.h"
-#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/Seconds.h"
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
@@ -381,7 +381,7 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString *relativeStr)
+extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
 {
     auto base = Bun::toWTFString(*baseStr);
     auto relative = Bun::toWTFString(*relativeStr);

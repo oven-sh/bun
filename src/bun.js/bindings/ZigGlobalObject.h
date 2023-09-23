@@ -418,8 +418,9 @@ public:
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
-private:
     void addBuiltinGlobals(JSC::VM&);
+
+private:
     void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;

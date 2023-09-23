@@ -63,7 +63,7 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
     return result;
 
-#if BUN_DEBUG
+#if ENABLE_ASSERT
 #include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
@@ -120,16 +120,23 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
 InternalModuleRegistry* InternalModuleRegistry::create(VM& vm, Structure* structure)
 {
     InternalModuleRegistry* registry = new (NotNull, allocateCell<InternalModuleRegistry>(vm)) InternalModuleRegistry(vm, structure);
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
-        registry->internalField(static_cast<Field>(i))
-            .set(vm, registry, jsUndefined());
-    }
+    registry->finishCreation(vm);
     return registry;
+}
+
+void InternalModuleRegistry::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        this->internalField(static_cast<Field>(i)).set(vm, this, jsUndefined());
+    }
 }
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 48);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 0);
 }
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)

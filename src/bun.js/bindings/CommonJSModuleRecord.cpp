@@ -1010,8 +1010,6 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->CommonJSModuleObjectStructure(),
         filename, filename, dirname, nullptr);
 
-    auto& builtinNames = WebCore::builtinNames(vm);
-
     JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireFunctionUnbound(),
@@ -1024,7 +1022,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         moduleObject,
         ArgList(), 1, jsString(vm, String("require"_s)));
 
-    requireFunction->putDirect(vm, builtinNames.resolvePublicName(), resolveFunction, PropertyAttribute::Function | 0);
+    requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, PropertyAttribute::Function | 0);
 
     return requireFunction;
 }

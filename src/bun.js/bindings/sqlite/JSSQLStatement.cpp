@@ -1261,7 +1261,6 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    //create a test print
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());

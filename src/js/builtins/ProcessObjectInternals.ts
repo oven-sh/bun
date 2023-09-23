@@ -105,7 +105,7 @@ export function getStdinStream(fd) {
     if (event === "readable") {
       ref();
     }
-    return originalOn.call(this, event, listener);
+    return originalOn.$call(this, event, listener);
   };
 
   stream.fd = fd;
@@ -113,13 +113,13 @@ export function getStdinStream(fd) {
   const originalPause = stream.pause;
   stream.pause = function () {
     unref();
-    return originalPause.call(this);
+    return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
     ref();
-    return originalResume.call(this);
+    return originalResume.$call(this);
   };
 
   async function internalRead(stream) {

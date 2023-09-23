@@ -154,7 +154,7 @@ public:
 
     DECLARE_INFO;
 
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM&);
 };
 
 } // namespace Bun

@@ -4,7 +4,7 @@ function ReadStream(fd) {
   if (!(this instanceof ReadStream)) return new ReadStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").ReadStream.call(this, "", {
+  const stream = require("node:fs").ReadStream.$call(this, "", {
     fd,
   });
 
@@ -95,7 +95,7 @@ function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").WriteStream.call(this, "", {
+  const stream = require("node:fs").WriteStream.$call(this, "", {
     fd,
   });
 

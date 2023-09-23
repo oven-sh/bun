@@ -77,14 +77,17 @@ specifiers = [...weirdInternalSpecifiers, ...specifiers.flatMap(a => ["node:" + 
 
 for (let specifier of specifiers) {
   test(`stubbed CJS import.meta.require ${specifier}`, async () => {
+    console.log(`importing1 ${specifier}`);
     import.meta.require(specifier);
   });
 
   test(`stubbed CJS require ${specifier}`, async () => {
+    console.log(`importing2 ${specifier}`);
     require(specifier);
   });
 
   test(`stubbed import ${specifier}`, async () => {
+    console.log(`importing3 ${specifier}`);
     const mod = await import(specifier);
     if ("default" in mod) {
       expect(mod).toHaveProperty("default");

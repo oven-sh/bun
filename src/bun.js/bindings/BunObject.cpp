@@ -701,7 +701,7 @@ public:
 #undef bunObjectReadableStreamToJSONCodeGenerator
 #undef bunObjectReadableStreamToTextCodeGenerator
 
-const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &JSNonFinalObject::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
+const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, Base::info(), &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {

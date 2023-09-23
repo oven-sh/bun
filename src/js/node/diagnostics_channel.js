@@ -10,7 +10,7 @@ const ArrayPrototypeSplice = (array, start, deleteCount) => array.splice(start, 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const ReflectApply = Reflect.apply;
+const ReflectApply = Reflect["apply"];
 const PromiseResolve = Promise.resolve;
 const PromiseReject = Promise.reject;
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);

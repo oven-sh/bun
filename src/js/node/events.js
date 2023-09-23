@@ -14,7 +14,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 
 var defaultMaxListeners = 10;
 
-// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
+// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 const EventEmitter = function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
@@ -49,14 +49,14 @@ function emitError(emitter, args) {
   if (!events) throw args[0];
   var errorMonitor = events[kErrorMonitor];
   if (errorMonitor) {
-    for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
-      handler.apply(emitter, args);
+    for (var handler of ArrayPrototypeSlice.$call(errorMonitor)) {
+      handler.$apply(emitter, args);
     }
   }
   var handlers = events.error;
   if (!handlers) throw args[0];
-  for (var handler of ArrayPrototypeSlice.call(handlers)) {
-    handler.apply(emitter, args);
+  for (var handler of ArrayPrototypeSlice.$call(handlers)) {
+    handler.$apply(emitter, args);
   }
   return true;
 }
@@ -94,7 +94,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (handlers === undefined) return false;
 
   for (var handler of [...handlers]) {
-    handler.apply(this, args);
+    handler.$apply(this, args);
   }
   return true;
 };
@@ -108,7 +108,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   var handlers = events[type];
   if (handlers === undefined) return false;
   for (var handler of [...handlers]) {
-    var result = handler.apply(this, args);
+    var result = handler.$apply(this, args);
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -181,7 +181,7 @@ function overflowWarning(emitter, type, handlers) {
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
-  listener.apply(this, args);
+  listener.$apply(this, args);
 }
 
 EventEmitterPrototype.once = function once(type, fn) {
@@ -480,5 +480,7 @@ Object.assign(EventEmitter, {
   init: EventEmitter,
   listenerCount,
 });
+
+console.log("yippee");
 
 export default EventEmitter;

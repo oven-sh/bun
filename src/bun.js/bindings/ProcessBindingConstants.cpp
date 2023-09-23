@@ -685,9 +685,6 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 #ifdef O_DIRECTORY
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DIRECTORY"_s)), jsNumber(O_DIRECTORY));
 #endif
-#ifdef O_EXCL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
-#endif
 #ifdef O_NOATIME
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOATIME"_s)), jsNumber(O_NOATIME));
 #endif

@@ -414,7 +414,7 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     }
     try {
       before.run();
-      const result = fn.apply(this, args);
+      const result = fn.$apply(this, args);
       after.run();
       return result;
     } catch (ex) {

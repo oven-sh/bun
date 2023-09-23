@@ -411,11 +411,11 @@ static const HashTableValue JSBufferListPrototypeTableValues[]
 void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    this->setPrototypeDirect(vm, globalThis->objectPrototype());
     reifyStaticProperties(vm, JSBufferList::info(), JSBufferListPrototypeTableValues, *this);
+    ASSERT(inherits(info()));
 }
 
-const ClassInfo JSBufferListPrototype::s_info = { "BufferList"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListPrototype) };
+const ClassInfo JSBufferListPrototype::s_info = { "BufferList"_s, Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListPrototype) };
 
 void JSBufferListConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype)
 {

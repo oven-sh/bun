@@ -417,7 +417,7 @@ const Socket = (function (InternalSocket) {
       var tls = undefined;
 
       if (typeof bunTLS === "function") {
-        tls = bunTLS.call(this, port, host, true);
+        tls = bunTLS.$call(this, port, host, true);
         // Client always request Cert
         this._requestCert = true;
         this._rejectUnauthorized = rejectUnauthorized;
@@ -824,7 +824,7 @@ class Server extends EventEmitter {
       const options = this[bunSocketServerOptions];
 
       if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+        [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
       } else {

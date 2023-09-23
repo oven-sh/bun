@@ -278,7 +278,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   };
 
   const table = (head, columns) => {
-    const columnWidths = ArrayPrototypeMap.call(head, h => getStringWidth(h)) as number[];
+    const columnWidths = ArrayPrototypeMap.$call(head, h => getStringWidth(h)) as number[];
     const longestColumn = Math.max(...(ArrayPrototypeMap as any).$call(columns, a => a.length));
     const rows: any = $newArrayWithSize(longestColumn);
 
@@ -508,7 +508,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         const errorHandler = useStdout ? this._stdoutErrorHandler : this._stderrErrorHandler;
 
         if (groupIndent.length !== 0) {
-          if (StringPrototypeIncludes.call(string, "\n")) {
+          if (StringPrototypeIncludes.$call(string, "\n")) {
             // ?!
             string = (RegExpPrototypeSymbolReplace.$call as any)(/\n/g, string, `\n${groupIndent}`);
           }
@@ -657,7 +657,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (!expression) {
         args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
         // The arguments will be formatted in warn() again
-        Reflect.apply(this.warn, this, args);
+        Reflect.$apply(this.warn, this, args);
       }
     },
 
@@ -698,7 +698,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     group(...data) {
       if (data.length > 0) {
-        Reflect.apply(this.log, this, data);
+        Reflect.$apply(this.log, this, data);
       }
       this[kGroupIndent] += StringPrototypeRepeat.$call(" ", this[kGroupIndentationWidth]);
     },

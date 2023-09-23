@@ -12,7 +12,7 @@ const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
  *  field-vchar    = VCHAR / obs-text
  */
 function checkInvalidHeaderChar(val: string) {
-  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
 }
 
 const validateHeaderName = (name, label) => {
@@ -1385,7 +1385,7 @@ class ClientRequest extends OutgoingMessage {
 
     if (options.path) {
       const path = String(options.path);
-      if (RegExpPrototypeExec.call(INVALID_PATH_REGEX, path) !== null) {
+      if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
         $debug('Path contains unescaped characters: "%s"', path);
         throw new Error("Path contains unescaped characters");
         // throw new ERR_UNESCAPED_CHARACTERS("Request path");
@@ -1432,7 +1432,7 @@ class ClientRequest extends OutgoingMessage {
         // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
         throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
       }
-      method = this.#method = StringPrototypeToUpperCase.call(method);
+      method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
       method = this.#method = "GET";
     }
@@ -1509,7 +1509,7 @@ class ClientRequest extends OutgoingMessage {
       //   // For the Host header, ensure that IPv6 addresses are enclosed
       //   // in square brackets, as defined by URI formatting
       //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      //   const posColon = StringPrototypeIndexOf.call(hostHeader, ":");
+      //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
       //   if (
       //     posColon !== -1 &&
       //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
@@ -1608,8 +1608,8 @@ function urlToHttpOptions(url) {
   return {
     protocol,
     hostname:
-      typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
-        ? StringPrototypeSlice.call(hostname, 1, -1)
+      typeof hostname === "string" && StringPrototypeStartsWith.$call(hostname, "[")
+        ? StringPrototypeSlice.$call(hostname, 1, -1)
         : hostname,
     hash,
     search,
@@ -1640,7 +1640,7 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
 function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.call(tokenRegExp, val) !== null;
+  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.

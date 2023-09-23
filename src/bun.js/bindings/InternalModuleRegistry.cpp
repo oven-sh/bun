@@ -63,7 +63,7 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
     return result;
 
-#if ENABLE_ASSERT
+#if BUN_DEBUG
 #include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \

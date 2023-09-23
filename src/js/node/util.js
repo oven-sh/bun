@@ -91,7 +91,7 @@ function deprecate(fn, msg, code) {
       }
       warned = true;
     }
-    return fn.apply(this, arguments);
+    return fn.$apply(this, arguments);
   }
   return deprecated;
 }
@@ -114,7 +114,7 @@ function debuglog(set) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       debugs[set] = function () {
-        var msg = format.apply(cjs_exports, arguments);
+        var msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -206,7 +206,7 @@ function formatValue(ctx, value, recurseTimes) {
   if (ctx.customInspect && value) {
     const customInspect = value[kInspectCustom];
     if (isFunction(customInspect)) {
-      var ret = customInspect.call(value, recurseTimes, ctx, inspect);
+      var ret = customInspect.$call(value, recurseTimes, ctx, inspect);
       if (!isString(ret)) {
         ret = formatValue(ctx, ret, recurseTimes);
       }
@@ -231,10 +231,10 @@ function formatValue(ctx, value, recurseTimes) {
       return ctx.stylize("[Function" + name + "]", "special");
     }
     if (isRegExp(value)) {
-      return ctx.stylize(RegExp.prototype.toString.call(value), "regexp");
+      return ctx.stylize(RegExp.prototype.toString.$call(value), "regexp");
     }
     if (isDate(value)) {
-      return ctx.stylize(Date.prototype.toString.call(value), "date");
+      return ctx.stylize(Date.prototype.toString.$call(value), "date");
     }
     if (isError(value)) {
       return formatError(value);
@@ -252,10 +252,10 @@ function formatValue(ctx, value, recurseTimes) {
     base = " [Function" + n + "]";
   }
   if (isRegExp(value)) {
-    base = " " + RegExp.prototype.toString.call(value);
+    base = " " + RegExp.prototype.toString.$call(value);
   }
   if (isDate(value)) {
-    base = " " + Date.prototype.toUTCString.call(value);
+    base = " " + Date.prototype.toUTCString.$call(value);
   }
   if (isError(value)) {
     base = " " + formatError(value);
@@ -265,7 +265,7 @@ function formatValue(ctx, value, recurseTimes) {
   }
   if (recurseTimes < 0) {
     if (isRegExp(value)) {
-      return ctx.stylize(RegExp.prototype.toString.call(value), "regexp");
+      return ctx.stylize(RegExp.prototype.toString.$call(value), "regexp");
     } else {
       return ctx.stylize("[Object]", "special");
     }
@@ -293,7 +293,7 @@ function formatPrimitive(ctx, value) {
   if (isNull(value)) return ctx.stylize("null", "null");
 }
 function formatError(value) {
-  return "[" + Error.prototype.toString.call(value) + "]";
+  return "[" + Error.prototype.toString.$call(value) + "]";
 }
 function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
   var output = [];
@@ -447,7 +447,7 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), format.apply(cjs_exports, arguments));
+  console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
   ctor.super_ = superCtor;
@@ -470,7 +470,7 @@ var _extend = function (origin, add) {
   return origin;
 };
 function hasOwnProperty(obj, prop) {
-  return Object.prototype.hasOwnProperty.call(obj, prop);
+  return Object.prototype.hasOwnProperty.$call(obj, prop);
 }
 var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
 var promisify = function promisify(original) {
@@ -506,7 +506,7 @@ var promisify = function promisify(original) {
       }
     });
     try {
-      original.apply(this, args);
+      original.$apply(this, args);
     } catch (err) {
       promiseReject(err);
     }
@@ -537,16 +537,16 @@ function callbackify(original) {
     throw new TypeError('The "original" argument must be of type Function');
   }
   function callbackified() {
-    var args = Array.prototype.slice.call(arguments);
+    var args = Array.prototype.slice.$call(arguments);
     var maybeCb = args.pop();
     if (typeof maybeCb !== "function") {
       throw new TypeError("The last argument must be of type Function");
     }
     var self = this;
     var cb = function () {
-      return maybeCb.apply(self, arguments);
+      return maybeCb.$apply(self, arguments);
     };
-    original.apply(this, args).then(
+    original.$apply(this, args).then(
       function (ret) {
         process.nextTick(cb, null, ret);
       },

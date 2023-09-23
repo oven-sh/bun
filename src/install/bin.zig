@@ -67,7 +67,9 @@ pub const Bin = extern struct {
     }
 
     pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
-        var cloned = std.mem.zeroes(Bin);
+        var cloned: Bin = Bin{};
+        @memset(std.mem.asBytes(&cloned), 0);
+
         switch (this.tag) {
             .none => {
                 cloned.tag = .none;

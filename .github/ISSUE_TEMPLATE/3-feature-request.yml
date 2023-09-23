@@ -8,7 +8,7 @@ body:
         Thank you for submitting an idea. It helps make Bun better.
 
         If you want to discuss Bun, or learn how others are using Bun, please
-        join our [Discord](https://discord.gg/CXdq2DP29u) server, where you can share in the [`#feedback-ideas`](https://discord.gg/unwUnHBNqy) channel.
+        join our [Discord](https://discord.gg/CXdq2DP29u) server, where you can share in the [`#feedback`](https://discord.gg/unwUnHBNqy) channel.
   - type: textarea
     attributes:
       label: What is the problem this feature would solve?

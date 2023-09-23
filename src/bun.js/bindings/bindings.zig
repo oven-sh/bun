@@ -3224,7 +3224,7 @@ pub const JSValue = enum(JSValueReprInt) {
             };
         }
 
-        pub fn isObject(this: JSType) bool {
+        pub inline fn isObject(this: JSType) bool {
             // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
             return @intFromEnum(this) >= @intFromEnum(JSType.Object);
         }

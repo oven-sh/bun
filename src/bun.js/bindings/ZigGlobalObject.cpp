@@ -217,6 +217,11 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
 #include "libusockets.h"
+#include "./webcrypto/CryptoKeyOKP.h"
+#include "./webcrypto/CryptoKeyEC.h"
+#include "./webcrypto/CryptoKeyRSA.h"
+#include <openssl/evp.h>
+#include <openssl/mem.h>
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -312,6 +317,136 @@ extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 // Rather than figure out the plumbing in JSC, we just skip the next call
 // TODO: thread_local for workers
 static bool skipNextComputeErrorInfo = false;
+
+static JSC::EncodedJSValue WebCrypto__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    // TODO: make this strings static constants
+    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+        auto id = key->wrapped().algorithmIdentifier();
+        switch (id) {
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("rsa"_s)));
+        case CryptoAlgorithmIdentifier::RSA_PSS:
+            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("rsa-pss"_s)));
+        case CryptoAlgorithmIdentifier::ECDSA:
+            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("dsa"_s)));
+        case CryptoAlgorithmIdentifier::ECDH:
+            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("dh"_s)));
+        case CryptoAlgorithmIdentifier::Ed25519:
+            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("ed25519"_s)));
+        default:
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+struct AsymmetricKeyValue {
+    EVP_PKEY* key;
+    bool owned;
+};
+
+static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
+{
+    auto id = key.algorithmIdentifier();
+    switch (id) {
+    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+    case CryptoAlgorithmIdentifier::RSA_OAEP:
+    case CryptoAlgorithmIdentifier::RSA_PSS:
+        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyRSA>(key).platformKey(), .owned = false };
+    case CryptoAlgorithmIdentifier::ECDSA:
+    case CryptoAlgorithmIdentifier::ECDH:
+        return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
+    case CryptoAlgorithmIdentifier::Ed25519:
+    {
+        //TODO: investigate if this is necessary or if comparing the raw key data is enough
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
+        auto keyData = okpKey.platformKey();
+        if (okpKey.type() == CryptoKeyType::Private) {
+            auto* evp_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
+            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+        } else {
+            auto* evp_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
+            return (AsymmetricKeyValue) { .key = evp_key, .owned = true };
+        }
+    }
+    default:
+        return (AsymmetricKeyValue) { .key = NULL, .owned = false };
+    }
+}
+
+// static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// {
+//     // if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+
+//     // }
+//     //REDO THIS
+// }
+static JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+        if (auto* key2 = jsDynamicCast<JSCryptoKey*>(callFrame->argument(1))) {
+            auto& wrapped = key->wrapped();
+            auto& wrapped2 = key2->wrapped();
+            auto key_type = wrapped.type();
+            if (key_type != wrapped2.type()) {
+                return JSC::JSValue::encode(jsBoolean(false));
+            }
+
+            if(key_type == CryptoKeyType::Secret) {
+                const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+                const auto& okpKey2 = downcast<WebCore::CryptoKeyOKP>(wrapped2);
+
+                auto keyData = okpKey.platformKey();
+                auto keyData2 = okpKey2.platformKey();
+                auto size = keyData.size();
+
+                if (size != keyData2.size()) {
+                    return JSC::JSValue::encode(jsBoolean(false));
+                }
+                return JSC::JSValue::encode(jsBoolean(CRYPTO_memcmp(keyData.data(), keyData2.data(), size) == 0));
+            }
+            auto evp_key = GetInternalAsymmetricKey(wrapped);
+            auto evp_key2 = GetInternalAsymmetricKey(wrapped2);
+
+            int ok = !evp_key.key || !evp_key2.key ? -2 : EVP_PKEY_cmp(evp_key.key, evp_key2.key);
+
+            if (evp_key.key && evp_key.owned) {
+                EVP_PKEY_free(evp_key.key);
+            }
+            if (evp_key2.key && evp_key2.owned) {
+                EVP_PKEY_free(evp_key2.key);
+            }
+            if (ok == -2) {
+                auto& vm = lexicalGlobalObject->vm();
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_CRYPTO_UNSUPPORTED_OPERATION"_s));
+                return JSValue::encode(JSC::jsUndefined());
+            }
+            return JSC::JSValue::encode(jsBoolean(ok == 1));
+        }
+    }
+    return JSC::JSValue::encode(jsBoolean(false));
+}
+
+static JSC::EncodedJSValue WebCrypto__SymmetricKeySize(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key->wrapped());
+
+        auto size = okpKey.keySizeInBytes();
+        if (!size) {
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+
+        return JSC::JSValue::encode(JSC::jsNumber(size));
+    }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
@@ -1759,6 +1894,25 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         if (string == "events"_s) {
             return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
         }
+
+        if (string == "internal/crypto"_s) {
+            // bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            // //             if (!isBuiltin) {
+            // //                 return JSC::JSValue::encode(JSC::jsUndefined());
+            // //             }
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, WebCrypto__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, WebCrypto__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, WebCrypto__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
+            // obj->putDirect(
+            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, WebCrypto__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            return JSValue::encode(obj);
+        }
+
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 

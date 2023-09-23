@@ -11889,6 +11889,45 @@ function getCurves() {
   return harcoded_curves;
 }
 
+const { symmetricKeySize, asymmetricKeyType, equals } = $lazy("internal/crypto");
+
+class KeyObject {
+  #cryptoKey;
+  constructor(key) {
+    if (!(key instanceof CryptoKey)) {
+      throw new TypeError("key must be a CryptoKey");
+    }
+    this.#cryptoKey = key;
+  }
+
+  static from(key) {
+    return new KeyObject(key);
+  }
+
+  get symmetricKeySize() {
+    return symmetricKeySize(this.#cryptoKey);
+  }
+
+  get asymmetricKeyType() {
+    return asymmetricKeyType(this.#cryptoKey);
+  }
+
+  export(options) {
+    return exports(this.#cryptoKey, options);
+  }
+
+  equals(otherKey) {
+    if (!(otherKey instanceof KeyObject)) {
+      throw new TypeError("otherKey must be a KeyObject");
+    }
+    return equals(this.#cryptoKey, otherKey.#cryptoKey);
+  }
+
+  get type() {
+    return this.#cryptoKey.type;
+  }
+}
+crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,

@@ -165,7 +165,7 @@ export function createRequireCache() {
     },
 
     has(target, key: string) {
-      return $requireMap.$has(key) || Loader.registry.$has(key);
+      return $requireMap.$has(key) || Boolean(Loader.registry.$get(key)?.evaluated);
     },
 
     deleteProperty(target, key: string) {

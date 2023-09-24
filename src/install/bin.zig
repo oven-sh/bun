@@ -20,7 +20,8 @@ pub const Bin = extern struct {
     tag: Tag = Tag.none,
     _padding_tag: [3]u8 = .{0} ** 3,
 
-    value: Value = std.mem.zeroes(Value),
+    // Largest member must be zero initialized
+    value: Value = Value{ .map = ExternalStringList{} },
 
     pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
         if (comptime !Environment.allow_assert)
@@ -112,6 +113,10 @@ pub const Bin = extern struct {
         }
 
         unreachable;
+    }
+
+    pub fn init() Bin {
+        return bun.serializable(.{ .tag = .none, .value = Value.init(.{ .none = {} }) });
     }
 
     pub const Value = extern union {

@@ -69,7 +69,7 @@ const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
 const VM = @import("root").bun.JSC.VM;
 const JSFunction = @import("root").bun.JSC.JSFunction;
 const Config = @import("../config.zig");
-const URL = @import("../../url.zig").URL;
+const URL = bun.URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
@@ -5215,6 +5215,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
             return JSC.JSValue.jsBoolean(debug_mode);
+        }
+
+        pub fn getURL(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue {
+            const pathParts = [_]string{ this.cached_hostname.toUTF8(this.allocator), this.getPort().toString().toUTF8(this.allocator) };
+            return URL.fromString(this.allocator, strings.concat(this.allocator, &pathParts)).toJS(globalThis);
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {

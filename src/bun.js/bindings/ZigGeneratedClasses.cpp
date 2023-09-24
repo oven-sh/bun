@@ -4203,6 +4203,9 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback);
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback);
 
+extern "C" JSC::EncodedJSValue DebugHTTPSServerPrototype__getURL(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPSServerPrototype__urlGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPSServerPrototype, JSDebugHTTPSServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
@@ -4217,7 +4220,8 @@ static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__reloadCallback, 2 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__stopCallback, 1 } },
-    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } }
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } },
+    { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__urlGetterWrap, 0 } }
 };
 
 const ClassInfo JSDebugHTTPSServerPrototype::s_info = { "DebugHTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPSServerPrototype) };
@@ -4496,6 +4500,18 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__upgradeCallback, (JSGlobalOb
     return DebugHTTPSServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPSServerPrototype__urlGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPSServer* thisObject = jsCast<JSDebugHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPSServerPrototype__getURL(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
 void JSDebugHTTPSServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -4685,6 +4701,9 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback);
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback);
 
+extern "C" JSC::EncodedJSValue DebugHTTPServerPrototype__getURL(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(DebugHTTPServerPrototype__urlGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDebugHTTPServerPrototype, JSDebugHTTPServerPrototype::Base);
 
 static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
@@ -4699,7 +4718,8 @@ static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__reloadCallback, 2 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__stopCallback, 1 } },
-    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } }
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } },
+    { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__urlGetterWrap, 0 } }
 };
 
 const ClassInfo JSDebugHTTPServerPrototype::s_info = { "DebugHTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDebugHTTPServerPrototype) };
@@ -4976,6 +4996,18 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__upgradeCallback, (JSGlobalObj
 #endif
 
     return DebugHTTPServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(DebugHTTPServerPrototype__urlGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSDebugHTTPServer* thisObject = jsCast<JSDebugHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = DebugHTTPServerPrototype__getURL(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 void JSDebugHTTPServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -11626,6 +11658,9 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback);
 extern "C" EncodedJSValue HTTPSServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback);
 
+extern "C" JSC::EncodedJSValue HTTPSServerPrototype__getURL(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPSServerPrototype__urlGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPSServerPrototype, JSHTTPSServerPrototype::Base);
 
 static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
@@ -11640,7 +11675,8 @@ static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__reloadCallback, 2 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__stopCallback, 1 } },
-    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } }
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } },
+    { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__urlGetterWrap, 0 } }
 };
 
 const ClassInfo JSHTTPSServerPrototype::s_info = { "HTTPSServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPSServerPrototype) };
@@ -11919,6 +11955,18 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__upgradeCallback, (JSGlobalObject 
     return HTTPSServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(HTTPSServerPrototype__urlGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPSServer* thisObject = jsCast<JSHTTPSServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPSServerPrototype__getURL(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
 void JSHTTPSServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -12108,6 +12156,9 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__stopCallback);
 extern "C" EncodedJSValue HTTPServerPrototype__doUpgrade(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback);
 
+extern "C" JSC::EncodedJSValue HTTPServerPrototype__getURL(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(HTTPServerPrototype__urlGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSHTTPServerPrototype, JSHTTPServerPrototype::Base);
 
 static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
@@ -12122,7 +12173,8 @@ static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__reloadCallback, 2 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__stopCallback, 1 } },
-    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } }
+    { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } },
+    { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__urlGetterWrap, 0 } }
 };
 
 const ClassInfo JSHTTPServerPrototype::s_info = { "HTTPServer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPServerPrototype) };
@@ -12399,6 +12451,18 @@ JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__upgradeCallback, (JSGlobalObject *
 #endif
 
     return HTTPServerPrototype__doUpgrade(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(HTTPServerPrototype__urlGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSHTTPServer* thisObject = jsCast<JSHTTPServer*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = HTTPServerPrototype__getURL(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 void JSHTTPServerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -27562,6 +27626,247 @@ extern "C" EncodedJSValue Transpiler__create(Zig::GlobalObject* globalObject, vo
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSTranspilerStructure();
     JSTranspiler* instance = JSTranspiler::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+class JSURLPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSURLPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSURLPrototype* ptr = new (NotNull, JSC::allocateCell<JSURLPrototype>(vm)) JSURLPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSURLPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSURLConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSURLConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSURLPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSURLConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForURLConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForURLConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForURLConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSURLPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSURLConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSURLPrototype* prototype);
+};
+
+extern "C" void* URLClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsURLConstructor);
+
+extern "C" void URLClass__finalize(void*);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSURLPrototype, JSURLPrototype::Base);
+
+static const HashTableValue JSURLPrototypeTableValues[] = {};
+
+const ClassInfo JSURLPrototype::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsURLConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSURLPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for URL"_s);
+    return JSValue::encode(globalObject->JSURLConstructor());
+}
+
+void JSURLPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSURLConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSURLPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "URL"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSURLConstructor::JSURLConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSURLConstructor* JSURLConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSURLPrototype* prototype)
+{
+    JSURLConstructor* ptr = new (NotNull, JSC::allocateCell<JSURLConstructor>(vm)) JSURLConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSURLConstructor();
+    Structure* structure = globalObject->JSURLStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSURLStructure());
+    }
+
+    void* ptr = URLClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSURL* instance = JSURL::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSURLConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSURLPrototype* prototype)
+{
+}
+
+const ClassInfo JSURLConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLConstructor) };
+
+extern "C" EncodedJSValue URL__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSURLConstructor());
+}
+
+JSURL::~JSURL()
+{
+    if (m_ctx) {
+        URLClass__finalize(m_ctx);
+    }
+}
+void JSURL::destroy(JSCell* cell)
+{
+    static_cast<JSURL*>(cell)->JSURL::~JSURL();
+}
+
+const ClassInfo JSURL::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURL) };
+
+void JSURL::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSURL* JSURL::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSURL* ptr = new (NotNull, JSC::allocateCell<JSURL>(vm)) JSURL(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* URL__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSURL* object = JSC::jsDynamicCast<JSURL*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool URL__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSURL* object = JSC::jsDynamicCast<JSURL*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t URL__ptrOffset = JSURL::offsetOfWrapped();
+
+void JSURL::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSURL*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSURL::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSURLConstructor::create(vm, globalObject, WebCore::JSURLConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSURLPrototype*>(prototype));
+}
+
+JSObject* JSURL::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSURLPrototype::create(vm, globalObject, JSURLPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue URL__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSURLStructure();
+    JSURL* instance = JSURL::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }

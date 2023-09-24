@@ -14,7 +14,7 @@ const C = bun.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
-const URL = @import("./url.zig").URL;
+const URL = bun.URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 

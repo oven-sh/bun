@@ -305,6 +305,12 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSTranspiler::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSTranspiler::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSURL.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSURL::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSURL::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSURL::createConstructor(init.vm, init.global, init.prototype));
+              });
 }
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
@@ -360,4 +366,5 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSTextDecoder.visit(visitor);
       thisObject->m_JSTimeout.visit(visitor);
       thisObject->m_JSTranspiler.visit(visitor);
+      thisObject->m_JSURL.visit(visitor);
 }

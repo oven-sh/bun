@@ -1034,8 +1034,11 @@ pub fn zero(comptime Type: type) Type {
     return @as(Type, @bitCast(out));
 }
 pub const c_ares = @import("./deps/c_ares.zig");
-pub const URL = @import("./url.zig").URL;
-pub const FormData = @import("./url.zig").FormData;
+pub const URL = @import("./bun.js/url.zig").URL;
+pub const FormData = @import("./bun.js/url.zig").FormData;
+pub const QueryStringMap = @import("./bun.js/url.zig").QueryStringMap;
+pub const PercentEncoding = @import("./bun.js/url.zig").PercentEncoding;
+pub const CombinedScanner = @import("./bun.js/url.zig").CombinedScanner;
 
 var needs_proc_self_workaround: bool = false;
 

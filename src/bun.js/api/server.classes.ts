@@ -47,6 +47,9 @@ function generate(name) {
       development: {
         getter: "getDevelopment",
       },
+      url: {
+        getter: "getURL",
+      },
     },
     klass: {},
     finalize: true,

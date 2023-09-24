@@ -1,6 +1,6 @@
 const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
+const Api = @import("../api/schema.zig").Api;
+const resolve_path = @import("../resolver/resolve_path.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -12,6 +12,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
+const CppURL = @import("./bindings/bindings.zig").CppURL;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
@@ -36,17 +37,29 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
-    pub fn isFile(this: *const URL) bool {
-        return strings.eqlComptime(this.protocol, "file");
+    pub usingnamespace JSC.Codegen.JSURL;
+    pub usingnamespace CppURL;
+
+    pub fn constructor(
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) ?*URL {
+        globalThis.throw("URL is not constructable", .{});
+        return null;
     }
 
-    pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
-        var href = JSC.URL.hrefFromJS(globalObject, js_value);
-        if (href.tag == .Dead) {
-            return error.InvalidURL;
-        }
+    pub fn finalize(_: *URL) callconv(.C) void {}
 
-        return URL.parse(try href.toOwnedSlice(allocator));
+    pub fn create(
+        globalThis: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) JSC.JSValue {
+        var build_error = allocator.create(JSC.URL) catch unreachable;
+        return build_error.toJS(globalThis, allocator);
+    }
+
+    pub fn isFile(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "file");
     }
 
     pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
@@ -1270,7 +1283,7 @@ pub const FormData = struct {
     }
 };
 
-const ParamsList = @import("./router.zig").Param.List;
+const ParamsList = @import("../router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
     pathname: PathnameScanner,

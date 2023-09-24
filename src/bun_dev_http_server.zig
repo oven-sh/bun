@@ -67,7 +67,7 @@ const JavaScriptCore = JavaScriptCore.C;
 const Syscall = bun.sys;
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
-const ZigURL = @import("./url.zig").URL;
+const ZigURL = bun.URL;
 
 const HTTPStatusCode = u10;
 const URLPath = @import("./http/url_path.zig");

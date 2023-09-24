@@ -121,6 +121,7 @@
   color: var(--bun-error-color);
   font-size: 16pt;
   font-weight: bold;
+  padding: 8px 0;
 }
 
 .BunError-list {

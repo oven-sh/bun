@@ -414,7 +414,7 @@ const AsyncSourceLines = ({
         controller.current = null;
       }
     };
-  }, [controller, setLoadState, setSourceLines, url, highlight]);
+  }, [controller, setLoadState, url, highlight]);
 
   switch (loadState) {
     case LoadState.pending: {
@@ -710,6 +710,7 @@ const NativeStackFrame = ({
 };
 
 const NativeStackFrames = ({ frames, urlBuilder }) => {
+  frames = frames.filter(({ scope }: StackFrame) => scope !== undefined);
   const items = new Array(frames.length);
   var maxLength = 0;
 
@@ -760,10 +761,11 @@ const NativeStackTrace = ({
     (line, column) => urlBuilder(file, line, column),
     [file, urlBuilder],
   );
+  const isEditorOpen = filename.length > 0 && position.line !== -1 && position.column_start !== -1;
 
   return (
     <div ref={ref} className={`BunError-NativeStackTrace`}>
-      <a
+      {isEditorOpen && <a
         href={urlBuilder(filename, position.line, position.column_start)}
         data-line={position.line}
         data-column={position.column_start}
@@ -773,7 +775,7 @@ const NativeStackTrace = ({
         className="BunError-NativeStackTrace-filename"
       >
         {filename}:{position.line}:{position.column_start}
-      </a>
+      </a>}
       {sourceLines.length > 0 && (
         <SourceLines
           highlight={position.line}

@@ -72,7 +72,7 @@ $ bun --watch run dev # ✔️ do this
 $ bun run dev --watch # ❌ don't do this
 ```
 
-Flags that occur at the end of the command will be ignores and passed through to the `"dev"` script itself.
+Flags that occur at the end of the command will be ignored and passed through to the `"dev"` script itself.
 {% /callout %}
 
 ### `--smol`

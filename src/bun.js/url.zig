@@ -12,6 +12,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
+const ZigString = JSC.ZigString;
 const CppURL = @import("./bindings/bindings.zig").CppURL;
 
 // This is close to WHATWG URL, but we don't want the validation errors
@@ -49,6 +50,29 @@ pub const URL = struct {
     }
 
     pub fn finalize(_: *URL) callconv(.C) void {}
+
+    pub fn toJSON(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var object = JSC.JSValue.createEmptyObject(globalThis, 3);
+        object.put(globalThis, ZigString.static("name"), ZigString.init("URL").toValueGC(globalThis));
+        object.put(globalThis, ZigString.static("hash"), ZigString.init(this.hash).toValueGC(globalThis));
+        object.put(globalThis, ZigString.static("host"), ZigString.init(this.host).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("hostname"), ZigString.init(this.hostname).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("href"), ZigString.init(this.href).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("origin"), ZigString.init(this.origin).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("password"), ZigString.init(this.password).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("pathname"), ZigString.init(this.pathname).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("port"), ZigString.init(this.port).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("protocol"), ZigString.init(this.protocol).toValueGC(globalThis));
+        // object.put(globalThis, ZigString.static("search"), ZigString.init(this.search).toValueGC(globalThis));
+        // // object.put(globalThis, ZigString.static("searchParams"), this.searchParams);
+        // object.put(globalThis, ZigString.static("username"), ZigString.init(this.username).toValueGC(globalThis));
+
+        return object;
+    }
 
     pub fn create(
         globalThis: *JSC.JSGlobalObject,

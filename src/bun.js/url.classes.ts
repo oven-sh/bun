@@ -9,6 +9,10 @@ export default [
       klass: {},
       JSType: "0b11101110",
       proto: {
+        ["toJSON"]: {
+          fn: "toJSON",
+          length: 0,
+        },
       },
     })
 ]

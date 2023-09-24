@@ -7145,9 +7145,12 @@ pub const JSURL = struct {
             @compileLog("URL.finalize is not a finalizer");
         }
 
+        if (@TypeOf(URL.toJSON) != CallbackType)
+            @compileLog("Expected URL.toJSON to be a callback but received " ++ @typeName(@TypeOf(URL.toJSON)));
         if (!JSC.is_bindgen) {
             @export(URL.constructor, .{ .name = "URLClass__construct" });
             @export(URL.finalize, .{ .name = "URLClass__finalize" });
+            @export(URL.toJSON, .{ .name = "URLPrototype__toJSON" });
         }
     }
 };

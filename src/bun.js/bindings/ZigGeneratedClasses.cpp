@@ -27702,9 +27702,14 @@ JSC_DECLARE_CUSTOM_GETTER(jsURLConstructor);
 
 extern "C" void URLClass__finalize(void*);
 
+extern "C" EncodedJSValue URLPrototype__toJSON(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(URLPrototype__toJSONCallback);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSURLPrototype, JSURLPrototype::Base);
 
-static const HashTableValue JSURLPrototypeTableValues[] = {};
+static const HashTableValue JSURLPrototypeTableValues[] = {
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, URLPrototype__toJSONCallback, 0 } }
+};
 
 const ClassInfo JSURLPrototype::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPrototype) };
 
@@ -27720,10 +27725,38 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLConstructor, (JSGlobalObject * lexicalGlobalObject
     return JSValue::encode(globalObject->JSURLConstructor());
 }
 
+JSC_DEFINE_HOST_FUNCTION(URLPrototype__toJSONCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSURL* thisObject = jsDynamicCast<JSURL*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof URL"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return URLPrototype__toJSON(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 void JSURLPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-
+    reifyStaticProperties(vm, JSURL::info(), JSURLPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

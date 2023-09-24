@@ -5226,7 +5226,24 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const port = this.getPort(globalThis).toSlice(globalThis, this.allocator).slice();
             const url_string = strings.concat(this.allocator, &.{ protocol, hostname, ":", port }) catch "http://www.google.com";
             var tmp = URL.parse(url_string);
-            return tmp.toJS(globalThis);
+            var url = bun.default_allocator.create(URL) catch @panic("Unable to allocate URL");
+            url.* = URL{
+                .hash = tmp.hash,
+                .host = tmp.host,
+                .hostname = tmp.hostname,
+                .href = tmp.href,
+                .origin = tmp.origin,
+                .password = tmp.password,
+                .pathname = tmp.pathname,
+                .path = tmp.path,
+                .port = tmp.port,
+                .protocol = tmp.protocol,
+                .search = tmp.search,
+                .searchParams = null, // FIXME
+                .username = tmp.username,
+                .port_was_automatically_set = tmp.port_was_automatically_set,
+            };
+            return url.toJS(globalThis);
         }
 
         // pub fn getURL(

@@ -1902,11 +1902,12 @@ pub const PackageManager = struct {
                     // TODO:
                     return null;
 
-                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
-                    // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
-                    if (this.isContinuousIntegration())
-                        return null;
+                // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                // and it makes tests more consistent
+                if (this.isContinuousIntegration())
+                    return null;
 
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
                     if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
                         this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
                         break :brk this.manifests.getPtr(name_hash).?;

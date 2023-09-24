@@ -538,6 +538,7 @@ class BunWebSocketMocked extends EventEmitter {
   #message(ws, message) {
     this.#ws = ws;
 
+    let isBinary = false;
     if (typeof message === "string") {
       if (this.#binaryType === "arraybuffer") {
         message = encoder.encode(message).buffer;
@@ -549,6 +550,7 @@ class BunWebSocketMocked extends EventEmitter {
       }
     } else {
       //Buffer
+      isBinary = true;
       if (this.#binaryType !== "nodebuffer") {
         if (this.#binaryType === "arraybuffer") {
           message = new Uint8Array(message);
@@ -558,7 +560,7 @@ class BunWebSocketMocked extends EventEmitter {
       }
     }
 
-    this.emit("message", message);
+    this.emit("message", message, isBinary);
   }
 
   #open(ws) {

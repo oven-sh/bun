@@ -70,6 +70,10 @@ $ bun upgrade --canary
 
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
+{% callout %}
+**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
+{% /callout %}
+
 <!--
 ## Native
 

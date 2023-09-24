@@ -5221,10 +5221,29 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            const pathParts = [_]string{ this.cached_hostname.toUTF8(this.allocator), this.getPort().toString().toUTF8(this.allocator) };
-            return URL.fromString(this.allocator, strings.concat(this.allocator, &pathParts)).toJS(globalThis);
+            const protocol = this.getProtocol(globalThis).toSlice(globalThis, this.allocator).slice();
+            const hostname = this.getHostname(globalThis).toSlice(globalThis, this.allocator).slice();
+            const port = this.getPort(globalThis).toSlice(globalThis, this.allocator).slice();
+            const url_string = strings.concat(this.allocator, &.{ protocol, hostname, ":", port }) catch "http://www.google.com";
+            var tmp = URL.parse(url_string);
+            return tmp.toJS(globalThis);
         }
 
+        // pub fn getURL(
+        //     this: *ThisServer,
+        //     globalThis: *JSC.JSGlobalObject,
+        // ) callconv(.C) JSC.JSValue {
+        //     const protocol = this.getProtocol(globalThis).toSlice(globalThis, this.allocator).slice();
+        //     const hostname = this.getHostname(globalThis).toSlice(globalThis, this.allocator).slice();
+        //     const port = this.getPort(globalThis).toSlice(globalThis, this.allocator).slice();
+
+        //     if (strings.concat(this.allocator, &.{ protocol, hostname, ":", port })) |url_string| {
+        //         if (URL.fromUTF8(this.allocator, url_string)) |url| {
+        //             return url.toJS(globalThis);
+        //         }
+        //     }
+        //     return JSValue.jsUndefined();
+        // }
         pub fn onRequestComplete(this: *ThisServer) void {
             this.vm.eventLoop().processGCTimer();
 

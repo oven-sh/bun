@@ -314,9 +314,14 @@ it("lockfile should not be modified when there are no version changes, issue#588
   };
 
   let prev = await getLockbContent();
-  for (let i = 0; i < 5; i++) {
+  urls.length = 0;
+  const count = 5;
+  for (let i = 0; i < count; i++) {
     const content = await getLockbContent();
     expect(prev).toStrictEqual(content);
     prev = content;
   }
+
+  // Assert we actually made a request to the registry for each update
+  expect(urls).toHaveLength(count);
 });

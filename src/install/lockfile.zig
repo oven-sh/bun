@@ -991,6 +991,7 @@ pub const Printer = struct {
             env_loader,
             null,
             null,
+            .install,
         );
 
         var printer = Printer{

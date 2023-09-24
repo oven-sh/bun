@@ -4549,6 +4549,7 @@ pub const PackageManager = struct {
             env: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
+            subcommand: Subcommand,
         ) !void {
             var base = Api.NpmRegistry{
                 .url = "",
@@ -4763,6 +4764,12 @@ pub const PackageManager = struct {
 
             if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
                 this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
+            // Update should never read from manifest cache
+            if (subcommand == .update) {
+                this.enable.manifest_cache = false;
+                this.enable.manifest_cache_control = false;
             }
 
             if (cli_) |cli| {
@@ -5370,6 +5377,7 @@ pub const PackageManager = struct {
             env,
             cli,
             ctx.install,
+            subcommand,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
@@ -5455,6 +5463,7 @@ pub const PackageManager = struct {
             env,
             cli,
             bun_install,
+            .install,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(

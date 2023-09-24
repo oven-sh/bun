@@ -72,3 +72,24 @@ const nestedObject = {
   },
 };
 console.log(nestedObject);
+
+const m = new Map();
+m.set("foo", "bar");
+console.log(m);
+
+const s = new Set();
+s.add("foo");
+console.log(s);
+
+const ab = new ArrayBuffer(8);
+console.log(ab);
+
+class FooWithFunc {
+  a = 1;
+  b = 2;
+  test() {
+    return 3;
+  }
+}
+
+console.log(new FooWithFunc());

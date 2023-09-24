@@ -57,3 +57,15 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
     }
   }
 }
+Map(1) {
+  "foo": "bar",
+}
+Set(1) {
+  "foo",
+}
+ArrayBuffer(8) [ 0, 0, 0, 0, 0, 0, 0, 0 ]
+{
+  a: 1,
+  b: 2,
+  test: [Function: test]
+}

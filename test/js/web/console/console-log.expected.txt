@@ -36,7 +36,7 @@ Promise { <pending> }
 [Function]
 [class Foo]
 [class (anonymous)]
-{}
+Foo {}
 [Function: foooo]
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
@@ -64,7 +64,7 @@ Set(1) {
   "foo",
 }
 ArrayBuffer(8) [ 0, 0, 0, 0, 0, 0, 0, 0 ]
-{
+FooWithFunc {
   a: 1,
   b: 2,
   test: [Function: test]

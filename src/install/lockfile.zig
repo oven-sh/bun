@@ -375,7 +375,7 @@ pub const Tree = struct {
             dependencies: Lockfile.DependencyIDList,
         };
 
-        pub const ArrayList = std.MultiArrayList(Entry);
+        pub const ArrayList = bun.MultiArrayList(Entry);
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {

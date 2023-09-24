@@ -67,41 +67,51 @@ pub const Bin = extern struct {
     }
 
     pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
-        var cloned: Bin = Bin{};
-        @memset(std.mem.asBytes(&cloned), 0);
-
         switch (this.tag) {
             .none => {
-                cloned.tag = .none;
-                cloned.value.none = {};
+                return Bin{
+                    .tag = .none,
+                    .value = Value.init(.{ .none = {} }),
+                };
             },
             .file => {
-                cloned.tag = .file;
-                cloned.value = .{ .file = builder.append(String, this.value.file.slice(buf)) };
+                return Bin{
+                    .tag = .file,
+                    .value = Value.init(.{ .file = builder.append(String, this.value.file.slice(buf)) }),
+                };
             },
             .named_file => {
-                cloned.tag = .named_file;
-                cloned.value = .{
-                    .named_file = [2]String{
-                        builder.append(String, this.value.named_file[0].slice(buf)),
-                        builder.append(String, this.value.named_file[1].slice(buf)),
-                    },
+                return Bin{
+                    .tag = .named_file,
+                    .value = Value.init(
+                        .{
+                            .named_file = [2]String{
+                                builder.append(String, this.value.named_file[0].slice(buf)),
+                                builder.append(String, this.value.named_file[1].slice(buf)),
+                            },
+                        },
+                    ),
                 };
             },
             .dir => {
-                cloned.tag = .dir;
-                cloned.value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) };
+                return Bin{
+                    .tag = .dir,
+                    .value = Value.init(.{ .dir = builder.append(String, this.value.dir.slice(buf)) }),
+                };
             },
             .map => {
                 for (this.value.map.get(prev_external_strings), 0..) |extern_string, i| {
                     extern_strings_slice[i] = builder.append(ExternalString, extern_string.slice(buf));
                 }
 
-                cloned.tag = .map;
-                cloned.value = .{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) };
+                return Bin{
+                    .tag = .map,
+                    .value = Value.init(.{ .map = ExternalStringList.init(all_extern_strings, extern_strings_slice) }),
+                };
             },
         }
-        return cloned;
+
+        unreachable;
     }
 
     pub const Value = extern union {
@@ -137,6 +147,11 @@ pub const Bin = extern struct {
         /// }
         ///```
         map: ExternalStringList,
+
+        /// To avoid undefined memory between union values, we must zero initialize the union first.
+        pub fn init(field: anytype) Value {
+            return bun.serializableInto(Value, field);
+        }
     };
 
     pub const Tag = enum(u8) {

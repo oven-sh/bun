@@ -25,6 +25,7 @@ it("should create selected template with @ prefix", async () => {
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "@quick-start/create-some-template" not found registry.npmjs.org/@quick-start%2fcreate-some-template 404`);
+  expect(err.split(/\r?\n/)).toContain(
+    `error: package "@quick-start/create-some-template" not found registry.npmjs.org/@quick-start%2fcreate-some-template 404`,
+  );
 });
-

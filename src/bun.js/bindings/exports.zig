@@ -2862,6 +2862,12 @@ pub const ZigConsoleClient = struct {
                         .parent = value,
                     };
 
+                    var class_name = ZigString.Empty;
+                    value.getClassName(this.globalThis, &class_name);
+                    if (class_name.len > 0 and !strings.eqlComptime(class_name.slice(), "Object")) {
+                        writer.print("{} ", .{class_name});
+                    }
+
                     if (this.depth > this.max_depth) {
                         if (this.always_newline_scope or this.goodTimeForANewLine()) {
                             writer.writeAll("\n");

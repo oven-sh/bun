@@ -50,7 +50,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on`.
+🟡 Missing `require('node:events').on`.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 

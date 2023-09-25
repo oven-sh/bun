@@ -58,15 +58,15 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
     ASSERT(base.isValid() || base.isNull());
     URL completeURL { base, url };
     if (!completeURL.isValid())
-        return Exception { TypeError };
+        return Exception { TypeError, makeString("\"", url, "\" cannot be parsed as a URL.") };
     return adoptRef(*new DOMURL(WTFMove(completeURL), base));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
-    URL baseURL { URL {}, base };
+    URL baseURL { base };
     if (!base.isNull() && !baseURL.isValid())
-        return Exception { TypeError };
+        return Exception { TypeError, makeString("\"", url, "\" cannot be parsed as a URL against \"", base, "\".") };
     return create(url, baseURL);
 }
 
@@ -79,7 +79,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
 {
     URL completeURL { URL {}, url };
     if (!completeURL.isValid())
-        return Exception { TypeError };
+        return Exception { TypeError, makeString("\"", url, "\" cannot be parsed as a URL.") };
     m_url = WTFMove(completeURL);
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();

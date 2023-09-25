@@ -261,22 +261,34 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
+        var package_fmt: []const u8 = undefined;
+        if (!strings.eql(update_request.version_buf, update_request.name)) {
+            package_fmt = try std.fmt.allocPrint(
+                ctx.allocator,
+                "{s}@{s}",
+                .{
+                    update_request.name,
+                    display_version,
+                },
+            );
+        } else package_fmt = update_request.name;
+
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin:{s}",
-                .{ update_request.name, display_version, PATH },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
+                .{ package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx/node_modules/.bin",
-                .{ update_request.name, display_version },
+                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
+                .{package_fmt},
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx@".len + update_request.name.len + display_version.len];
+        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
@@ -361,8 +373,8 @@ pub const BunxCommand = struct {
 
         var bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}@{s}--bunx",
-            .{ update_request.name, display_version },
+            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
+            .{package_fmt},
         );
 
         // TODO: fix this after zig upgrade
@@ -375,18 +387,6 @@ pub const BunxCommand = struct {
             defer package_json.close();
             package_json.writeAll("{}\n") catch {};
         }
-
-        var package_fmt: []const u8 = undefined;
-        if (!strings.eql(update_request.version_buf, update_request.name)) {
-            package_fmt = try std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}@{s}",
-                .{
-                    update_request.name,
-                    display_version,
-                },
-            );
-        } else package_fmt = display_version;
 
         var args_buf = [_]string{
             try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",

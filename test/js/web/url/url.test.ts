@@ -7,6 +7,11 @@ describe("url", () => {
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       '"boop" cannot be parsed as a URL against "http!/example.com"',
     );
+
+    // redact
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
+      '"boop" cannot be parsed as a URL against <redacted>',
+    );
   });
 
   it("should have correct origin and protocol", () => {

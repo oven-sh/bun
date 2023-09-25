@@ -112,3 +112,11 @@ bun run publish-layer -- \
   --output /path/to/layer.zip \
   --region us-east-1
 ```
+
+## Additional bun command line arguments
+
+You may optionally provide extra command line arguments to bun binary via `BUN_ARGS` Lambda variable.
+
+```sh
+BUN_ARGS="--smol"
+```

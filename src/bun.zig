@@ -1864,3 +1864,45 @@ pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field:
         }
     };
 }
+
+pub fn serializable(input: anytype) @TypeOf(input) {
+    const T = @TypeOf(input);
+    comptime {
+        if (std.meta.trait.isExtern(T)) {
+            if (@typeInfo(T) == .Union) {
+                @compileError("Extern unions must be serialized with serializableInto");
+            }
+        }
+    }
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(T)) |field_name| {
+        @field(result, field_name) = @field(input, field_name);
+    }
+
+    return result.*;
+}
+
+pub inline fn serializableInto(comptime T: type, init: anytype) T {
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
+        @field(result, field_name) = @field(init, field_name);
+    }
+
+    return result.*;
+}

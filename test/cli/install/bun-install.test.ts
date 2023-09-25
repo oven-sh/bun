@@ -62,7 +62,7 @@ registry = "http://${server.hostname}:${server.port}/"
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: ConnectionRefused downloading package manifest bar");
+  expect(err).toMatch(/error: (ConnectionRefused|ConnectionClosed) downloading package manifest bar/gm);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);

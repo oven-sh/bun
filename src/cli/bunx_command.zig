@@ -23,7 +23,8 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |index| {
+            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
+                const index = slashIndex + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);

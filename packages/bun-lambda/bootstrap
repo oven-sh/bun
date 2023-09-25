@@ -1,3 +1,4 @@
 #! /bin/sh
 export BUN_INSTALL_CACHE_DIR=/tmp/bun/cache
-exec /opt/bun --cwd $LAMBDA_TASK_ROOT /opt/runtime.ts
+# -smol   Use less memory, but run garbage collection more often
+exec /opt/bun $BUN_ARGS --cwd $LAMBDA_TASK_ROOT /opt/runtime.ts

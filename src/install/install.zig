@@ -6138,6 +6138,9 @@ pub const PackageManager = struct {
                     request.is_aliased = true;
                     request.name = allocator.dupe(u8, name) catch unreachable;
                     request.name_hash = String.Builder.stringHash(name);
+                } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
+                    request.name = input;
+                    request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 } else {
                     request.name_hash = String.Builder.stringHash(version.literal.slice(input));
                 }
@@ -8033,6 +8036,7 @@ test "UpdateRequests.parse" {
         "baz",
         "boo@1.0.0",
         "bing@latest",
+        "github:bar/foo",
     };
     var reqs = PackageManager.UpdateRequest.parse(default_allocator, &log, updates, &array, .add);
 
@@ -8041,11 +8045,12 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqualStrings(reqs[2].name, "bar");
     try std.testing.expectEqualStrings(reqs[3].name, "baz");
     try std.testing.expectEqualStrings(reqs[4].name, "boo");
+    try std.testing.expectEqualStrings(reqs[7].name, "github:bar/foo");
     try std.testing.expectEqual(reqs[4].version.tag, Dependency.Version.Tag.npm);
     try std.testing.expectEqualStrings(reqs[4].version.literal.slice("boo@1.0.0"), "1.0.0");
     try std.testing.expectEqual(reqs[5].version.tag, Dependency.Version.Tag.dist_tag);
     try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
-    try std.testing.expectEqual(updates.len, 6);
+    try std.testing.expectEqual(updates.len, 7);
 }
 
 test "PackageManager.Options - default registry, default values" {

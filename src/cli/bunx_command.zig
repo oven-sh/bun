@@ -376,20 +376,26 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args_buf = [_]string{
-            try std.fs.selfExePathAlloc(ctx.allocator), "add", "--no-summary",
-            try std.fmt.allocPrint(
+        var package_fmt: []const u8 = undefined;
+        if (!strings.eql(update_request.version_buf, update_request.name)) {
+            package_fmt = try std.fmt.allocPrint(
                 ctx.allocator,
                 "{s}@{s}",
                 .{
                     update_request.name,
                     display_version,
                 },
-            ),
+            );
+        } else package_fmt = display_version;
+
+        var args_buf = [_]string{
+            try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",
+            package_fmt,
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            "--no-cache",
+                                           "--no-cache",
         };
+
         const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
 
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);

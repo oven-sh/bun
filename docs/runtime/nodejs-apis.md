@@ -54,7 +54,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`, `fs.statfs{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 

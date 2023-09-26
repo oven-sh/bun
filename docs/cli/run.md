@@ -89,6 +89,10 @@ $ bun --smol run index.tsx
 Compare to `npm run <script>` or `yarn <script>`
 {% /note %}
 
+```sh
+$ bun [bun flags] run <script> [script flags]
+```
+
 Your `package.json` can define a number of named `"scripts"` that correspond to shell commands.
 
 ```jsonc
@@ -101,10 +105,10 @@ Your `package.json` can define a number of named `"scripts"` that correspond to 
 }
 ```
 
-Use `bun <script>` or `bun run <script>` to execute these scripts.
+Use `bun run <script>` to execute these scripts.
 
 ```bash
-$ bun clean
+$ bun run clean
  $ rm -rf dist && echo 'Done.'
  Cleaning...
  Done.

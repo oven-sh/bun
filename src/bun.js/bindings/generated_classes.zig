@@ -7145,11 +7145,59 @@ pub const JSURL = struct {
             @compileLog("URL.finalize is not a finalizer");
         }
 
+        if (@TypeOf(URL.getHash) != GetterType)
+            @compileLog("Expected URL.getHash to be a getter");
+
+        if (@TypeOf(URL.getHost) != GetterType)
+            @compileLog("Expected URL.getHost to be a getter");
+
+        if (@TypeOf(URL.getHostname) != GetterType)
+            @compileLog("Expected URL.getHostname to be a getter");
+
+        if (@TypeOf(URL.getHref) != GetterType)
+            @compileLog("Expected URL.getHref to be a getter");
+
+        if (@TypeOf(URL.getOrigin) != GetterType)
+            @compileLog("Expected URL.getOrigin to be a getter");
+
+        if (@TypeOf(URL.getPassword) != GetterType)
+            @compileLog("Expected URL.getPassword to be a getter");
+
+        if (@TypeOf(URL.getPathname) != GetterType)
+            @compileLog("Expected URL.getPathname to be a getter");
+
+        if (@TypeOf(URL.getPortJS) != GetterType)
+            @compileLog("Expected URL.getPortJS to be a getter");
+
+        if (@TypeOf(URL.getProtocol) != GetterType)
+            @compileLog("Expected URL.getProtocol to be a getter");
+
+        if (@TypeOf(URL.getSearch) != GetterType)
+            @compileLog("Expected URL.getSearch to be a getter");
+
+        if (@TypeOf(URL.getSearchParams) != GetterType)
+            @compileLog("Expected URL.getSearchParams to be a getter");
+
         if (@TypeOf(URL.toJSON) != CallbackType)
             @compileLog("Expected URL.toJSON to be a callback but received " ++ @typeName(@TypeOf(URL.toJSON)));
+        if (@TypeOf(URL.getUsername) != GetterType)
+            @compileLog("Expected URL.getUsername to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(URL.constructor, .{ .name = "URLClass__construct" });
             @export(URL.finalize, .{ .name = "URLClass__finalize" });
+            @export(URL.getHash, .{ .name = "URLPrototype__getHash" });
+            @export(URL.getHost, .{ .name = "URLPrototype__getHost" });
+            @export(URL.getHostname, .{ .name = "URLPrototype__getHostname" });
+            @export(URL.getHref, .{ .name = "URLPrototype__getHref" });
+            @export(URL.getOrigin, .{ .name = "URLPrototype__getOrigin" });
+            @export(URL.getPassword, .{ .name = "URLPrototype__getPassword" });
+            @export(URL.getPathname, .{ .name = "URLPrototype__getPathname" });
+            @export(URL.getPortJS, .{ .name = "URLPrototype__getPortJS" });
+            @export(URL.getProtocol, .{ .name = "URLPrototype__getProtocol" });
+            @export(URL.getSearch, .{ .name = "URLPrototype__getSearch" });
+            @export(URL.getSearchParams, .{ .name = "URLPrototype__getSearchParams" });
+            @export(URL.getUsername, .{ .name = "URLPrototype__getUsername" });
             @export(URL.toJSON, .{ .name = "URLPrototype__toJSON" });
         }
     }

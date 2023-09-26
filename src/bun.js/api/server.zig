@@ -5221,46 +5221,28 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            const protocol = this.getProtocol(globalThis).toSlice(globalThis, this.allocator).slice();
-            const hostname = this.getHostname(globalThis).toSlice(globalThis, this.allocator).slice();
-            const port = this.getPort(globalThis).toSlice(globalThis, this.allocator).slice();
-            const url_string = strings.concat(this.allocator, &.{ protocol, hostname, ":", port }) catch "http://www.google.com";
-            var tmp = URL.parse(url_string);
+            var base_url = this.config.base_url;
             var url = bun.default_allocator.create(URL) catch @panic("Unable to allocate URL");
+
             url.* = URL{
-                .hash = tmp.hash,
-                .host = tmp.host,
-                .hostname = tmp.hostname,
-                .href = tmp.href,
-                .origin = tmp.origin,
-                .password = tmp.password,
-                .pathname = tmp.pathname,
-                .path = tmp.path,
-                .port = tmp.port,
-                .protocol = tmp.protocol,
-                .search = tmp.search,
-                .searchParams = null, // FIXME
-                .username = tmp.username,
-                .port_was_automatically_set = tmp.port_was_automatically_set,
+                .hash = base_url.hash,
+                .host = base_url.host,
+                .hostname = base_url.hostname,
+                .href = base_url.href,
+                .origin = base_url.origin,
+                .password = base_url.password,
+                .pathname = base_url.pathname,
+                .path = base_url.path,
+                .port = base_url.port,
+                .protocol = base_url.protocol,
+                .search = base_url.search,
+                .searchParams = null, // no search params for server URL
+                .username = base_url.username,
+                .port_was_automatically_set = base_url.port_was_automatically_set,
             };
             return url.toJS(globalThis);
         }
 
-        // pub fn getURL(
-        //     this: *ThisServer,
-        //     globalThis: *JSC.JSGlobalObject,
-        // ) callconv(.C) JSC.JSValue {
-        //     const protocol = this.getProtocol(globalThis).toSlice(globalThis, this.allocator).slice();
-        //     const hostname = this.getHostname(globalThis).toSlice(globalThis, this.allocator).slice();
-        //     const port = this.getPort(globalThis).toSlice(globalThis, this.allocator).slice();
-
-        //     if (strings.concat(this.allocator, &.{ protocol, hostname, ":", port })) |url_string| {
-        //         if (URL.fromUTF8(this.allocator, url_string)) |url| {
-        //             return url.toJS(globalThis);
-        //         }
-        //     }
-        //     return JSValue.jsUndefined();
-        // }
         pub fn onRequestComplete(this: *ThisServer) void {
             this.vm.eventLoop().processGCTimer();
 

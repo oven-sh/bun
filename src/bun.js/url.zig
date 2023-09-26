@@ -51,27 +51,97 @@ pub const URL = struct {
 
     pub fn finalize(_: *URL) callconv(.C) void {}
 
+    pub fn getHash(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.hash).toJSConst(globalThis);
+    }
+
+    pub fn getHost(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.host).toJSConst(globalThis);
+    }
+
+    pub fn getHostname(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.hostname).toJSConst(globalThis);
+    }
+
+    pub fn getHref(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.href).toJSConst(globalThis);
+    }
+
+    pub fn getOrigin(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.origin).toJSConst(globalThis);
+    }
+
+    pub fn getPassword(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.password).toJSConst(globalThis);
+    }
+
+    pub fn getPathname(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.pathname).toJSConst(globalThis);
+    }
+
+    pub fn getPortJS(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.port).toJSConst(globalThis);
+    }
+
+    pub fn getProtocol(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.protocol).toJSConst(globalThis);
+    }
+
+    pub fn getSearch(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.search).toJSConst(globalThis);
+    }
+
+    pub fn getSearchParams(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        _ = this;
+        return JSC.JSValue.createEmptyObject(globalThis, 0);
+    }
+
+    pub fn getUsername(
+        this: *URL,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return bun.String.init(this.username).toJSConst(globalThis);
+    }
+
     pub fn toJSON(
         this: *URL,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var object = JSC.JSValue.createEmptyObject(globalThis, 3);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("URL").toValueGC(globalThis));
-        object.put(globalThis, ZigString.static("hash"), ZigString.init(this.hash).toValueGC(globalThis));
-        object.put(globalThis, ZigString.static("host"), ZigString.init(this.host).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("hostname"), ZigString.init(this.hostname).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("href"), ZigString.init(this.href).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("origin"), ZigString.init(this.origin).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("password"), ZigString.init(this.password).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("pathname"), ZigString.init(this.pathname).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("port"), ZigString.init(this.port).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("protocol"), ZigString.init(this.protocol).toValueGC(globalThis));
-        // object.put(globalThis, ZigString.static("search"), ZigString.init(this.search).toValueGC(globalThis));
-        // // object.put(globalThis, ZigString.static("searchParams"), this.searchParams);
-        // object.put(globalThis, ZigString.static("username"), ZigString.init(this.username).toValueGC(globalThis));
-
-        return object;
+        return this.getHref(globalThis);
     }
 
     pub fn create(

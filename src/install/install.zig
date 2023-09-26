@@ -2682,7 +2682,11 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // relative to cwd
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+                // if the workspace name is '*', use the name of the dependency itself
+                const workspace_name = this.lockfile.str(&version.value.workspace);
+                const workspace_hash = if (strings.eqlComptime(workspace_name, "*")) name_hash else String.Builder.stringHash(workspace_name);
+
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(workspace_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
@@ -2956,7 +2960,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .git, .github, .npm, .tarball => String.Builder.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;

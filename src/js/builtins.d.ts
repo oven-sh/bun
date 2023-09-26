@@ -439,6 +439,8 @@ declare function $createCommonJSModule(
   parent: CommonJSModuleRecord,
 ): CommonJSModuleRecord;
 
+declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
+
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;

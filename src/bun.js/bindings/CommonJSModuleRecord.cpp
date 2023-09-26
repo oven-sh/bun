@@ -8,7 +8,7 @@
  * Then, at runtime, we create a JSCommonJSModule object.
  *
  * On this special object, we override the setter for the "exports" property in
- * a non-observable way (`static bool put ...`)
+ * a non-observable way using a CustomGetterSetter.
  *
  * When the setter is called, we set the internal "exports" property to the
  * value passed in and we also update the requireMap with the new value.
@@ -20,17 +20,13 @@
  *
  * If an exception occurs, we remove the entry from the requireMap.
  *
- * We tried using a CustomGetterSetter instead of overriding `put`, but it led
- * to returning the getter itself
- *
- * How cyclical dependencies are handled
+ * How cyclical dependencies are handled:
  *
  * Before executing the CommonJS module, we set the exports object in the
  * requireMap to an empty object. When the CommonJS module is required again, we
  * return the exports object from the requireMap. The values should be in sync
  * while the module is being executed, unless module.exports is re-assigned to a
  * different value. In that case, it will have a stale value.
- *
  */
 
 #include "root.h"
@@ -105,15 +101,21 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         vm,
         0,
         moduleObject);
-
     thisObject->putDirectOffset(
         vm,
         1,
-        dirname);
-
+        globalObject->requireFunctionUnbound());
     thisObject->putDirectOffset(
         vm,
         2,
+        globalObject->requireResolveFunctionUnbound());
+    thisObject->putDirectOffset(
+        vm,
+        3,
+        dirname);
+    thisObject->putDirectOffset(
+        vm,
+        4,
         filename);
 
     moduleObject->hasEvaluated = true;
@@ -400,7 +402,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     String wrappedString = makeString(
         "(function(module,exports,require,__dirname,__filename){"_s,
         sourceString,
-        "\n}).call($_BunCommonJSModule_$.module.exports, $_BunCommonJSModule_$.module, $_BunCommonJSModule_$.module.exports, ($_BunCommonJSModule_$.module.require = $_BunCommonJSModule_$.module.require.bind($_BunCommonJSModule_$.module), $_BunCommonJSModule_$.module.require.path = $_BunCommonJSModule_$.module.id, $_BunCommonJSModule_$.module.require.resolve = $_BunCommonJSModule_$.module.require.resolve.bind($_BunCommonJSModule_$.module.id), $_BunCommonJSModule_$.module.require), $_BunCommonJSModule_$.__dirname, $_BunCommonJSModule_$.__filename);"_s);
+        "\n}).call($_BunCommonJSModule_$.module.exports,$_BunCommonJSModule_$.module,$_BunCommonJSModule_$.module.exports,($_BunCommonJSModule_$.module.require=$_BunCommonJSModule_$.require.bind($_BunCommonJSModule_$.module),$_BunCommonJSModule_$.module.require.path=$_BunCommonJSModule_$.module.id,$_BunCommonJSModule_$.module.require.resolve=$_BunCommonJSModule_$.module.resolve.bind($_BunCommonJSModule_$.module.id),$_BunCommonJSModule_$.module.require),$_BunCommonJSModule_$.__dirname,$_BunCommonJSModule_$.__filename)"_s);
 
     SourceCode sourceCode = makeSource(
         WTFMove(wrappedString),
@@ -438,6 +440,26 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
+// These two setters are only used if you directly hit `Module.prototype.require` or `module.require`.
+// When accessing the cjs require argument, this is a bound version of `require`, which calls into the overridden one.
+//
+// This require function also intentionally does not have .resolve on it, nor does it have any of the other properties.
+//
+// Note: allowing require to be overridable at all is only needed for Next.js to work (they do Module.prototype.require = ...)
+
+JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return JSValue::encode(globalObject->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    globalObject->putDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
+    return true;
+}
+
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
@@ -447,6 +469,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
+    { "require"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterRequireFunction, setterRequireFunction } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {
@@ -483,14 +506,12 @@ public:
         ASSERT(inherits(vm, info()));
         reifyStaticProperties(vm, JSCommonJSModule::info(), JSCommonJSModulePrototypeTableValues, *this);
 
-        this->putDirect(vm, clientData(vm)->builtinNames().requirePublicName(), (static_cast<Zig::GlobalObject*>(globalObject))->requireFunctionUnbound(), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
-
         this->putDirectNativeFunction(
             vm,
             globalObject,
             clientData(vm)->builtinNames().requirePrivateName(),
             2,
-            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | 0);
+            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
     }
 };
 
@@ -772,21 +793,6 @@ JSValue JSCommonJSModule::exportsObject()
 JSValue JSCommonJSModule::id()
 {
     return m_id.get();
-}
-
-bool JSCommonJSModule::put(
-    JSC::JSCell* cell,
-    JSC::JSGlobalObject* globalObject,
-    JSC::PropertyName propertyName,
-    JSC::JSValue value,
-    JSC::PutPropertySlot& slot)
-{
-
-    auto& vm = globalObject->vm();
-    auto* clientData = WebCore::clientData(vm);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    RELEASE_AND_RETURN(throwScope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
 template<typename, SubspaceAccess mode> JSC::GCClient::IsoSubspace* JSCommonJSModule::subspaceFor(JSC::VM& vm)

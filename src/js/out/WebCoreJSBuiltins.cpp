@@ -786,13 +786,21 @@ const int s_moduleMainCodeLength = 68;
 static const JSC::Intrinsic s_moduleMainCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_moduleMainCode = "(function () {\"use strict\";\n  return @requireMap.@get(Bun.main);\n})\n";
 
+// overridableRequire
+const JSC::ConstructAbility s_moduleOverridableRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleOverridableRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleOverridableRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleOverridableRequireCodeLength = 888;
+static const JSC::Intrinsic s_moduleOverridableRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleOverridableRequireCode = "(function (id) {\"use strict\";\n  const existing = @requireMap.@get(id) || @requireMap.@get(id = @resolveSync(id, this.path, !1));\n  if (existing)\n    return @evaluateCommonJSModule(existing), existing.exports;\n  if (id.endsWith(\".node\"))\n    return @internalRequire(id);\n  const mod = @createCommonJSModule(id, {}, !1, this);\n  @requireMap.@set(id, mod);\n  var out = this.@require(id, mod);\n  if (out === -1) {\n    try {\n      out = @requireESM(id);\n    } catch (exception) {\n      throw @requireMap.@delete(id), exception;\n    }\n    const esm = @Loader.registry.@get(id);\n    if (esm\?.evaluated && (esm.state \?\? 0) >= @ModuleReady) {\n      const namespace = @Loader.getModuleNamespaceObject(esm.module);\n      return mod.exports = namespace.__esModule \? namespace : Object.create(namespace, { __esModule: { value: !0 } });\n    }\n  }\n  return @evaluateCommonJSModule(mod), mod.exports;\n})\n";
+
 // require
 const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireCodeLength = 888;
+const int s_moduleRequireCodeLength = 79;
 static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireCode = "(function (id) {\"use strict\";\n  const existing = @requireMap.@get(id) || @requireMap.@get(id = @resolveSync(id, this.path, !1));\n  if (existing)\n    return @evaluateCommonJSModule(existing), existing.exports;\n  if (id.endsWith(\".node\"))\n    return @internalRequire(id);\n  const mod = @createCommonJSModule(id, {}, !1, this);\n  @requireMap.@set(id, mod);\n  var out = this.@require(id, mod);\n  if (out === -1) {\n    try {\n      out = @requireESM(id);\n    } catch (exception) {\n      throw @requireMap.@delete(id), exception;\n    }\n    const esm = @Loader.registry.@get(id);\n    if (esm\?.evaluated && (esm.state \?\? 0) >= @ModuleReady) {\n      const namespace = @Loader.getModuleNamespaceObject(esm.module);\n      return mod.exports = namespace.__esModule \? namespace : Object.create(namespace, { __esModule: { value: !0 } });\n    }\n  }\n  return @evaluateCommonJSModule(mod), mod.exports;\n})\n";
+const char* const s_moduleRequireCode = "(function (id) {\"use strict\";\n  return @overridableRequire.@call(this, id);\n})\n";
 
 // requireNativeModule
 const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

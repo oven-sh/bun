@@ -371,8 +371,9 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "globalPaths"_s),
       constructEmptyArray(globalObject, nullptr, 0));
 
-  put(Identifier::fromString(vm, "prototype"_s),
-      constructEmptyObject(globalObject));
+  defaultObject->putDirect(
+      vm, vm.propertyNames->prototype,
+      globalObject->CommonJSModuleObjectStructure()->storedPrototype());
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,

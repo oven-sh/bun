@@ -83,7 +83,7 @@
       "name": "bun test [*]",
       "program": "bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "/Users/dave/code/bun/test/integration/next",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",

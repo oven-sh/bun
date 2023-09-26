@@ -21253,7 +21253,7 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
+                    const cjsGlobal = p.newSymbol(.unbound, "this") catch unreachable;
                     var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
                     const this_module = p.newExpr(
                         E.Dot{
@@ -21279,7 +21279,7 @@ fn NewParser_(
                     const get_require = p.newExpr(
                         E.Dot{
                             .name = "require",
-                            .target = this_module,
+                            .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
@@ -21298,6 +21298,12 @@ fn NewParser_(
                     );
 
                     const get_resolve = p.newExpr(E.Dot{
+                        .name = "resolve",
+                        .name_loc = logger.Loc.Empty,
+                        .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                    }, logger.Loc.Empty);
+
+                    const set_resolve = p.newExpr(E.Dot{
                         .name = "resolve",
                         .name_loc = logger.Loc.Empty,
                         .target = get_require,
@@ -21334,7 +21340,7 @@ fn NewParser_(
 
                     const assign_resolve_binding = p.newExpr(
                         E.Binary{
-                            .left = get_resolve,
+                            .left = set_resolve,
                             .right = create_resolve_binding,
                             .op = .bin_assign,
                         },

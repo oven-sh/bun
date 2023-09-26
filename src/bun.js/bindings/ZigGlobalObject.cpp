@@ -2828,7 +2828,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                3);
+                5);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
@@ -2836,6 +2836,20 @@ void GlobalObject::finishCreation(VM& vm)
                 vm,
                 structure,
                 JSC::Identifier::fromString(vm, "module"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "require"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "resolve"_s),
                 0,
                 offset);
 
@@ -3646,6 +3660,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.requireNativeModulePrivateName(), moduleRequireNativeModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+
+    putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), moduleOverridableRequireCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);

@@ -987,9 +987,9 @@ pub const ZigConsoleClient = struct {
 
         var print_length = len;
         var print_options: FormatOptions = .{
-                    .enable_colors = enable_colors,
-                    .add_newline = true,
-                    .flush = true,
+            .enable_colors = enable_colors,
+            .add_newline = true,
+            .flush = true,
         };
 
         if (message_type == .Dir and len >= 2) {
@@ -999,7 +999,7 @@ pub const ZigConsoleClient = struct {
                 var depth_prop = opts.get(global, "depth") orelse JSValue.zero;
                 if (depth_prop.isNumber())
                     print_options.max_depth = depth_prop.toU16();
-                if(depth_prop.isNull())
+                if (depth_prop.isNull())
                     print_options.max_depth = std.math.maxInt(u16);
                 var colors_option = opts.get(global, "colors") orelse JSValue.zero;
                 if (colors_option.isBoolean())

@@ -60,3 +60,18 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
 {
   "1": [Object ...]
 }
+{
+  "1": [Object ...]
+}
+{
+  "1": {
+    "2": [Object ...]
+  }
+}
+{
+  "1": {
+    "2": {
+      "3": 3
+    }
+  }
+}

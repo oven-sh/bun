@@ -996,14 +996,16 @@ pub const ZigConsoleClient = struct {
             print_length = 1;
             var opts = vals[1];
             if (opts.isObject()) {
-                var depth_prop = opts.get(global, "depth") orelse JSValue.zero;
-                if (depth_prop.isNumber())
-                    print_options.max_depth = depth_prop.toU16();
-                if (depth_prop.isNull())
-                    print_options.max_depth = std.math.maxInt(u16);
-                var colors_option = opts.get(global, "colors") orelse JSValue.zero;
-                if (colors_option.isBoolean())
-                    print_options.enable_colors = colors_option.toBoolean();
+                if (opts.get(global, "depth")) |depth_prop| {
+                    if (depth_prop.isNumber())
+                        print_options.max_depth = depth_prop.toU16();
+                    if (depth_prop.isNull() or depth_prop.toInt64() == std.math.maxInt(i64))
+                        print_options.max_depth = std.math.maxInt(u16);
+                }
+                if (opts.get(global, "colors")) |colors_prop| {
+                    if (colors_prop.isBoolean())
+                        print_options.enable_colors = colors_prop.toBoolean();
+                }
             }
         }
 

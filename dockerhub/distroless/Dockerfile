@@ -52,16 +52,16 @@ RUN apt-get update -qq \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
+    && which bunx \
     && bun --version
 
 FROM gcr.io/distroless/base-nossl-debian11
 
-COPY --from=build /usr/local/bin/bun /usr/local/bin/
-
-# Known issue: `bunx` is not available in distroless.
-#
-# If `ln` is used in the build image, the size of the final
-# image will be double, because of: https://github.com/oven-sh/bun/issues/5269
+# List of sources to destination (final path):
+COPY --from=build \
+  /usr/local/bin/bun /usr/local/bin/bunx \
+  /usr/local/bin
 
 ENTRYPOINT ["/usr/local/bin/bun"]

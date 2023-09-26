@@ -1,6 +1,19 @@
 import { describe, it, expect } from "bun:test";
 
 describe("url", () => {
+  it("URL throws", () => {
+    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
+    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
+    expect(() => new URL("boop", "http!/example.com")).toThrow(
+      '"boop" cannot be parsed as a URL against "http!/example.com"',
+    );
+
+    // redact
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
+      '"boop" cannot be parsed as a URL against <redacted>',
+    );
+  });
+
   it("should have correct origin and protocol", () => {
     var url = new URL("https://example.com");
     expect(url.protocol).toBe("https:");

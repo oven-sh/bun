@@ -324,7 +324,6 @@ static JSC::EncodedJSValue WebCrypto__createSecretKey(JSC::JSGlobalObject* lexic
 {
     JSValue bufferArg = callFrame->uncheckedArgument(0);
 
-
     if (bufferArg.isCell()) {
         auto type = bufferArg.asCell()->type();
 
@@ -373,7 +372,7 @@ static JSC::EncodedJSValue WebCrypto__createSecretKey(JSC::JSGlobalObject* lexic
             return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
         }
         default:
-           break;
+            break;
         }
     }
     {
@@ -3427,7 +3426,9 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSCryptoKey.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, init.owner->objectPrototype());
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
+            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
             init.set(structure);
         });
 

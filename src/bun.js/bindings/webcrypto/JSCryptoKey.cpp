@@ -196,10 +196,6 @@ void JSCryptoKey::finishCreation(VM& vm)
     // static_assert(!std::is_base_of<ActiveDOMObject, CryptoKey>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
-Structure* JSCryptoKey::createStructure(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-}
 
 
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

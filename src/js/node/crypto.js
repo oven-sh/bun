@@ -11888,15 +11888,13 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
+const $lazy = globalThis[Symbol.for("Bun.lazy")];
 
 const { symmetricKeySize, asymmetricKeyType, equals, createSecretKey } = $lazy("internal/crypto");
 
 class KeyObject {
   #cryptoKey;
   constructor(key) {
-    if (!(key instanceof CryptoKey)) {
-      throw new TypeError("key must be a CryptoKey");
-    }
     this.#cryptoKey = key;
   }
 
@@ -11912,8 +11910,8 @@ class KeyObject {
     return asymmetricKeyType(this.#cryptoKey);
   }
 
-  export(options) {
-    return exports(this.#cryptoKey, options);
+  ["export"](options) {
+    // return exports(this.#cryptoKey, options);
   }
 
   equals(otherKey) {
@@ -11927,12 +11925,14 @@ class KeyObject {
     return this.#cryptoKey.type;
   }
 }
-
 crypto_exports.createSecretKey = function (key, encoding) {
   //TODO: Handle KeyObject and CryptoKey
   const buffer = getArrayBufferOrView(key, encoding || "utf8");
   return KeyObject.from(createSecretKey(buffer));
-}
+};
+crypto_exports.createPublicKey = function (key) {
+  console.log("createPublicKey", key);
+};
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 __export(crypto_exports, {

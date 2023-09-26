@@ -93,7 +93,6 @@ jobs:
         with:
           images: oven/bun
           flavor: |
-            latest=${{ matrix.variant == 'debian' }}
             suffix=${{ matrix.variant }}
           tags: canary
       - id: login

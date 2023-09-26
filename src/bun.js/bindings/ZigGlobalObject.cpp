@@ -193,6 +193,11 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
+#include "webcrypto/CryptoKeyOKP.h"
+#include "webcrypto/CryptoKeyEC.h"
+#include "webcrypto/CryptoKeyRSA.h"
+#include "webcrypto/CryptoKeyHMAC.h"
+#include "webcrypto/CryptoKeyUsage.h"
 
 #include "JSDOMFormData.h"
 #include "JSDOMBinding.h"
@@ -217,9 +222,6 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
 #include "libusockets.h"
-#include "./webcrypto/CryptoKeyOKP.h"
-#include "./webcrypto/CryptoKeyEC.h"
-#include "./webcrypto/CryptoKeyRSA.h"
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 
@@ -318,6 +320,69 @@ extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 // TODO: thread_local for workers
 static bool skipNextComputeErrorInfo = false;
 
+static JSC::EncodedJSValue WebCrypto__createSecretKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    JSValue bufferArg = callFrame->uncheckedArgument(0);
+
+
+    if (bufferArg.isCell()) {
+        auto type = bufferArg.asCell()->type();
+
+        switch (type) {
+
+        case DataViewType:
+        case Uint8ArrayType:
+        case Uint8ClampedArrayType:
+        case Uint16ArrayType:
+        case Uint32ArrayType:
+        case Int8ArrayType:
+        case Int16ArrayType:
+        case Int32ArrayType:
+        case Float32ArrayType:
+        case Float64ArrayType:
+        case BigInt64ArrayType:
+        case BigUint64ArrayType: {
+            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArg.asCell());
+
+            void* data = view->vector();
+            size_t byteLength = view->length();
+            if (UNLIKELY(!data)) {
+                break;
+            }
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+            auto& vm = globalObject->vm();
+            auto* structure = globalObject->JSCryptoKeyStructure();
+            auto impl = CryptoKeyHMAC::generateFromBytes(data, byteLength, CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify).releaseNonNull();
+            return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
+        }
+        case ArrayBufferType: {
+            auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(bufferArg.asCell());
+            if (UNLIKELY(!jsBuffer)) {
+                break;
+            }
+            RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+            void* data = buffer->data();
+            size_t byteLength = buffer->byteLength();
+            if (UNLIKELY(!byteLength)) {
+                break;
+            }
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+            auto& vm = globalObject->vm();
+            auto* structure = globalObject->JSCryptoKeyStructure();
+            auto impl = CryptoKeyHMAC::generateFromBytes(data, byteLength, CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify).releaseNonNull();
+            return JSC::JSValue::encode(JSCryptoKey::create(structure, globalObject, WTFMove(impl)));
+        }
+        default:
+           break;
+        }
+    }
+    {
+        auto& vm = lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "ERR_INVALID_ARG_TYPE: expected Buffer or array-like object"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+}
 static JSC::EncodedJSValue WebCrypto__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     // TODO: make this strings static constants
@@ -360,9 +425,8 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     case CryptoAlgorithmIdentifier::ECDSA:
     case CryptoAlgorithmIdentifier::ECDH:
         return (AsymmetricKeyValue) { .key = downcast<WebCore::CryptoKeyEC>(key).platformKey(), .owned = false };
-    case CryptoAlgorithmIdentifier::Ed25519:
-    {
-        //TODO: investigate if this is necessary or if comparing the raw key data is enough
+    case CryptoAlgorithmIdentifier::Ed25519: {
+        // TODO: investigate if this is necessary or if comparing the raw key data is enough
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
         auto keyData = okpKey.platformKey();
         if (okpKey.type() == CryptoKeyType::Private) {
@@ -396,7 +460,7 @@ static JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalO
                 return JSC::JSValue::encode(jsBoolean(false));
             }
 
-            if(key_type == CryptoKeyType::Secret) {
+            if (key_type == CryptoKeyType::Secret) {
                 const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
                 const auto& okpKey2 = downcast<WebCore::CryptoKeyOKP>(wrapped2);
 
@@ -1910,6 +1974,9 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             // obj->putDirect(
             //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, WebCrypto__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
 
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, WebCrypto__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
             return JSValue::encode(obj);
         }
 
@@ -3358,6 +3425,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSCryptoKey.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, init.owner->objectPrototype());
+            init.set(structure);
+        });
+
     m_JSHTTPSResponseSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
@@ -4001,6 +4074,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSCryptoKey.visit(visitor);
+
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
 

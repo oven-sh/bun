@@ -40,6 +40,7 @@ public:
     }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
+    static Structure* createStructure(VM& vm, JSDOMGlobalObject& globalObject);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static CryptoKey* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);

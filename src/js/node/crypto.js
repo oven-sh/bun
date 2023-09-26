@@ -11889,7 +11889,7 @@ function getCurves() {
   return harcoded_curves;
 }
 
-const { symmetricKeySize, asymmetricKeyType, equals } = $lazy("internal/crypto");
+const { symmetricKeySize, asymmetricKeyType, equals, createSecretKey } = $lazy("internal/crypto");
 
 class KeyObject {
   #cryptoKey;
@@ -11926,6 +11926,12 @@ class KeyObject {
   get type() {
     return this.#cryptoKey.type;
   }
+}
+
+crypto_exports.createSecretKey = function (key, encoding) {
+  //TODO: Handle KeyObject and CryptoKey
+  const buffer = getArrayBufferOrView(key, encoding || "utf8");
+  return KeyObject.from(createSecretKey(buffer));
 }
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;

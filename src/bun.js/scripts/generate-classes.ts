@@ -3,6 +3,7 @@ import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
+import { mergeClasses } from "./utils/merge";
 
 const CommonIdentifiers = {
   "name": true,
@@ -1239,7 +1240,8 @@ function generateImpl(typeName, obj) {
 }
 
 function generateZig(
-  typeName,
+  jsName,
+  zigName,
   {
     klass = {},
     proto = {},
@@ -1257,39 +1259,43 @@ function generateZig(
   const exports = new Map<string, string>();
 
   if (construct && !noConstructor) {
-    exports.set(`constructor`, classSymbolName(typeName, "construct"));
+    if (jsName == zigName) {
+      exports.set(`constructor`, classSymbolName(jsName, "construct"));
+    } else {
+      exports.set(`${jsName}__construct`, classSymbolName(jsName, "construct"));
+    }
   }
 
   if (call) {
-    exports.set(`call`, classSymbolName(typeName, "call"));
+    exports.set(`call`, classSymbolName(jsName, "call"));
   }
 
   if (finalize) {
-    exports.set(`finalize`, classSymbolName(typeName, "finalize"));
+    exports.set(`finalize`, classSymbolName(jsName, "finalize"));
   }
 
   if (estimatedSize) {
-    exports.set(`estimatedSize`, symbolName(typeName, "estimatedSize"));
+    exports.set(`estimatedSize`, symbolName(jsName, "estimatedSize"));
   }
 
   if (hasPendingActivity) {
-    exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
+    exports.set("hasPendingActivity", symbolName(jsName, "hasPendingActivity"));
   }
-  Object.values(klass).map(a => appendSymbols(exports, name => classSymbolName(typeName, name), a));
-  Object.values(proto).map(a => appendSymbols(exports, name => protoSymbolName(typeName, name), a));
+  Object.values(klass).map(a => appendSymbols(exports, name => classSymbolName(jsName, name), a));
+  Object.values(proto).map(a => appendSymbols(exports, name => protoSymbolName(jsName, name), a));
 
   if (getInternalProperties) {
-    exports.set("getInternalProperties", symbolName(typeName, "getInternalProperties"));
+    exports.set("getInternalProperties", symbolName(jsName, "getInternalProperties"));
   }
 
   if (structuredClone) {
-    exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
+    exports.set("onStructuredCloneSerialize", symbolName(jsName, "onStructuredCloneSerialize"));
 
     if (structuredClone === "transferable") {
-      exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
+      exports.set("onStructuredCloneTransfer", symbolName(jsName, "onStructuredCloneTransfer"));
     }
 
-    exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
+    exports.set("onStructuredCloneDeserialize", symbolName(jsName, "onStructuredCloneDeserialize"));
   }
 
   const externs = Object.entries({
@@ -1299,25 +1305,25 @@ function generateZig(
     .filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal)
     .map(
       ([name]) =>
-        `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+        `extern fn ${protoSymbolName(jsName, name)}SetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-        extern fn ${protoSymbolName(typeName, name)}GetCachedValue(JSC.JSValue) JSC.JSValue;
-        
-        /// \`${typeName}.${name}\` setter
+        extern fn ${protoSymbolName(jsName, name)}GetCachedValue(JSC.JSValue) JSC.JSValue;
+
+        /// \`${jsName}.${name}\` setter
         /// This value will be visited by the garbage collector.
         pub fn ${name}SetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
           JSC.markBinding(@src());
-          ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value); 
+          ${protoSymbolName(jsName, name)}SetCachedValue(thisValue, globalObject, value);
         }
 
-        /// \`${typeName}.${name}\` getter
+        /// \`${jsName}.${name}\` getter
         /// This value will be visited by the garbage collector.
         pub fn ${name}GetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
           JSC.markBinding(@src());
-          const result = ${protoSymbolName(typeName, name)}GetCachedValue(thisValue);
+          const result = ${protoSymbolName(jsName, name)}GetCachedValue(thisValue);
           if (result == .zero)
             return null;
-          
+
           return result;
         }
 `.trim() + "\n",
@@ -1329,55 +1335,63 @@ function generateZig(
 
     if (estimatedSize) {
       output += `
-        if (@TypeOf(${typeName}.estimatedSize) != (fn(*${typeName}) callconv(.C) usize)) {
-           @compileLog("${typeName}.estimatedSize is not a size function");
+        if (@TypeOf(${jsName}.estimatedSize) != (fn(*${jsName}) callconv(.C) usize)) {
+           @compileLog("${jsName}.estimatedSize is not a size function");
         }
       `;
     }
 
     if (structuredClone) {
       output += `
-      if (@TypeOf(${typeName}.onStructuredCloneSerialize) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
-        @compileLog("${typeName}.onStructuredCloneSerialize is not a structured clone serialize function");
+      if (@TypeOf(${jsName}.onStructuredCloneSerialize) != (fn(*${jsName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+        @compileLog("${jsName}.onStructuredCloneSerialize is not a structured clone serialize function");
       }
       `;
 
       if (getInternalProperties) {
         output += `
-        if (@TypeOf(${typeName}.getInternalProperties) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, JSC.JSValue thisValue) callconv(.C) JSC.JSValue {
-          @compileLog("${typeName}.getInternalProperties is not a getInternalProperties function");
+        if (@TypeOf(${jsName}.getInternalProperties) != (fn(*${jsName}, globalThis: *JSC.JSGlobalObject, JSC.JSValue thisValue) callconv(.C) JSC.JSValue {
+          @compileLog("${jsName}.getInternalProperties is not a getInternalProperties function");
         }
         `;
       }
 
       if (structuredClone === "transferable") {
-        exports.set("structuredClone", symbolName(typeName, "onTransferableStructuredClone"));
+        exports.set("structuredClone", symbolName(jsName, "onTransferableStructuredClone"));
         output += `
-        if (@TypeOf(${typeName}.onStructuredCloneTransfer) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, write: *const fn(*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void) callconv(.C) void)) {
-          @compileLog("${typeName}.onStructuredCloneTransfer is not a structured clone transfer function");
+        if (@TypeOf(${jsName}.onStructuredCloneTransfer) != (fn(*${jsName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, write: *const fn(*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void) callconv(.C) void)) {
+          @compileLog("${jsName}.onStructuredCloneTransfer is not a structured clone transfer function");
         }
         `;
       }
 
       output += `
-      if (@TypeOf(${typeName}.onStructuredCloneDeserialize) != (fn(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
-        @compileLog("${typeName}.onStructuredCloneDeserialize is not a structured clone deserialize function");
+      if (@TypeOf(${jsName}.onStructuredCloneDeserialize) != (fn(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+        @compileLog("${jsName}.onStructuredCloneDeserialize is not a structured clone deserialize function");
       }
       `;
     }
 
     if (construct && !noConstructor) {
-      output += `
-        if (@TypeOf(${typeName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${typeName})) {
-           @compileLog("${typeName}.constructor is not a constructor");
-        }
-      `;
+      if (jsName == zigName) {
+        output += `
+          if (@TypeOf(${jsName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${jsName})) {
+            @compileLog("${jsName}.constructor is not a constructor");
+          }
+        `;
+      } else {
+        output += `
+          if (@TypeOf(${jsName}.${jsName}__construct) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${jsName})) {
+            @compileLog("${zigName}.${jsName}__construct is not a constructor");
+          }
+        `;
+      }
     }
 
     if (finalize) {
       output += `
-        if (@TypeOf(${typeName}.finalize) != (fn(*${typeName}) callconv(.C) void)) {
-           @compileLog("${typeName}.finalize is not a finalizer");
+        if (@TypeOf(${jsName}.finalize) != (fn(*${jsName}) callconv(.C) void)) {
+           @compileLog("${jsName}.finalize is not a finalizer");
         }
       `;
     }
@@ -1391,13 +1405,13 @@ function generateZig(
       if (getter) {
         if (thisValue) {
           output += `
-            if (@TypeOf(${typeName}.${getter}) != GetterTypeWithThisValue)
-              @compileLog("Expected ${typeName}.${getter} to be a getter with thisValue");`;
+            if (@TypeOf(${jsName}.${getter}) != GetterTypeWithThisValue)
+              @compileLog("Expected ${jsName}.${getter} to be a getter with thisValue");`;
         } else {
           output += `
-            if (@TypeOf(${typeName}.${getter}) != GetterType)
+            if (@TypeOf(${jsName}.${getter}) != GetterType)
               @compileLog(
-                "Expected ${typeName}.${getter} to be a getter"
+                "Expected ${jsName}.${getter} to be a getter"
                 );
 `;
         }
@@ -1406,13 +1420,13 @@ function generateZig(
       if (setter) {
         if (thisValue) {
           output += `
-            if (@TypeOf(${typeName}.${setter}) != SetterTypeWithThisValue)
-              @compileLog("Expected ${typeName}.${setter} to be a setter with thisValue");`;
+            if (@TypeOf(${jsName}.${setter}) != SetterTypeWithThisValue)
+              @compileLog("Expected ${jsName}.${setter} to be a setter with thisValue");`;
         } else {
           output += `
-            if (@TypeOf(${typeName}.${setter}) != SetterType)
+            if (@TypeOf(${jsName}.${setter}) != SetterType)
               @compileLog(
-                "Expected ${typeName}.${setter} to be a setter"
+                "Expected ${jsName}.${setter} to be a setter"
               );`;
         }
       }
@@ -1420,16 +1434,16 @@ function generateZig(
       if (fn) {
         if (DOMJIT) {
           output += `
-          if (@TypeOf(${typeName}.${DOMJITName(fn)}) != ${ZigDOMJITFunctionType(typeName, DOMJIT)}) 
+          if (@TypeOf(${jsName}.${DOMJITName(fn)}) != ${ZigDOMJITFunctionType(jsName, DOMJIT)})
             @compileLog(
-              "Expected ${typeName}.${DOMJITName(fn)} to be a DOMJIT function"
+              "Expected ${jsName}.${DOMJITName(fn)} to be a DOMJIT function"
             );`;
         }
 
         output += `
-          if (@TypeOf(${typeName}.${fn}) != CallbackType) 
+          if (@TypeOf(${jsName}.${fn}) != CallbackType)
             @compileLog(
-              "Expected ${typeName}.${fn} to be a callback but received " ++ @typeName(@TypeOf(${typeName}.${fn}))
+              "Expected ${jsName}.${fn} to be a callback but received " ++ @typeName(@TypeOf(${jsName}.${fn}))
             );`;
       }
     });
@@ -1442,35 +1456,35 @@ function generateZig(
 
       if (getter) {
         output += `
-          if (@TypeOf(${typeName}.${getter}) != StaticGetterType) 
+          if (@TypeOf(${jsName}.${getter}) != StaticGetterType)
             @compileLog(
-              "Expected ${typeName}.${getter} to be a static getter"
+              "Expected ${jsName}.${getter} to be a static getter"
             );
 `;
       }
 
       if (setter) {
         output += `
-          if (@TypeOf(${typeName}.${setter}) != StaticSetterType) 
+          if (@TypeOf(${jsName}.${setter}) != StaticSetterType)
             @compileLog(
-              "Expected ${typeName}.${setter} to be a static setter"
+              "Expected ${jsName}.${setter} to be a static setter"
             );`;
       }
 
       if (fn) {
         output += `
-          if (@TypeOf(${typeName}.${fn}) != StaticCallbackType) 
+          if (@TypeOf(${jsName}.${fn}) != StaticCallbackType)
             @compileLog(
-              "Expected ${typeName}.${fn} to be a static callback"
+              "Expected ${jsName}.${fn} to be a static callback"
             );`;
       }
     });
 
     if (!!call) {
       output += `
-      if (@TypeOf(${typeName}.call) != StaticCallbackType) 
+      if (@TypeOf(${jsName}.call) != StaticCallbackType)
       @compileLog(
-        "Expected ${typeName}.call to be a static callback"
+        "Expected ${jsName}.call to be a static callback"
       );`;
     }
 
@@ -1479,19 +1493,19 @@ function generateZig(
 
   return `
 
-pub const ${className(typeName)} = struct {
-    const ${typeName} = Classes.${typeName};
-    const GetterType = fn(*${typeName}, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = fn(*${typeName}, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = fn(*${typeName}, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = fn(*${typeName}, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = fn(*${typeName}, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const ${className(jsName)} = struct {
+    const ${jsName} = Classes.${zigName};
+    const GetterType = fn(*${jsName}, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn(*${jsName}, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn(*${jsName}, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn(*${jsName}, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn(*${jsName}, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
-    pub fn fromJS(value: JSC.JSValue) ?*${typeName} {
+    pub fn fromJS(value: JSC.JSValue) ?*${jsName} {
         JSC.markBinding(@src());
-        return ${symbolName(typeName, "fromJS")}(value);
+        return ${symbolName(jsName, "fromJS")}(value);
     }
 
     ${externs}
@@ -1499,58 +1513,58 @@ pub const ${className(typeName)} = struct {
     ${
       !noConstructor
         ? `
-    /// Get the ${typeName} constructor value.
+    /// Get the ${jsName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
-        return ${symbolName(typeName, "getConstructor")}(globalObject);
+        return ${symbolName(jsName, "getConstructor")}(globalObject);
     }
   `
         : ""
     }
-    /// Create a new instance of ${typeName}
-    pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    /// Create a new instance of ${jsName}
+    pub fn toJS(this: *${jsName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "create")}(globalObject, this);
-            std.debug.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            const value__ = ${symbolName(jsName, "create")}(globalObject, this);
+            std.debug.assert(value__.as(${jsName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return ${symbolName(typeName, "create")}(globalObject, this);
+            return ${symbolName(jsName, "create")}(globalObject, this);
         }
     }
 
-    /// Modify the internal ptr to point to a new instance of ${typeName}.
-    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*${typeName}) bool {
+    /// Modify the internal ptr to point to a new instance of ${jsName}.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*${jsName}) bool {
       JSC.markBinding(@src());
-      return ${symbolName(typeName, "dangerouslySetPtr")}(value, ptr);
+      return ${symbolName(jsName, "dangerouslySetPtr")}(value, ptr);
     }
 
     /// Detach the ptr from the thisValue
-    pub fn detachPtr(_: *${typeName}, value: JSC.JSValue) void {
+    pub fn detachPtr(_: *${jsName}, value: JSC.JSValue) void {
       JSC.markBinding(@src());
-      std.debug.assert(${symbolName(typeName, "dangerouslySetPtr")}(value, null));
+      std.debug.assert(${symbolName(jsName, "dangerouslySetPtr")}(value, null));
     }
 
-    extern fn ${symbolName(typeName, "fromJS")}(JSC.JSValue) ?*${typeName};
-    extern fn ${symbolName(typeName, "getConstructor")}(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn ${symbolName(jsName, "fromJS")}(JSC.JSValue) ?*${jsName};
+    extern fn ${symbolName(jsName, "getConstructor")}(*JSC.JSGlobalObject) JSC.JSValue;
 
-    extern fn ${symbolName(typeName, "create")}(globalObject: *JSC.JSGlobalObject, ptr: ?*${typeName}) JSC.JSValue;
+    extern fn ${symbolName(jsName, "create")}(globalObject: *JSC.JSGlobalObject, ptr: ?*${jsName}) JSC.JSValue;
 
-    extern fn ${typeName}__dangerouslySetPtr(JSC.JSValue, ?*${typeName}) bool;
+    extern fn ${jsName}__dangerouslySetPtr(JSC.JSValue, ?*${jsName}) bool;
 
     comptime {
         ${typeCheck()}
         if (!JSC.is_bindgen) {
 ${[...exports]
   .sort(([a], [b]) => a.localeCompare(b))
-  .map(([internalName, externalName]) => `@export(${typeName}.${internalName}, .{.name = "${externalName}"});`)
+  .map(([internalName, externalName]) => `@export(${jsName}.${internalName}, .{.name = "${externalName}"});`)
   .join("\n          ")}
         }
     }
 };
 
-  
+
 `;
 }
 
@@ -1726,6 +1740,26 @@ function findClasses() {
     });
   }
   classes.sort((a, b) => (a.name < b.name ? -1 : 1));
+  let hasExtends = true;
+  while (hasExtends) {
+    let _hasExtends = false;
+    for (const _class of classes) {
+      if (_class.extends) {
+        if (!_class._baseExtends) {
+          _class._baseExtends = _class.extends;
+        }
+        let base = classes.find((a) => a.name == _class.extends);
+        if (!base) {
+          throw new Error(`${_class.name} tries to extend ${_class.extends}, but that class does not seem to exist.`);
+        }
+        mergeClasses(base, _class);
+        if (_class.extends) {
+          _hasExtends = true;
+        }
+      }
+    }
+    hasExtends = _hasExtends;
+  }
   return classes;
 }
 
@@ -1819,7 +1853,7 @@ function writeCppSerializers() {
 await writeAndUnlink(`${import.meta.dir}/../bindings/generated_classes.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
-  ...classes.map(a => generateZig(a.name, a).trim()).join("\n"),
+  ...classes.map(a => generateZig(a.name, a._baseExtends || a.name, a).trim()).join("\n"),
   "\n",
   `
 comptime {

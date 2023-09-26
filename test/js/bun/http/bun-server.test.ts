@@ -405,7 +405,6 @@ describe("Server", () => {
     }
   });
 
-
   test("server should have URL fields set with IPv6", async () => {
     const server = Bun.serve({
       hostname: "[::1]",

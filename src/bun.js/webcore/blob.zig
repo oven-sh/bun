@@ -3063,7 +3063,7 @@ pub const Blob = struct {
                     return store.data.file.pathlike.path.slice();
                 }
             } else {
-                unreachable;
+                return "";
             }
         }
 
@@ -3402,6 +3402,12 @@ pub const Blob = struct {
         }
 
         duped.allocator = null;
+        if (this.store) |store| {
+            if (store.data == .file) {
+                duped.fileName = this.fileName;
+            }
+        }
+
         return duped;
     }
 

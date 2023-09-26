@@ -5358,6 +5358,83 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle installing packages from inside a workspace with `*`", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "yolo"), { recursive: true });
+  const yolo_package = JSON.stringify({
+    name: "yolo",
+    version: "0.0.1",
+    dependencies: {
+      swag: "workspace:*",
+    },
+  });
+  await writeFile(join(package_dir, "packages", "yolo", "package.json"), yolo_package);
+  await mkdir(join(package_dir, "packages", "swag"));
+  const swag_package = JSON.stringify({
+    name: "swag",
+    version: "0.0.1",
+  });
+  await writeFile(join(package_dir, "packages", "swag", "package.json"), swag_package);
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "yolo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + swag@workspace:packages/swag",
+    " + yolo@workspace:packages/yolo",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "bar"],
+    cwd: join(package_dir, "packages", "yolo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2).toContain("installed bar");
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should override npm dependency by matching workspace", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

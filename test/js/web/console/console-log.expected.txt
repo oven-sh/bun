@@ -57,3 +57,6 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
     }
   }
 }
+{
+  "1": [Object ...]
+}

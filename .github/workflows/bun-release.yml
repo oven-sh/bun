@@ -129,10 +129,17 @@ jobs:
           package: packages/bun-types/dist/package.json
           token: ${{ secrets.NPM_TOKEN }}
   docker:
-    name: Release to Dockerhub
+    name: Release to Dockerhub (${{ matrix.variant }})
     runs-on: ubuntu-latest
     needs: sign
     if: github.repository_owner == 'oven-sh'
+    strategy:
+      matrix:
+        variant:
+          - debian
+          - slim
+          - alpine
+          - distroless
     steps:
       - id: checkout
         name: Checkout
@@ -157,9 +164,13 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: oven/bun
+          flavor: |
+            latest=${{ matrix.variant == 'debian' }}
+            suffix=${{ matrix.variant }}
           tags: |
             type=match,pattern=(bun-v)?(\d+.\d+.\d+),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(\d+.\d+),group=2,value=${{ env.TAG }}
+            type=match,pattern=(bun-v)?(\d+),group=2,value=${{ env.TAG }}
       - id: login
         name: Login to Docker
         uses: docker/login-action@v2
@@ -170,8 +181,7 @@ jobs:
         name: Push to Docker
         uses: docker/build-push-action@v3
         with:
-          context: ./dockerhub
-          file: ./dockerhub/Dockerfile-debian
+          context: ./dockerhub/${{ matrix.variant }}
           platforms: linux/amd64,linux/arm64
           builder: ${{ steps.buildx.outputs.name }}
           push: true

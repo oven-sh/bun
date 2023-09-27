@@ -1,4 +1,4 @@
-const URL = bun.URL;
+const URL = @import("../url.zig").URL;
 const bun = @import("root").bun;
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;

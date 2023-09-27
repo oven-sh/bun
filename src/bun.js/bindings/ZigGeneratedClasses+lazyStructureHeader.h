@@ -202,7 +202,3 @@ JSC::Structure* JSTranspilerStructure() { return m_JSTranspiler.getInitializedOn
   JSC::JSObject* JSTranspilerConstructor() { return m_JSTranspiler.constructorInitializedOnMainThread(this); }
   JSC::JSValue JSTranspilerPrototype() { return m_JSTranspiler.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_JSTranspiler;
-JSC::Structure* JSURLStructure() { return m_JSURL.getInitializedOnMainThread(this); }
-  JSC::JSObject* JSURLConstructor() { return m_JSURL.constructorInitializedOnMainThread(this); }
-  JSC::JSValue JSURLPrototype() { return m_JSURL.prototypeInitializedOnMainThread(this); }
-  JSC::LazyClassStructure m_JSURL;

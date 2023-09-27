@@ -1331,9 +1331,6 @@ pub const JSDebugHTTPSServer = struct {
             @compileLog("Expected DebugHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doStop)));
         if (@TypeOf(DebugHTTPSServer.doUpgrade) != CallbackType)
             @compileLog("Expected DebugHTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doUpgrade)));
-        if (@TypeOf(DebugHTTPSServer.getURL) != GetterType)
-            @compileLog("Expected DebugHTTPSServer.getURL to be a getter");
-
         if (!JSC.is_bindgen) {
             @export(DebugHTTPSServer.doFetch, .{ .name = "DebugHTTPSServerPrototype__doFetch" });
             @export(DebugHTTPSServer.doPublish, .{ .name = "DebugHTTPSServerPrototype__doPublish" });
@@ -1348,7 +1345,6 @@ pub const JSDebugHTTPSServer = struct {
             @export(DebugHTTPSServer.getPendingWebSockets, .{ .name = "DebugHTTPSServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPSServer.getPort, .{ .name = "DebugHTTPSServerPrototype__getPort" });
             @export(DebugHTTPSServer.getProtocol, .{ .name = "DebugHTTPSServerPrototype__getProtocol" });
-            @export(DebugHTTPSServer.getURL, .{ .name = "DebugHTTPSServerPrototype__getURL" });
         }
     }
 };
@@ -1478,9 +1474,6 @@ pub const JSDebugHTTPServer = struct {
             @compileLog("Expected DebugHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doStop)));
         if (@TypeOf(DebugHTTPServer.doUpgrade) != CallbackType)
             @compileLog("Expected DebugHTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doUpgrade)));
-        if (@TypeOf(DebugHTTPServer.getURL) != GetterType)
-            @compileLog("Expected DebugHTTPServer.getURL to be a getter");
-
         if (!JSC.is_bindgen) {
             @export(DebugHTTPServer.doFetch, .{ .name = "DebugHTTPServerPrototype__doFetch" });
             @export(DebugHTTPServer.doPublish, .{ .name = "DebugHTTPServerPrototype__doPublish" });
@@ -1495,7 +1488,6 @@ pub const JSDebugHTTPServer = struct {
             @export(DebugHTTPServer.getPendingWebSockets, .{ .name = "DebugHTTPServerPrototype__getPendingWebSockets" });
             @export(DebugHTTPServer.getPort, .{ .name = "DebugHTTPServerPrototype__getPort" });
             @export(DebugHTTPServer.getProtocol, .{ .name = "DebugHTTPServerPrototype__getProtocol" });
-            @export(DebugHTTPServer.getURL, .{ .name = "DebugHTTPServerPrototype__getURL" });
         }
     }
 };
@@ -3289,9 +3281,6 @@ pub const JSHTTPSServer = struct {
             @compileLog("Expected HTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doStop)));
         if (@TypeOf(HTTPSServer.doUpgrade) != CallbackType)
             @compileLog("Expected HTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(HTTPSServer.doUpgrade)));
-        if (@TypeOf(HTTPSServer.getURL) != GetterType)
-            @compileLog("Expected HTTPSServer.getURL to be a getter");
-
         if (!JSC.is_bindgen) {
             @export(HTTPSServer.doFetch, .{ .name = "HTTPSServerPrototype__doFetch" });
             @export(HTTPSServer.doPublish, .{ .name = "HTTPSServerPrototype__doPublish" });
@@ -3306,7 +3295,6 @@ pub const JSHTTPSServer = struct {
             @export(HTTPSServer.getPendingWebSockets, .{ .name = "HTTPSServerPrototype__getPendingWebSockets" });
             @export(HTTPSServer.getPort, .{ .name = "HTTPSServerPrototype__getPort" });
             @export(HTTPSServer.getProtocol, .{ .name = "HTTPSServerPrototype__getProtocol" });
-            @export(HTTPSServer.getURL, .{ .name = "HTTPSServerPrototype__getURL" });
         }
     }
 };
@@ -3436,9 +3424,6 @@ pub const JSHTTPServer = struct {
             @compileLog("Expected HTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doStop)));
         if (@TypeOf(HTTPServer.doUpgrade) != CallbackType)
             @compileLog("Expected HTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(HTTPServer.doUpgrade)));
-        if (@TypeOf(HTTPServer.getURL) != GetterType)
-            @compileLog("Expected HTTPServer.getURL to be a getter");
-
         if (!JSC.is_bindgen) {
             @export(HTTPServer.doFetch, .{ .name = "HTTPServerPrototype__doFetch" });
             @export(HTTPServer.doPublish, .{ .name = "HTTPServerPrototype__doPublish" });
@@ -3453,7 +3438,6 @@ pub const JSHTTPServer = struct {
             @export(HTTPServer.getPendingWebSockets, .{ .name = "HTTPServerPrototype__getPendingWebSockets" });
             @export(HTTPServer.getPort, .{ .name = "HTTPServerPrototype__getPort" });
             @export(HTTPServer.getProtocol, .{ .name = "HTTPServerPrototype__getProtocol" });
-            @export(HTTPServer.getURL, .{ .name = "HTTPServerPrototype__getURL" });
         }
     }
 };
@@ -7083,125 +7067,6 @@ pub const JSTranspiler = struct {
         }
     }
 };
-pub const JSURL = struct {
-    const URL = Classes.URL;
-    const GetterType = fn (*URL, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = fn (*URL, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = fn (*URL, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = fn (*URL, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = fn (*URL, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
-
-    /// Return the pointer to the wrapped object.
-    /// If the object does not match the type, return null.
-    pub fn fromJS(value: JSC.JSValue) ?*URL {
-        JSC.markBinding(@src());
-        return URL__fromJS(value);
-    }
-
-    /// Get the URL constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return URL__getConstructor(globalObject);
-    }
-
-    /// Create a new instance of URL
-    pub fn toJS(this: *URL, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        if (comptime Environment.allow_assert) {
-            const value__ = URL__create(globalObject, this);
-            std.debug.assert(value__.as(URL).? == this); // If this fails, likely a C ABI issue.
-            return value__;
-        } else {
-            return URL__create(globalObject, this);
-        }
-    }
-
-    /// Modify the internal ptr to point to a new instance of URL.
-    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*URL) bool {
-        JSC.markBinding(@src());
-        return URL__dangerouslySetPtr(value, ptr);
-    }
-
-    /// Detach the ptr from the thisValue
-    pub fn detachPtr(_: *URL, value: JSC.JSValue) void {
-        JSC.markBinding(@src());
-        std.debug.assert(URL__dangerouslySetPtr(value, null));
-    }
-
-    extern fn URL__fromJS(JSC.JSValue) ?*URL;
-    extern fn URL__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
-
-    extern fn URL__create(globalObject: *JSC.JSGlobalObject, ptr: ?*URL) JSC.JSValue;
-
-    extern fn URL__dangerouslySetPtr(JSC.JSValue, ?*URL) bool;
-
-    comptime {
-        if (@TypeOf(URL.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*URL)) {
-            @compileLog("URL.constructor is not a constructor");
-        }
-
-        if (@TypeOf(URL.finalize) != (fn (*URL) callconv(.C) void)) {
-            @compileLog("URL.finalize is not a finalizer");
-        }
-
-        if (@TypeOf(URL.getHash) != GetterType)
-            @compileLog("Expected URL.getHash to be a getter");
-
-        if (@TypeOf(URL.getHost) != GetterType)
-            @compileLog("Expected URL.getHost to be a getter");
-
-        if (@TypeOf(URL.getHostname) != GetterType)
-            @compileLog("Expected URL.getHostname to be a getter");
-
-        if (@TypeOf(URL.getHref) != GetterType)
-            @compileLog("Expected URL.getHref to be a getter");
-
-        if (@TypeOf(URL.getOrigin) != GetterType)
-            @compileLog("Expected URL.getOrigin to be a getter");
-
-        if (@TypeOf(URL.getPassword) != GetterType)
-            @compileLog("Expected URL.getPassword to be a getter");
-
-        if (@TypeOf(URL.getPathname) != GetterType)
-            @compileLog("Expected URL.getPathname to be a getter");
-
-        if (@TypeOf(URL.getPortJS) != GetterType)
-            @compileLog("Expected URL.getPortJS to be a getter");
-
-        if (@TypeOf(URL.getProtocol) != GetterType)
-            @compileLog("Expected URL.getProtocol to be a getter");
-
-        if (@TypeOf(URL.getSearch) != GetterType)
-            @compileLog("Expected URL.getSearch to be a getter");
-
-        if (@TypeOf(URL.getSearchParams) != GetterType)
-            @compileLog("Expected URL.getSearchParams to be a getter");
-
-        if (@TypeOf(URL.toJSON) != CallbackType)
-            @compileLog("Expected URL.toJSON to be a callback but received " ++ @typeName(@TypeOf(URL.toJSON)));
-        if (@TypeOf(URL.getUsername) != GetterType)
-            @compileLog("Expected URL.getUsername to be a getter");
-
-        if (!JSC.is_bindgen) {
-            @export(URL.constructor, .{ .name = "URLClass__construct" });
-            @export(URL.finalize, .{ .name = "URLClass__finalize" });
-            @export(URL.getHash, .{ .name = "URLPrototype__getHash" });
-            @export(URL.getHost, .{ .name = "URLPrototype__getHost" });
-            @export(URL.getHostname, .{ .name = "URLPrototype__getHostname" });
-            @export(URL.getHref, .{ .name = "URLPrototype__getHref" });
-            @export(URL.getOrigin, .{ .name = "URLPrototype__getOrigin" });
-            @export(URL.getPassword, .{ .name = "URLPrototype__getPassword" });
-            @export(URL.getPathname, .{ .name = "URLPrototype__getPathname" });
-            @export(URL.getPortJS, .{ .name = "URLPrototype__getPortJS" });
-            @export(URL.getProtocol, .{ .name = "URLPrototype__getProtocol" });
-            @export(URL.getSearch, .{ .name = "URLPrototype__getSearch" });
-            @export(URL.getSearchParams, .{ .name = "URLPrototype__getSearchParams" });
-            @export(URL.getUsername, .{ .name = "URLPrototype__getUsername" });
-            @export(URL.toJSON, .{ .name = "URLPrototype__toJSON" });
-        }
-    }
-};
 
 comptime {
     _ = JSAttributeIterator;
@@ -7255,5 +7120,4 @@ comptime {
     _ = JSTextDecoder;
     _ = JSTimeout;
     _ = JSTranspiler;
-    _ = JSURL;
 }

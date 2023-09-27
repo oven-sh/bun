@@ -27,7 +27,7 @@ const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
-const URL = bun.URL;
+const URL = @import("../url.zig").URL;
 const HTTP = @import("root").bun.HTTP;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;

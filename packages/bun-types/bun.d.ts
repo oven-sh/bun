@@ -2373,11 +2373,6 @@ declare module "bun" {
      * When bun is not started with the `--hot` flag, this ID is currently unused.
      */
     readonly id: string;
-
-    /**
-     * A URL object representing the address the server is listening on.
-     */
-    readonly url: URL;
   }
 
   /**

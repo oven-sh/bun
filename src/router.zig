@@ -25,7 +25,7 @@ const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const allocators = @import("./allocators.zig");
 const URLPath = @import("./http/url_path.zig");
-const PathnameScanner = bun.PathnameScanner;
+const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
 const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));

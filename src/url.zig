@@ -1,6 +1,6 @@
 const std = @import("std");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
+const Api = @import("./api/schema.zig").Api;
+const resolve_path = @import("./resolver/resolve_path.zig");
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
@@ -12,8 +12,6 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
-const CppURL = @import("./bindings/bindings.zig").CppURL;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
@@ -38,122 +36,17 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
-    pub usingnamespace JSC.Codegen.JSURL;
-    pub usingnamespace CppURL;
-
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) callconv(.C) ?*URL {
-        globalThis.throw("URL is not constructable", .{});
-        return null;
-    }
-
-    pub fn finalize(_: *URL) callconv(.C) void {}
-
-    pub fn getHash(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.hash).toJSConst(globalThis);
-    }
-
-    pub fn getHost(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.host).toJSConst(globalThis);
-    }
-
-    pub fn getHostname(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.hostname).toJSConst(globalThis);
-    }
-
-    pub fn getHref(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.href).toJSConst(globalThis);
-    }
-
-    pub fn getOrigin(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.origin).toJSConst(globalThis);
-    }
-
-    pub fn getPassword(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.password).toJSConst(globalThis);
-    }
-
-    pub fn getPathname(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.pathname).toJSConst(globalThis);
-    }
-
-    pub fn getPortJS(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.port).toJSConst(globalThis);
-    }
-
-    pub fn getProtocol(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.protocol).toJSConst(globalThis);
-    }
-
-    pub fn getSearch(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.search).toJSConst(globalThis);
-    }
-
-    pub fn getSearchParams(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        _ = this;
-        return JSC.JSValue.createEmptyObject(globalThis, 0);
-    }
-
-    pub fn getUsername(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return bun.String.init(this.username).toJSConst(globalThis);
-    }
-
-    pub fn toJSON(
-        this: *URL,
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        return this.getHref(globalThis);
-    }
-
-    pub fn create(
-        globalThis: *JSC.JSGlobalObject,
-        allocator: std.mem.Allocator,
-    ) JSC.JSValue {
-        var build_error = allocator.create(JSC.URL) catch unreachable;
-        return build_error.toJS(globalThis, allocator);
-    }
-
     pub fn isFile(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "file");
+    }
+
+    pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
+        var href = JSC.URL.hrefFromJS(globalObject, js_value);
+        if (href.tag == .Dead) {
+            return error.InvalidURL;
+        }
+
+        return URL.parse(try href.toOwnedSlice(allocator));
     }
 
     pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
@@ -1377,7 +1270,7 @@ pub const FormData = struct {
     }
 };
 
-const ParamsList = @import("../router.zig").Param.List;
+const ParamsList = @import("./router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
     pathname: PathnameScanner,

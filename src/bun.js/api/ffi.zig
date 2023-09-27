@@ -70,7 +70,7 @@ const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
 const VM = @import("root").bun.JSC.VM;
 const JSFunction = @import("root").bun.JSC.JSFunction;
 const Config = @import("../config.zig");
-const URL = bun.URL;
+const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const ComptimeStringMap = @import("../../comptime_string_map.zig").ComptimeStringMap;
@@ -317,9 +317,9 @@ pub const FFI = struct {
                 };
             };
         };
-
+        
         var size = symbols.values().len;
-        if (size >= 63) {
+        if(size >= 63) {
             size = 0;
         }
         var obj = JSC.JSValue.createEmptyObject(global, size);

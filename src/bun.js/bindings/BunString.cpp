@@ -337,6 +337,23 @@ extern "C" BunString URL__getFileURLString(BunString* filePath)
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(Bun::toWTFString(*filePath)).stringWithoutFragmentIdentifier());
 }
 
+extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    auto str = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    if (str.isEmpty()) {
+        return nullptr;
+    }
+
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isNull())
+        return nullptr;
+
+    return new WTF::URL(WTFMove(url));
+}
+
 extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -373,6 +390,16 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString *relativeStr
         return { BunStringTag::Dead };
 
     return Bun::toStringRef(url.string());
+}
+
+extern "C" WTF::URL* URL__fromString(BunString* input)
+{
+    auto&& str = Bun::toWTFString(*input);
+    auto url = WTF::URL(str);
+    if (!url.isValid())
+        return nullptr;
+
+    return new WTF::URL(WTFMove(url));
 }
 
 extern "C" BunString URL__protocol(WTF::URL* url)

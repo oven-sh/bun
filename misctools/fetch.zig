@@ -13,7 +13,7 @@ pub usingnamespace @import("root").bun;
 
 const clap = bun.clap;
 
-const URL = bun.URL;
+const URL = @import("../src/url.zig").URL;
 const Headers = @import("root").bun.HTTP.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;

@@ -3,7 +3,7 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const RequestContext = @import("../../bun_dev_http_server.zig").RequestContext;
 const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
-const ZigURL = bun.URL;
+const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const FetchRedirect = HTTPClient.FetchRedirect;
 const NetworkThread = HTTPClient.NetworkThread;
@@ -1970,7 +1970,7 @@ pub const Fetch = struct {
         if (is_file_url) {
             defer allocator.free(url_proxy_buffer);
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const PercentEncoding = bun.PercentEncoding;
+            const PercentEncoding = @import("../../url.zig").PercentEncoding;
             var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
             var stream = std.io.fixedBufferStream(&path_buf2);
             const url_path_decoded = path_buf2[0 .. PercentEncoding.decode(

@@ -49,5 +49,4 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextChunk;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTimeout;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspiler;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspilerConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURL;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLConstructor;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspilerConstructor;

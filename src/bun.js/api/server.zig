@@ -69,7 +69,7 @@ const ZigGlobalObject = @import("root").bun.JSC.ZigGlobalObject;
 const VM = @import("root").bun.JSC.VM;
 const JSFunction = @import("root").bun.JSC.JSFunction;
 const Config = @import("../config.zig");
-const URL = bun.URL;
+const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
@@ -5224,32 +5224,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
             return JSC.JSValue.jsBoolean(debug_mode);
-        }
-
-        pub fn getURL(
-            this: *ThisServer,
-            globalThis: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
-            var base_url = this.config.base_url;
-            var url = bun.default_allocator.create(URL) catch @panic("Unable to allocate URL");
-
-            url.* = URL{
-                .hash = base_url.hash,
-                .host = base_url.host,
-                .hostname = base_url.hostname,
-                .href = base_url.href,
-                .origin = base_url.origin,
-                .password = base_url.password,
-                .pathname = base_url.pathname,
-                .path = base_url.path,
-                .port = base_url.port,
-                .protocol = base_url.protocol,
-                .search = base_url.search,
-                .searchParams = null, // no search params for server URL
-                .username = base_url.username,
-                .port_was_automatically_set = base_url.port_was_automatically_set,
-            };
-            return url.toJS(globalThis);
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {

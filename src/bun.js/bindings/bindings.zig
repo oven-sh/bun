@@ -21,7 +21,6 @@ const MutableString = bun.MutableString;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 const String = bun.String;
 const ErrorableString = JSC.ErrorableString;
-const URL = JSC.URL;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -5480,7 +5479,9 @@ pub fn untrackFunction(
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
-pub const CppURL = opaque {
+pub const URL = opaque {
+    extern fn URL__fromJS(JSValue, *JSC.JSGlobalObject) ?*URL;
+    extern fn URL__fromString(*bun.String) ?*URL;
     extern fn URL__protocol(*URL) String;
     extern fn URL__href(*URL) String;
     extern fn URL__username(*URL) String;
@@ -5522,6 +5523,19 @@ pub const CppURL = opaque {
         return URL__getHrefFromJS(value, globalObject);
     }
 
+    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
+        JSC.markBinding(@src());
+        return URL__fromJS(value, globalObject);
+    }
+
+    pub fn fromUTF8(input: []const u8) ?*URL {
+        return fromString(String.fromUTF8(input));
+    }
+    pub fn fromString(str: bun.String) ?*URL {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__fromString(&input);
+    }
     pub fn protocol(url: *URL) String {
         JSC.markBinding(@src());
         return URL__protocol(url);

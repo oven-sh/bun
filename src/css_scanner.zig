@@ -19,7 +19,7 @@ const logger = @import("root").bun.logger;
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
-const URL = bun.URL;
+const URL = @import("./url.zig").URL;
 const replacementCharacter: CodePoint = 0xFFFD;
 
 pub const Chunk = struct {

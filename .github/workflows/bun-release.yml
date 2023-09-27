@@ -163,6 +163,7 @@ jobs:
             latest=${{ matrix.suffix == '' && (github.event.inputs.is-latest == 'true' || github.event.release.tag_name == env.BUN_VERSION) }}
             suffix=${{ matrix.suffix }}
           tags: |
+            type=raw,value=${{ matrix.variant }},enable=${{ github.event.inputs.is-latest == 'true' || github.event.release.tag_name == env.BUN_VERSION || 'false' }}
             type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
             type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
             type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }}

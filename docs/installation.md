@@ -48,6 +48,24 @@ The test runner, package manager, and bundler are still under development. The f
 - `bun link/unlink`
 - `bun build`
 
+## Docker
+
+Bun provides a [Docker image](https://hub.docker.com/r/oven/bun/tags) that supports both Linux x64 and arm64.
+
+```bash
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+```
+
+There are also image variants for different operating systems.
+
+```bash
+$ docker pull oven/bun:debian
+$ docker pull oven/bun:slim
+$ docker pull oven/bun:alpine
+$ docker pull oven/bun:distroless
+```
+
 ## Upgrading
 
 Once installed, the binary can upgrade itself.

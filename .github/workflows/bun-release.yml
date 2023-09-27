@@ -173,7 +173,7 @@ jobs:
           images: oven/bun
           flavor: |
             latest=${{ matrix.variant == 'debian' }}
-            suffix=${{ matrix.variant }}
+            suffix=-${{ matrix.variant }}
           tags: |
             type=match,pattern=(bun-v)?(\d+.\d+.\d+),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(\d+.\d+),group=2,value=${{ env.TAG }}

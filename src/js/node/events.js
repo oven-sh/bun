@@ -93,6 +93,8 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   var handlers = events[type];
   if (handlers === undefined) return false;
   // clone handlers array if necessary since handlers can be added/removed during the loop
+  // cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
   for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];
@@ -127,6 +129,8 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   var handlers = events[type];
   if (handlers === undefined) return false;
   // clone handlers array if necessary since handlers can be added/removed during the loop
+  // cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
   for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];

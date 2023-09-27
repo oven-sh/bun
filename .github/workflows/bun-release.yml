@@ -2,6 +2,7 @@ name: bun-release
 concurrency: release
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
+  BUN_LATEST: ${{ github.event.inputs.is-latest || github.event.release.prerelease == 'false' }}
 on:
   release:
     types:
@@ -160,13 +161,14 @@ jobs:
         with:
           images: oven/bun
           flavor: |
-            latest=${{ matrix.suffix == '' && (github.event.inputs.is-latest == 'true' || github.event.release.tag_name == env.BUN_VERSION) }}
-            suffix=${{ matrix.suffix }}
+            latest=false
           tags: |
-            type=raw,value=${{ matrix.variant }},enable=${{ github.event.inputs.is-latest == 'true' || github.event.release.tag_name == env.BUN_VERSION || 'false' }}
-            type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
-            type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
-            type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }}
+            type=raw,value=latest,enable=${{ env.BUN_LATEST == 'true' && matrix.suffix == '' }}
+            type=raw,value=latest,suffix=${{ matrix.suffix }},enable=${{ env.BUN_LATEST == 'true' }}
+            type=raw,value=${{ matrix.variant }},enable=${{ env.BUN_LATEST == 'true' }}
+            type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
+            type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
+            type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
       - name: Login to Docker
         uses: docker/login-action@v2
         with:

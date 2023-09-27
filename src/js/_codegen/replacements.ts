@@ -153,7 +153,12 @@ export function applyReplacements(src: string, length: number) {
           "(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
-          JSON.stringify(checkSlice.result.slice(1, -1).replace(/__intrinsic__/g, "$")) +
+          JSON.stringify(
+            checkSlice.result
+              .slice(1, -1)
+              .replace(/__intrinsic__/g, "$")
+              .trim(),
+          ) +
           extraArgs +
           "):void 0)",
         rest2,

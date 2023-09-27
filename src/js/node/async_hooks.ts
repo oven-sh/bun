@@ -29,11 +29,15 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   // undefined is OK
   if (array === undefined) return true;
   // Otherwise, it must be an array
-  $assert(Array.isArray(array), "AsyncContextData should be an array or undefined, got", array);
+  $assert(
+    Array.isArray(array),
+    "AsyncContextData must be an array or undefined, got",
+    Bun.inspect(array, { depth: 1 }),
+  );
   // the array has to be even
-  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", array);
+  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
   // if it is zero-length, use undefined instead
-  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", array);
+  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
       array[i] instanceof AsyncLocalStorage,
@@ -126,6 +130,8 @@ class AsyncLocalStorage {
     return this.run(undefined, cb, ...args);
   }
 
+  // This function is literred with $asserts to ensure that everything that
+  // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
@@ -144,11 +150,14 @@ class AsyncLocalStorage {
         previous_value = context[i + 1];
         context[i + 1] = store_value;
       } else {
+        i = context.length;
         context.push(this, store_value);
+        $assert(i % 2 === 0);
         $assert(context.length % 2 === 0);
       }
       set(context);
     }
+    $assert(i > -1, "i was not set");
     $assert(this.getStore() === store_value, "run: store_value was not set");
     try {
       return callback(...args);
@@ -164,18 +173,24 @@ class AsyncLocalStorage {
           set(undefined);
         } else {
           context2 = context2.slice(); // array is cloned here
+          $assert(context2[i] === this);
           if (hasPrevious) {
-            $assert(context2[i] === this);
             context2[i + 1] = previous_value;
             set(context2);
           } else {
+            // i wonder if this is a fair assert to make
             context2.splice(i, 2);
-            $assert(context2.indexOf(this) === -1);
             $assert(context2.length % 2 === 0);
             set(context2.length ? context2 : undefined);
           }
         }
-        $assert(this.getStore() === previous_value, "run: store_value was not restored");
+        $assert(
+          this.getStore() === previous_value,
+          "run: previous_value",
+          Bun.inspect(previous_value),
+          "was not restored, i see",
+          this.getStore(),
+        );
       }
     }
   }
@@ -212,10 +227,10 @@ class AsyncLocalStorage {
 if (IS_BUN_DEVELOPMENT) {
   AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth, options) {
     if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
-    return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} = ${Bun.inspect(this.getStore(), {
-      ...options,
-      depth: depth - 1,
-    })} }`;
+    return `AsyncLocalStorage { [${options.stylize("debug id", "special")}]: ${Bun.inspect(
+      (this as any).__id__,
+      options,
+    )} }`;
   };
 }
 

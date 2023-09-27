@@ -21237,10 +21237,6 @@ fn NewParser_(
                         .loc = logger.Loc.Empty,
                     };
 
-                    if (p.has_import_meta) {
-                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
-                    }
-
                     var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
                     var remaining_stmts = stmts_to_copy;
                     var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
@@ -21286,10 +21282,19 @@ fn NewParser_(
                     }, logger.Loc.Empty);
 
                     bind_resolve_args[0] = module_id;
-                    const get_require = p.newExpr(
+                    const get_original_require = p.newExpr(
                         E.Dot{
                             .name = "require",
                             .target = cjsWrapperThis,
+                            .name_loc = logger.Loc.Empty,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const set_require = p.newExpr(
+                        E.Dot{
+                            .name = "require",
+                            .target = this_module,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
@@ -21300,14 +21305,14 @@ fn NewParser_(
                             .target = p.newExpr(E.Dot{
                                 .name = "bind",
                                 .name_loc = logger.Loc.Empty,
-                                .target = get_require,
+                                .target = get_original_require,
                             }, logger.Loc.Empty),
                             .args = bun.BabyList(Expr).init(bind_args),
                         },
                         logger.Loc.Empty,
                     );
 
-                    const get_resolve = p.newExpr(E.Dot{
+                    const get_original_resolve = p.newExpr(E.Dot{
                         .name = "resolve",
                         .name_loc = logger.Loc.Empty,
                         .target = cjsWrapperThis,
@@ -21316,7 +21321,7 @@ fn NewParser_(
                     const set_resolve = p.newExpr(E.Dot{
                         .name = "resolve",
                         .name_loc = logger.Loc.Empty,
-                        .target = get_require,
+                        .target = set_require,
                     }, logger.Loc.Empty);
 
                     const create_resolve_binding = p.newExpr(
@@ -21324,7 +21329,7 @@ fn NewParser_(
                             .target = p.newExpr(E.Dot{
                                 .name = "bind",
                                 .name_loc = logger.Loc.Empty,
-                                .target = get_resolve,
+                                .target = get_original_resolve,
                             }, logger.Loc.Empty),
                             .args = bun.BabyList(Expr).init(bind_resolve_args),
                         },
@@ -21334,14 +21339,14 @@ fn NewParser_(
                     const require_path = p.newExpr(
                         E.Dot{
                             .name = "path",
-                            .target = get_require,
+                            .target = get_original_require,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
                     );
-                    const assign_binding = p.newExpr(
+                    const assign_require_binding = p.newExpr(
                         E.Binary{
-                            .left = get_require,
+                            .left = set_require,
                             .right = create_binding,
                             .op = .bin_assign,
                         },
@@ -21364,10 +21369,10 @@ fn NewParser_(
                     }, logger.Loc.Empty);
 
                     var create_require = [4]Expr{
-                        assign_binding,
+                        assign_require_binding,
                         assign_id,
                         assign_resolve_binding,
-                        get_require,
+                        set_require,
                     };
 
                     //
@@ -21429,6 +21434,7 @@ fn NewParser_(
 
                     // var $Bun_import_meta = this.createImportMeta(this.filename);
                     if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
                         var decl = allocator.alloc(Decl, 1) catch unreachable;
                         decl[0] = Decl{
                             .binding = Binding.alloc(

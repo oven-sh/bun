@@ -1985,13 +1985,6 @@ pub const ModuleLoader = struct {
                     return null;
                 }
 
-                if (comptime Environment.isDebug) {
-                    if (err == error.FileNotFound) {
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
-                    }
-                }
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
                 return null;
             },

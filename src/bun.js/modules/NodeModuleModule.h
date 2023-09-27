@@ -304,6 +304,39 @@ JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
   return false;
 }
 
+// These two setters are only used if you directly hit
+// `Module.prototype.require` or `module.require`. When accessing the cjs
+// require argument, this is a bound version of `require`, which calls into the
+// overridden one.
+//
+// This require function also intentionally does not have .resolve on it, nor
+// does it have any of the other properties.
+//
+// Note: allowing require to be overridable at all is only needed for Next.js to
+// work (they do Module.prototype.require = ...)
+
+JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue, JSC::PropertyName)) {
+  return JSValue::encode(globalObject->getDirect(
+      globalObject->vm(), WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue value,
+                          JSC::PropertyName propertyName)) {
+  globalObject->putDirect(globalObject->vm(),
+                          WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName(),
+                          JSValue::decode(value), 0);
+  return true;
+}
+
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
@@ -371,9 +404,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "globalPaths"_s),
       constructEmptyArray(globalObject, nullptr, 0));
 
-  defaultObject->putDirect(
-      vm, vm.propertyNames->prototype,
-      globalObject->CommonJSModuleObjectStructure()->storedPrototype());
+  auto prototype =
+      constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+  prototype->putDirectCustomAccessor(
+      vm, JSC::Identifier::fromString(vm, "require"_s),
+      JSC::CustomGetterSetter::create(vm, getterRequireFunction,
+                                      setterRequireFunction),
+      0);
+
+  defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,

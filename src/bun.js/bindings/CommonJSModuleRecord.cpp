@@ -402,7 +402,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     String wrappedString = makeString(
         "(function(module,exports,require,__dirname,__filename){"_s,
         sourceString,
-        "\n}).call($_BunCommonJSModule_$.module.exports,$_BunCommonJSModule_$.module,$_BunCommonJSModule_$.module.exports,($_BunCommonJSModule_$.module.require=$_BunCommonJSModule_$.require.bind($_BunCommonJSModule_$.module),$_BunCommonJSModule_$.module.require.path=$_BunCommonJSModule_$.module.id,$_BunCommonJSModule_$.module.require.resolve=$_BunCommonJSModule_$.module.resolve.bind($_BunCommonJSModule_$.module.id),$_BunCommonJSModule_$.module.require),$_BunCommonJSModule_$.__dirname,$_BunCommonJSModule_$.__filename)"_s);
+        "\n}).call(this.module.exports,this.module,this.module.exports,(this.module.require=this.require.bind(this.module),this.require.path=this.module.id,this.module.require.resolve=this.resolve.bind(this.module.id),this.module.require),this.__dirname,this.__filename)"_s);
 
     SourceCode sourceCode = makeSource(
         WTFMove(wrappedString),
@@ -440,26 +440,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
-// These two setters are only used if you directly hit `Module.prototype.require` or `module.require`.
-// When accessing the cjs require argument, this is a bound version of `require`, which calls into the overridden one.
-//
-// This require function also intentionally does not have .resolve on it, nor does it have any of the other properties.
-//
-// Note: allowing require to be overridable at all is only needed for Next.js to work (they do Module.prototype.require = ...)
-
-JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(globalObject->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    globalObject->putDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
-    return true;
-}
-
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
@@ -469,7 +449,6 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
-    { "require"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterRequireFunction, setterRequireFunction } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {

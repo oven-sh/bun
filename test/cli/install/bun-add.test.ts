@@ -1642,7 +1642,7 @@ it("should add local tarball dependency", async () => {
   await copyFile(tarball, join(package_dir, tarball));
   const { stdout, stderr, exited } = spawn({
     // cmd: ["pwd"],
-    cmd: ["/Users/axel.escalada/bun-dev/packages/debug-bun-darwin-aarch64/bun-debug", "add", tarball],
+    cmd: [bunExe(), "add", tarball],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

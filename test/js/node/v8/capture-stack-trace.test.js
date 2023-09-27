@@ -517,3 +517,18 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
   expect(result).toBe("custom stack trace");
   expect(Error.prepareStackTrace).toBeNull();
 });
+
+test("Error.captureStackTrace inside error constructor works", () => {
+  class ExtendedError extends Error {
+    constructor() {
+      super();
+      Error.captureStackTrace(this, ExtendedError);
+    }
+  }
+
+  class AnotherError extends ExtendedError {}
+
+  expect(() => {
+    throw new AnotherError();
+  }).toThrow();
+});

@@ -10,6 +10,10 @@ on:
     - cron: "0 14 * * *" # every day at 6am PST
   workflow_dispatch:
     inputs:
+      is-latest:
+        description: Is this the latest release?
+        type: boolean
+        default: false
       tag:
         type: string
         description: What is the release tag? (e.g. "1.0.2", "canary")
@@ -156,7 +160,7 @@ jobs:
         with:
           images: oven/bun
           flavor: |
-            latest=${{ github.event.release.tag_name == env.BUN_VERSION }}
+            latest=${{ github.event.inputs.is-latest == 'true' || github.event.release.tag_name == env.BUN_VERSION }}
             suffix=${{ matrix.suffix }}
           tags: |
             type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }}

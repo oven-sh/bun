@@ -2850,6 +2850,62 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        when: "https://github.com/cujojs/when/tarball/1.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + when@https://github.com/cujojs/when/tarball/1.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "when"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "when"))).toEqual([
+    ".gitignore",
+    ".gitmodules",
+    "LICENSE.txt",
+    "README.md",
+    "apply.js",
+    "cancelable.js",
+    "delay.js",
+    "package.json",
+    "test",
+    "timed.js",
+    "timeout.js",
+    "when.js",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle GitHub URL with existing lockfile", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

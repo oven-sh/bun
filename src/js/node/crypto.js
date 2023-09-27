@@ -11890,7 +11890,7 @@ function getCurves() {
 }
 const $lazy = globalThis[Symbol.for("Bun.lazy")];
 
-const { symmetricKeySize, asymmetricKeyType, equals, createSecretKey } = $lazy("internal/crypto");
+const { symmetricKeySize, asymmetricKeyType, equals, exports, createSecretKey } = $lazy("internal/crypto");
 
 class KeyObject {
   #cryptoKey;
@@ -11911,7 +11911,8 @@ class KeyObject {
   }
 
   ["export"](options) {
-    // return exports(this.#cryptoKey, options);
+
+    return exports(this.#cryptoKey, options);
   }
 
   equals(otherKey) {

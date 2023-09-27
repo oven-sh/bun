@@ -196,8 +196,11 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyEC.h"
 #include "webcrypto/CryptoKeyRSA.h"
+#include "webcrypto/CryptoKeyAES.h"
 #include "webcrypto/CryptoKeyHMAC.h"
 #include "webcrypto/CryptoKeyUsage.h"
+#include "webcrypto/JsonWebKey.h"
+#include "webcrypto/JSJsonWebKey.h"
 
 #include "JSDOMFormData.h"
 #include "JSDOMBinding.h"
@@ -441,13 +444,125 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     }
 }
 
-// static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-// {
-//     // if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
 
-//     // }
-//     //REDO THIS
-// }
+    auto count = callFrame->argumentCount();
+    auto& vm = globalObject->vm();
+
+    if (count < 1) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(globalObject, scope, "exports requires 1 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+
+        auto& wrapped = key->wrapped();
+        auto key_type = wrapped.type();
+        if(count > 1){
+            if(auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1))){
+                JSValue formatJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "format"_s)));
+                auto string = formatJSValue.toWTFString(globalObject);
+                if (string.isNull()) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSC::throwTypeError(globalObject, scope, "format is expected to be a string"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+
+                if (key_type == CryptoKeyType::Secret) {
+                    const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+                    if(string == "buffer"_s) {
+                        auto keyData = okpKey.platformKey();
+                        auto size = keyData.size();
+                        
+                        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                        if (size > 0)
+                            memcpy(buffer->vector(), keyData.data(), size);
+
+                        return JSC::JSValue::encode(buffer);
+                    } 
+                    if (string == "jwk"_s) {
+                         auto id = key->wrapped().keyClass();
+                        switch (id) {
+                        case CryptoKeyClass::HMAC: {
+                            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+                            const JsonWebKey& jwkValue = hmac.exportJwk();
+                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                            
+                        }
+                        case CryptoKeyClass::RSA:{
+                            const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+                            const JsonWebKey& jwkValue = rsa.exportJwk();
+                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                            
+                        }
+                        case CryptoKeyClass::AES: {
+                            const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
+                            const JsonWebKey& jwkValue = aes.exportJwk();
+                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                        }
+                        case CryptoKeyClass::EC: {
+                            const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+                            auto jwk = ec.exportJwk();
+                            if (jwk.hasException()) {
+                                auto scope = DECLARE_THROW_SCOPE(vm);
+                                WebCore::propagateException(*globalObject, scope, jwk.releaseException());
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+                            const JsonWebKey& jwkValue = jwk.releaseReturnValue();
+                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                        }                        
+                        default: {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
+                            return JSC::JSValue::encode(JSC::JSValue {});        
+                        }
+                        }
+                    } 
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer' or 'jwk'"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                } else {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            } else {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwTypeError(globalObject, scope, "options is expected to be an object"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+        }
+        // default options
+        if (key_type == CryptoKeyType::Secret) {
+            const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+            auto keyData = okpKey.platformKey();
+            auto size = keyData.size();
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+            if (size > 0)
+                memcpy(buffer->vector(), keyData.data(), size);
+
+            return JSC::JSValue::encode(buffer);
+        } else {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+    }
+
+    // No JSCryptoKey instance
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(globalObject, scope, "expected CryptoKey as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+}
+
 static JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
@@ -1970,8 +2085,8 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, WebCrypto__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, WebCrypto__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, WebCrypto__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, WebCrypto__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
 
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, WebCrypto__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);

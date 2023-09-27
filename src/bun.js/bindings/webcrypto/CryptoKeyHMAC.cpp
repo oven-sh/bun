@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyHMAC.h"
+#include "../wtf-bindings.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -125,11 +126,13 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorith
     return CryptoKeyHMAC::importRaw(lengthBits, hash, WTFMove(*octetSequence), extractable, usages);
 }
 
+
 JsonWebKey CryptoKeyHMAC::exportJwk() const
-{
+{   
+    
     JsonWebKey result;
     result.kty = "oct"_s;
-    result.k = base64URLEncodeToString(m_key);
+    result.k = Bun::base64URLEncodeToString(m_key);
     result.key_ops = usages();
     result.ext = extractable();
     return result;

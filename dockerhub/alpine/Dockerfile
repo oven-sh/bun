@@ -103,7 +103,7 @@ RUN addgroup -g 1000 bun \
       /tmp/glibc-bin.apk \
     && rm /tmp/glibc.apk \
     && rm /tmp/glibc-bin.apk \
-    && ln /usr/local/bin/bun /usr/local/bin/bunx \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
     && which bunx \
     && bun --version

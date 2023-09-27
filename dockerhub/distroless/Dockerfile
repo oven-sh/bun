@@ -62,6 +62,6 @@ FROM gcr.io/distroless/base-nossl-debian11
 # List of sources to destination (final path):
 COPY --from=build \
   /usr/local/bin/bun /usr/local/bin/bunx \
-  /usr/local/bin
+  /usr/local/bin/
 
 ENTRYPOINT ["/usr/local/bin/bun"]

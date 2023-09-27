@@ -156,7 +156,7 @@ jobs:
         with:
           images: oven/bun
           flavor: |
-            latest=${{ matrix.suffix == '' && github.event.release.tag_name == env.BUN_VERSION }}
+            latest=${{ github.event.release.tag_name == env.BUN_VERSION }}
             suffix=${{ matrix.suffix }}
           tags: |
             type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }}

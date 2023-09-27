@@ -52,16 +52,18 @@ RUN apt-get update -qq \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun \
-    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
-    && which bunx \
     && bun --version
 
 FROM gcr.io/distroless/base-nossl-debian11
 
-# List of sources to destination (final path):
-COPY --from=build \
-  /usr/local/bin/bun /usr/local/bin/bunx \
-  /usr/local/bin/
+COPY --from=build /usr/local/bin/bun /usr/local/bin/
+
+# Temporarily use the `build`-stage image binaries to create a symlink:
+RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
+    --mount=type=bind,from=build,source=/bin,target=/bin <<EOF
+  ln -s /usr/local/bin/bun /usr/local/bin/bunx
+  which bunx
+EOF
 
 ENTRYPOINT ["/usr/local/bin/bun"]

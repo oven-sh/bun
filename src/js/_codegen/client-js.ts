@@ -28,7 +28,7 @@ export function createAssertClientJS(publicName: string) {
 let $assert = function(check, sourceString, ...message) {
   if (!check) {
     console.error('[${publicName}] ASSERTION FAILED: ' + sourceString);
-    if(message.length)console.warn (' ${" ".repeat(publicName.length)}', ...message);
+    if (message.length) console.warn(...message);
     const e = new Error(sourceString);
     e.name = 'AssertionError';
     throw e;

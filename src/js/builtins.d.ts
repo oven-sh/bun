@@ -12,7 +12,7 @@ declare function $debug(...args: any[]): void;
 /** $assert is a preprocessor macro that only runs in debug mode. it throws an error if the first argument is falsy.
  * The source code passed to `check` is inlined in the message, but in addition you can pass additional messages.
  */
-declare function $assert(check: any, ...message: any[]): void;
+declare function $assert(check: any, ...message: any[]): asserts check;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

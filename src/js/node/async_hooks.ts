@@ -25,14 +25,22 @@
 const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
 
 // Only run during debug
-function debugValidateAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
+function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
+  // undefined is OK
   if (array === undefined) return true;
-  if (!Array.isArray(array)) return false;
-  if (array.length % 2 === 0) return false;
-  if (array.length % 2 !== 0) return false;
+  // Otherwise, it must be an array
+  $assert(Array.isArray(array), "AsyncContextData should be an array or undefined, got", array);
+  // the array has to be even
+  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", array);
+  // if it is zero-length, use undefined instead
+  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", array);
   for (var i = 0; i < array.length; i += 2) {
-    if (!(array[i] instanceof AsyncLocalStorage)) return false;
-    // if (array[i + 1] instanceof AsyncLocalStorage) return false;
+    $assert(
+      array[i] instanceof AsyncLocalStorage,
+      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
+      i,
+      array[i],
+    );
   }
   return true;
 }
@@ -52,7 +60,7 @@ function get(): ReadonlyArray<any> | undefined {
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
-  $assert(debugValidateAsyncContextArray(contextValue), "Invalid Async Context Array", contextValue);
+  $assert(assertValidAsyncContextArray(contextValue));
   $debug("set", debugFormatContextValue(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);
 }

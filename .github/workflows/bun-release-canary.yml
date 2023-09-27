@@ -9,6 +9,8 @@ jobs:
     name: Sign Release
     runs-on: ubuntu-latest
     if: github.repository_owner == 'oven-sh'
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: packages/bun-release
@@ -42,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: sign
     if: github.repository_owner == 'oven-sh'
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/bun-release
@@ -68,6 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: sign
     if: github.repository_owner == 'oven-sh'
+    permissions:
+      contents: read
     strategy:
       matrix:
         variant:
@@ -118,6 +124,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: sign
     if: github.repository_owner == 'oven-sh'
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/bun-release

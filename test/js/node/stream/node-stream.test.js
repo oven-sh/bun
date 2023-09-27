@@ -197,6 +197,7 @@ describe("PassThrough", () => {
 
 const ttyStreamsTest = `
 import tty from "tty";
+import fs from "fs";
 
 import { dlopen } from "bun:ffi";
 
@@ -278,10 +279,11 @@ describe("TTY", () => {
     close(child_fd);
   });
   it("process.stdio tty", () => {
-    expect(process.stdin instanceof tty.ReadStream).toBe(true);
+    // this isnt run in a tty, so stdin will not appear to be a tty
+    expect(process.stdin instanceof fs.ReadStream).toBe(true);
     expect(process.stdout instanceof tty.WriteStream).toBe(true);
     expect(process.stderr instanceof tty.WriteStream).toBe(true);
-    expect(process.stdin.isTTY).toBeDefined();
+    expect(process.stdin.isTTY).toBeUndefined();
     expect(process.stdout.isTTY).toBeDefined();
     expect(process.stderr.isTTY).toBeDefined();
   });
@@ -311,7 +313,11 @@ it("TTY streams", () => {
   });
 
   expect(stdout.toString()).toBe("");
-  expect(stderr.toString()).toContain("0 fail");
+  try {
+    expect(stderr.toString()).toContain("0 fail");
+  } catch (error) {
+    throw new Error(stderr.toString());
+  }
   expect(exitCode).toBe(0);
 });
 

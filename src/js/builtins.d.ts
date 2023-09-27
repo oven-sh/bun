@@ -14,6 +14,8 @@ declare function $debug(...args: any[]): void;
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 
+declare const IS_BUN_DEVELOPMENT: boolean;
+
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
 /** Assign to this directly above a function declaration (like a decorator) to override the function's display name. */

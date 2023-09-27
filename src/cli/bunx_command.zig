@@ -262,17 +262,20 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
-        var package_fmt: []const u8 = undefined;
-        if (!strings.eql(update_request.version_buf, update_request.name)) {
-            package_fmt = try std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}@{s}",
-                .{
-                    update_request.name,
-                    display_version,
-                },
-            );
-        } else package_fmt = update_request.name;
+        const package_fmt: []const u8 = brk: {
+            if (!strings.eql(update_request.version_buf, update_request.name)) {
+                break :brk try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "{s}@{s}",
+                    .{
+                        update_request.name,
+                        display_version,
+                    },
+                );
+            }
+
+            break :brk update_request.name;
+        };
 
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {

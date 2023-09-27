@@ -233,7 +233,7 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
 
     while (parts.next()) |part| {
         n_parts += 1;
-        if (n_parts == 3 and !part.eql("tarball")) {
+        if (n_parts == 3 and !strings.eql(part, "tarball")) {
             return false;
         } else if (n_parts > 4) {
             return false;

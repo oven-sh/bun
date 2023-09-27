@@ -2681,12 +2681,8 @@ pub const PackageManager = struct {
                 }
             },
             .workspace => {
-                // relative to cwd
-                // if the workspace name is '*', use the name of the dependency itself
-                const workspace_name = this.lockfile.str(&version.value.workspace);
-                const workspace_hash = if (strings.eqlComptime(workspace_name, "*")) name_hash else String.Builder.stringHash(workspace_name);
-
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(workspace_hash)) orelse &version.value.workspace;
+                // package name hash should be used to find workspace path from map
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 

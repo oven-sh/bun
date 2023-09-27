@@ -1948,6 +1948,11 @@ JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(whenSignalAborted);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
 
+JSC_DEFINE_HOST_FUNCTION(jsCreateCJSImportMeta, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(Zig::ImportMetaObject::create(globalObject, callFrame->argument(0).toString(globalObject)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(makeThisTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
@@ -2825,11 +2830,20 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonJSFunctionArgumentsStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+
+            auto prototype = JSC::constructEmptyObject(init.owner, globalObject->objectPrototype(), 1);
+            prototype->putDirect(
+                init.vm,
+                Identifier::fromString(init.vm, "createImportMeta"_s),
+                JSFunction::create(init.vm, init.owner, 2, ""_s, jsCreateCJSImportMeta, ImplementationVisibility::Public),
+                PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | 0);
+
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
-                globalObject->objectPrototype(),
+                prototype,
                 5);
             JSC::PropertyOffset offset;
+
             auto& vm = globalObject->vm();
 
             structure = structure->addPropertyTransition(

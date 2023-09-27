@@ -21232,8 +21232,19 @@ fn NewParser_(
                         total_stmts_count += part.stmts.len;
                     }
 
+                    const cjsWrapperThis = Expr{
+                        .data = .{ .e_this = .{} },
+                        .loc = logger.Loc.Empty,
+                    };
+
+                    if (p.has_import_meta) {
+                        p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch unreachable;
+                    }
+
                     var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
                     var remaining_stmts = stmts_to_copy;
+                    var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
+
                     for (parts) |part| {
                         for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
                             dest.* = src;
@@ -21246,19 +21257,18 @@ fn NewParser_(
                             .func = G.Fn{
                                 .name = null,
                                 .open_parens_loc = logger.Loc.Empty,
-                                .args = args,
+                                .args = args[0..5],
                                 .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
                                 .flags = Flags.Function.init(.{ .is_export = false }),
                             },
                         },
                         logger.Loc.Empty,
                     );
-                    const cjsGlobal = p.newSymbol(.unbound, "this") catch unreachable;
-                    var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
+
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
-                            .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                            .target = cjsWrapperThis,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
@@ -21279,7 +21289,7 @@ fn NewParser_(
                     const get_require = p.newExpr(
                         E.Dot{
                             .name = "require",
-                            .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                            .target = cjsWrapperThis,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
@@ -21300,7 +21310,7 @@ fn NewParser_(
                     const get_resolve = p.newExpr(E.Dot{
                         .name = "resolve",
                         .name_loc = logger.Loc.Empty,
-                        .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                        .target = cjsWrapperThis,
                     }, logger.Loc.Empty);
 
                     const set_resolve = p.newExpr(E.Dot{
@@ -21384,7 +21394,7 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "__dirname",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                                .target = cjsWrapperThis,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21392,7 +21402,7 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "__filename",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                                .target = cjsWrapperThis,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21414,14 +21424,49 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    var only_stmt = try p.allocator.alloc(Stmt, 1);
-                    only_stmt[0] = p.s(
+                    var top_level_stmts = p.allocator.alloc(Stmt, 1 + @as(usize, @intFromBool(p.has_import_meta))) catch unreachable;
+                    parts[0].stmts = top_level_stmts;
+
+                    // var $Bun_import_meta = this.createImportMeta(this.filename);
+                    if (p.has_import_meta) {
+                        var decl = allocator.alloc(Decl, 1) catch unreachable;
+                        decl[0] = Decl{
+                            .binding = Binding.alloc(
+                                p.allocator,
+                                B.Identifier{
+                                    .ref = p.import_meta_ref,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .value = p.newExpr(
+                                E.Call{
+                                    .target = p.newExpr(E.Dot{
+                                        .target = cjsWrapperThis,
+                                        .name = "createImportMeta",
+                                        .name_loc = logger.Loc.Empty,
+                                    }, logger.Loc.Empty),
+                                    // reuse the `this.__filename` argument
+                                    .args = ExprNodeList.init(call_args[5..6]),
+                                },
+                                logger.Loc.Empty,
+                            ),
+                        };
+
+                        top_level_stmts[0] = p.s(
+                            S.Local{
+                                .decls = G.Decl.List.init(decl),
+                                .kind = .k_var,
+                            },
+                            logger.Loc.Empty,
+                        );
+                        top_level_stmts = top_level_stmts[1..];
+                    }
+                    top_level_stmts[0] = p.s(
                         S.SExpr{
                             .value = call,
                         },
                         logger.Loc.Empty,
                     );
-                    parts[0].stmts = only_stmt;
                     parts.len = 1;
                 },
 
@@ -21952,6 +21997,8 @@ fn NewParser_(
 
                 // TODO:
                 // .const_values = p.const_values,
+
+                .import_meta_ref = p.import_meta_ref,
             };
         }
 

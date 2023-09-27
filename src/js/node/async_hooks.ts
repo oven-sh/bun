@@ -23,6 +23,16 @@
 //
 const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
 
+function validateAsyncContextArray(array: any): boolean {
+  if (!Array.isArray(array)) return false;
+  if (array.length % 2 !== 0) return false;
+  for (var i = 0; i < array.length; i += 2) {
+    if (!(array[i] instanceof AsyncLocalStorage)) return false;
+    if (array[i + 1] instanceof AsyncLocalStorage) return false;
+  }
+  return true;
+}
+
 function get(): ReadonlyArray<any> | undefined {
   $debug("get", $getInternalField($asyncContext, 0));
   return $getInternalField($asyncContext, 0);
@@ -30,6 +40,7 @@ function get(): ReadonlyArray<any> | undefined {
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
   $debug("set", contextValue);
+  $assert(validateAsyncContextArray(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
@@ -38,6 +49,10 @@ class AsyncLocalStorage {
 
   constructor() {
     setAsyncHooksEnabled(true);
+
+    if (!!$debug) {
+      (this as any).__id__ = Math.random().toString(36).slice(2, 8) + "@" + require("bun:jsc").callerSourceOrigin();
+    }
   }
 
   static bind(fn, ...args: any) {
@@ -129,6 +144,7 @@ class AsyncLocalStorage {
   }
 
   disable() {
+    $debug("disable " + (this as any).__id__);
     // In this case, we actually do want to mutate the context state
     if (!this.#disableCalled) {
       var context = get() as any[];
@@ -156,11 +172,17 @@ class AsyncLocalStorage {
   }
 }
 
+if (!!$debug) {
+  AsyncLocalStorage.prototype[Bun.inspect.custom] = function () {
+    return `AsyncLocalStorage { ${(this as any).__id__} }`;
+  };
+}
+
 class AsyncResource {
   type;
   #snapshot;
 
-  constructor(type, options) {
+  constructor(type, options?) {
     if (typeof type !== "string") {
       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
     }
@@ -199,6 +221,15 @@ class AsyncResource {
     } finally {
       set(prev);
     }
+  }
+
+  bind(fn, thisArg) {
+    return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
+  }
+
+  static bind(fn, type, thisArg) {
+    type = type || fn.name;
+    return new AsyncResource(type || "bound-anonymous-fn").bind(fn, thisArg);
   }
 }
 

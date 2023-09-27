@@ -60,7 +60,7 @@ jobs:
         run: bun install
       - name: Sign Release
         run: |
-          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${BUN_VERSION}"
+          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -119,7 +119,7 @@ jobs:
           package: packages/bun-types/dist/package.json
           token: ${{ secrets.NPM_TOKEN }}
   docker:
-    name: Release to Dockerhub (${{ matrix.variant }})
+    name: Release to Dockerhub
     runs-on: ubuntu-latest
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
@@ -184,7 +184,7 @@ jobs:
     needs: sign
     permissions:
       contents: read
-    if: ${{ github.event_name != 'schedule' || github.event.inputs.use-homebrew == 'true' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3

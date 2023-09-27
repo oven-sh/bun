@@ -164,7 +164,6 @@ jobs:
             latest=false
           tags: |
             type=raw,value=latest,enable=${{ env.BUN_LATEST == 'true' && matrix.suffix == '' }}
-            type=raw,value=latest,suffix=${{ matrix.suffix }},enable=${{ env.BUN_LATEST == 'true' }}
             type=raw,value=${{ matrix.variant }},enable=${{ env.BUN_LATEST == 'true' }}
             type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
             type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}

@@ -21203,49 +21203,50 @@ fn NewParser_(
                     parts[parts.len - 1].stmts = new_stmts_list;
                 },
 
-                // This becomes
+                // This transforms the user's code into.
                 //
-                //   (function (module, exports, require) {
+                //   (function (exports, require, module, __filename, __dirname) {
+                //      ...
+                //   }).call(
+                //      this.module.exports,
+                //      this.module.exports,
+                //      this.require,
+                //      this.module,
+                //      this.__filename,
+                //      this.__dirname,
+                //  );
                 //
-                //   })(module, exports, require);
+                //  `this` is a `CommonJSFunctionArgumentsStructure`
+                //  which is initialized in `evaluateCommonJSModuleOnce`
                 .bun_js => {
                     var args = allocator.alloc(Arg, 5) catch unreachable;
                     args[0..5].* = .{
-                        Arg{
-                            .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
-                        },
-                        Arg{
-                            .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
-                        },
-                        Arg{
-                            .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
-                        },
-                        Arg{
-                            .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                        },
-                        Arg{
-                            .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                        },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
+                        Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                     };
+
+                    const cjsArguments = Expr{
+                        .data = .{ .e_this = .{} },
+                        .loc = logger.Loc.Empty,
+                    };
+
                     var total_stmts_count: usize = 0;
                     for (parts) |part| {
                         total_stmts_count += part.stmts.len;
                     }
 
-                    const cjsWrapperThis = Expr{
-                        .data = .{ .e_this = .{} },
-                        .loc = logger.Loc.Empty,
-                    };
-
                     var stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch unreachable;
-                    var remaining_stmts = stmts_to_copy;
-                    var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
-
-                    for (parts) |part| {
-                        for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
-                            dest.* = src;
+                    {
+                        var remaining_stmts = stmts_to_copy;
+                        for (parts) |part| {
+                            for (part.stmts, remaining_stmts[0..part.stmts.len]) |src, *dest| {
+                                dest.* = src;
+                            }
+                            remaining_stmts = remaining_stmts[part.stmts.len..];
                         }
-                        remaining_stmts = remaining_stmts[part.stmts.len..];
                     }
 
                     const wrapper = p.newExpr(
@@ -21264,150 +21265,46 @@ fn NewParser_(
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
-                            .target = cjsWrapperThis,
+                            .target = cjsArguments,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
                     );
 
-                    var bind_args = all_call_args[0..1];
-                    bind_args[0] = this_module;
-                    var bind_resolve_args = all_call_args[1..2];
-                    var call_args = all_call_args[2..];
-
-                    const module_id = p.newExpr(E.Dot{
-                        .name = "id",
-                        .target = this_module,
-                        .name_loc = logger.Loc.Empty,
-                    }, logger.Loc.Empty);
-
-                    bind_resolve_args[0] = module_id;
-                    const get_original_require = p.newExpr(
+                    const module_exports = p.newExpr(
                         E.Dot{
-                            .name = "require",
-                            .target = cjsWrapperThis,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const set_require = p.newExpr(
-                        E.Dot{
-                            .name = "require",
+                            .name = "exports",
                             .target = this_module,
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
                     );
 
-                    const create_binding = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(E.Dot{
-                                .name = "bind",
-                                .name_loc = logger.Loc.Empty,
-                                .target = get_original_require,
-                            }, logger.Loc.Empty),
-                            .args = bun.BabyList(Expr).init(bind_args),
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const get_original_resolve = p.newExpr(E.Dot{
-                        .name = "resolve",
-                        .name_loc = logger.Loc.Empty,
-                        .target = cjsWrapperThis,
-                    }, logger.Loc.Empty);
-
-                    const set_resolve = p.newExpr(E.Dot{
-                        .name = "resolve",
-                        .name_loc = logger.Loc.Empty,
-                        .target = set_require,
-                    }, logger.Loc.Empty);
-
-                    const create_resolve_binding = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(E.Dot{
-                                .name = "bind",
-                                .name_loc = logger.Loc.Empty,
-                                .target = get_original_resolve,
-                            }, logger.Loc.Empty),
-                            .args = bun.BabyList(Expr).init(bind_resolve_args),
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const require_path = p.newExpr(
-                        E.Dot{
-                            .name = "path",
-                            .target = get_original_require,
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
-                    const assign_require_binding = p.newExpr(
-                        E.Binary{
-                            .left = set_require,
-                            .right = create_binding,
-                            .op = .bin_assign,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const assign_resolve_binding = p.newExpr(
-                        E.Binary{
-                            .left = set_resolve,
-                            .right = create_resolve_binding,
-                            .op = .bin_assign,
-                        },
-                        logger.Loc.Empty,
-                    );
-
-                    const assign_id = p.newExpr(E.Binary{
-                        .left = require_path,
-                        .right = module_id,
-                        .op = .bin_assign,
-                    }, logger.Loc.Empty);
-
-                    var create_require = [4]Expr{
-                        assign_require_binding,
-                        assign_id,
-                        assign_resolve_binding,
-                        set_require,
-                    };
-
-                    //
-                    // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.module.require = this.module.require.bind(module), (this.module.require.id = this.module.id, this.module.require), __dirname, __filename)
+                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
                     call_args[0..6].* = .{
+                        module_exports, // this.module.exports (this value inside fn)
+                        module_exports, // this.module.exports (arg 1)
                         p.newExpr(
                             E.Dot{
-                                .name = "exports",
-                                .target = this_module,
+                                .name = "require",
+                                .target = cjsArguments,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
                         ),
-                        this_module,
-                        p.newExpr(
-                            E.Dot{
-                                .name = "exports",
-                                .target = this_module,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        Expr.joinAllWithComma(&create_require, p.allocator),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__dirname",
-                                .target = cjsWrapperThis,
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        this_module, // this.module
                         p.newExpr(
                             E.Dot{
                                 .name = "__filename",
-                                .target = cjsWrapperThis,
+                                .target = cjsArguments,
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        p.newExpr(
+                            E.Dot{
+                                .name = "__dirname",
+                                .target = cjsArguments,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21447,7 +21344,7 @@ fn NewParser_(
                             .value = p.newExpr(
                                 E.Call{
                                     .target = p.newExpr(E.Dot{
-                                        .target = cjsWrapperThis,
+                                        .target = cjsArguments,
                                         .name = "createImportMeta",
                                         .name_loc = logger.Loc.Empty,
                                     }, logger.Loc.Empty),

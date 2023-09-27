@@ -19,28 +19,41 @@
 // use. But the nature of this approach makes the implementation *itself* very low-impact on performance.
 //
 // AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
-// each key is an AsyncLocalStorage object and the value is the associated value.
+// each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
+// calls to $assert which will verify this invariant (only during bun-debug)
 //
 const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
 
-function validateAsyncContextArray(array: any): boolean {
+// Only run during debug
+function debugValidateAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
+  if (array === undefined) return true;
   if (!Array.isArray(array)) return false;
+  if (array.length % 2 === 0) return false;
   if (array.length % 2 !== 0) return false;
   for (var i = 0; i < array.length; i += 2) {
     if (!(array[i] instanceof AsyncLocalStorage)) return false;
-    if (array[i + 1] instanceof AsyncLocalStorage) return false;
+    // if (array[i + 1] instanceof AsyncLocalStorage) return false;
   }
   return true;
 }
 
+// Only run during debug
+function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
+  if (value === undefined) return "{}";
+  let str = "{\n";
+  for (var i = 0; i < value.length; i += 2) {
+    str += `  ${value[i].__id__}: ${Bun.inspect(value[i + 1], { depth: 1, colors: Bun.enableANSIColors })}\n`;
+  }
+}
+
 function get(): ReadonlyArray<any> | undefined {
-  $debug("get", $getInternalField($asyncContext, 0));
+  $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
   return $getInternalField($asyncContext, 0);
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
-  $debug("set", contextValue);
-  $assert(validateAsyncContextArray(contextValue));
+  $assert(debugValidateAsyncContextArray(contextValue), "Invalid Async Context Array", contextValue);
+  $debug("set", debugFormatContextValue(contextValue));
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
@@ -50,8 +63,12 @@ class AsyncLocalStorage {
   constructor() {
     setAsyncHooksEnabled(true);
 
-    if (!!$debug) {
-      (this as any).__id__ = Math.random().toString(36).slice(2, 8) + "@" + require("bun:jsc").callerSourceOrigin();
+    // In debug mode assign every AsyncLocalStorage a unique ID
+    if (IS_BUN_DEVELOPMENT) {
+      (this as any).__id__ =
+        Math.random().toString(36).slice(2, 8) +
+        "@" +
+        require("node:path").basename(require("bun:jsc").callerSourceOrigin());
     }
   }
 
@@ -82,8 +99,11 @@ class AsyncLocalStorage {
       return;
     }
     var { length } = context;
+    $assert(length > 0);
+    $assert(length % 2 === 0);
     for (var i = 0; i < length; i += 2) {
       if (context[i] === this) {
+        $assert(length > i + 1);
         const clone = context.slice();
         clone[i + 1] = store;
         set(clone);
@@ -91,33 +111,37 @@ class AsyncLocalStorage {
       }
     }
     set(context.concat(this, store));
+    $assert(this.getStore() === store);
   }
 
   exit(cb, ...args) {
     return this.run(undefined, cb, ...args);
   }
 
-  run(store, callback, ...args) {
+  run(store_value, callback, ...args) {
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
-    var previous;
+    var previous_value;
     var i = 0;
-    var contextWasInit = !context;
-    if (contextWasInit) {
-      set((context = [this, store]));
+    var contextWasAlreadyInit = !context;
+    if (contextWasAlreadyInit) {
+      set((context = [this, store_value]));
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
       i = context.indexOf(this);
       if (i > -1) {
+        $assert(i % 2 === 0);
         hasPrevious = true;
-        previous = context[i + 1];
-        context[i + 1] = store;
+        previous_value = context[i + 1];
+        context[i + 1] = store_value;
       } else {
-        context.push(this, store);
+        context.push(this, store_value);
+        $assert(context.length % 2 === 0);
       }
       set(context);
     }
+    $assert(this.getStore() === store_value, "run: store_value was not set");
     try {
       return callback(...args);
     } catch (e) {
@@ -126,19 +150,24 @@ class AsyncLocalStorage {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
       if (!this.#disableCalled) {
-        var context2 = get()! as any[];
-        if (context2 === context && contextWasInit) {
+        var context2 = get()! as any[]; // we make sure to .slice() before mutating
+        if (context2 === context && contextWasAlreadyInit) {
+          $assert(context2.length === 2, "context was mutated without copy");
           set(undefined);
         } else {
           context2 = context2.slice(); // array is cloned here
           if (hasPrevious) {
-            context2[i + 1] = previous;
+            $assert(context2[i] === this);
+            context2[i + 1] = previous_value;
             set(context2);
           } else {
             context2.splice(i, 2);
+            $assert(context2.indexOf(this) === -1);
+            $assert(context2.length % 2 === 0);
             set(context2.length ? context2 : undefined);
           }
         }
+        $assert(this.getStore() === previous_value, "run: store_value was not restored");
       }
     }
   }
@@ -172,9 +201,13 @@ class AsyncLocalStorage {
   }
 }
 
-if (!!$debug) {
-  AsyncLocalStorage.prototype[Bun.inspect.custom] = function () {
-    return `AsyncLocalStorage { ${(this as any).__id__} }`;
+if (IS_BUN_DEVELOPMENT) {
+  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth, options) {
+    if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
+    return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} = ${Bun.inspect(this.getStore(), {
+      ...options,
+      depth: depth - 1,
+    })} }`;
   };
 }
 

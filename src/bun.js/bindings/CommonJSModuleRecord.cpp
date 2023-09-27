@@ -94,35 +94,35 @@ static bool canPerformFastEnumeration(Structure* s)
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
     JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
-    JSC::JSObject* thisObject = JSC::constructEmptyObject(
-        vm,
-        thisObjectStructure);
-    thisObject->putDirectOffset(
-        vm,
-        0,
-        moduleObject);
-    thisObject->putDirectOffset(
-        vm,
-        1,
-        globalObject->requireFunctionUnbound());
-    thisObject->putDirectOffset(
-        vm,
-        2,
-        globalObject->requireResolveFunctionUnbound());
-    thisObject->putDirectOffset(
-        vm,
-        3,
-        dirname);
-    thisObject->putDirectOffset(
-        vm,
-        4,
-        filename);
+
+    JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->requireResolveFunctionUnbound(),
+        moduleObject->id(),
+        ArgList(), 1, jsString(vm, String("resolve"_s)));
+    JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->requireFunctionUnbound(),
+        moduleObject,
+        ArgList(), 1, jsString(vm, String("require"_s)));
+    requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
+    moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+
+    JSC::JSObject* thisObject = JSC::constructEmptyObject(vm, thisObjectStructure);
+    thisObject->putDirectOffset(vm, 0, moduleObject);
+    thisObject->putDirectOffset(vm, 1, requireFunction);
+    thisObject->putDirectOffset(vm, 2, resolveFunction);
+    thisObject->putDirectOffset(vm, 3, dirname);
+    thisObject->putDirectOffset(vm, 4, filename);
 
     moduleObject->hasEvaluated = true;
+    // TODO: try to not use this write barrier. it needs some extensive testing.
+    // there is some possible GC issue where `thisObject` is gc'd before it should be
     globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
     JSValue empty = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), thisObject, exception);
 
+    ensureStillAliveHere(thisObject);
     globalObject->m_BunCommonJSModuleValue.clear();
     moduleObject->sourceCode.clear();
 
@@ -400,9 +400,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
     String wrappedString = makeString(
-        "(function(module,exports,require,__dirname,__filename){"_s,
+        "(function(exports,require,module,__filename,__dirname){"_s,
         sourceString,
-        "\n}).call(this.module.exports,this.module,this.module.exports,(this.module.require=this.require.bind(this.module),this.require.path=this.module.id,this.module.require.resolve=this.resolve.bind(this.module.id),this.module.require),this.__dirname,this.__filename)"_s);
+        "\n}).call(this.module.exports,this.module.exports,this.require,this.module,this.__filename,this.__dirname)"_s);
 
     SourceCode sourceCode = makeSource(
         WTFMove(wrappedString),
@@ -1007,7 +1007,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, jsString(vm, String("require"_s)));
+        ArgList(), 1, jsString(vm, String("resolve"_s)));
 
     requireFunction->putDirect(vm, builtinNames.resolvePublicName(), resolveFunction, PropertyAttribute::Function | 0);
 

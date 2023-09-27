@@ -1040,14 +1040,14 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
       uwsRes->onAborted(nullptr);
-      uwsRes->endWithoutBody(std::nullopt, close_connection);
+      uwsRes->sendTerminatingChunk(close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
       uwsRes->onAborted(nullptr);
-      uwsRes->endWithoutBody(std::nullopt, close_connection);
+      uwsRes->sendTerminatingChunk(close_connection);
     }
   }
 

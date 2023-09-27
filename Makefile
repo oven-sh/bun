@@ -550,7 +550,7 @@ tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
 		AR=$(AR) $(CCACHE_CC_FLAG) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CCACHE_CC_OR_CC) --ar=$(AR) --config-predefs=yes  && \
-		make -j10 && \
+		make libtcc.a -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
@@ -1291,7 +1291,7 @@ jsc-build-linux-compile-config:
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects" -DUSE_BUN_JSC_ADDITIONS=ON \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
 

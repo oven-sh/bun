@@ -370,7 +370,7 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, NodeModule>;
+declare const $requireMap: Map<string, CommonJSModuleRecord>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
@@ -432,7 +432,12 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
+declare function $createCommonJSModule(
+  id: string,
+  exports: any,
+  hasEvaluated: boolean,
+  parent: CommonJSModuleRecord,
+): CommonJSModuleRecord;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

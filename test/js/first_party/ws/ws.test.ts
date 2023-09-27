@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -236,6 +236,30 @@ describe("WebSocket", () => {
       expect(wasClean).toBeFalse();
       done();
     });
+  });
+});
+
+it("isBinary", done => {
+  const wss = new WebSocketServer({ port: 0 });
+  let isDone = false;
+  wss.on("connection", ws => {
+    ws.on("message", (data, isBinary) => {
+      if (isDone) {
+        expect(isBinary).toBeTrue();
+        wss.close();
+        ws.close();
+        done();
+        return;
+      }
+      expect(isBinary).toBeFalse();
+      isDone = true;
+    });
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.on("open", function open() {
+    ws.send("hello");
+    ws.send(Buffer.from([1, 2, 3]));
   });
 });
 

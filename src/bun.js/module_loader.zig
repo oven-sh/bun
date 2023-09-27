@@ -402,6 +402,7 @@ pub const RuntimeTranspilerStore = struct {
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
                 .jsx = bundler.options.jsx,
+                .emit_decorator_metadata = bundler.options.emit_decorator_metadata,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -1427,6 +1428,7 @@ pub const ModuleLoader = struct {
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
+                    .emit_decorator_metadata = jsc_vm.bundler.options.emit_decorator_metadata,
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
@@ -1935,14 +1937,21 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const synchronous_loader = loader orelse
-            // Unknown extensions are to be treated as file loader
-            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
-            options.Loader.file
-        else
-            // Unless it's potentially the main module
-            // This is important so that "bun run ./foo-i-have-no-extension" works
-            options.Loader.js;
+        const synchronous_loader = loader orelse loader: {
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
+                // Extensionless files in this context are treated as the JS loader
+                if (path.name.ext.len == 0) {
+                    break :loader options.Loader.tsx;
+                }
+
+                // Unknown extensions are to be treated as file loader
+                break :loader options.Loader.file;
+            } else {
+                // Unless it's potentially the main module
+                // This is important so that "bun run ./foo-i-have-no-extension" works
+                break :loader options.Loader.tsx;
+            }
+        };
 
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
@@ -2141,7 +2150,7 @@ pub const ModuleLoader = struct {
         const path = Fs.Path.init(specifier);
 
         const loader = if (loader_ != ._none)
-            options.Loader.fromString(@tagName(loader_)).?
+            options.Loader.fromAPI(loader_)
         else
             jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -2160,7 +2169,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                options.Loader.fromString(@tagName(loader)).?,
+                loader,
                 &log,
                 &virtual_source,
                 ret,

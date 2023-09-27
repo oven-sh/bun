@@ -2276,6 +2276,7 @@ pub const ParseTask = struct {
     tree_shaking: bool = false,
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
+    emit_decorator_metadata: bool = false,
     ctx: *BundleV2,
     package_version: string = "",
 
@@ -2298,6 +2299,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
+            .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
             .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         };
     }
@@ -2600,6 +2602,7 @@ pub const ParseTask = struct {
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
+        opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;

@@ -84,15 +84,20 @@ plugin({
 });
 ```
 
-With this plugin, data can be directly imported from `.yaml` files.
+Register this file in `preload`:
+
+```toml#bunfig.toml
+preload = ["./yamlPlugin.ts"]
+```
+
+Once the plugin is registered, `.yaml` and `.yml` files can be directly imported.
 
 {% codetabs %}
 
 ```ts#index.ts
-import "./yamlPlugin.ts"
-import {name, releaseYear} from "./data.yml"
+import data from "./data.yml"
 
-console.log(name, releaseYear);
+console.log(data);
 ```
 
 ```yaml#data.yml

@@ -189,24 +189,28 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     if (dependency.len < 3) return false;
 
     var hash_index: usize = 0;
-    var slash_index: usize = 0;
+
+    // the branch could have slashes
+    // - oven-sh/bun#brach/name
+    var first_slash_index: usize = 0;
 
     for (dependency, 0..) |c, i| {
         switch (c) {
             '/' => {
                 if (i == 0) return false;
-                if (slash_index > 0) return false;
-                slash_index = i;
+                if (first_slash_index == 0) {
+                    first_slash_index = i;
+                }
             },
             '#' => {
                 if (i == 0) return false;
                 if (hash_index > 0) return false;
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
                 hash_index = i;
             },
             // Not allowed in username
             '.', '_' => {
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
             },
             // Must be alphanumeric
             '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
@@ -214,7 +218,7 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
         }
     }
 
-    return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
+    return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
 // This won't work for query string params, but I'll let someone file an issue

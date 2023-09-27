@@ -71,6 +71,8 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 
+extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const char* input_ptr, uint64_t input_len);
+
 namespace Bun {
 using namespace JSC;
 
@@ -267,6 +269,31 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
     return JSValue::encode(thisObject->m_id.get());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        return JSValue::encode(jsUndefined());
+    }
+    auto v = thisObject->m_parent.get();
+    if (v)
+        return JSValue::encode(thisObject->m_parent.get());
+
+    // initialize parent by checking if it is the main module. we do this lazily because most people
+    // dont need `module.parent` and creating commonjs module records is done a ton.
+    auto idValue = thisObject->m_id.get();
+    if (idValue) {
+        auto id = idValue->value(globalObject).utf8();
+        if (Bun__isBunMain(globalObject, id.data(), id.length())) {
+            thisObject->m_parent.set(globalObject->vm(), thisObject, jsNull());
+            return JSValue::encode(jsNull());
+        }
+    }
+
+    thisObject->m_parent.set(globalObject->vm(), thisObject, jsUndefined());
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_SETTER(setterPath,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -331,27 +358,93 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
     thisObject->m_id.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
     return true;
 }
+JSC_DEFINE_CUSTOM_SETTER(setterParent,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->m_parent.set(globalObject->vm(), thisObject, JSValue::decode(value));
+
+    return true;
+}
 
 static JSValue createLoaded(VM& vm, JSObject* object)
 {
     JSCommonJSModule* cjs = jsCast<JSCommonJSModule*>(object);
     return jsBoolean(cjs->hasEvaluated);
 }
-static JSValue createParent(VM& vm, JSObject* object)
-{
-    return jsUndefined();
-}
 static JSValue createChildren(VM& vm, JSObject* object)
 {
     return constructEmptyArray(object->globalObject(), nullptr, 0);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
+    if (!moduleObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    String sourceString = callframe->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+
+    String filenameString = callframe->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+
+    String wrappedString = makeString(
+        "(function(module,exports,require,__dirname,__filename){"_s,
+        sourceString,
+        "\n}).call($_BunCommonJSModule_$.module.exports, $_BunCommonJSModule_$.module, $_BunCommonJSModule_$.module.exports, ($_BunCommonJSModule_$.module.require = $_BunCommonJSModule_$.module.require.bind($_BunCommonJSModule_$.module), $_BunCommonJSModule_$.module.require.path = $_BunCommonJSModule_$.module.id, $_BunCommonJSModule_$.module.require.resolve = $_BunCommonJSModule_$.module.require.resolve.bind($_BunCommonJSModule_$.module.id), $_BunCommonJSModule_$.module.require), $_BunCommonJSModule_$.__dirname, $_BunCommonJSModule_$.__filename);"_s);
+
+    SourceCode sourceCode = makeSource(
+        WTFMove(wrappedString),
+        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+        JSC::SourceTaintedOrigin::Untainted,
+        filenameString,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+    JSSourceCode* jsSourceCode = JSSourceCode::create(vm, WTFMove(sourceCode));
+    moduleObject->sourceCode.set(vm, moduleObject, jsSourceCode);
+
+    auto index = filenameString.reverseFind('/', filenameString.length());
+    String dirnameString;
+    if (index != WTF::notFound) {
+        dirnameString = filenameString.substring(0, index);
+    } else {
+        dirnameString = "/"_s;
+    }
+
+    WTF::NakedPtr<JSC::Exception> exception;
+    evaluateCommonJSModuleOnce(
+        vm,
+        jsCast<Zig::GlobalObject*>(globalObject),
+        moduleObject,
+        jsString(vm, dirnameString),
+        jsString(vm, filenameString),
+        exception);
+
+    if (exception) {
+        throwException(globalObject, throwScope, exception.get());
+        exception.clear();
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
+    { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
-    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createLoaded } },
-    { "parent"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createParent } },
+    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createLoaded } },
+    { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
 };
@@ -441,23 +534,23 @@ JSCommonJSModule* JSCommonJSModule::create(
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
+    RELEASE_ASSERT(callframe->argumentCount() == 4);
 
-    auto id = callframe->argument(0).toWTFString(globalObject);
+    auto id = callframe->uncheckedArgument(0).toWTFString(globalObject);
+    JSValue object = callframe->uncheckedArgument(1);
+    JSValue hasEvaluated = callframe->uncheckedArgument(2);
+    ASSERT(hasEvaluated.isBoolean());
+    JSValue parent = callframe->uncheckedArgument(3);
 
-    JSValue object = callframe->argument(1);
-
-    return JSValue::encode(
-        JSCommonJSModule::create(
-            jsCast<Zig::GlobalObject*>(globalObject),
-            id,
-            object, callframe->argument(2).isBoolean() && callframe->argument(2).asBoolean()));
+    return JSValue::encode(JSCommonJSModule::create(jsCast<Zig::GlobalObject*>(globalObject), id, object, hasEvaluated.isTrue(), parent));
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     JSValue exportsObject,
-    bool hasEvaluated)
+    bool hasEvaluated,
+    JSValue parent)
 {
     auto& vm = globalObject->vm();
     JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
@@ -472,8 +565,14 @@ JSCommonJSModule* JSCommonJSModule::create(
         globalObject->CommonJSModuleObjectStructure(),
         requireMapKey, requireMapKey, dirname, nullptr);
 
-    out->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), exportsObject, exportsObject.isCell() && exportsObject.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+    out->putDirect(
+        vm,
+        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+        exportsObject,
+        exportsObject.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
     out->hasEvaluated = hasEvaluated;
+    out->m_parent.set(vm, out, parent);
+
     return out;
 }
 

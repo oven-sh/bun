@@ -640,6 +640,12 @@ describe("expect()", () => {
     expect(g).not.toEqual(a);
   });
 
+  test("deepEquals and typed arrays", () => {
+    expect(new Uint8Array([0, 255])).not.toEqual(new Uint8ClampedArray([0, 255]));
+    expect(new Int8Array([0, -1])).not.toEqual(new Uint8Array([0, 255]));
+    expect(new Float32Array([0])).not.toEqual(new Uint8Array([0, 0, 0, 0]));
+  });
+
   test("deepEquals throw getters", () => {
     let a = {
       get x() {

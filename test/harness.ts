@@ -7,6 +7,7 @@ export const bunEnv: any = {
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
   TZ: "Etc/UTC",
+  CI: "1",
 };
 
 export function bunExe() {

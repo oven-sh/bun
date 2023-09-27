@@ -1,15 +1,3 @@
-interface CommonJSModuleRecord {
-  $require(id: string, mod: any): any;
-  children: CommonJSModuleRecord[];
-  exports: any;
-  id: string;
-  loaded: boolean;
-  parent: undefined;
-  path: string;
-  paths: string[];
-  require: typeof require;
-}
-
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -45,7 +33,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false);
+  const mod = $createCommonJSModule(id, {}, false, this);
   $requireMap.$set(id, mod);
 
   // This is where we load the module. We will see if Module._load and

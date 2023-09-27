@@ -1,54 +1,66 @@
 name: bun-release
 concurrency: release
+env:
+  BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
 on:
   release:
     types:
       - published
+  schedule:
+    - cron: "0 14 * * *" # every day at 6am PST
   workflow_dispatch:
     inputs:
       tag:
         type: string
-        description: The tag to publish
+        description: What is the release tag? (e.g. "1.0.2", "canary")
         required: true
+      use-docker:
+        description: Should Docker images be released?
+        type: boolean
+        default: false
+      use-npm:
+        description: Should npm packages be published?
+        type: boolean
+        default: false
+      use-homebrew:
+        description: Should binaries be released to Homebrew?
+        type: boolean
+        default: false
+      use-s3:
+        description: Should binaries be uploaded to S3?
+        type: boolean
+        default: false
+      use-types:
+        description: Should types be released to npm?
+        type: boolean
+        default: false
 jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'oven-sh'
+    if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
     defaults:
       run:
         working-directory: packages/bun-release
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-gpg
-        name: Setup GPG
+      - name: Setup GPG
         uses: crazy-max/ghaction-import-gpg@v5
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      - id: setup-bun
-        name: Setup Bun
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: canary
-      - id: bun-install
-        name: Install Dependencies
+          bun-version: latest
+      - name: Install Dependencies
         run: bun install
-      - id: bun-run
-        name: Sign Release
+      - name: Sign Release
         run: |
-          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.TAG }}"
+          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -56,34 +68,23 @@ jobs:
     name: Release to NPM
     runs-on: ubuntu-latest
     needs: sign
-    if: github.repository_owner == 'oven-sh'
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
     defaults:
       run:
         working-directory: packages/bun-release
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-bun
-        name: Setup Bun
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: canary
-      - id: bun-install
-        name: Install Dependencies
+          bun-version: latest
+      - name: Install Dependencies
         run: bun install
-      - id: bun-run
-        name: Release
-        run: bun upload-npm -- "${{ env.TAG }}" publish
+      - name: Release
+        run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -91,75 +92,58 @@ jobs:
     name: Release types to NPM
     runs-on: ubuntu-latest
     needs: sign
-    if: github.repository_owner == 'oven-sh'
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
     defaults:
       run:
         working-directory: packages/bun-types
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-node
-        name: Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: latest
-      - id: setup-bun
-        name: Setup Bun
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: canary
-      - id: bun-install
-        name: Install Dependencies
+          bun-version: latest
+      - name: Install Dependencies
         run: bun install
-      - id: bun-run
-        name: Build
+      - name: Build
         run: bun run build
-        env:
-          BUN_VERSION: ${{ env.TAG }}
-      - id: npm-publish
-        name: Release
+      - name: Release
         uses: JS-DevTools/npm-publish@v1
         with:
           package: packages/bun-types/dist/package.json
           token: ${{ secrets.NPM_TOKEN }}
   docker:
-    name: Release to Dockerhub (${{ matrix.variant }})
+    name: Release to Dockerhub
     runs-on: ubuntu-latest
     needs: sign
-    if: github.repository_owner == 'oven-sh'
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - debian
-          - slim
-          - alpine
-          - distroless
+        include:
+          - variant: debian
+            suffix: ''
+          - variant: debian
+            suffix: -debian
+          - variant: slim
+            suffix: -slim
+            dir: debian-slim
+          - variant: alpine
+            suffix: -alpine
+          - variant: distroless
+            suffix: -distroless
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
-      - id: environment
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: qemu
-        name: Setup Docker QEMU
+      - name: Setup Docker emulator
         uses: docker/setup-qemu-action@v2
       - id: buildx
         name: Setup Docker buildx
@@ -172,71 +156,58 @@ jobs:
         with:
           images: oven/bun
           flavor: |
-            latest=${{ matrix.variant == 'debian' }}
-            suffix=-${{ matrix.variant }}
+            latest=${{ matrix.suffix == '' && github.event.release.tag_name == env.BUN_VERSION }}
+            suffix=${{ matrix.suffix }}
           tags: |
-            type=match,pattern=(bun-v)?(\d+.\d+.\d+),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(\d+.\d+),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(\d+),group=2,value=${{ env.TAG }}
-      - id: login
-        name: Login to Docker
+            type=match,pattern=(bun-v)?(canary|\d+.\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
+            type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }}
+            type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }}
+      - name: Login to Docker
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - id: push
-        name: Push to Docker
+      - name: Push to Docker
         uses: docker/build-push-action@v3
         with:
-          context: ./dockerhub/${{ matrix.variant }}
+          context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64
           builder: ${{ steps.buildx.outputs.name }}
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
-            BUN_VERSION=${{ env.TAG }}
+            BUN_VERSION=${{ env.BUN_VERSION }}
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest
     needs: sign
-    if: github.repository_owner == 'oven-sh'
     permissions:
       contents: read
+    if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
         with:
           repository: oven-sh/homebrew-bun
           token: ${{ secrets.ROBOBUN_TOKEN }}
-      - id: setup-gpg
+      - id: gpg
         name: Setup GPG
         uses: crazy-max/ghaction-import-gpg@v5
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-ruby
-        name: Setup Ruby
+      - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "2.6"
-      - id: update-tap
-        name: Update Tap
-        run: ruby scripts/release.rb "${{ env.TAG }}"
-      - id: commit-tap
-        name: Commit Tap
+      - name: Update Tap
+        run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
+      - name: Commit Tap
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_options: --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
-          commit_message: Release ${{ env.TAG }}
+          commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
+          commit_message: Release ${{ env.BUN_VERSION }}
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh
           commit_author: robobun <robobun@oven.sh>
@@ -244,34 +215,23 @@ jobs:
     name: Upload to S3
     runs-on: ubuntu-latest
     needs: sign
-    if: github.repository_owner == 'oven-sh'
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:
       contents: read
     defaults:
       run:
         working-directory: packages/bun-release
     steps:
-      - id: checkout
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
-      - id: setup-bun
-        name: Setup Bun
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: canary
-      - id: bun-install
-        name: Install Dependencies
+          bun-version: latest
+      - name: Install Dependencies
         run: bun install
-      - id: bun-run
-        name: Release
-        run: bun upload-s3 -- "${{ env.TAG }}"
+      - name: Release
+        run: bun upload-s3 -- "${{ env.BUN_VERSION }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

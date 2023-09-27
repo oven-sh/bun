@@ -74,18 +74,18 @@ RUN apk --no-cache add \
         --retry 5 \
         || (echo "error: failed to download: glibc-bin v${GLIBC_VERSION}" && exit 1) \
       && mv "glibc-bin-${GLIBC_VERSION}.apk" glibc-bin.apk ;; \
-      aarch64) curl "https://raw.githubusercontent.com/squishyu/alpine-pkg-glibc-aarch64-bin/master/glibc-${GLIBC_VERSION}.apk" \
+      aarch64) curl "https://raw.githubusercontent.com/squishyu/alpine-pkg-glibc-aarch64-bin/master/glibc-${GLIBC_VERSION_AARCH64}.apk" \
         -fsSLO \
         --compressed \
         --retry 5 \
-        || (echo "error: failed to download: glibc v${GLIBC_VERSION}" && exit 1) \
-      && mv "glibc-${GLIBC_VERSION}.apk" glibc.apk \
-      && curl "https://raw.githubusercontent.com/squishyu/alpine-pkg-glibc-aarch64-bin/master/glibc-bin-${GLIBC_VERSION}.apk" \
+        || (echo "error: failed to download: glibc v${GLIBC_VERSION_AARCH64}" && exit 1) \
+      && mv "glibc-${GLIBC_VERSION_AARCH64}.apk" glibc.apk \
+      && curl "https://raw.githubusercontent.com/squishyu/alpine-pkg-glibc-aarch64-bin/master/glibc-bin-${GLIBC_VERSION_AARCH64}.apk" \
         -fsSLO \
         --compressed \
         --retry 5 \
-        || (echo "error: failed to download: glibc-bin v${GLIBC_VERSION}" && exit 1) \
-      && mv "glibc-bin-${GLIBC_VERSION}.apk" glibc-bin.apk ;; \
+        || (echo "error: failed to download: glibc-bin v${GLIBC_VERSION_AARCH64}" && exit 1) \
+      && mv "glibc-bin-${GLIBC_VERSION_AARCH64}.apk" glibc-bin.apk ;; \
       *) echo "error: unsupported architecture '$arch'"; exit 1 ;; \
     esac
 

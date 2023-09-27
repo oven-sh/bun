@@ -2739,17 +2739,7 @@ pub const Blob = struct {
         value: JSC.JSValue,
         global: *JSGlobalObject,
     ) JSC.JSValue {
-        if (value.isError()) {
-            return JSC.JSPromise.rejectedPromiseValue(global, value);
-        }
-
-        if (value.jsType() == .JSPromise)
-            return value;
-
-        return JSPromise.resolvedPromiseValue(
-            global,
-            value,
-        );
+        return JSC.JSPromise.wrap(global, value);
     }
 
     pub fn getText(

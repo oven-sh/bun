@@ -42,16 +42,15 @@ pub const Constants = struct {
     };
 
     /// Constant for fs.copyFile. Flag indicating the destination file should not be overwritten if it already exists.
-    pub const COPYFILE_EXCL: i32 = 1 << Copyfile.exclusive;
-
+    pub const COPYFILE_EXCL: i32 = Copyfile.exclusive;
     ///
     /// Constant for fs.copyFile. copy operation will attempt to create a copy-on-write reflink.
     /// If the underlying platform does not support copy-on-write, then a fallback copy mechanism is used.
-    pub const COPYFILE_FICLONE: i32 = 1 << Copyfile.clone;
+    pub const COPYFILE_FICLONE: i32 = Copyfile.clone;
     ///
     /// Constant for fs.copyFile. Copy operation will attempt to create a copy-on-write reflink.
     /// If the underlying platform does not support copy-on-write, then the operation will fail with an error.
-    pub const COPYFILE_FICLONE_FORCE: i32 = 1 << Copyfile.force;
+    pub const COPYFILE_FICLONE_FORCE: i32 = Copyfile.force;
     // File Open Constants
     /// Constant for fs.open(). Flag indicating to open a file for read-only access.
     pub const O_RDONLY = std.os.O.RDONLY;

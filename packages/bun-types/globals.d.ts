@@ -725,6 +725,14 @@ interface Process {
    * @param listener The event handler function
    */
   listenerCount(eventName: string | symbol, listener?: Function): number;
+
+  /**
+   * Get the constrained memory size for the process.
+   *
+   * On Linux, this is the memory limit for the process, accounting for cgroups 1 and 2.
+   * On other operating systems, this returns `undefined`.
+   */
+  constrainedMemory(): number | undefined;
 }
 
 interface MemoryUsageObject {

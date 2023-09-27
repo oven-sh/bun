@@ -9,7 +9,9 @@
     "allowSyntheticDefaultImports": true,
     "disableSolutionSearching": true,
     "noUnusedLocals": true,
-    "outDir": "build"
+    "outDir": "build",
+    "noEmit": true,
+    "resolveJsonModule": true
   },
   "exclude": [
     "dist",

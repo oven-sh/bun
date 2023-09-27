@@ -18,14 +18,12 @@ test("Regular .stack", () => {
 });
 
 test("throw inside Error.prepareStackTrace doesnt crash", () => {
-  
- Error.prepareStackTrace = function (err, stack) {
+  Error.prepareStackTrace = function (err, stack) {
     Error.prepareStackTrace = null;
-    throw new Error('wat');
+    throw new Error("wat");
   };
 
-expect(() =>  new Error().stack).toThrow("wat");
-
+  expect(() => new Error().stack).toThrow("wat");
 });
 
 test("capture stack trace", () => {
@@ -494,14 +492,13 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(490);
+  expect(lineNumber).toBe(488);
   // TODO: this is wrong
-  expect(parentLineNumber).toBe(499);
+  expect(parentLineNumber).toBe(497);
 });
 
-
 test("Error.prepareStackTrace inside a node:vm works", () => {
-  const {runInNewContext} = require("node:vm");
+  const { runInNewContext } = require("node:vm");
   Error.prepareStackTrace = null;
   const result = runInNewContext(
     `
@@ -515,8 +512,23 @@ test("Error.prepareStackTrace inside a node:vm works", () => {
 
     const err = new Error();
     err.stack;
-    `
-  )
+    `,
+  );
   expect(result).toBe("custom stack trace");
   expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace inside error constructor works", () => {
+  class ExtendedError extends Error {
+    constructor() {
+      super();
+      Error.captureStackTrace(this, ExtendedError);
+    }
+  }
+
+  class AnotherError extends ExtendedError {}
+
+  expect(() => {
+    throw new AnotherError();
+  }).toThrow();
 });

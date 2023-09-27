@@ -348,11 +348,32 @@ pub const SliceWithUnderlyingStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn deinit(this: *const SliceWithUnderlyingStringOrBuffer) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => |*str| {
+                str.deinit();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *const SliceWithUnderlyingStringOrBuffer) void {
+        switch (this.*) {
+            .SliceWithUnderlyingString => |*str| {
+                str.deinit();
+            },
+            .buffer => |buffer| {
+                buffer.buffer.value.unprotect();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SliceWithUnderlyingStringOrBuffer {
         _ = exception;
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var str = bun.String.tryFromJS(value, global) orelse return null;
+                str.ref();
                 return SliceWithUnderlyingStringOrBuffer{ .SliceWithUnderlyingString = str.toSlice(allocator) };
             },
 
@@ -802,7 +823,7 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
-        return fromJSWithAllocator(ctx, arguments, arguments.arena.allocator(), exception);
+        return fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception);
     }
     pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
         const arg = arguments.next() orelse return null;

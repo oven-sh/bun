@@ -52,6 +52,31 @@ FOOBAR=aaaaaa
 <lots more lines>
 ```
 
+## TypeScript
+
+In TypeScript, all properties of `process.env` are typed as `string | undefined`.
+
+```ts
+Bun.env.whatever;
+// string | undefined
+```
+
+To get autocompletion and tell TypeScript to treat a variable as a non-optional string, we'll use [interface merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#merging-interfaces).
+
+```ts
+declare module "bun" {
+  interface Env {
+    AWESOME: string;
+  }
+}
+```
+
+Add this line to any file in your project. It will globally add the `AWESOME` property to `process.env` and `Bun.env`.
+
+```ts
+process.env.AWESOME; // => string
+```
+
 ## Configuring Bun
 
 These environment variables are read by Bun and configure aspects of its behavior.

@@ -1902,11 +1902,12 @@ pub const PackageManager = struct {
                     // TODO:
                     return null;
 
-                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
-                    // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
-                    if (this.isContinuousIntegration())
-                        return null;
+                // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                // and it makes tests more consistent
+                if (this.isContinuousIntegration())
+                    return null;
 
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
                     if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
                         this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
                         break :brk this.manifests.getPtr(name_hash).?;
@@ -2129,14 +2130,21 @@ pub const PackageManager = struct {
                 github_api_domain = api_domain;
             }
         }
+
+        const owner = this.lockfile.str(&repository.owner);
+        const repo = this.lockfile.str(&repository.repo);
+        const committish = this.lockfile.str(&repository.committish);
+
         return std.fmt.allocPrint(
             this.allocator,
-            "https://{s}/repos/{s}/{s}/tarball/{s}",
+            "https://{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
                 github_api_domain,
-                this.lockfile.str(&repository.owner),
-                this.lockfile.str(&repository.repo),
-                this.lockfile.str(&repository.committish),
+                owner,
+                repo,
+                // repo might be empty if dep is https://github.com/... style
+                if (repo.len > 0) "/" else "",
+                committish,
             },
         ) catch unreachable;
     }
@@ -2673,8 +2681,8 @@ pub const PackageManager = struct {
                 }
             },
             .workspace => {
-                // relative to cwd
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+                // package name hash should be used to find workspace path from map
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
@@ -2948,7 +2956,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .git, .github, .npm, .tarball => String.Builder.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -4541,6 +4549,7 @@ pub const PackageManager = struct {
             env: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
+            subcommand: Subcommand,
         ) !void {
             var base = Api.NpmRegistry{
                 .url = "",
@@ -4755,6 +4764,12 @@ pub const PackageManager = struct {
 
             if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
                 this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
+            // Update should never read from manifest cache
+            if (subcommand == .update) {
+                this.enable.manifest_cache = false;
+                this.enable.manifest_cache_control = false;
             }
 
             if (cli_) |cli| {
@@ -5362,6 +5377,7 @@ pub const PackageManager = struct {
             env,
             cli,
             ctx.install,
+            subcommand,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
@@ -5447,6 +5463,7 @@ pub const PackageManager = struct {
             env,
             cli,
             bun_install,
+            .install,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(
@@ -6189,7 +6206,7 @@ pub const PackageManager = struct {
     ) !void {
         var update_requests = try UpdateRequest.Array.init(0);
 
-        if (manager.options.positionals.len == 1) {
+        if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));

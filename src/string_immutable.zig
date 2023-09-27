@@ -4676,30 +4676,30 @@ test "eqlCaseInsensitiveASCII" {
 }
 
 pub fn isIPAddress(input: []const u8) bool {
-    if (containsChar(input, ':'))
-        return true;
+    var max_ip_address_buffer: [512]u8 = undefined;
+    if (input.len > max_ip_address_buffer.len) return false;
 
-    if (comptime Environment.isWindows) {
-        return bun.todo(@src(), false);
-    }
+    var sockaddr: std.os.sockaddr = undefined;
+    @memset(std.mem.asBytes(&sockaddr), 0);
+    @memcpy(max_ip_address_buffer[0..input.len], input);
+    max_ip_address_buffer[input.len] = 0;
 
-    if (std.net.Address.resolveIp(input, 0)) |_| {
-        return true;
-    } else |_| {
-        return false;
-    }
+    var ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
+
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
-    if (comptime Environment.isWindows) {
-        return bun.todo(@src(), false);
-    }
+    var max_ip_address_buffer: [512]u8 = undefined;
+    if (input.len > max_ip_address_buffer.len) return false;
 
-    if (std.net.Address.parseIp6(input, 0)) |_| {
-        return true;
-    } else |_| {
-        return false;
-    }
+    var sockaddr: std.os.sockaddr = undefined;
+    @memset(std.mem.asBytes(&sockaddr), 0);
+    @memcpy(max_ip_address_buffer[0..input.len], input);
+    max_ip_address_buffer[input.len] = 0;
+
+    var ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
 }
 
 pub fn cloneNormalizingSeparators(

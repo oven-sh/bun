@@ -20,8 +20,9 @@ pub const EncodedJSValue = union_EncodedJSValue;
 pub export var ValueUndefined: EncodedJSValue = EncodedJSValue{
     .asInt64 = @as(i64, @bitCast(@as(c_longlong, @as(c_int, 2) | @as(c_int, 8)))),
 };
+pub const TrueI64 = @as(i64, @bitCast(@as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1))));
 pub export var ValueTrue: EncodedJSValue = EncodedJSValue{
-    .asInt64 = @as(i64, @bitCast(@as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1)))),
+    .asInt64 = TrueI64,
 };
 pub const JSContext = ?*anyopaque;
 pub inline fn JSVALUE_IS_CELL(arg_val: EncodedJSValue) bool {

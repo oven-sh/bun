@@ -738,19 +738,19 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  execArgv = options.execArgv || process.execArgv;
-  validateArgumentsNullCheck(execArgv, "options.execArgv");
+  // execArgv = options.execArgv || process.execArgv;
+  // validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  if (execArgv === process.execArgv && process._eval != null) {
-    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
-    if (index > 0) {
-      // Remove the -e switch to avoid fork bombing ourselves.
-      execArgv = ArrayPrototypeSlice.call(execArgv);
-      ArrayPrototypeSplice.call(execArgv, index - 1, 2);
-    }
-  }
+  // if (execArgv === process.execArgv && process._eval != null) {
+  //   const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+  //   if (index > 0) {
+  //     // Remove the -e switch to avoid fork bombing ourselves.
+  //     execArgv = ArrayPrototypeSlice.call(execArgv);
+  //     ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+  //   }
+  // }
 
-  args = [...execArgv, modulePath, ...args];
+  args = [/*...execArgv,*/ modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1298,7 +1298,7 @@ function nodeToBun(item) {
     return item;
   } else {
     const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error("Invalid stdio option");
+    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
     return result;
   }
 }

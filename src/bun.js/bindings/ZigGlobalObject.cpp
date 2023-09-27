@@ -1331,7 +1331,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionATOB,
+JSC_DEFINE_HOST_FUNCTION(functionATOB,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -1354,7 +1354,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionReportError,
+JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     switch (callFrame->argumentCount()) {
@@ -1636,7 +1636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
-static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
+JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 
@@ -3353,7 +3353,7 @@ JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObjec
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
+JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -3437,6 +3437,38 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     }
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);
+}
+
+// `console._stdout` is equal to `process.stdout`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdout);
+}
+
+// `console._stderr` is equal to `process.stderr`
+JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto console = JSValue::decode(thisValue).getObject();
+    auto global = static_cast<Zig::GlobalObject*>(globalObject);
+
+    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
+    auto stdout = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
+    if (!stdout)
+        return JSValue::encode({});
+
+    console->putDirect(vm, property, stdout, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(stdout);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
@@ -3676,7 +3708,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, noop_setter), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | 0);
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)

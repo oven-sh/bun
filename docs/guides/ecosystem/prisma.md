@@ -2,6 +2,12 @@
 name: Get started using Prisma
 ---
 
+{% callout %}
+**Note** — At the moment Prisma needs Node.js to be installed to run certain generation code. Make sure Node.js is installed in the environment where you're running `bunx prisma` commands.
+{% /callout %}
+
+---
+
 Prisma works out of the box with Bun. First, create a directory and initialize it with `bun init`.
 
 ```bash

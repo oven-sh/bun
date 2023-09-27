@@ -92,13 +92,13 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  // clone handlers array if necessary since handlers can be added/removed during the loop
-  // cloning is skipped for performance reasons in the case of exactly one attached handler
-  // since array length changes have no side-effects in a for-loop of length 1
+  // Clone handlers array if necessary since handlers can be added/removed during the loop.
+  // Cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1.
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
   for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];
-    // for performance reasons Function.call(...) is used whenever possible
+    // For performance reasons Function.call(...) is used whenever possible.
     switch (args.length) {
       case 0:
         handler.call(this);
@@ -128,14 +128,14 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  // clone handlers array if necessary since handlers can be added/removed during the loop
-  // cloning is skipped for performance reasons in the case of exactly one attached handler
-  // since array length changes have no side-effects in a for-loop of length 1
+  // Clone handlers array if necessary since handlers can be added/removed during the loop.
+  // Cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1.
   const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
   for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
     const handler = maybeClonedHandlers[i];
     let result;
-    // for performance reasons Function.call(...) is used whenever possible
+    // For performance reasons Function.call(...) is used whenever possible.
     switch (args.length) {
       case 0:
         result = handler.call(this);

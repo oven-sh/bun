@@ -221,6 +221,28 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
+// Github allows for the following format of URL:
+// https://github.com/<org>/<repo>/tarball/<ref>
+// This is a legacy (but still supported) method of retrieiving a tarball of an
+// entire source tree at some git reference. (branch, tag, etc)
+// The function expects "https://github.com/" is already stripped from the string
+pub inline fn isGitHubTarballPath(dependency: string) bool {
+    var parts = dependency.split("/");
+
+    var n_parts: usize = 0;
+
+    while (parts.next()) |part| {
+        n_parts += 1;
+        if (n_parts == 3 and !part.eql("tarball")) {
+            return false;
+        } else if (n_parts > 4) {
+            return false;
+        }
+    }
+
+    return n_parts == 4;
+}
+
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 pub inline fn isTarball(dependency: string) bool {
@@ -495,7 +517,9 @@ pub const Version = struct {
                             }
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                if (isGitHubTarballPath(url["github.com/".len..])) return .tarball;
                             }
+                            if (strings.hasPrefixComptime(url, "gitpkg-fork.vercel.sh")) return .tarball;
                         }
                     }
                 },

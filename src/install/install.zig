@@ -6089,7 +6089,7 @@ pub const PackageManager = struct {
 
                 var value = input;
                 var alias: ?string = null;
-                if (strings.isNPMPackageName(input)) {
+                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
                     alias = input;
                     value = input[input.len..];
                 } else if (input.len > 1) {

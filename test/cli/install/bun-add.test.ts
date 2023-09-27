@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile } from "fs/promises";
 import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
@@ -1627,3 +1627,53 @@ it("should add dependency alongside peerDependencies", async () => {
   });
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should add local tarball dependency", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const tarball = "baz-0.0.3.tgz"
+  await copyFile(tarball, join(package_dir, tarball));
+  const { stdout, stderr, exited } = spawn({
+    // cmd: ["pwd"],
+    cmd: ["/Users/axel.escalada/bun-dev/packages/debug-bun-darwin-aarch64/bun-debug", "add", tarball],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed baz@baz-0.0.3.tgz with binaries:",
+    "  - baz-run",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(package_json.name).toBe("baz");
+  expect(package_json.version).toBe("0.0.3");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+  await access(join(package_dir, "bun.lockb"));
+});
+
+

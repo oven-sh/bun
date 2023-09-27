@@ -1443,6 +1443,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn endStream(this: *RequestContext, closeConnection: bool) void {
+            ctxLog("endStream", .{});
             if (this.resp) |resp| {
                 if (this.flags.is_waiting_for_request_body) {
                     this.flags.is_waiting_for_request_body = false;
@@ -1729,6 +1730,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this: *RequestContext,
             headers: *JSC.FetchHeaders,
         ) void {
+            ctxLog("writeHeaders", .{});
             headers.fastRemove(.ContentLength);
             headers.fastRemove(.TransferEncoding);
             if (!ssl_enabled) headers.fastRemove(.StrictTransportSecurity);
@@ -2100,6 +2102,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doRenderStream(pair: *StreamPair) void {
+            ctxLog("doRenderStream", .{});
             var this = pair.this;
             var stream = pair.stream;
             if (this.resp == null or this.flags.aborted) {
@@ -2223,6 +2226,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                     }
                     return;
+                } else {
+                    // if is not a promise we treat it as Error
+                    streamLog("returned an error", .{});
+                    if (!this.flags.aborted) resp.clearAborted();
+                    response_stream.detach();
+                    this.sink = null;
+                    response_stream.sink.destroy();
+                    return this.handleReject(assignment_result);
                 }
             }
 
@@ -2232,6 +2243,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer stream.value.unprotect();
                 response_stream.sink.markDone();
                 this.finalizeForAbort();
+                response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
                 return;
@@ -2255,7 +2267,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
-            this.finalize();
+            response_stream.sink.onFirstWrite = null;
+            response_stream.sink.ctx = null;
+            response_stream.detach();
+            stream.cancel(globalThis);
+            response_stream.sink.markDone();
+            this.renderMissing();
         }
 
         const streamLog = Output.scoped(.ReadableStream, false);
@@ -2455,7 +2472,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onResolve({any})", .{wrote_anything});
-
             //aborted so call finalizeForAbort
             if (req.flags.aborted or req.resp == null) {
                 req.finalizeForAbort();

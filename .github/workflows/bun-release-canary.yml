@@ -56,7 +56,7 @@ jobs:
     name: Release to NPM
     runs-on: ubuntu-latest
     needs: sign
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
     defaults:
@@ -84,7 +84,7 @@ jobs:
     name: Release to Dockerhub (${{ matrix.variant }})
     runs-on: ubuntu-latest
     needs: sign
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
       contents: read
     strategy:
@@ -137,7 +137,7 @@ jobs:
     name: Upload to S3
     runs-on: ubuntu-latest
     needs: sign
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:
       contents: read
     defaults:

@@ -75,6 +75,7 @@ jobs:
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         variant:
           - debian

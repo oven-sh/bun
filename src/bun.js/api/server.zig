@@ -1537,8 +1537,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.flags.aborted);
-            //mark request as aborted
+            // mark request as aborted
             this.flags.aborted = true;
+            var any_js_calls = false;
+            var vm = this.server.vm;
+            defer {
+                // This is a task in the event loop.
+                // If we called into JavaScript, we must drain the microtask queue
+                if (any_js_calls) {
+                    vm.drainMicrotasks();
+                }
+            }
 
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
@@ -1547,6 +1556,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
+                    any_js_calls = true;
                 }
                 _ = signal.unref();
             }
@@ -1578,6 +1588,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         } else if (body.value.Locked.readable != null) {
                             body.value.Locked.readable.?.abort(this.server.globalThis);
                             body.value.Locked.readable = null;
+                            any_js_calls = true;
                         }
                         body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
@@ -1588,6 +1599,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (response.body.value.Locked.readable) |*readable| {
                             response.body.value.Locked.readable = null;
                             readable.abort(this.server.globalThis);
+                            any_js_calls = true;
                         }
                     }
                 }
@@ -1597,10 +1609,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.pending_promises_for_abort += 1;
                     this.promise = null;
                     promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
-                }
-
-                if (this.pending_promises_for_abort > 0) {
-                    this.server.vm.tick();
+                    any_js_calls = true;
                 }
             }
         }

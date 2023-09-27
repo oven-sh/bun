@@ -861,7 +861,7 @@ pub const PackageManifest = struct {
             }
         }
 
-        var result = PackageManifest{};
+        var result: PackageManifest = bun.serializable(PackageManifest{});
 
         var string_pool = String.Builder.StringPool.init(default_allocator);
         defer string_pool.deinit();
@@ -1094,6 +1094,9 @@ pub const PackageManifest = struct {
                 var dependency_values = version_extern_strings;
                 var dependency_names = all_dependency_names_and_values;
                 var prev_extern_bin_group = extern_strings_bin_entries;
+                const empty_version = bun.serializable(PackageVersion{
+                    .bin = Bin.init(),
+                });
 
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
@@ -1113,7 +1116,7 @@ pub const PackageManifest = struct {
                     }
                     if (!parsed_version.valid) continue;
 
-                    var package_version = PackageVersion{};
+                    var package_version: PackageVersion = empty_version;
 
                     if (prop.value.?.asProperty("cpu")) |cpu| {
                         package_version.cpu = Architecture.all;

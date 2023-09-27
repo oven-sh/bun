@@ -90,7 +90,7 @@ Register this file in `preload`:
 preload = ["./yamlPlugin.ts"]
 ```
 
-Once the plugin is registed, `.yaml` and `.yml` files can be directly imported.
+Once the plugin is registered, `.yaml` and `.yml` files can be directly imported.
 
 {% codetabs %}
 

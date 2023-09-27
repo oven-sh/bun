@@ -107,9 +107,11 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
     // 6. Pause until the user responds either positively or negatively.
     var stdin = std.io.getStdIn();
-    var reader = stdin.reader();
+    var unbuffered_reader = stdin.reader();
+    var buffered = std.io.bufferedReader(unbuffered_reader);
+    var reader = buffered.reader();
 
-    const first_byte = reader.readByte() catch {
+    var first_byte = reader.readByte() catch {
         return .false;
     };
 
@@ -122,13 +124,14 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.
+
                 return .false;
             };
 
             if (next_byte == '\n') {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return .false;
+                return .true;
             }
         },
         else => {},

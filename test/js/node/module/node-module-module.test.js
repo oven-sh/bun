@@ -87,3 +87,10 @@ test("Module.prototype._compile", () => {
   expect(fn).toBe("/file/path/goes/here.js");
   expect(dn).toBe("/file/path/goes");
 });
+
+test("Module._extensions", () => {
+  expect(".js" in Module._extensions).toBeTrue();
+  expect(".json" in Module._extensions).toBeTrue();
+  expect(".node" in Module._extensions).toBeTrue();
+  expect(require.extensions).toBe(Module._extensions);
+});

@@ -3035,7 +3035,7 @@ pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
     null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
-    true = @as(JSValueReprInt, @bitCast(@as(i64, 0x4))),
+    true = FFI.TrueI64,
     false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
     _,
 
@@ -3225,7 +3225,7 @@ pub const JSValue = enum(JSValueReprInt) {
             };
         }
 
-        pub fn isObject(this: JSType) bool {
+        pub inline fn isObject(this: JSType) bool {
             // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
             return @intFromEnum(this) >= @intFromEnum(JSType.Object);
         }

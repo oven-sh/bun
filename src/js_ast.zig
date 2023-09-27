@@ -1495,7 +1495,6 @@ pub const E = struct {
         target: ExprNodeIndex,
         args: ExprNodeList = ExprNodeList{},
         optional_chain: ?OptionalChain = null,
-        is_direct_eval: bool = false,
         close_paren_loc: logger.Loc = logger.Loc.Empty,
 
         // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -1513,7 +1512,6 @@ pub const E = struct {
 
         pub fn hasSameFlagsAs(a: *Call, b: *Call) bool {
             return (a.optional_chain == b.optional_chain and
-                a.is_direct_eval == b.is_direct_eval and
                 a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused);
         }
     };
@@ -1536,7 +1534,6 @@ pub const E = struct {
 
         pub fn hasSameFlagsAs(a: *Dot, b: *Dot) bool {
             return (a.optional_chain == b.optional_chain and
-                a.is_direct_eval == b.is_direct_eval and
                 a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused and a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused);
         }
     };

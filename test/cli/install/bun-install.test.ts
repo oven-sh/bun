@@ -5435,6 +5435,226 @@ it("should handle installing packages from inside a workspace with `*`", async (
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle installing packages inside workspaces with difference versions", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  {
+    await mkdir(join(package_dir, "packages", "package1"), { recursive: true });
+    const package1 = JSON.stringify({
+      name: "package1",
+      version: "0.0.2",
+    });
+    await writeFile(join(package_dir, "packages", "package1", "package.json"), package1);
+  }
+  {
+    await mkdir(join(package_dir, "packages", "package2"));
+    const package2 = JSON.stringify({
+      name: "package2",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:*",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package2", "package.json"), package2);
+  }
+  {
+    await mkdir(join(package_dir, "packages", "package3"));
+    const package3 = JSON.stringify({
+      name: "package3",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:^",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package3", "package.json"), package3);
+  }
+  {
+    await mkdir(join(package_dir, "packages", "package4"));
+    const package4 = JSON.stringify({
+      name: "package4",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:../package1",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package4", "package.json"), package4);
+  }
+  {
+    await mkdir(join(package_dir, "packages", "package5"));
+    const package5 = JSON.stringify({
+      name: "package5",
+      version: "0.0.1",
+      dependencies: {
+        package1: "workspace:0.0.2",
+      },
+    });
+    await writeFile(join(package_dir, "packages", "package5", "package.json"), package5);
+  }
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "package2"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + package1@workspace:packages/package1",
+    " + package2@workspace:packages/package2",
+    " + package3@workspace:packages/package3",
+    " + package4@workspace:packages/package4",
+    " + package5@workspace:packages/package5",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "package3"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + package1@workspace:packages/package1",
+    " + package2@workspace:packages/package2",
+    " + package3@workspace:packages/package3",
+    " + package4@workspace:packages/package4",
+    " + package5@workspace:packages/package5",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "package4"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + package1@workspace:packages/package1",
+    " + package2@workspace:packages/package2",
+    " + package3@workspace:packages/package3",
+    " + package4@workspace:packages/package4",
+    " + package5@workspace:packages/package5",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+  const {
+    stdout: stdout4,
+    stderr: stderr4,
+    exited: exited4,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "package5"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr4).toBeDefined();
+  const err4 = await new Response(stderr4).text();
+  expect(err4).toContain("Saved lockfile");
+  expect(stdout4).toBeDefined();
+  const out4 = await new Response(stdout4).text();
+  expect(out4.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + package1@workspace:packages/package1",
+    " + package2@workspace:packages/package2",
+    " + package3@workspace:packages/package3",
+    " + package4@workspace:packages/package4",
+    " + package5@workspace:packages/package5",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited4).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  // from the root
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  await rm(join(package_dir, "bun.lockb"), { force: true, recursive: true });
+
+  const {
+    stdout: stdout5,
+    stderr: stderr5,
+    exited: exited5,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr5).toBeDefined();
+  const err5 = await new Response(stderr5).text();
+  expect(err5).toContain("Saved lockfile");
+  expect(stdout5).toBeDefined();
+  const out5 = await new Response(stdout5).text();
+  expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + package1@workspace:packages/package1",
+    " + package2@workspace:packages/package2",
+    " + package3@workspace:packages/package3",
+    " + package4@workspace:packages/package4",
+    " + package5@workspace:packages/package5",
+    "",
+    " 5 packages installed",
+  ]);
+  expect(await exited5).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should override npm dependency by matching workspace", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

@@ -19556,6 +19556,15 @@ fn NewParser_(
 
                 .m_identifier => |ref| {
                     p.recordUsage(ref);
+                    if (p.is_import_item.contains(ref)) {
+                        return p.maybeDefinedHelper(p.newExpr(
+                            E.ImportIdentifier{
+                                .ref = ref,
+                            },
+                            logger.Loc.Empty,
+                        ));
+                    }
+
                     return p.maybeDefinedHelper(p.newExpr(
                         E.Identifier{ .ref = ref },
                         logger.Loc.Empty,
@@ -19588,12 +19597,21 @@ fn NewParser_(
                         i -= 1;
                     }
 
-                    current_expr.* = p.newExpr(
-                        E.Identifier{
-                            .ref = refs.items[0],
-                        },
-                        logger.Loc.Empty,
-                    );
+                    if (p.is_import_item.contains(refs.items[0])) {
+                        current_expr.* = p.newExpr(
+                            E.ImportIdentifier{
+                                .ref = refs.items[0],
+                            },
+                            logger.Loc.Empty,
+                        );
+                    } else {
+                        current_expr.* = p.newExpr(
+                            E.Identifier{
+                                .ref = refs.items[0],
+                            },
+                            logger.Loc.Empty,
+                        );
+                    }
 
                     const dot_identifier = current_expr.*;
                     var current_dot = dots;

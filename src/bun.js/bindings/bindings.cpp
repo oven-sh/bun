@@ -4103,6 +4103,7 @@ enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
     status,
+    statusText,
     url,
     body,
     data,
@@ -4121,6 +4122,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::headers: {
         return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::statusText: {
+        return clientData->builtinNames().statusTextPublicName();
     }
     case BuiltinNamesMap::status: {
         return clientData->builtinNames().statusPublicName();

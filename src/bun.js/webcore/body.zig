@@ -51,7 +51,6 @@ const Request = JSC.WebCore.Request;
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
-    init: Init = Init{ .headers = null, .status_code = 200 },
     value: Value, // = Value.empty,
 
     pub inline fn len(this: *const Body) Blob.SizeType {
@@ -68,7 +67,6 @@ pub const Body = struct {
 
     pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
         return Body{
-            .init = this.init.clone(globalThis),
             .value = this.value.clone(globalThis),
         };
     }
@@ -79,19 +77,7 @@ pub const Body = struct {
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
         formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
-        try writer.writeAll("\n");
 
-        // if (this.init.headers) |headers| {
-        //     try formatter.writeIndent(Writer, writer);
-        //     try writer.writeAll("headers: ");
-        //     try headers.leak().writeFormat(formatter, writer, comptime enable_ansi_colors);
-        //     try writer.writeAll("\n");
-        // }
-
-        try formatter.writeIndent(Writer, writer);
-        try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
@@ -113,17 +99,13 @@ pub const Body = struct {
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
-        if (this.init.headers) |headers| {
-            this.init.headers = null;
-
-            headers.deref();
-        }
         this.value.deinit();
     }
 
     pub const Init = struct {
         headers: ?*FetchHeaders = null,
         status_code: u16,
+        status_text: bun.String = bun.String.empty,
         method: Method = Method.GET,
 
         pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
@@ -156,8 +138,8 @@ pub const Body = struct {
                     return result;
                 }
 
-                if (response_init.as(Response)) |req| {
-                    return req.body.init.clone(ctx);
+                if (response_init.as(Response)) |resp| {
+                    return resp.init.clone(ctx);
                 }
             }
 
@@ -182,6 +164,10 @@ pub const Body = struct {
                 }
             }
 
+            if (response_init.fastGet(ctx, .statusText)) |status_text| {
+                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+            }
+
             if (response_init.fastGet(ctx, .method)) |method_value| {
                 var method_str = method_value.toSlice(ctx, allocator);
                 defer method_str.deinit();
@@ -191,6 +177,16 @@ pub const Body = struct {
             }
 
             return result;
+        }
+
+        pub fn deinit(this: *Init, _: std.mem.Allocator) void {
+            if (this.headers) |headers| {
+                this.headers = null;
+
+                headers.deref();
+            }
+
+            this.status_text.deref();
         }
     };
 
@@ -1023,53 +1019,14 @@ pub const Body = struct {
         };
     }
 
+    // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
     pub fn extract(
         globalThis: *JSGlobalObject,
         value: JSValue,
     ) ?Body {
-        return extractBody(
-            globalThis,
-            value,
-            false,
-            JSValue.zero,
-        );
-    }
-
-    pub fn extractWithInit(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        init: JSValue,
-    ) ?Body {
-        return extractBody(
-            globalThis,
-            value,
-            true,
-            init,
-        );
-    }
-
-    // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-    inline fn extractBody(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        comptime has_init: bool,
-        init: JSValue,
-    ) ?Body {
-        var body = Body{
-            .value = Value{ .Null = {} },
-            .init = Init{ .headers = null, .status_code = 200 },
-        };
+        var body = Body{ .value = Value{ .Null = {} } };
         var allocator = getAllocator(globalThis);
-
-        if (comptime has_init) {
-            if (Init.init(allocator, globalThis, init)) |maybeInit| {
-                if (maybeInit) |init_| {
-                    body.init = init_;
-                }
-            } else |_| {
-                return null;
-            }
-        }
+        _ = allocator;
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)

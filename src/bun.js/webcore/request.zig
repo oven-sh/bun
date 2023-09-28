@@ -542,12 +542,12 @@ pub const Request = struct {
 
                 if (value.as(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
-                        req.method = response.body.init.method;
+                        req.method = response.init.method;
                         fields.insert(.method);
                     }
 
                     if (!fields.contains(.headers)) {
-                        if (response.body.init.headers) |headers| {
+                        if (response.init.headers) |headers| {
                             req.headers = headers.cloneThis(globalThis);
                             fields.insert(.headers);
                         }

@@ -655,12 +655,12 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
                                         return JSC::JSValue::encode(JSC::JSValue {});
                                     }
                                 } else if (type == "pkcs8"_s) {
-                                    // if(PEM_write_bio_RSAPrivateKey(bio, rsa, cipher, passphrase, passphrase_len, nullptr, nullptr) != 1) {
-                                    //     auto scope = DECLARE_THROW_SCOPE(vm);
-                                    //     JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
-                                    //     BIO_free(bio);
-                                    //     return JSC::JSValue::encode(JSC::JSValue {});
-                                    // }
+                                    if (PEM_write_bio_PKCS8PrivateKey(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
                                 } else {
                                     auto scope = DECLARE_THROW_SCOPE(vm);
                                     JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'pkcs8'"_s);
@@ -668,9 +668,23 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
                                     return JSC::JSValue::encode(JSC::JSValue {});
                                 }
                             } else if (string == "der"_s) {
-                                if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                if (type == "pkcs1"_s) {
+                                    if (i2d_RSAPrivateKey_bio(bio, rsa_ptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else if (type == "pkcs8"_s) {
+                                    if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else {
                                     auto scope = DECLARE_THROW_SCOPE(vm);
-                                    JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                    JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'pkcs8'"_s);
                                     BIO_free(bio);
                                     return JSC::JSValue::encode(JSC::JSValue {});
                                 }
@@ -697,7 +711,6 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
                         BIO_free(bio);
                         return JSC::JSValue::encode(buffer);
                     }
-                    break;
                 }
                 case CryptoKeyClass::OKP: {
                     const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);

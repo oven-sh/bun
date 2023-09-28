@@ -4,21 +4,21 @@
 // over this code, but will assign ownership to the Node.js contributors, with
 // the same license as specified in the Node.js codebase; the portion adapted
 // here should all be plain MIT license.
-// 
+//
 // Node.js is licensed for use as follows:
-// 
+//
 // Copyright Node.js contributors. All rights reserved.
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
 // deal in the Software without restriction, including without limitation the
 // rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
 // sell copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in
 // all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -218,7 +218,8 @@ function assert(p, message) {
 }
 
 const codes = {}; // exported from errors.js
-{ // errors.js
+{
+  // errors.js
   // Sorted by a rough estimate on most frequently used entries.
   const kTypes = [
     "string",
@@ -271,7 +272,8 @@ const codes = {}; // exported from errors.js
       if (instances.length > 0 || other.length > 0) msg += " or ";
     }
     if (instances.length > 0) {
-      if (instances.length > 2) msg += `an instance of ${ArrayPrototypeJoin(instances, ", ")}, or ${ArrayPrototypePop(instances)}`;
+      if (instances.length > 2)
+        msg += `an instance of ${ArrayPrototypeJoin(instances, ", ")}, or ${ArrayPrototypePop(instances)}`;
       else msg += `an instance of ${instances[0]}` + (instances.length === 2 ? ` or ${instances[1]}` : "");
       if (other.length > 0) msg += " or ";
     }
@@ -307,14 +309,20 @@ const codes = {}; // exported from errors.js
 
     const msg = messages.get(sym);
     assert(typeof msg === "function");
-    assert(msg.length <= args.length, // Default options do not count.
-      `Code: ${sym}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`);
+    assert(
+      msg.length <= args.length, // Default options do not count.
+      `Code: ${sym}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`,
+    );
     const message = ReflectApply(msg, error, args);
 
     ObjectDefineProperty(error, "message", { value: message, enumerable: false, writable: true, configurable: true });
     ObjectDefineProperty(error, "toString", {
-      value() { return `${this.name} [${sym}]: ${this.message}`; },
-      enumerable: false, writable: true, configurable: true,
+      value() {
+        return `${this.name} [${sym}]: ${this.message}`;
+      },
+      enumerable: false,
+      writable: true,
+      configurable: true,
     });
     // addCodeToName + captureLargerStackTrace
     let err = error;
@@ -333,12 +341,14 @@ const codes = {}; // exported from errors.js
  * @param {unknown} value
  * @param {string} name
  * @param {{ allowArray?: boolean, allowFunction?: boolean, nullable?: boolean }} [options] */
-const validateObject = ((value, name, allowArray = false) => {
+const validateObject = (value, name, allowArray = false) => {
   if (
-    (value === null) || (!allowArray && ArrayIsArray(value)) ||
-    (typeof value !== "object" && (typeof value !== "function"))
-  ) throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
-});
+    value === null ||
+    (!allowArray && ArrayIsArray(value)) ||
+    (typeof value !== "object" && typeof value !== "function")
+  )
+    throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
+};
 
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
@@ -2661,7 +2671,8 @@ function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   const ret = [];
   for (const [k, v] of ObjectEntries(desc)) {
     if (!RegExpPrototypeTest(/^(0|[1-9][0-9]*)$/, k) || NumberParseInt(k, 10) >= 2 ** 32 - 1) {
-      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue; // Arrays are limited in size
+      // Arrays are limited in size
+      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
       else ArrayPrototypePush(ret, k);
     }
   }

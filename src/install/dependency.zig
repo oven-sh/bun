@@ -224,8 +224,8 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
 // Github allows for the following format of URL:
 // https://github.com/<org>/<repo>/tarball/<ref>
 // This is a legacy (but still supported) method of retrieving a tarball of an
-// entire source tree at some git reference. (branch, tag, etc)
-// The function expects "https://github.com/" is already stripped from the string
+// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+// can have arbitrary number of slashes)
 pub inline fn isGitHubTarballPath(dependency: string) bool {
     var parts = strings.split(dependency, "/");
 
@@ -233,14 +233,12 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
 
     while (parts.next()) |part| {
         n_parts += 1;
-        if (n_parts == 3 and !strings.eql(part, "tarball")) {
-            return false;
-        } else if (n_parts > 4) {
-            return false;
+        if (n_parts == 3) {
+            return strings.eql(part, "tarball");
         }
     }
 
-    return n_parts == 4;
+    return false;
 }
 
 // This won't work for query string params, but I'll let someone file an issue

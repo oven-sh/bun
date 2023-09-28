@@ -479,13 +479,13 @@ declare module "bun:test" {
    * @param actual the actual value
    */
   export const expect: {
-    (actual?: unknown): Expect;
+    <T = unknown>(actual?: T): Expect<T>;
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
     anything: () => Expect;
-    stringContaining: (str: string) => Expect;
-    stringMatching: (regex: RegExp | string) => Expect;
+    stringContaining: (str: string) => Expect<string>;
+    stringMatching: <T extends RegExp | string>(regex: T) => Expect<T>;
   };
   /**
    * Asserts that a value matches some criteria.

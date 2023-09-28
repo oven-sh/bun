@@ -306,18 +306,15 @@ const TLSSocket = (function (InternalTLSSocket) {
     value: "TLSSocket",
     enumerable: false,
   });
-
-  return Object.defineProperty(
-    function Socket(options) {
-      return new InternalTLSSocket(options);
+  function Socket(options) {
+    return new InternalTLSSocket(options);
+  }
+  Socket.prototype = InternalTLSSocket.prototype;
+  return Object.defineProperty(Socket, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalTLSSocket;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalTLSSocket;
-      },
-    },
-  );
+  });
 })(
   class TLSSocket extends InternalTCPSocket {
     #secureContext;

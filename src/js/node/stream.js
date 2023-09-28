@@ -2282,9 +2282,13 @@ var require_readable = __commonJS({
         }
       });
     }
-    Readable.prototype = {};
-    ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
-    ObjectSetPrototypeOf(Readable, Stream);
+    // Set Readable's prototype to Stream's prototype,
+    // so instances of Readable will inherit from Stream
+    Readable.prototype = Stream.prototype;
+
+    // Set the prototype of the Readable constructor to Stream,
+    // so that Readable will inherit static methods from Stream
+    Object.setPrototypeOf(Readable, Stream);
 
     Readable.prototype.on = function (ev, fn) {
       const res = Stream.prototype.on.call(this, ev, fn);

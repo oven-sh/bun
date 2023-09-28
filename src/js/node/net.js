@@ -79,17 +79,15 @@ const Socket = (function (InternalSocket) {
     enumerable: false,
   });
 
-  return Object.defineProperty(
-    function Socket(options) {
-      return new InternalSocket(options);
+  function Socket(options) {
+    return new InternalSocket(options);
+  }
+  Socket.prototype = InternalSocket.prototype;
+  return Object.defineProperty(Socket, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalSocket;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalSocket;
-      },
-    },
-  );
+  });
 })(
   class Socket extends Duplex {
     static #Handlers = {

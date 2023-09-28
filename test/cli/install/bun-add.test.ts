@@ -1639,9 +1639,9 @@ it("should add local tarball dependency", async () => {
     }),
   );
   const tarball = "baz-0.0.3.tgz"
-  await copyFile(tarball, join(package_dir, tarball));
+  const absolutePath = join(__dirname, tarball);
+  await copyFile(absolutePath, join(package_dir, tarball));
   const { stdout, stderr, exited } = spawn({
-    // cmd: ["pwd"],
     cmd: [bunExe(), "add", tarball],
     cwd: package_dir,
     stdout: null,

@@ -102,94 +102,6 @@ pub const Body = struct {
         this.value.deinit();
     }
 
-    pub const Init = struct {
-        headers: ?*FetchHeaders = null,
-        status_code: u16,
-        status_text: bun.String = bun.String.empty,
-        method: Method = Method.GET,
-
-        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
-            var that = this;
-            var headers = this.headers;
-            if (headers) |head| {
-                that.headers = head.cloneThis(ctx);
-            }
-
-            return that;
-        }
-
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
-            var result = Init{ .status_code = 200 };
-
-            if (!response_init.isCell())
-                return null;
-
-            if (response_init.jsType() == .DOMWrapper) {
-                // fast path: it's a Request object or a Response object
-                // we can skip calling JS getters
-                if (response_init.as(Request)) |req| {
-                    if (req.headers) |headers| {
-                        if (!headers.isEmpty()) {
-                            result.headers = headers.cloneThis(ctx);
-                        }
-                    }
-
-                    result.method = req.method;
-                    return result;
-                }
-
-                if (response_init.as(Response)) |resp| {
-                    return resp.init.clone(ctx);
-                }
-            }
-
-            if (response_init.fastGet(ctx, .headers)) |headers| {
-                if (headers.as(FetchHeaders)) |orig| {
-                    if (!orig.isEmpty()) {
-                        result.headers = orig.cloneThis(ctx);
-                    }
-                } else {
-                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
-                }
-            }
-
-            if (response_init.fastGet(ctx, .status)) |status_value| {
-                const number = status_value.coerceToInt64(ctx);
-                if ((200 <= number and number < 600) or number == 101) {
-                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
-                } else {
-                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                    ctx.throwValue(err);
-                    return null;
-                }
-            }
-
-            if (response_init.fastGet(ctx, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
-            }
-
-            if (response_init.fastGet(ctx, .method)) |method_value| {
-                var method_str = method_value.toSlice(ctx, allocator);
-                defer method_str.deinit();
-                if (method_str.len > 0) {
-                    result.method = Method.which(method_str.slice()) orelse .GET;
-                }
-            }
-
-            return result;
-        }
-
-        pub fn deinit(this: *Init, _: std.mem.Allocator) void {
-            if (this.headers) |headers| {
-                this.headers = null;
-
-                headers.deref();
-            }
-
-            this.status_text.deref();
-        }
-    };
-
     pub const PendingValue = struct {
         promise: ?JSValue = null,
         readable: ?JSC.WebCore.ReadableStream = null,
@@ -999,25 +911,6 @@ pub const Body = struct {
             return Value{ .Empty = {} };
         }
     };
-
-    pub fn @"404"(_: js.JSContextRef) Body {
-        return Body{
-            .init = Init{
-                .headers = null,
-                .status_code = 404,
-            },
-            .value = Value{ .Null = {} },
-        };
-    }
-
-    pub fn @"200"(_: js.JSContextRef) Body {
-        return Body{
-            .init = Init{
-                .status_code = 200,
-            },
-            .value = Value{ .Null = {} },
-        };
-    }
 
     // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
     pub fn extract(

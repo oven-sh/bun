@@ -63,7 +63,7 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
-    init: Body.Init,
+    init: Init,
     url: bun.String = bun.String.empty,
     redirected: bool = false,
 
@@ -374,7 +374,7 @@ pub const Response = struct {
             .body = Body{
                 .value = .{ .Empty = {} },
             },
-            .init = Body.Init{
+            .init = Response.Init{
                 .status_code = 200,
             },
             .allocator = getAllocator(globalThis),
@@ -410,7 +410,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.init = _init;
                 }
             }
@@ -433,7 +433,7 @@ pub const Response = struct {
         // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
-            .init = Body.Init{
+            .init = Response.Init{
                 .status_code = 302,
             },
             .body = Body{
@@ -456,7 +456,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.init = _init;
                     response.init.status_code = 302;
                 }
@@ -477,7 +477,7 @@ pub const Response = struct {
     ) callconv(.C) JSValue {
         var response = getAllocator(globalThis).create(Response) catch unreachable;
         response.* = Response{
-            .init = Body.Init{
+            .init = Response.Init{
                 .status_code = 0,
             },
             .body = Body{
@@ -505,22 +505,23 @@ pub const Response = struct {
 
         const arguments = args_list.ptr[0..args_list.len];
 
-        const init: Body.Init = @as(?Body.Init, brk: {
+        const init: Init = @as(?Init, brk: {
             switch (arguments.len) {
                 0 => {
-                    break :brk Body.Init{
+                    break :brk Init{
                         .status_code = 200,
+                        .headers = null,
                     };
                 },
                 1 => {
-                    break :brk Body.Init{
+                    break :brk Init{
                         .status_code = 200,
                         .headers = null,
                     };
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        if (Body.Init.init(allocator, globalThis, arguments[1]) catch null) |_init| {
+                        if (Init.init(allocator, globalThis, arguments[1]) catch null) |_init| {
                             break :brk _init;
                         }
                     }
@@ -552,6 +553,128 @@ pub const Response = struct {
         {
             response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
+
+        return response;
+    }
+
+    pub const Init = struct {
+        headers: ?*FetchHeaders = null,
+        status_code: u16,
+        status_text: bun.String = bun.String.empty,
+        method: Method = Method.GET,
+
+        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
+            var that = this;
+            var headers = this.headers;
+            if (headers) |head| {
+                that.headers = head.cloneThis(ctx);
+            }
+
+            return that;
+        }
+
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+            var result = Init{ .status_code = 200 };
+
+            if (!response_init.isCell())
+                return null;
+
+            if (response_init.jsType() == .DOMWrapper) {
+                // fast path: it's a Request object or a Response object
+                // we can skip calling JS getters
+                if (response_init.as(Request)) |req| {
+                    if (req.headers) |headers| {
+                        if (!headers.isEmpty()) {
+                            result.headers = headers.cloneThis(ctx);
+                        }
+                    }
+
+                    result.method = req.method;
+                    return result;
+                }
+
+                if (response_init.as(Response)) |resp| {
+                    return resp.init.clone(ctx);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .headers)) |headers| {
+                if (headers.as(FetchHeaders)) |orig| {
+                    if (!orig.isEmpty()) {
+                        result.headers = orig.cloneThis(ctx);
+                    }
+                } else {
+                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .status)) |status_value| {
+                const number = status_value.coerceToInt64(ctx);
+                if ((200 <= number and number < 600) or number == 101) {
+                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
+                } else {
+                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                    ctx.throwValue(err);
+                    return null;
+                }
+            }
+
+            if (response_init.fastGet(ctx, .statusText)) |status_text| {
+                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+            }
+
+            if (response_init.fastGet(ctx, .method)) |method_value| {
+                var method_str = method_value.toSlice(ctx, allocator);
+                defer method_str.deinit();
+                if (method_str.len > 0) {
+                    result.method = Method.which(method_str.slice()) orelse .GET;
+                }
+            }
+
+            return result;
+        }
+
+        pub fn deinit(this: *Init, _: std.mem.Allocator) void {
+            if (this.headers) |headers| {
+                this.headers = null;
+
+                headers.deref();
+            }
+
+            this.status_text.deref();
+        }
+    };
+
+    pub fn @"404"(globalThis: *JSC.JSGlobalObject) Response {
+        var allocator = getAllocator(globalThis);
+        var response = allocator.create(Response) catch unreachable;
+
+        response.* = Response{
+            .body = Body{
+                .value = Body.Value{ .Null = {} },
+            },
+            .init = Init{
+                .status_code = 404,
+            },
+            .allocator = getAllocator(globalThis),
+        };
+
+        return response;
+    }
+
+    pub fn @"200"(globalThis: *JSC.JSGlobalObject) Response {
+        var allocator = getAllocator(globalThis);
+        var response = allocator.create(Response) catch unreachable;
+
+        response.* = Response{
+            .body = Body{
+                .value = Body.Value{ .Null = {} },
+            },
+            .init = Init{
+                .status_code = 200,
+            },
+            .allocator = getAllocator(globalThis),
+        };
 
         return response;
     }
@@ -1504,7 +1627,7 @@ pub const Fetch = struct {
                     .Blob = blob,
                 },
             },
-            .init = Body.Init{
+            .init = Response.Init{
                 .status_code = 200,
                 .status_text = bun.String.createAtom("OK"),
             },
@@ -2023,7 +2146,7 @@ pub const Fetch = struct {
                 .body = Body{
                     .value = .{ .Blob = bun_file },
                 },
-                .init = Body.Init{
+                .init = Response.Init{
                     .status_code = 200,
                 },
                 .allocator = bun.default_allocator,

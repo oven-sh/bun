@@ -918,8 +918,6 @@ pub const Body = struct {
         value: JSValue,
     ) ?Body {
         var body = Body{ .value = Value{ .Null = {} } };
-        var allocator = getAllocator(globalThis);
-        _ = allocator;
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)

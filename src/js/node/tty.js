@@ -11,30 +11,34 @@ function ReadStream(fd) {
   const stream = require("node:fs").ReadStream.call(this, "", {
     fd,
   });
+  Object.setPrototypeOf(stream, ReadStream.prototype);
 
   stream.isRaw = false;
-  stream.isTTY = isatty(stream.fd);
+  stream.isTTY = true;
+
+  $assert(stream instanceof ReadStream);
 
   return stream;
 }
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Real = require("node:fs").ReadStream.prototype;
+    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
-    Object.defineProperty(ReadStream, "prototype", { value: Real });
-    ReadStream.prototype.setRawMode = function (flag) {
+    Prototype.setRawMode = function (flag) {
       const mode = flag ? 1 : 0;
       const err = ttySetMode(this.fd, mode);
       if (err) {
-        this.emit("error", new Error("setRawMode failed with errno:", err));
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
         return this;
       }
       this.isRaw = flag;
       return this;
     };
 
-    return Real;
+    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+
+    return Prototype;
   },
   enumerable: true,
   configurable: true,

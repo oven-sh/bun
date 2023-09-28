@@ -19556,6 +19556,15 @@ fn NewParser_(
 
                 .m_identifier => |ref| {
                     p.recordUsage(ref);
+                    if (p.is_import_item.contains(ref)) {
+                        return p.maybeDefinedHelper(p.newExpr(
+                            E.ImportIdentifier{
+                                .ref = ref,
+                            },
+                            logger.Loc.Empty,
+                        ));
+                    }
+
                     return p.maybeDefinedHelper(p.newExpr(
                         E.Identifier{ .ref = ref },
                         logger.Loc.Empty,

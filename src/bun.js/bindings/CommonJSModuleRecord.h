@@ -20,7 +20,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     mutable JSC::WriteBarrier<JSString> m_id;
     mutable JSC::WriteBarrier<Unknown> m_filename;
@@ -73,10 +73,6 @@ public:
     JSValue id();
 
     DECLARE_VISIT_CHILDREN;
-
-    static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject,
-        JSC::PropertyName propertyName, JSC::JSValue value,
-        JSC::PutPropertySlot& slot);
 
     DECLARE_INFO;
     template<typename, SubspaceAccess mode>

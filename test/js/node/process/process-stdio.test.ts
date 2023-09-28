@@ -5,7 +5,7 @@ import { isatty } from "tty";
 
 test("process.stdin", () => {
   expect(process.stdin).toBeDefined();
-  expect(process.stdout.isTTY).toBe(isatty(0) ? true : undefined);
+  expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);
   expect(process.stdin.on("close", function () {})).toBe(process.stdin);
   expect(process.stdin.once("end", function () {})).toBe(process.stdin);
 });

@@ -1342,6 +1342,7 @@ pub const Bundler = struct {
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
+                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);

@@ -912,6 +912,14 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Enabled by default, use this to disable dead code elimination.
+     *
+     * Some other transpiler options may still do some specific dead code elimination.
+     */
+    deadCodeElimination?: boolean;
 
     /**
      * This does two things (and possibly more in the future):

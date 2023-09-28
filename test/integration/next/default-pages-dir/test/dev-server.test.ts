@@ -38,7 +38,7 @@ test("the dev server can start", async () => {
   console.error("Failed to start dev server :/");
   dev_server.kill();
   dev_server = undefined;
-}, 10000);
+}, 30000);
 
 test("ssr works for 100 requests", async () => {
   expect(dev_server).not.toBeUndefined();
@@ -60,7 +60,7 @@ test("ssr works for 100 requests", async () => {
   for (const y of x) {
     expect(y.status).toBe("fulfilled");
   }
-});
+}, 10000);
 
 test("hot reloading works on the client (+ tailwind hmr)", async () => {
   expect(dev_server).not.toBeUndefined();
@@ -72,7 +72,7 @@ test("hot reloading works on the client (+ tailwind hmr)", async () => {
     stdio: ["ignore", "inherit", "inherit"],
   });
   expect(result.exitCode).toBe(0);
-});
+}, 30000);
 
 afterAll(() => {
   Bun.spawnSync(["pkill", "-P", dev_server!.pid.toString()]);

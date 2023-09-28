@@ -646,23 +646,14 @@ pub const Response = struct {
     };
 
     pub fn @"404"(globalThis: *JSC.JSGlobalObject) Response {
-        var allocator = getAllocator(globalThis);
-        var response = allocator.create(Response) catch unreachable;
-
-        response.* = Response{
-            .body = Body{
-                .value = Body.Value{ .Null = {} },
-            },
-            .init = Init{
-                .status_code = 404,
-            },
-            .allocator = getAllocator(globalThis),
-        };
-
-        return response;
+        return emptyWithStatus(globalThis, 404);
     }
 
     pub fn @"200"(globalThis: *JSC.JSGlobalObject) Response {
+        return emptyWithStatus(globalThis, 200);
+    }
+
+    inline fn emptyWithStatus(globalThis: *JSC.JSGlobalObject, status: u16) Response {
         var allocator = getAllocator(globalThis);
         var response = allocator.create(Response) catch unreachable;
 
@@ -671,7 +662,7 @@ pub const Response = struct {
                 .value = Body.Value{ .Null = {} },
             },
             .init = Init{
-                .status_code = 200,
+                .status_code = status,
             },
             .allocator = getAllocator(globalThis),
         };

@@ -25,6 +25,7 @@ test("the dev server can start", async () => {
     dev_server = undefined;
   });
   for await (const chunk of dev_server.stdout) {
+    console.error({ chunk });
     const str = new TextDecoder().decode(chunk);
     let match = str.match(/http:\/\/localhost:\d+/);
     if (match) {
@@ -41,6 +42,8 @@ test("the dev server can start", async () => {
 
 test("ssr works for 100 requests", async () => {
   expect(dev_server).not.toBeUndefined();
+  expect(baseUrl).not.toBeUndefined();
+
   const promises = [];
   for (let i = 0; i < 100; i++) {
     promises.push(
@@ -53,10 +56,16 @@ test("ssr works for 100 requests", async () => {
     );
   }
 
-  await Promise.all(promises);
+  const x = await Promise.allSettled(promises);
+  for (const y of x) {
+    expect(y.status).toBe("fulfilled");
+  }
 });
 
 test("hot reloading works on the client (+ tailwind hmr)", async () => {
+  expect(dev_server).not.toBeUndefined();
+  expect(baseUrl).not.toBeUndefined();
+
   const result = Bun.spawnSync([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
     cwd: root,
     env: bunEnv,

@@ -507,10 +507,9 @@ pub const Request = struct {
         };
         const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
             @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
-
         for (values_to_try) |value| {
             const value_type = value.jsType();
-
+            const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
@@ -625,23 +624,25 @@ pub const Request = struct {
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
                 if (Body.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
-                    if (!fields.contains(.method)) {
-                        req.method = init.method;
-                        fields.insert(.method);
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                        if (!fields.contains(.method)) {
+                            req.method = init.method;
+                            fields.insert(.method);
+                        }
                     }
-
-                    if (init.headers) |headers| {
-                        if (!fields.contains(.headers)) {
-                            req.headers = headers;
-                            fields.insert(.headers);
-                        } else {
-                            headers.deref();
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
+                        if (init.headers) |headers| {
+                            if (!fields.contains(.headers)) {
+                                req.headers = headers;
+                                fields.insert(.headers);
+                            } else {
+                                headers.deref();
+                            }
                         }
                     }
                 }
             }
         }
-
         if (req.url.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             req.finalizeWithoutDeinit();

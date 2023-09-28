@@ -1241,6 +1241,16 @@ describe("Request", () => {
     expect(req.signal.aborted).toBe(true);
   });
 
+  it("copies method (#6144)", () => {
+    const request = new Request("http://localhost:1337/test", {
+      method: "POST",
+    });
+    const new_req = new Request(request, {
+      body: JSON.stringify({ message: "Hello world" }),
+    });
+    expect(new_req.method).toBe("POST");
+  });
+
   it("cloned signal", async () => {
     gc();
     const controller = new AbortController();

@@ -1638,7 +1638,7 @@ it("should add local tarball dependency", async () => {
       version: "0.0.1",
     }),
   );
-  const tarball = "baz-0.0.3.tgz"
+  const tarball = "baz-0.0.3.tgz";
   const absolutePath = join(__dirname, tarball);
   await copyFile(absolutePath, join(package_dir, tarball));
   const { stdout, stderr, exited } = spawn({
@@ -1665,15 +1665,10 @@ it("should add local tarball dependency", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
-    "index.js",
-    "package.json",
-  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
   expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
-  await access(join(package_dir, "bun.lockb"));
+    await access(join(package_dir, "bun.lockb"));
 });
-
-

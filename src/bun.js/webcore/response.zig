@@ -536,7 +536,19 @@ pub const Response = struct {
             unreachable;
         }) orelse return null;
 
-        const body: Body = Body.extract(globalThis, arguments[0]) orelse return null;
+        const body: Body = brk: {
+            switch (arguments.len) {
+                0 => {
+                    break :brk Body{
+                        .value = Body.Value{ .Null = {} },
+                    };
+                },
+                else => {
+                    break :brk Body.extract(globalThis, arguments[0]);
+                },
+            }
+            unreachable;
+        } orelse return null;
 
         var response = allocator.create(Response) catch unreachable;
 
@@ -569,6 +581,7 @@ pub const Response = struct {
             if (headers) |head| {
                 that.headers = head.cloneThis(ctx);
             }
+            that.status_text = this.status_text.clone();
 
             return that;
         }

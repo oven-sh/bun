@@ -72,6 +72,7 @@ const TranspilerOptions = struct {
     trim_unused_imports: ?bool = null,
     inlining: bool = false,
 
+    dead_code_elimination: bool = true,
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
@@ -541,6 +542,10 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.minify_whitespace = flag.toBoolean();
     }
 
+    if (object.get(globalThis, "deadCodeElimination")) |flag| {
+        transpiler.dead_code_elimination = flag.toBoolean();
+    }
+
     if (object.getTruthy(globalThis, "minify")) |hot| {
         if (hot.isBoolean()) {
             transpiler.minify_whitespace = hot.coerce(bool, globalThis);
@@ -800,6 +805,7 @@ pub fn constructor(
         bundler.options.macro_remap = transpiler_options.macro_map;
     }
 
+    bundler.options.dead_code_elimination = transpiler_options.dead_code_elimination;
     bundler.options.minify_whitespace = transpiler_options.minify_whitespace;
 
     // Keep defaults for these

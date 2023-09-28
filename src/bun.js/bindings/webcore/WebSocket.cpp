@@ -161,7 +161,6 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    ref();
 }
 
 WebSocket::~WebSocket()

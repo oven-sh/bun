@@ -1090,7 +1090,7 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
 */
 #include "ProcessBindingConstants.lut.h"
 
-const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, Base::info(), &processBindingConstantsTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
+const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, &Base::s_info, &processBindingConstantsTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
 
 ProcessBindingConstants* ProcessBindingConstants::create(VM& vm, Structure* structure)
 {

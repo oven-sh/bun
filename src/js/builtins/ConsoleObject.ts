@@ -116,7 +116,7 @@ export function write(this: Console, input) {
 
   const count = $argumentCount();
   for (var i = 1; i < count; i++) {
-    wrote += writer.write($argument(i));
+    wrote += writer.write(arguments[i]);
   }
 
   writer.flush(true);

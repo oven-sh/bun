@@ -92,12 +92,19 @@ generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModu
         exportNames.reserveCapacity(len);
         exportValues.ensureCapacity(len);
 
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(object);
+        bool hasDefault = false;
 
         for (auto& entry : properties) {
+            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+                hasDefault = true;
+            }
             exportNames.append(entry);
             exportValues.append(object->get(globalObject, entry));
+        }
+
+        if (!hasDefault) {
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(object);
         }
     };
 }

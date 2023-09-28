@@ -819,6 +819,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -1897,7 +1898,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     // We must use the same naming convention to match Node
     // Some packages (like MongoDB's official Node.js client) rely on this behavior.
     "Uint8Array"_s,
-    Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
+    &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
 };
 
 static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
@@ -1930,7 +1931,7 @@ static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsaf
 */
 #include "JSBuffer.lut.h"
 
-const ClassInfo JSBufferConstructor::s_info = { "Buffer"_s, Base::info(), &jsBufferConstructorTable, nullptr, CREATE_METHOD_TABLE(JSBufferConstructor) };
+const ClassInfo JSBufferConstructor::s_info = { "Buffer"_s, &Base::s_info, &jsBufferConstructorTable, nullptr, CREATE_METHOD_TABLE(JSBufferConstructor) };
 
 void JSBufferConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {

@@ -251,6 +251,11 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       // but allows much quicker checks.
 
       class FixedCircularBuffer {
+        top: number;
+        bottom: number;
+        list: Array<FixedCircularBuffer | undefined>;
+        next: FixedCircularBuffer | null;
+
         constructor() {
           this.bottom = 0;
           this.top = 0;
@@ -282,6 +287,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
       }
 
       class FixedQueue {
+        head: FixedCircularBuffer;
+        tail: FixedCircularBuffer;
+
         constructor() {
           this.head = this.tail = new FixedCircularBuffer();
         }

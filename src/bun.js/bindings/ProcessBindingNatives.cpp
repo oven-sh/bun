@@ -98,7 +98,7 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
 */
 #include "ProcessBindingNatives.lut.h"
 
-const ClassInfo ProcessBindingNatives::s_info = { "ProcessBindingNatives"_s, Base::info(), &processBindingNativesTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingNatives) };
+const ClassInfo ProcessBindingNatives::s_info = { "ProcessBindingNatives"_s, &Base::s_info, &processBindingNativesTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingNatives) };
 
 ProcessBindingNatives* ProcessBindingNatives::create(VM& vm, Structure* structure)
 {

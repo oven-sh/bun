@@ -663,6 +663,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunObject, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -701,7 +702,7 @@ public:
 #undef bunObjectReadableStreamToJSONCodeGenerator
 #undef bunObjectReadableStreamToTextCodeGenerator
 
-const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, Base::info(), &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
+const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {

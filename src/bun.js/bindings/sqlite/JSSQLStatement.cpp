@@ -695,7 +695,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    if(sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
+    if (sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This build of sqlite3 does not support dynamic extension loading"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -1064,7 +1064,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
 };
 
-const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
+const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
 
 void JSSQLStatementConstructor::finishCreation(VM& vm)
 {
@@ -1642,7 +1642,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
+const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
 
 /* Hash table for prototype */
 static const HashTableValue JSSQLStatementTableValues[] = {

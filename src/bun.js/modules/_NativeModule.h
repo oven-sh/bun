@@ -40,7 +40,7 @@
 // that what you passed to INIT_NATIVE_MODULE is indeed correct.
 #define RETURN_NATIVE_MODULE()                                                 \
   ASSERT_WITH_MESSAGE(numberOfActualExportNames == passedNumberOfExportNames,  \
-                      "NATIVE_MODULE_START() was given the incorrect value.");
+                      "NATIVE_MODULE_START() was should be given %d", numberOfActualExportNames);
 
 #define __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames)                       \
   int numberOfActualExportNames = 0;                                           \

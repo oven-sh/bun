@@ -114,6 +114,7 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
@@ -128,6 +129,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireResolveFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
@@ -149,6 +151,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 

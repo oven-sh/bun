@@ -481,6 +481,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-console.log("yippee");
-
 export default EventEmitter;

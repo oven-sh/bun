@@ -82,7 +82,7 @@
       "request": "launch",
       "name": "bun test [*]",
       "program": "bun-debug",
-      "args": ["test"],
+      "args": ["test", "js/node"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",

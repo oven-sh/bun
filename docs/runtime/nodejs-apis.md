@@ -10,7 +10,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented.
+🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 
@@ -26,7 +26,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 
-🟡 Missing `Console` constructor.
+🟢 Fully implemented.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
@@ -50,11 +50,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on`.
+🟡 Missing `require('node:events').on`.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`, `fs.statfs{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -485,7 +485,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
-🟡 Missing `Console` constructor.
+🟢 Fully implemented.
 
 ### [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
 
@@ -621,7 +621,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`require()`](https://nodejs.org/api/globals.html#require)
 
-🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options).
+🟢 Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
 
 ### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
 

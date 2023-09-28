@@ -3034,7 +3034,7 @@ pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = @as(JSValueReprInt, @bitCast(@as(i64, 0xa))),
     null = @as(JSValueReprInt, @bitCast(@as(i64, 0x2))),
-    true = @as(JSValueReprInt, @bitCast(@as(i64, 0x4))),
+    true = FFI.TrueI64,
     false = @as(JSValueReprInt, @bitCast(@as(i64, 0x6))),
     _,
 

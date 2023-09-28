@@ -330,12 +330,17 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(15);
-  exportValues.ensureCapacity(15);
+  exportNames.reserveCapacity(16);
+  exportValues.ensureCapacity(16);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
 
   put(Identifier::fromString(vm, "Module"_s), defaultObject);
+
+  // Module._extensions === require.extensions
+  put(Identifier::fromString(vm, "_extensions"_s),
+      globalObject->requireFunctionUnbound()->get(
+          globalObject, Identifier::fromString(vm, "extensions"_s)));
 
   defaultObject->putDirectCustomAccessor(
       vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),

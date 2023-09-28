@@ -5118,7 +5118,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSPromise.rejectedPromiseValue(ctx, err);
             }
 
-            var request = ctx.bunVM().allocator.create(Request) catch unreachable;
+            var request = bun.default_allocator.create(Request) catch unreachable;
             request.* = existing_request;
 
             const response_value = this.config.onRequest.callWithThis(
@@ -5538,6 +5538,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
+            this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 

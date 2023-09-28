@@ -835,12 +835,12 @@ pub const Loop = extern struct {
         return us_wakeup_loop(this);
     }
 
-    pub fn tick(this: *Loop) void {
-        us_loop_run_bun_tick(this, 0);
+    pub fn tick(this: *Loop, ctx: ?*anyopaque) void {
+        us_loop_run_bun_tick(this, 0, ctx);
     }
 
-    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
-        us_loop_run_bun_tick(this, timeoutMs);
+    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64, ctx: ?*anyopaque) void {
+        us_loop_run_bun_tick(this, timeoutMs, ctx);
     }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -902,7 +902,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64, ?*anyopaque) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;

@@ -6,6 +6,8 @@ Some features not relevant to Bun have been removed. Others might be added or mo
 This library provides an as-faithful-as-possible implementation of Node.js's
 [`util.inspect`](https://nodejs.org/api/util.html#util_util_inspect_object_options) function.
 
+This is currently done for compatibility reasons. In the future, this should be replaced with a 100% native implementation.
+
 ## API
 
 The following [`util`](https://nodejs.org/api/util.html) functions:

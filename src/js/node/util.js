@@ -1,7 +1,7 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
-const utl = require("../thirdparty/utl");
+const utl = require("internal/util/inspect");
 
 var cjs_exports = {};
 

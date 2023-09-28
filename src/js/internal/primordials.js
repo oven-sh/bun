@@ -1,3 +1,6 @@
+// TODO: Use native code and JSC intrinsics for everything in this file.
+// It is primarily used for `internal/util`
+
 const createSafeIterator = (factory, next) => {
   class SafeIterator {
     constructor(iterable) {
@@ -21,11 +24,11 @@ function getGetter(cls, getter) {
   return Function.prototype.call.bind(cls.prototype.__lookupGetter__(getter));
 }
 
-function getterCaller(getter) {
-  return val => {
-    return val.constructor.prototype.__lookupGetter__(getter).call(val);
-  };
-}
+// function getterCaller(getter) {
+//   return val => {
+//     return val.constructor.prototype.__lookupGetter__(getter).call(val);
+//   };
+// }
 
 function uncurryThis(func) {
   return Function.prototype.call.bind(func);

@@ -223,14 +223,12 @@ Object.defineProperty(WriteStream, "prototype", {
       }
 
       if ("TEAMCITY_VERSION" in env) {
-        return RegExpPrototypeExec(/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/, env.TEAMCITY_VERSION) !== null
-          ? COLORS_16
-          : COLORS_2;
+        return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
       }
 
       switch (env.TERM_PROGRAM) {
         case "iTerm.app":
-          if (!env.TERM_PROGRAM_VERSION || RegExpPrototypeExec(/^[0-2]\./, env.TERM_PROGRAM_VERSION) !== null) {
+          if (!env.TERM_PROGRAM_VERSION || /^[0-2]\./.test(env.TERM_PROGRAM_VERSION)) {
             return COLORS_256;
           }
           return COLORS_16m;
@@ -246,16 +244,16 @@ Object.defineProperty(WriteStream, "prototype", {
       }
 
       if (env.TERM) {
-        if (RegExpPrototypeExec(/^xterm-256/, env.TERM) !== null) {
+        if (/^xterm-256/.test(env.TERM) !== null) {
           return COLORS_256;
         }
 
-        const termEnv = StringPrototypeToLowerCase(env.TERM);
+        const termEnv = env.TERM.toLowerCase();
 
         if (TERM_ENVS[termEnv]) {
           return TERM_ENVS[termEnv];
         }
-        if (ArrayPrototypeSome(TERM_ENVS_REG_EXP, term => RegExpPrototypeExec(term, termEnv) !== null)) {
+        if (TERM_ENVS_REG_EXP.some(term => term.test(termEnv))) {
           return COLORS_16;
         }
       }

@@ -160,17 +160,6 @@ declare interface Error {
 function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
 
 interface BunLazyModules {
-  /**
-   * Primordials is a dynamic object that contains builtin functions and values.
-   *
-   * like primordials.isPromise -> $isPromise, etc
-   * Also primordials.Bun -> $Bun, etc; untampered globals
-   *
-   * The implmentation of this is done using createBuiltin('(function (){ return @<name here>; })')
-   * Meaning you can crash bun if you try returning something like `getInternalField`
-   */
-  primordials: any;
-
   "bun:jsc": Omit<typeof import("bun:jsc"), "jscDescribe" | "jscDescribeArray"> & {
     describe: typeof import("bun:jsc").jscDescribe;
     describeArray: typeof import("bun:jsc").jscDescribe;
@@ -201,9 +190,8 @@ interface BunLazyModules {
     callback: any;
   };
   "async_hooks": {
-    get: typeof import("./builtins/AsyncContext").getAsyncContext;
-    set: typeof import("./builtins/AsyncContext").setAsyncContext;
     cleanupLater: () => void;
+    setAsyncHooksEnabled: (enabled: boolean) => void;
   };
   "worker_threads": [
     //
@@ -225,3 +213,15 @@ interface BunLazyModules {
 
 /** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
 declare var $exports: any;
+
+interface CommonJSModuleRecord {
+  $require(id: string, mod: any): any;
+  children: CommonJSModuleRecord[];
+  exports: any;
+  id: string;
+  loaded: boolean;
+  parent: undefined;
+  path: string;
+  paths: string[];
+  require: typeof require;
+}

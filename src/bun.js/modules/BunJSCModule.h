@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
                   &peak_rss, &current_commit, &peak_commit, &page_faults);
 
   // mi_process_info produces incorrect rss size on linux.
-  Zig::getRSS(&current_rss);
+  Bun::getRSS(&current_rss);
 
   VM &vm = globalObject->vm();
   JSC::JSObject *object = JSC::constructEmptyObject(

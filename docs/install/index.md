@@ -69,7 +69,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]
@@ -188,7 +188,7 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 
 ## Tarball dependencies
 
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
+A package name can correspond to a publicly hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
 
 ```json#package.json
 {

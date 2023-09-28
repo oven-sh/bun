@@ -307,7 +307,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.E2BIG, "Argument list too long");
         map.put(.EACCES, "Permission denied");
         map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Can’t assign requested address");
+        map.put(.EADDRNOTAVAIL, "Can't assign requested address");
         map.put(.EAFNOSUPPORT, "Address family not supported by protocol family");
         map.put(.EAGAIN, "non-blocking and interrupt i/o. Resource temporarily unavailable");
         map.put(.EALREADY, "Operation already in progress");
@@ -350,7 +350,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.EMULTIHOP, "Reserved");
         map.put(.ENAMETOOLONG, "File name too long");
         map.put(.ENEEDAUTH, "Need authenticator");
-        map.put(.ENETDOWN, "ipc/network software – operational errors Network is down");
+        map.put(.ENETDOWN, "ipc/network software - operational errors Network is down");
         map.put(.ENETRESET, "Network dropped connection on reset");
         map.put(.ENETUNREACH, "Network is unreachable");
         map.put(.ENFILE, "Too many open files in system");
@@ -375,7 +375,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOTDIR, "Not a directory");
         map.put(.ENOTEMPTY, "Directory not empty");
         map.put(.ENOTRECOVERABLE, "State not recoverable");
-        map.put(.ENOTSOCK, "ipc/network software – argument errors. Socket operation on non-socket");
+        map.put(.ENOTSOCK, "ipc/network software - argument errors. Socket operation on non-socket");
         map.put(.ENOTSUP, "Operation not supported");
         map.put(.ENOTTY, "Inappropriate ioctl for device");
         map.put(.ENXIO, "Device not configured");
@@ -405,7 +405,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ESTALE, "Network File System. Stale NFS file handle");
         map.put(.ETIME, "STREAM ioctl timeout");
         map.put(.ETIMEDOUT, "Operation timed out");
-        map.put(.ETOOMANYREFS, "Too many references: can’t splice");
+        map.put(.ETOOMANYREFS, "Too many references: can't splice");
         map.put(.ETXTBSY, "Text file busy");
         map.put(.EUSERS, "Too many users");
         // map.put(.EWOULDBLOCK, "Operation would block");
@@ -727,29 +727,6 @@ const IO_CTL_RELATED = struct {
 };
 
 pub usingnamespace IO_CTL_RELATED;
-
-pub const RemoveFileFlags = struct {
-    /// If path is a directory, recurse (depth first traversal)
-    pub const recursive: u32 = (1 << 0);
-    /// Remove contents but not directory itself
-    pub const keep_parent: u32 = (1 << 1);
-    /// 7 pass DoD algorithm
-    pub const secure_7_pass: u32 = (1 << 2);
-    /// 35-pass Gutmann algorithm (overrides REMOVEFILE_SECURE_7_PASS)
-    pub const secure_35_pass: u32 = (1 << 3);
-    /// 1 pass single overwrite),
-    pub const secure_1_pass: u32 = (1 << 4);
-    /// 3 pass overwrite
-    pub const secure_3_pass: u32 = (1 << 5);
-    /// Single-pass overwrite, with 0 instead of random data
-    pub const secure_1_pass_zero: u32 = (1 << 6);
-    /// Cross mountpoints when deleting recursively. << 6),
-    pub const cross_mount: u32 = (1 << 7);
-    /// Paths may be longer than PATH_MAX - requires temporarily changing cwd
-    pub const allow_long_paths: u32 = (1 << 8);
-};
-pub const removefile_state_t = opaque {};
-pub extern fn removefileat(fd: c_int, path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
 
 // As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers
 pub const ifaddrs = extern struct {

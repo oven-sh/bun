@@ -26,6 +26,7 @@ declare var $visibility: "Public" | "Private";
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
 declare var $intrinsic: string;
+/** Assign to this directly above a function declaration (like a decorator) to make it a constructor. */
 declare var $constructor;
 /** Place this directly above a function declaration (like a decorator) to NOT include "use strict" */
 declare var $sloppy;
@@ -315,8 +316,6 @@ declare function $isPaused(): TODO;
 declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazy(): TODO;
-declare function $lazyLoad(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
@@ -371,7 +370,7 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, NodeModule>;
+declare const $requireMap: Map<string, CommonJSModuleRecord>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
@@ -433,7 +432,12 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
+declare function $createCommonJSModule(
+  id: string,
+  exports: any,
+  hasEvaluated: boolean,
+  parent: CommonJSModuleRecord,
+): CommonJSModuleRecord;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

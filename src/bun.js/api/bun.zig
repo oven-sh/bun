@@ -4426,11 +4426,12 @@ pub const EnvironmentVariables = struct {
         }
         return len;
     }
+
     pub fn getEnvValue(globalObject: *JSC.JSGlobalObject, name: ZigString) ?ZigString {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.map.map.get(sliced.slice()) orelse return null;
+        const value = vm.bundler.env.map.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };

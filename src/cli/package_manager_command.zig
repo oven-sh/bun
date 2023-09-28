@@ -162,7 +162,7 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
 
-            if (pm.options.positionals.len > 0 and strings.eqlComptime(pm.options.positionals[0], "rm")) {
+            if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
                     Global.crash();
@@ -247,7 +247,7 @@ pub const PackageManagerCommand = struct {
         }
 
         Output.prettyln(
-            \\bun pm - package manager related commands
+            \\<b><blue>bun pm<r>: package manager related commands
             \\
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
@@ -258,6 +258,8 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
+            \\
+            \\Learn more about these at <magenta>https://bun.sh/docs/install/utilities<r>
             \\
         , .{});
 

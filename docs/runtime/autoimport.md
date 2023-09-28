@@ -1,7 +1,3 @@
-{% callout %}
-**Note** — Added in Bun v0.3.0
-{% /callout %}
-
 If no `node_modules` directory is found in the working directory or higher, Bun will abandon Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
 
 Under Bun-style module resolution, all imported packages are auto-installed on the fly into a [global module cache](/docs/install/cache) during execution (the same cache used by [`bun install`](/docs/cli/install)).

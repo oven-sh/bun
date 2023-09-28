@@ -154,3 +154,7 @@ it("devNull", () => {
   if (process.platform === "win32") expect(os.devNull).toBe("\\\\.\\nul");
   else expect(os.devNull).toBe("/dev/null");
 });
+
+it("availableParallelism", () => {
+  expect(os.availableParallelism()).toBeGreaterThan(0);
+});

@@ -375,7 +375,7 @@ pub const Tree = struct {
             dependencies: Lockfile.DependencyIDList,
         };
 
-        pub const ArrayList = std.MultiArrayList(Entry);
+        pub const ArrayList = bun.MultiArrayList(Entry);
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {
@@ -672,7 +672,7 @@ pub fn cleanWithLogger(
     // If yes, choose that version instead.
     // Why lower?
     //
-    // Normally, the problem is looks like this:
+    // Normally, the problem looks like this:
     //   Package A: "react@^17"
     //   Package B: "react@17.0.1
     //
@@ -983,7 +983,7 @@ pub const Printer = struct {
         };
 
         env_loader.loadProcess();
-        try env_loader.load(&fs.fs, entries_option.entries, .production);
+        try env_loader.load(entries_option.entries, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -991,6 +991,7 @@ pub const Printer = struct {
             env_loader,
             null,
             null,
+            .install,
         );
 
         var printer = Printer{
@@ -1057,21 +1058,39 @@ pub const Printer = struct {
 
                     if (!installed.isSet(package_id)) continue;
 
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        }
-                    };
+                    if (PackageManager.instance.laterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version| {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                            }
+                        };
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                                later_version.fmt(string_buf),
+                            },
+                        );
+                    } else {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            }
+                        };
 
-                    try writer.print(
-                        fmt,
-                        .{
-                            package_name,
-                            resolved[package_id].fmt(string_buf),
-                        },
-                    );
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
                 }
             } else {
                 outer: for (dependencies_buffer, resolutions_buffer, 0..) |dependency, package_id, dep_id| {

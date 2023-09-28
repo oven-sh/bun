@@ -9712,6 +9712,174 @@ extern "C" EncodedJSValue ExpectAnything__create(Zig::GlobalObject* globalObject
 
     return JSValue::encode(instance);
 }
+class JSExpectArrayContainingPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSExpectArrayContainingPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSExpectArrayContainingPrototype* ptr = new (NotNull, JSC::allocateCell<JSExpectArrayContainingPrototype>(vm)) JSExpectArrayContainingPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSExpectArrayContainingPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void ExpectArrayContainingClass__finalize(void*);
+extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectArrayContainingClass__call);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectArrayContainingPrototype, JSExpectArrayContainingPrototype::Base);
+
+static const HashTableValue JSExpectArrayContainingPrototypeTableValues[] = {};
+
+const ClassInfo JSExpectArrayContainingPrototype::s_info = { "ExpectArrayContaining"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectArrayContainingPrototype) };
+
+extern "C" void ExpectArrayContainingPrototype__arrayValueSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSExpectArrayContaining*>(JSValue::decode(thisValue));
+    thisObject->m_arrayValue.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ExpectArrayContainingPrototype__arrayValueGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSExpectArrayContaining*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_arrayValue.get());
+}
+
+void JSExpectArrayContainingPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSExpectArrayContaining::~JSExpectArrayContaining()
+{
+    if (m_ctx) {
+        ExpectArrayContainingClass__finalize(m_ctx);
+    }
+}
+void JSExpectArrayContaining::destroy(JSCell* cell)
+{
+    static_cast<JSExpectArrayContaining*>(cell)->JSExpectArrayContaining::~JSExpectArrayContaining();
+}
+
+const ClassInfo JSExpectArrayContaining::s_info = { "ExpectArrayContaining"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectArrayContaining) };
+
+void JSExpectArrayContaining::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSExpectArrayContaining* JSExpectArrayContaining::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSExpectArrayContaining* ptr = new (NotNull, JSC::allocateCell<JSExpectArrayContaining>(vm)) JSExpectArrayContaining(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* ExpectArrayContaining__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSExpectArrayContaining* object = JSC::jsDynamicCast<JSExpectArrayContaining*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool ExpectArrayContaining__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSExpectArrayContaining* object = JSC::jsDynamicCast<JSExpectArrayContaining*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t ExpectArrayContaining__ptrOffset = JSExpectArrayContaining::offsetOfWrapped();
+
+void JSExpectArrayContaining::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSExpectArrayContaining*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSExpectArrayContaining::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSExpectArrayContainingPrototype::create(vm, globalObject, JSExpectArrayContainingPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue ExpectArrayContaining__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSExpectArrayContainingStructure();
+    JSExpectArrayContaining* instance = JSExpectArrayContaining::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSExpectArrayContaining::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSExpectArrayContaining* thisObject = jsCast<JSExpectArrayContaining*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSExpectArrayContaining);
+
+template<typename Visitor>
+void JSExpectArrayContaining::visitAdditionalChildren(Visitor& visitor)
+{
+    JSExpectArrayContaining* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_arrayValue);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExpectArrayContaining);
+
+template<typename Visitor>
+void JSExpectArrayContaining::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSExpectArrayContaining* thisObject = jsCast<JSExpectArrayContaining*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpectArrayContaining);
 class JSExpectStringContainingPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -23215,6 +23383,9 @@ JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__readableGetterWrap);
 extern "C" EncodedJSValue SubprocessPrototype__doRef(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(SubprocessPrototype__refCallback);
 
+extern "C" EncodedJSValue SubprocessPrototype__doSend(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(SubprocessPrototype__sendCallback);
+
 extern "C" JSC::EncodedJSValue SubprocessPrototype__getSignalCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__signalCodeGetterWrap);
 
@@ -23243,6 +23414,7 @@ static const HashTableValue JSSubprocessPrototypeTableValues[] = {
     { "pid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__pidGetterWrap, 0 } },
     { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__readableGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__refCallback, 0 } },
+    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__sendCallback, 1 } },
     { "signalCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__signalCodeGetterWrap, 0 } },
     { "stderr"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__stderrGetterWrap, 0 } },
     { "stdin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__stdinGetterWrap, 0 } },
@@ -23398,6 +23570,34 @@ JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__refCallback, (JSGlobalObject * lex
 #endif
 
     return SubprocessPrototype__doRef(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSSubprocess* thisObject = jsDynamicCast<JSSubprocess*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Subprocess"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return SubprocessPrototype__doSend(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__signalCodeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

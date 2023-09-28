@@ -130,7 +130,6 @@ using namespace JSC;
     macro(join) \
     macro(kind) \
     macro(lazy) \
-    macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
     macro(localStreams) \
@@ -211,12 +210,6 @@ using namespace JSC;
     macro(strategyHWM) \
     macro(strategySizeAlgorithm) \
     macro(stream) \
-    macro(streamClosed) \
-    macro(streamClosing) \
-    macro(streamErrored) \
-    macro(streamReadable) \
-    macro(streamWaiting) \
-    macro(streamWritable) \
     macro(structuredCloneForStream) \
     macro(syscall) \
     macro(textDecoderStreamDecoder) \

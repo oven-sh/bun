@@ -165,6 +165,36 @@ describe("fs.watch", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/5442
+  test("should work with paths with trailing slashes", done => {
+    const testsubdir = tempDirWithFiles("subdir", {
+      "trailing.txt": "hello",
+    });
+    const filepath = path.join(testsubdir, "trailing.txt");
+    let err: Error | undefined = undefined;
+    const watcher = fs.watch(testsubdir + "/", function (event, filename) {
+      try {
+        expect(event).toBe("rename");
+        expect(filename).toBe("trailing.txt");
+      } catch (e: any) {
+        err = e;
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
+    });
+
+    watcher.once("close", () => {
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      fs.rmSync(filepath, { force: true });
+      const fd = fs.openSync(filepath, "w");
+      fs.closeSync(fd);
+    });
+  });
+
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 

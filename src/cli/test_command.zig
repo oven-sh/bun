@@ -549,8 +549,6 @@ const Scanner = struct {
 
 pub const TestCommand = struct {
     pub const name = "test";
-    pub const old_name = "wiptest";
-
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
         fractions: bun.sourcemap.CoverageFraction = .{},
@@ -565,11 +563,7 @@ pub const TestCommand = struct {
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
-        if (strings.eqlComptime(ctx.positionals[0], old_name)) {
-            Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        } else {
-            Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        }
+        Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var env_loader = brk: {
@@ -675,7 +669,7 @@ pub const TestCommand = struct {
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,
             .fs = vm.bundler.fs,
-            .filter_names = ctx.positionals[1..],
+            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
         const dir_to_scan = brk: {
@@ -691,8 +685,13 @@ pub const TestCommand = struct {
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
-            if (vm.hot_reload != .none)
-                JSC.HotReloader.enableHotModuleReloading(vm);
+
+            switch (vm.hot_reload) {
+                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                else => {},
+            }
+
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
@@ -738,7 +737,8 @@ pub const TestCommand = struct {
 
         if (scanner.filter_names.len == 0 and test_files.len == 0) {
             Output.prettyErrorln(
-                \\<b><yellow>No tests found<r>! Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                \\<b><yellow>No tests found!<r>
+                \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
                 \\
             ,
                 .{},

@@ -284,6 +284,55 @@ pub const struct_hostent = extern struct {
         ares_free_hostent(this);
     }
 };
+
+pub const struct_nameinfo = extern struct {
+    node: [*c]u8,
+    service: [*c]u8,
+
+    pub fn toJSReponse(this: *struct_nameinfo, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const array = JSC.JSValue.createEmptyArray(globalThis, 2); // [node, service]
+
+        if (this.node != null) {
+            const node_len = bun.len(this.node);
+            const node_slice = this.node[0..node_len];
+            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toValueGC(globalThis));
+        } else {
+            array.putIndex(globalThis, 0, JSC.JSValue.jsUndefined());
+        }
+
+        if (this.service != null) {
+            const service_len = bun.len(this.service);
+            const service_slice = this.service[0..service_len];
+            array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toValueGC(globalThis));
+        } else {
+            array.putIndex(globalThis, 1, JSC.JSValue.jsUndefined());
+        }
+
+        return array;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, node: ?struct_nameinfo) void;
+    }
+
+    pub fn CallbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_nameinfo_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, .{ node, service });
+                return;
+            }
+        }.handle;
+    }
+};
+
 pub const struct_timeval = opaque {};
 pub const struct_Channeldata = opaque {};
 pub const AddrInfo_cname = extern struct {
@@ -524,11 +573,12 @@ pub const Channel = opaque {
     }
 
     pub fn resolve(this: *Channel, name: []const u8, comptime lookup_name: []const u8, comptime Type: type, ctx: *Type, comptime cares_type: type, comptime callback: cares_type.Callback(Type)) void {
+        if (name.len >= 1023 or (name.len == 0 and !(bun.strings.eqlComptime(lookup_name, "ns") or bun.strings.eqlComptime(lookup_name, "soa")))) {
+            return cares_type.callbackWrapper(lookup_name, Type, callback).?(ctx, ARES_EBADNAME, 0, null, 0);
+        }
+
         var name_buf: [1024]u8 = undefined;
-        const name_ptr: ?[*:0]const u8 = brk: {
-            if (name.len == 0 or name.len >= 1023) {
-                break :brk null;
-            }
+        const name_ptr: [*:0]const u8 = brk: {
             const len = @min(name.len, name_buf.len - 1);
             @memcpy(name_buf[0..len], name[0..len]);
 
@@ -569,6 +619,20 @@ pub const Channel = opaque {
             }
         }
         struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);
+    }
+
+    // https://c-ares.org/ares_getnameinfo.html
+    pub fn getNameInfo(this: *Channel, sa: *std.os.sockaddr, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
+        return ares_getnameinfo(
+            this,
+            sa,
+            if (sa.*.family == std.os.AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
+            // node returns ENOTFOUND for addresses like 255.255.255.255:80
+            // So, it requires setting the ARES_NI_NAMEREQD flag
+            ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
+            struct_nameinfo.CallbackWrapper(Type, callback),
+            ctx,
+        );
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
@@ -1188,7 +1252,7 @@ pub extern fn ares_set_servers_csv(channel: *Channel, servers: [*c]const u8) c_i
 pub extern fn ares_set_servers_ports_csv(channel: *Channel, servers: [*c]const u8) c_int;
 pub extern fn ares_get_servers(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
-pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) [*c]const u8;
+pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) ?[*:0]const u8;
 pub extern fn ares_inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
 pub const ARES_SUCCESS = 0;
 pub const ARES_ENODATA = 1;
@@ -1439,7 +1503,6 @@ pub export fn Bun__canonicalizeIP(
 
     if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
         const addr_slice = addr.toSlice(bun.default_allocator);
-        defer addr_slice.deinit();
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
             return JSC.JSValue.jsUndefined();
@@ -1471,6 +1534,52 @@ pub export fn Bun__canonicalizeIP(
         return .zero;
     }
 }
+
+/// Creates a sockaddr structure from an address, port.
+///
+/// # Parameters
+/// - `addr`: A byte slice representing the IP address.
+/// - `port`: A 16-bit unsigned integer representing the port number.
+/// - `sa`: A pointer to a sockaddr structure where the result will be stored.
+///
+/// # Returns
+///
+/// This function returns 0 on success.
+pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
+    const buf_size = 128;
+
+    var buf: [buf_size]u8 = undefined;
+    const addr_ptr: [*:0]const u8 = brk: {
+        if (addr.len == 0 or addr.len >= buf_size) {
+            return -1;
+        }
+        const len = @min(addr.len, buf.len - 1);
+        @memcpy(buf[0..len], addr[0..len]);
+
+        buf[len] = 0;
+        break :brk buf[0..len :0];
+    };
+
+    {
+        const in: *std.os.sockaddr.in = @as(*std.os.sockaddr.in, @alignCast(@ptrCast(sa)));
+        if (ares_inet_pton(std.os.AF.INET, addr_ptr, &in.addr) == 1) {
+            in.*.family = std.os.AF.INET;
+            in.*.port = std.mem.nativeToBig(u16, port);
+            return 0;
+        }
+    }
+    {
+        const in6: *std.os.sockaddr.in6 = @as(*std.os.sockaddr.in6, @alignCast(@ptrCast(sa)));
+        if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &in6.addr) == 1) {
+            in6.*.family = std.os.AF.INET6;
+            in6.*.port = std.mem.nativeToBig(u16, port);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__canonicalizeIP;

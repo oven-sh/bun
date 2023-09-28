@@ -8,10 +8,6 @@ import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 
-it("primordials are not here!", () => {
-  expect(globalThis[Symbol.for("Bun.lazy")]("primordials") === undefined).toBe(true);
-});
-
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
     cmd: [bunExe(), "run", join(import.meta.dir, "./main-test-script.js")],
@@ -98,9 +94,7 @@ it("Module._cache", () => {
 });
 
 it("Module._resolveFilename()", () => {
-  const expected = Bun.resolveSync(import.meta.path, "/");
-  const result = Module._resolveFilename(import.meta.path, "/", true);
-  expect(result).toBe(expected);
+  expect(Module._resolveFilename).toBeUndefined();
 });
 
 it("Module.createRequire(file://url).resolve(file://url)", () => {

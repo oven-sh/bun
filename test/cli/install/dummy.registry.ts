@@ -34,16 +34,19 @@ export let root_url: string;
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
   const _handler: Handler = async request => {
     urls.push(request.url);
+    const url = request.url.replaceAll("%2f", "/");
+
     expect(request.method).toBe("GET");
-    if (request.url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, basename(request.url).toLowerCase())));
+    if (url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, basename(url).toLowerCase())));
     }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
     );
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
-    const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
+
+    const name = url.slice(url.indexOf("/", root_url.length) + 1);
     const versions: Record<string, Pkg> = {};
     let version;
     for (version in info) {
@@ -52,7 +55,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
         name,
         version,
         dist: {
-          tarball: `${request.url}-${info[version].as ?? version}.tgz`,
+          tarball: `${url}-${info[version].as ?? version}.tgz`,
         },
         ...info[version],
       };

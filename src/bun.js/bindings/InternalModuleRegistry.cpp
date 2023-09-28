@@ -33,7 +33,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName, urlString) \
     auto throwScope = DECLARE_THROW_SCOPE(vm);                                              \
     auto&& origin = SourceOrigin(WTF::URL(urlString));                                      \
-    SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                        \
+    SourceCode source = JSC::makeSource(SOURCE, origin,                                     \
+        JSC::SourceTaintedOrigin::Untainted,                                                \
+        moduleName);                                                                        \
     maybeAddCodeCoverage(vm, source);                                                       \
     JSFunction* func                                                                        \
         = JSFunction::create(                                                               \

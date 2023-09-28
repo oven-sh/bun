@@ -499,6 +499,23 @@ it("creating buffers larger than pool size", () => {
   expect(sb).toBe(s);
 });
 
+it("should use args correctly", () => {
+  const buf1 = Buffer.allocUnsafe(26);
+
+  for (let i = 0; i < 26; i++) {
+    // 97 is the decimal ASCII value for 'a'.
+    buf1[i] = i + 97;
+  }
+
+  expect(buf1.toString("utf8")).toBe("abcdefghijklmnopqrstuvwxyz");
+  expect(buf1.toString("utf8", 0, 5)).toBe("abcde");
+
+  const buf2 = Buffer.from("tést");
+  expect(buf2.toString("hex")).toBe("74c3a97374");
+  expect(buf2.toString("utf8", 0, 3)).toBe("té");
+  expect(buf2.toString(undefined, 0, 3)).toBe("té");
+});
+
 it("hex toString()", () => {
   const hexb = Buffer.allocUnsafe(256);
   for (let i = 0; i < 256; i++) {
@@ -2403,15 +2420,6 @@ it("Buffer.toString(encoding, start, end)", () => {
   expect(buf.toString("utf8", 100, 1)).toStrictEqual("");
 });
 
-it("Buffer.toString(offset, length, encoding)", () => {
-  const buf = Buffer.from("0123456789", "utf8");
-
-  expect(buf.toString(3, 6, "utf8")).toStrictEqual("345678");
-  expect(buf.toString(3, 100, "utf8")).toStrictEqual("3456789");
-  expect(buf.toString(100, 200, "utf8")).toStrictEqual("");
-  expect(buf.toString(100, 50, "utf8")).toStrictEqual("");
-});
-
 it("Buffer.asciiSlice())", () => {
   const buf = Buffer.from("0123456789", "ascii");
 
@@ -2563,4 +2571,28 @@ it("construct buffer from UTF16, issue #3914", () => {
 
   const buf = Buffer.from(str, "latin1");
   expect(buf).toStrictEqual(raw);
+});
+
+it("construct buffer from hex, issue #4919", () => {
+  const data = "测试63e9f6c4b04fa8c80f3fb0ee";
+
+  const slice1 = data.substring(0, 2);
+  const slice2 = data.substring(2);
+
+  const buf1 = Buffer.from(slice1, "hex");
+  const buf2 = Buffer.from(slice2, "hex");
+
+  expect(buf1).toStrictEqual(Buffer.from([]));
+  expect(buf2).toStrictEqual(Buffer.from([0x63, 0xe9, 0xf6, 0xc4, 0xb0, 0x4f, 0xa8, 0xc8, 0x0f, 0x3f, 0xb0, 0xee]));
+});
+
+it("new Buffer.alloc()", () => {
+  const buf = new Buffer.alloc(10);
+  expect(buf.length).toBe(10);
+  expect(buf[0]).toBe(0);
+});
+
+it("new Buffer.from()", () => {
+  const buf = new Buffer.from("🥶");
+  expect(buf.length).toBe(4);
 });

@@ -1,15 +1,3 @@
-interface CommonJSModuleRecord {
-  $require(id: string, mod: any): any;
-  children: CommonJSModuleRecord[];
-  exports: any;
-  id: string;
-  loaded: boolean;
-  parent: undefined;
-  path: string;
-  paths: string[];
-  require: typeof require;
-}
-
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -39,13 +27,13 @@ export function require(this: CommonJSModuleRecord, id: string) {
     return existing.exports;
   }
 
-  if (id.endsWith(".json") || id.endsWith(".toml") || id.endsWith(".node")) {
+  if (id.endsWith(".node")) {
     return $internalRequire(id);
   }
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false);
+  const mod = $createCommonJSModule(id, {}, false, this);
   $requireMap.$set(id, mod);
 
   // This is where we load the module. We will see if Module._load and
@@ -86,7 +74,6 @@ export function requireResolve(this: string | { path: string }, id: string) {
 }
 
 export function requireNativeModule(id: string) {
-  // There might be a race condition here?
   let esm = Loader.registry.$get(id);
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
     const exports = Loader.getModuleNamespaceObject(esm.module);

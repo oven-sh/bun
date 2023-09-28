@@ -738,19 +738,19 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  execArgv = options.execArgv || process.execArgv;
-  validateArgumentsNullCheck(execArgv, "options.execArgv");
+  // execArgv = options.execArgv || process.execArgv;
+  // validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  if (execArgv === process.execArgv && process._eval != null) {
-    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
-    if (index > 0) {
-      // Remove the -e switch to avoid fork bombing ourselves.
-      execArgv = ArrayPrototypeSlice.call(execArgv);
-      ArrayPrototypeSplice.call(execArgv, index - 1, 2);
-    }
-  }
+  // if (execArgv === process.execArgv && process._eval != null) {
+  //   const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+  //   if (index > 0) {
+  //     // Remove the -e switch to avoid fork bombing ourselves.
+  //     execArgv = ArrayPrototypeSlice.call(execArgv);
+  //     ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+  //   }
+  // }
 
-  args = [...execArgv, modulePath, ...args];
+  args = [/*...execArgv,*/ modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1158,6 +1158,9 @@ class ChildProcess extends EventEmitter {
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
 
+    // TODO: better ipc support
+    const ipc = $isArray(stdio) && stdio[3] === "ipc";
+
     var env = options.envPairs || undefined;
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
@@ -1182,53 +1185,67 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
+      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
     });
     this.pid = this.#handle.pid;
 
     onSpawnNT(this);
 
-    // const ipc = stdio.ipc;
-    // const ipcFd = stdio.ipcFd;
-    // stdio = options.stdio = stdio.stdio;
-
-    // for (i = 0; i < stdio.length; i++) {
-    //   const stream = stdio[i];
-    //   if (stream.type === "ignore") continue;
-
-    //   if (stream.ipc) {
-    //     this._closesNeeded++;
-    //     continue;
-    //   }
-
-    //   // The stream is already cloned and piped, thus stop its readable side,
-    //   // otherwise we might attempt to read from the stream when at the same time
-    //   // the child process does.
-    //   if (stream.type === "wrap") {
-    //     stream.handle.reading = false;
-    //     stream.handle.readStop();
-    //     stream._stdio.pause();
-    //     stream._stdio.readableFlowing = false;
-    //     stream._stdio._readableState.reading = false;
-    //     stream._stdio[kIsUsedAsStdio] = true;
-    //     continue;
-    //   }
-
-    //   if (stream.handle) {
-    //     stream.socket = createSocket(
-    //       this.pid !== 0 ? stream.handle : null,
-    //       i > 0
-    //     );
-
-    // // Add .send() method and start listening for IPC data
-    // if (ipc !== undefined) setupChannel(this, ipc, serialization);
+    if (ipc) {
+      this.send = this.#send;
+      this.disconnect = this.#disconnect;
+    }
   }
 
-  send() {
-    console.log("ChildProcess.prototype.send() - Sorry! Not implemented yet");
+  #emitIpcMessage(message) {
+    this.emit("message", message);
   }
 
-  disconnect() {
-    console.log("ChildProcess.prototype.disconnect() - Sorry! Not implemented yet");
+  #send(message, handle, options, callback) {
+    if (typeof handle === "function") {
+      callback = handle;
+      handle = undefined;
+      options = undefined;
+    } else if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    } else if (options !== undefined) {
+      if (typeof options !== "object" || options === null) {
+        throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+      }
+    }
+
+    if (!this.#handle) {
+      if (callback) {
+        process.nextTick(callback, new TypeError("Process was closed while trying to send message"));
+      } else {
+        this.emit("error", new TypeError("Process was closed while trying to send message"));
+      }
+      return false;
+    }
+
+    // Bun does not handle handles yet
+    try {
+      this.#handle.send(message);
+      if (callback) process.nextTick(callback);
+      return true;
+    } catch (error) {
+      if (callback) {
+        process.nextTick(callback, error);
+      } else {
+        this.emit("error", error);
+      }
+      return false;
+    }
+  }
+
+  #disconnect() {
+    if (!this.connected) {
+      this.emit("error", new TypeError("Process was closed while trying to send message"));
+      return;
+    }
+    this.connected = false;
+    this.#handle.disconnect();
   }
 
   kill(sig) {
@@ -1281,7 +1298,7 @@ function nodeToBun(item) {
     return item;
   } else {
     const result = nodeToBunLookup[item];
-    if (result === undefined) throw new Error("Invalid stdio option");
+    if (result === undefined) throw new Error(`Invalid stdio option "${item}"`);
     return result;
   }
 }

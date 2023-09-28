@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import Module from "module";
+import path from "path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
@@ -56,4 +58,39 @@ test("Module.wrap", () => {
   expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
   expect(mod.exports.foo).toBe(1);
   expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
+});
+
+test("Overwriting _resolveFilename", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "resolveFilenameOverwrite.cjs")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+test("Module.prototype._compile", () => {
+  const module = new Module("module id goes here");
+  const starting_exports = module.exports;
+  const r = module._compile(
+    "module.exports = { module, exports, require, __filename, __dirname }",
+    "/file/path/goes/here.js",
+  );
+  expect(r).toBe(undefined);
+  expect(module.exports).not.toBe(starting_exports);
+  const { module: m, exports: e, require: req, __filename: fn, __dirname: dn } = module.exports;
+  expect(m).toBe(module);
+  expect(e).toBe(starting_exports);
+  expect(req).toBe(module.require);
+  expect(fn).toBe("/file/path/goes/here.js");
+  expect(dn).toBe("/file/path/goes");
+});
+
+test("Module._extensions", () => {
+  expect(".js" in Module._extensions).toBeTrue();
+  expect(".json" in Module._extensions).toBeTrue();
+  expect(".node" in Module._extensions).toBeTrue();
+  expect(require.extensions).toBe(Module._extensions);
 });

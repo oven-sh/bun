@@ -11,6 +11,8 @@ const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const IPC = @import("./ipc.zig");
+const uws = @import("root").bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -31,9 +33,37 @@ file_polls_: ?*JSC.FilePoll.Store = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
+spawn_ipc_usockets_context: ?*uws.SocketContext = null,
+
 mime_types: ?bun.HTTP.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
+
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
+}
+
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+        _ = this.listening_sockets_for_watch_mode.swapRemove(i);
+    }
+}
+
+pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
+    this.listening_sockets_for_watch_mode_lock.lock();
+    defer this.listening_sockets_for_watch_mode_lock.unlock();
+    for (this.listening_sockets_for_watch_mode.items) |socket| {
+        _ = Syscall.close(socket);
+    }
+    this.listening_sockets_for_watch_mode = .{};
+}
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     if (this.hot_map == null) {
@@ -308,6 +338,20 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         rare.stdin_store = store;
         break :brk store;
     };
+}
+
+const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
+
+pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
+    if (rare.spawn_ipc_usockets_context) |ctx| {
+        return ctx;
+    }
+
+    var opts: uws.us_socket_context_options_t = .{};
+    const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
+    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    rare.spawn_ipc_usockets_context = ctx;
+    return ctx;
 }
 
 pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {

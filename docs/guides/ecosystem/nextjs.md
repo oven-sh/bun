@@ -11,7 +11,7 @@ The Next.js [App Router](https://nextjs.org/docs/app) currently relies on Node.j
 Initialize a Next.js app with `create-next-app`. This automatically installs dependencies using `npm`.
 
 ```sh
-$ bun create next-app
+$ bunx create-next-app
 ✔ What is your project named? … my-app
 ✔ Would you like to use TypeScript with this project? … No / Yes
 ✔ Would you like to use ESLint with this project? … No / Yes

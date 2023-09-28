@@ -2,9 +2,6 @@ const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 // primordials
 const StringPrototypeSplit = Function.prototype.call.bind(String.prototype.split);
-const RegExpPrototypeExec = Function.prototype.call.bind(RegExp.prototype.exec);
-const StringPrototypeToLowerCase = Function.prototype.call.bind(String.prototype.toLowerCase);
-const ArrayPrototypeSome = Function.prototype.call.bind(Array.prototype.some);
 const NumberIsInteger = Number.isInteger;
 
 function ReadStream(fd) {

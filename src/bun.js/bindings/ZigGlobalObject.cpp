@@ -1579,6 +1579,98 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
     return true;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsMakeClassCallableCall, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* constructor = callframe->thisValue().getObject();
+    if (!constructor || !constructor->isConstructor()) {
+        throwTypeError(globalObject, scope, "call expects a constructor"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSValue newTarget = callframe->argument(0);
+    JSC::ArgList args = JSC::ArgList(callframe, 1);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::construct(globalObject, constructor, JSC::getCallData(constructor), args, newTarget)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMakeClassCallableApply, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* constructor = callframe->thisValue().getObject();
+    if (!constructor || !constructor->isConstructor()) {
+        throwTypeError(globalObject, scope, "apply expects a constructor"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSValue newTarget = callframe->argument(0);
+
+    MarkedArgumentBuffer args;
+    JSValue argumentsObject = callframe->argument(1);
+    if (auto* array = jsDynamicCast<JSC::JSArray*>(argumentsObject)) {
+        JSValue thisValue = callframe->thisValue();
+
+        unsigned argCount = array->length();
+        for (unsigned i = 0; i < argCount; i++) {
+            JSValue value = array->getIndex(globalObject, i);
+            if (UNLIKELY(scope.exception()))
+                return JSC::JSValue::encode(JSC::JSValue {});
+            if (value.isEmpty())
+                continue;
+
+            args.append(value);
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::construct(globalObject, constructor, JSC::getCallData(constructor), args, newTarget)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMakeClassCallable, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callframe->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "makeClassCallable needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto* constructor = callframe->argument(0).getObject();
+    if (!constructor || !constructor->isConstructor()) {
+        throwTypeError(globalObject, scope, "makeClassCallable needs a constructor"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSFunction* call = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->makeClassCallableCallUnbound(),
+        constructor,
+        ArgList(), 1, jsString(vm, String("call"_s)));
+
+    JSFunction* apply = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->makeClassCallableApplyUnbound(),
+        constructor,
+        ArgList(), 1, jsString(vm, String("apply"_s)));
+
+    constructor->putDirect(
+        vm,
+        vm.propertyNames->builtinNames().callPublicName(),
+        call,
+        JSC::PropertyAttribute::DontEnum | 0);
+    constructor->putDirect(
+        vm,
+        vm.propertyNames->builtinNames().applyPublicName(),
+        apply,
+        JSC::PropertyAttribute::DontEnum | 0);
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(constructor));
+}
+
 static NeverDestroyed<const String> pathToFileURLString(MAKE_STATIC_STRING_IMPL("pathToFileURL"));
 static NeverDestroyed<const String> fileURLToPathString(MAKE_STATIC_STRING_IMPL("fileURLToPath"));
 
@@ -1699,6 +1791,10 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
                 JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
             return JSC::JSValue::encode(obj);
+        }
+
+        if (string == "makeClassCallable"_s) {
+            return JSC::JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "makeClassCallable"_s, jsMakeClassCallable, ImplementationVisibility::Public, NoIntrinsic));
         }
 
         if (string == "worker_threads"_s) {
@@ -2766,6 +2862,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(fileConstructor);
         });
 
+    m_makeClassCallableCall.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, "call"_s, jsMakeClassCallableCall, ImplementationVisibility::Private));
+        });
+
+    m_makeClassCallableApply.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, "apply"_s, jsMakeClassCallableApply, ImplementationVisibility::Private));
+        });
+
     m_cryptoObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
@@ -3813,7 +3919,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
-
+    thisObject->m_makeClassCallableCall.visit(visitor);
+    thisObject->m_makeClassCallableApply.visit(visitor);
     thisObject->m_requireFunctionUnbound.visit(visitor);
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);

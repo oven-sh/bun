@@ -353,6 +353,8 @@ public:
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     mutable WriteBarrier<JSC::Unknown> m_errorConstructorPrepareStackTraceValue;
+    JSFunction* makeClassCallableCallUnbound() { return m_makeClassCallableCall.getInitializedOnMainThread(this); }
+    JSFunction* makeClassCallableApplyUnbound() { return m_makeClassCallableApply.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {
@@ -508,6 +510,8 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, JSFunction> m_makeClassCallableCall;
+    LazyProperty<JSGlobalObject, JSFunction> m_makeClassCallableApply;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

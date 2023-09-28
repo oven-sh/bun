@@ -240,18 +240,18 @@ extern "C" size_t WTF__base64URLEncode(const unsigned char* __restrict inputData
 }
 
 namespace Bun {
-    String base64URLEncodeToString(Vector<uint8_t> data)
-    {
-        auto size = data.size();
-        size_t encodedLength = ((size * 4) + 2) / 3;
-        if(!encodedLength)
-            return String();
+String base64URLEncodeToString(Vector<uint8_t> data)
+{
+    auto size = data.size();
+    size_t encodedLength = ((size * 4) + 2) / 3;
+    if (!encodedLength)
+        return String();
 
-        Vector<uint8_t> encodedData(encodedLength);
-        encodedLength = WTF__base64URLEncode(data.data(), data.size(), encodedData.data(), encodedData.size());
-        if (!encodedLength)
-            return String();
+    Vector<uint8_t> encodedData(encodedLength);
+    encodedLength = WTF__base64URLEncode(data.data(), data.size(), encodedData.data(), encodedData.size());
+    if (!encodedLength)
+        return String();
 
-        return String::fromUTF8(encodedData.data(), encodedLength);
-    }
+    return String::fromUTF8(encodedData.data(), encodedLength);
+}
 }

@@ -198,6 +198,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/CryptoKeyRSA.h"
 #include "webcrypto/CryptoKeyAES.h"
 #include "webcrypto/CryptoKeyHMAC.h"
+#include "webcrypto/CryptoKeyRaw.h"
 #include "webcrypto/CryptoKeyUsage.h"
 #include "webcrypto/JsonWebKey.h"
 #include "webcrypto/JSJsonWebKey.h"
@@ -227,7 +228,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "libusockets.h"
 #include <openssl/evp.h>
 #include <openssl/mem.h>
-
+#include <openssl/x509.h>
+#include <openssl/pem.h>
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -415,6 +417,32 @@ struct AsymmetricKeyValue {
     bool owned;
 };
 
+static Vector<uint8_t> GetRawKeyFromSecret(WebCore::CryptoKey& key)
+{
+    auto id = key.keyClass();
+    switch (id) {
+    case CryptoKeyClass::HMAC: {
+        const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(key);
+        return hmac.key();
+    }
+    case CryptoKeyClass::AES: {
+        const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
+        return aes.key();
+    }
+    case CryptoKeyClass::OKP: {
+        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
+        return okpKey.platformKey();
+    }
+    case CryptoKeyClass::Raw: {
+        const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);
+        return raw.key();
+    }
+    default: {
+        Vector<uint8_t> empty;
+        return empty;
+    }
+    }
+}
 static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
 {
     auto id = key.algorithmIdentifier();
@@ -460,9 +488,11 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
 
         auto& wrapped = key->wrapped();
         auto key_type = wrapped.type();
-        if(count > 1){
-            if(auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1))){
+        auto id = wrapped.keyClass();
+        if (count > 1) {
+            if (auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1))) {
                 JSValue formatJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "format"_s)));
+                JSValue typeJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "type"_s)));
                 auto string = formatJSValue.toWTFString(globalObject);
                 if (string.isNull()) {
                     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -470,84 +500,309 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
 
-                if (key_type == CryptoKeyType::Secret) {
-                    const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
-                    if(string == "buffer"_s) {
-                        auto keyData = okpKey.platformKey();
+                switch (id) {
+                case CryptoKeyClass::HMAC: {
+                    const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+                    if (string == "buffer"_s) {
+                        auto keyData = hmac.key();
                         auto size = keyData.size();
-                        
                         auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
                         if (size > 0)
                             memcpy(buffer->vector(), keyData.data(), size);
 
                         return JSC::JSValue::encode(buffer);
-                    } 
+                    } else if (string == "jwk"_s) {
+                        const JsonWebKey& jwkValue = hmac.exportJwk();
+                        Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                        return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    }
+                    break;
+                }
+                case CryptoKeyClass::AES: {
+                    const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
+                    if (string == "buffer"_s) {
+                        auto keyData = aes.key();
+                        auto size = keyData.size();
+                        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                        if (size > 0)
+                            memcpy(buffer->vector(), keyData.data(), size);
+
+                        return JSC::JSValue::encode(buffer);
+                    } else if (string == "jwk"_s) {
+                        const JsonWebKey& jwkValue = aes.exportJwk();
+                        Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                        return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    }
+                    break;
+                }
+                case CryptoKeyClass::RSA: {
+                    const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
                     if (string == "jwk"_s) {
-                         auto id = key->wrapped().keyClass();
-                        switch (id) {
-                        case CryptoKeyClass::HMAC: {
-                            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
-                            const JsonWebKey& jwkValue = hmac.exportJwk();
-                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
-                            
+                        const JsonWebKey& jwkValue = rsa.exportJwk();
+                        Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                        return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    } else {
+                        auto type = !typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty() ? typeJSValue.toWTFString(globalObject) : "pkcs1"_s;
+                        if (type.isNull()) {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            JSC::throwTypeError(globalObject, scope, "type is expected to be a string"_s);
+                            return JSC::JSValue::encode(JSC::JSValue {});
                         }
-                        case CryptoKeyClass::RSA:{
-                            const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
-                            const JsonWebKey& jwkValue = rsa.exportJwk();
-                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
-                            
-                        }
-                        case CryptoKeyClass::AES: {
-                            const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
-                            const JsonWebKey& jwkValue = aes.exportJwk();
-                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
-                        }
-                        case CryptoKeyClass::EC: {
-                            const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
-                            auto jwk = ec.exportJwk();
-                            if (jwk.hasException()) {
+
+                        auto* bio = BIO_new(BIO_s_mem());
+                        auto* rsaKey = rsa.platformKey();
+                        auto* rsa_ptr = EVP_PKEY_get1_RSA(rsaKey);
+
+                        if (key_type == CryptoKeyType::Public) {
+                            if (string == "pem"_s) {
+                                if (type == "pkcs1"_s) {
+                                    if (PEM_write_bio_RSAPublicKey(bio, rsa_ptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write public key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else if (type == "spki"_s) {
+                                    if (PEM_write_bio_PUBKEY(bio, rsaKey) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write public key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else {
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'spki'"_s);
+                                    BIO_free(bio);
+                                    return JSC::JSValue::encode(JSC::JSValue {});
+                                }
+
+                            } else if (string == "der"_s) {
+                                if (type == "pkcs1"_s) {
+                                    if (i2d_RSAPublicKey_bio(bio, rsa_ptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write public key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else if (type == "spki"_s) {
+                                    if (i2d_PUBKEY_bio(bio, rsaKey) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write public key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else {
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'spki'"_s);
+                                    BIO_free(bio);
+                                    return JSC::JSValue::encode(JSC::JSValue {});
+                                }
+                            } else {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
-                                WebCore::propagateException(*globalObject, scope, jwk.releaseException());
+                                JSC::throwTypeError(globalObject, scope, "format expected to be 'der', 'pem' or 'jwk'"_s);
+                                BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
-                            const JsonWebKey& jwkValue = jwk.releaseReturnValue();
-                            Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                            return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
-                        }                        
-                        default: {
+                        } else {
+                            JSValue passphraseJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
+                            JSValue cipherJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "cipher"_s)));
+                            auto cipher_wtfstr = cipherJSValue.toWTFString(globalObject);
+                            const EVP_CIPHER* cipher;
+
+                            if (!cipher_wtfstr.isNull()) {
+                                auto cipherOrError = cipher_wtfstr.tryGetUTF8();
+                                if (!cipherOrError) {
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    JSC::throwTypeError(globalObject, scope, "invalid cipher name"_s);
+                                    BIO_free(bio);
+                                    return JSC::JSValue::encode(JSC::JSValue {});
+                                } else {
+                                    auto cipher_str = cipherOrError->data();
+                                    if (cipher_str != nullptr) {
+                                        cipher = EVP_get_cipherbyname(cipher_str);
+                                    } else {
+                                        cipher = nullptr;
+                                    }
+                                }
+                            } else {
+                                cipher = nullptr;
+                            }
+                            void* passphrase;
+                            size_t passphrase_len = 0;
+                            if (auto* passphraseBuffer = jsCast<JSUint8Array*>(passphraseJSValue)) {
+                                passphrase = passphraseBuffer->vector();
+                                passphrase_len = passphraseBuffer->byteLength();
+                            } else {
+                                auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
+                                if (!passphrase_wtfstr.isNull()) {
+                                    if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
+                                        passphrase = const_cast<char*>(pass->data());
+                                        passphrase_len = pass->length();
+                                    } else {
+                                        passphrase = nullptr;
+                                    }
+                                } else {
+                                    passphrase = nullptr;
+                                }
+                            }
+
+                            if (string == "pem"_s) {
+                                if (type == "pkcs1"_s) {
+                                    if (PEM_write_bio_RSAPrivateKey(bio, rsa_ptr, cipher, (unsigned char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                        auto scope = DECLARE_THROW_SCOPE(vm);
+                                        JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                        BIO_free(bio);
+                                        return JSC::JSValue::encode(JSC::JSValue {});
+                                    }
+                                } else if (type == "pkcs8"_s) {
+                                    // if(PEM_write_bio_RSAPrivateKey(bio, rsa, cipher, passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                    //     auto scope = DECLARE_THROW_SCOPE(vm);
+                                    //     JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                    //     BIO_free(bio);
+                                    //     return JSC::JSValue::encode(JSC::JSValue {});
+                                    // }
+                                } else {
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'pkcs8'"_s);
+                                    BIO_free(bio);
+                                    return JSC::JSValue::encode(JSC::JSValue {});
+                                }
+                            } else if (string == "der"_s) {
+                                if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, (char*)passphrase, passphrase_len, nullptr, nullptr) != 1) {
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
+                                    BIO_free(bio);
+                                    return JSC::JSValue::encode(JSC::JSValue {});
+                                }
+                            } else {
+                                auto scope = DECLARE_THROW_SCOPE(vm);
+                                JSC::throwTypeError(globalObject, scope, "format expected to be 'der', 'pem' or 'jwk'"_s);
+                                BIO_free(bio);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
+                        }
+
+                        BUF_MEM* bptr;
+                        BIO_get_mem_ptr(bio, &bptr);
+                        auto length = bptr->length;
+                        if (string == "pem"_s) {
+                            auto str = WTF::String::fromUTF8(bptr->data, length);
+                            return JSValue::encode(JSC::jsString(vm, str));
+                        }
+
+                        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, length)));
+                        if (length > 0)
+                            memcpy(buffer->vector(), bptr->data, length);
+
+                        BIO_free(bio);
+                        return JSC::JSValue::encode(buffer);
+                    }
+                    break;
+                }
+                case CryptoKeyClass::OKP: {
+                    const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+                    if (string == "buffer"_s) {
+                        auto keyData = okpKey.platformKey();
+                        auto size = keyData.size();
+                        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                        if (size > 0)
+                            memcpy(buffer->vector(), keyData.data(), size);
+
+                        return JSC::JSValue::encode(buffer);
+                    } else if (string == "jwk"_s) {
+                        auto result = okpKey.exportJwk();
+                        if (result.hasException()) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
-                            JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
-                            return JSC::JSValue::encode(JSC::JSValue {});        
+                            WebCore::propagateException(*globalObject, scope, result.releaseException());
+                            return JSC::JSValue::encode(JSC::JSValue {});
                         }
-                        }
-                    } 
+                        const JsonWebKey& jwkValue = result.releaseReturnValue();
+                        Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+                        return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    }
+                    break;
+                }
+                case CryptoKeyClass::Raw: {
+                    const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
+                    if (string == "buffer"_s) {
+                        auto keyData = raw.key();
+                        auto size = keyData.size();
+                        auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                        if (size > 0)
+                            memcpy(buffer->vector(), keyData.data(), size);
+
+                        return JSC::JSValue::encode(buffer);
+                    }
+
                     auto scope = DECLARE_THROW_SCOPE(vm);
-                    JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer' or 'jwk'"_s);
-                    return JSC::JSValue::encode(JSC::JSValue {});
-                } else {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
-                    JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
+                    JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer'"_s);
                     return JSC::JSValue::encode(JSC::JSValue {});
                 }
+                default: {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+                }
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwTypeError(globalObject, scope, "format is expected to be 'buffer' or 'jwk'"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
             } else {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                JSC::throwTypeError(globalObject, scope, "options is expected to be an object"_s);
+                JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
         }
         // default options
         if (key_type == CryptoKeyType::Secret) {
-            const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
-            auto keyData = okpKey.platformKey();
-            auto size = keyData.size();
-            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-            if (size > 0)
-                memcpy(buffer->vector(), keyData.data(), size);
+            switch (id) {
+            case CryptoKeyClass::HMAC: {
+                const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+                auto keyData = hmac.key();
+                auto size = keyData.size();
+                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                if (size > 0)
+                    memcpy(buffer->vector(), keyData.data(), size);
 
-            return JSC::JSValue::encode(buffer);
+                return JSC::JSValue::encode(buffer);
+            }
+            case CryptoKeyClass::AES: {
+                const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
+                auto keyData = aes.key();
+                auto size = keyData.size();
+                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                if (size > 0)
+                    memcpy(buffer->vector(), keyData.data(), size);
+
+                return JSC::JSValue::encode(buffer);
+            }
+            case CryptoKeyClass::OKP: {
+                const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
+                auto keyData = okpKey.platformKey();
+                auto size = keyData.size();
+                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                if (size > 0)
+                    memcpy(buffer->vector(), keyData.data(), size);
+
+                return JSC::JSValue::encode(buffer);
+            }
+            case CryptoKeyClass::Raw: {
+                const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
+                auto keyData = raw.key();
+                auto size = keyData.size();
+                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
+                if (size > 0)
+                    memcpy(buffer->vector(), keyData.data(), size);
+
+                return JSC::JSValue::encode(buffer);
+            }
+            default: {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            }
+
         } else {
             auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
@@ -570,16 +825,14 @@ static JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalO
             auto& wrapped = key->wrapped();
             auto& wrapped2 = key2->wrapped();
             auto key_type = wrapped.type();
+            auto key_class = wrapped.keyClass();
             if (key_type != wrapped2.type()) {
                 return JSC::JSValue::encode(jsBoolean(false));
             }
 
             if (key_type == CryptoKeyType::Secret) {
-                const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
-                const auto& okpKey2 = downcast<WebCore::CryptoKeyOKP>(wrapped2);
-
-                auto keyData = okpKey.platformKey();
-                auto keyData2 = okpKey2.platformKey();
+                auto keyData = GetRawKeyFromSecret(wrapped);
+                auto keyData2 = GetRawKeyFromSecret(wrapped2);
                 auto size = keyData.size();
 
                 if (size != keyData2.size()) {
@@ -610,12 +863,38 @@ static JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalO
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
-static JSC::EncodedJSValue WebCrypto__SymmetricKeySize(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue WebCrypto__SymmetricKeySize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
-        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key->wrapped());
+        auto& wrapped = key->wrapped();
+        auto id = wrapped.keyClass();
+        size_t size = 0;
+        switch (id) {
+        case CryptoKeyClass::HMAC: {
+            const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
+            auto keyData = hmac.key();
+            size = keyData.size();
+            break;
+        }
+        case CryptoKeyClass::AES: {
+            const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
+            auto keyData = aes.key();
+            size = keyData.size();
+            break;
+        }
+        case CryptoKeyClass::Raw: {
+            const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
+            auto keyData = raw.key();
+            size = keyData.size();
+            break;
+        }
+        default: {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
 
-        auto size = okpKey.keySizeInBytes();
         if (!size) {
             return JSC::JSValue::encode(JSC::jsUndefined());
         }

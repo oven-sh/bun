@@ -160,19 +160,27 @@ pub const Os = struct {
 
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
+            const key_cpu_mhz = "cpu MHz\t\t: ";
 
             var cpu_index: u32 = 0;
+            var cpu: JSC.JSValue = undefined;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(0)); // fallback for speed
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
-                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                } else if (strings.hasPrefixComptime(line, key_cpu_mhz)) {
+                    const digits = std.mem.trim(u8, line[key_cpu_mhz.len..], "\t\n");
+                    const mhz = (std.fmt.parseFloat(f64, digits) catch 0);
+                    const speed = @as(u32, @intFromFloat(mhz)); // trunc the speed like nodejs
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
                 }
                 //TODO: special handling for ARM64 (no model name)?
             }
@@ -195,13 +203,10 @@ pub const Os = struct {
 
                 const bytes_read = try file.readAll(&line_buffer);
                 const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
-                const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
-
-                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
-            } else |_| {
-                // Initialize CPU speed to 0
-                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(0));
-            }
+                if (std.fmt.parseInt(u32, digits, 10)) |speed| {
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed / 1000));
+                } else |_| {}
+            } else |_| {}
         }
 
         return values;

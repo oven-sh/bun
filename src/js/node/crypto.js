@@ -11902,9 +11902,6 @@ class KeyObject {
     if (key instanceof KeyObject) {
       key = key.#cryptoKey;
     }
-    if (!(key instanceof CryptoKey)) {
-      throw new TypeError("otherKey must be a KeyObject");
-    }
     return new KeyObject(key);
   }
 
@@ -12001,7 +11998,7 @@ crypto_exports.createPublicKey = function (key) {
         error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
         throw error;
       }
-      if(!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key)) {
+      if(!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
         var error = new TypeError(
           `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
             key,
@@ -12012,7 +12009,7 @@ crypto_exports.createPublicKey = function (key) {
       if(!key.format) {
         key.format = "pem";
       }
-      return createSecretKey(key);
+      return createPublicKey(key);
     }
 
   } else {

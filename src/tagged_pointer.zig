@@ -97,6 +97,8 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub const Tag = TagType;
         repr: TaggedPointer,
 
+        pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+
         const This = @This();
         fn assert_type(comptime Type: type) void {
             var name = comptime typeBaseName(@typeName(Type));
@@ -167,6 +169,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
             return This{ .repr = TaggedPointer.init(_ptr, @intFromEnum(@field(Tag, name))) };
+        }
+
+        pub inline fn isNull(this: This) bool {
+            return this.repr._ptr == 0;
         }
     };
 }

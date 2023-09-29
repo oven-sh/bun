@@ -411,3 +411,10 @@ it("should handle connection error (unix)", done => {
     done();
   });
 });
+
+it("Socket has a prototype", () => {
+  function Connection() {}
+  function Connection2() {}
+  require("util").inherits(Connection, Socket);
+  require("util").inherits(Connection2, require("tls").TLSSocket);
+});

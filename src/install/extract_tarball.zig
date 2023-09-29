@@ -374,8 +374,10 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
+    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
+
     return .{
-        .url = this.url.slice(),
+        .url = url,
         .resolved = resolved,
         .json_path = ret_json_path,
         .json_buf = json_buf,

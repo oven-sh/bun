@@ -3,13 +3,13 @@
   "name": "bun-polyfills",
   "module": "src/index.ts",
   "devDependencies": {
-    "@types/node": "^20.4.5",
+    "@types/node": "^20.7.2",
     "@types/which": "^3.0.0",
-    "bun-types": "^0.7.0",
+    "bun-types": "^1.0.3",
     "copyfiles": "^2.4.1"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.2.2"
   },
   "scripts": {
     "node": "node --enable-source-maps --import ./dist/src/repl.js",
@@ -23,8 +23,8 @@
     "bun-wasm": "link:bun-wasm",
     "chalk": "^5.3.0",
     "js-md4": "^0.3.2",
-    "open-editor": "^4.0.0",
+    "open-editor": "^4.1.1",
     "supports-color": "^9.4.0",
-    "which": "^3.0.1"
+    "which": "^4.0.0"
   }
 }

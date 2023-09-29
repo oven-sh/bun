@@ -4,7 +4,8 @@
 #include <bun-uws/src/AsyncSocket.h>
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
-#include <ares.h>
+
+extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
 extern "C"
 {

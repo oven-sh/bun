@@ -244,6 +244,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
   return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject,
+                                              CallFrame *callFrame)) {
+  auto &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  throwException(
+      globalObject, scope,
+      createError(globalObject, "Bun does not support ESM loaders"_s));
+  return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
                          (JSGlobalObject * globalObject,
                           CallFrame *callFrame)) {
@@ -408,6 +418,9 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "_extensions"_s),
       globalObject->requireFunctionUnbound()->get(
           globalObject, Identifier::fromString(vm, "extensions"_s)));
+
+  put(Identifier::fromString(vm, "_pathCache"_s),
+      JSC::constructEmptyObject(globalObject));
 
   defaultObject->putDirectCustomAccessor(
       vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),

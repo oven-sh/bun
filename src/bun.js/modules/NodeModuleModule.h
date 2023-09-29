@@ -161,6 +161,40 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
   return JSValue::encode(jsBoolean(isBuiltinModule(moduleStr)));
 }
 
+// Might be faster as a JS builtin
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModulePreloadModules,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  JSValue requests = callFrame->argument(0);
+
+  JSArray *requestsArray = jsDynamicCast<JSArray *>(requests.asCell());
+  if (!requestsArray)
+    return JSValue::encode(jsUndefined());
+
+  auto length = requestsArray->length();
+  auto requireFn = jsCast<Zig::GlobalObject *>(globalObject)
+                       ->getDirect(vm, WebCore::clientData(vm)
+                                           ->builtinNames()
+                                           .overridableRequirePrivateName());
+
+  if (!requireFn.isCallable())
+    return JSValue::encode(jsUndefined());
+
+  JSC::CallData callData = JSC::getCallData(requireFn);
+  WTF::NakedPtr<JSC::Exception> exception;
+  for (unsigned i = 0; i < length; ++i) {
+    MarkedArgumentBuffer args;
+    args.append(requestsArray->getIndex(globalObject, i));
+    JSValue result = JSC::call(globalObject, requireFn, callData,
+                               JSC::jsUndefined(), args, exception);
+    if (exception)
+      return JSValue::encode(jsUndefined());
+  }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
                                           JSC::CallFrame *callFrame)) {
   auto &vm = globalObject->vm();
@@ -363,8 +397,8 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(16);
-  exportValues.ensureCapacity(16);
+  exportNames.reserveCapacity(17);
+  exportValues.ensureCapacity(17);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
 
@@ -383,6 +417,8 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   putNativeFn(Identifier::fromString(vm, "__resolveFilename"_s),
               jsFunctionResolveFileName);
 
+  putNativeFn(Identifier::fromString(vm, "_preloadModules"_s),
+              jsFunctionNodeModulePreloadModules);
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);
   putNativeFn(Identifier::fromString(vm, "paths"_s),

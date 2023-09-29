@@ -45,7 +45,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.15.0"
+#define REPORTED_NODE_VERSION "20.8.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define processObjectMainModuleCodeGenerator moduleMainCodeGenerator
 

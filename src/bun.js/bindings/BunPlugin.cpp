@@ -19,6 +19,8 @@
 #include "BunClientData.h"
 #include "isBuiltinModule.h"
 #include "JavaScriptCore/RegularExpression.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapInlines.h"
 
 namespace Zig {
 
@@ -133,7 +135,25 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     }
     auto* virtualModules = global->onLoadPlugins.virtualModules;
 
-    virtualModules->add(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
+    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
+
+    JSMap* esmRegistry;
+
+    if (auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s))) {
+        if (auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s))) {
+            esmRegistry = jsCast<JSC::JSMap*>(registryValue);
+        }
+    }
+
+    global->requireMap()->remove(globalObject, moduleIdValue);
+    esmRegistry && esmRegistry->remove(globalObject, moduleIdValue);
+
+    // bool hasBeenRequired = global->requireMap()->has(globalObject, moduleIdValue);
+    // bool hasBeenImported = esmRegistry && esmRegistry->has(globalObject, moduleIdValue);
+    // if (hasBeenRequired || hasBeenImported) {
+    //     // callAndReplaceModule(global, moduleIdValue, functionValue, global->requireMap(), esmRegistry, hasBeenRequired, hasBeenImported);
+    //     // RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    // }
 
     return JSValue::encode(jsUndefined());
 }

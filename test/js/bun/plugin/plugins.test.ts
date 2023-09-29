@@ -243,6 +243,49 @@ describe("module", () => {
     expect(hello).toBe("world");
     delete require.cache["my-virtual-module-sync"];
   });
+
+  it("modules are overridable", async () => {
+    // @ts-expect-error
+    let { hello, there } = await import("my-virtual-module-sync");
+    expect(there).toBeUndefined();
+    expect(hello).toBe("world");
+
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            there: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      const { there, hello } = require("my-virtual-module-sync");
+      expect(there).toBe(true);
+      expect(hello).toBeUndefined();
+    }
+
+    Bun.plugin({
+      setup(builder) {
+        builder.module("my-virtual-module-sync", () => ({
+          exports: {
+            yo: true,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    {
+      // @ts-expect-error
+      const { there, hello, yo } = await import("my-virtual-module-sync");
+      expect(yo).toBe(true);
+      expect(hello).toBeUndefined();
+      expect(there).toBeUndefined();
+    }
+  });
 });
 
 describe("dynamic import", () => {

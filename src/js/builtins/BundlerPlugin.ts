@@ -162,6 +162,9 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     onResolve,
     onStart: notImplementedIssueFn(2771, "On-start callbacks"),
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
+    module: () => {
+      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+    },
     // esbuild's options argument is different, we provide some interop
     initialOptions: {
       ...config,

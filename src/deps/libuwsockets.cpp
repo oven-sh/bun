@@ -4,6 +4,7 @@
 #include <bun-uws/src/AsyncSocket.h>
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
+#include <c-ares/include/ares.h>
 
 extern "C"
 {
@@ -1589,20 +1590,17 @@ extern "C"
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
-    if (length == 0) {
-      return 0; // unix socket or other failure
-    } else if (length == 4) {
-        length = snprintf(b, 64, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        *is_ipv6 = false;
+    if (length == 0) return 0;
+    if (length == 4) {
+      length = snprintf(b, 64, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+      *dest = b;
+      *is_ipv6 = false;
+      return length;
     } else {
-        // TODO: print compact ipv6 strings if possible.
-        length = snprintf(b, 64, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-            b[12], b[13], b[14], b[15]);
-        *is_ipv6 = true;
+      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+      *dest = &b[16];
+      *is_ipv6 = true;
+      return strlen(*dest);
     }
-
-    *dest = b;
-    return (unsigned int) length;
   }
 }

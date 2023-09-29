@@ -1237,12 +1237,12 @@ it("server.requestIP (v6)", async () => {
     fetch(req, server) {
       return Response.json(server.requestIP(req));
     },
-    hostname: "0000:0000:0000:0000:0000:0000:0000:0001",
+    hostname: "::1",
   });
 
   const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
   expect(response).toEqual({
-    address: "0000:0000:0000:0000:0000:0000:0000:0001",
+    address: "::1",
     family: "IPv6",
     port: expect.any(Number),
   });

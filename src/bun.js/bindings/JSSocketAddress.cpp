@@ -9,8 +9,11 @@ using namespace JSC;
 namespace Bun {
 namespace JSSocketAddress {
 
-// Using a structure with inlined offsets will be more lightweight than a class.
+static const NeverDestroyed<String> IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
+static const NeverDestroyed<String> IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
+static const NeverDestroyed<String> Unix = MAKE_STATIC_STRING_IMPL("unix");
 
+// Using a structure with inlined offsets should be more lightweight than a class.
 Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(

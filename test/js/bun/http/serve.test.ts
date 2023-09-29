@@ -1248,3 +1248,31 @@ it("server.requestIP (v6)", async () => {
   });
   server.stop(true);
 });
+
+it("server.requestIP (unix)", async () => {
+  const unix = "/tmp/bun-serve.sock";
+  const server = Bun.serve({
+    unix,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+  });
+  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers<void>();
+  const connection = await Bun.connect({
+    unix,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        resolve();
+      },
+    },
+  });
+  connection.write(requestText);
+  connection.flush();
+  await promise;
+  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+  connection.end();
+  server.stop(true);
+});

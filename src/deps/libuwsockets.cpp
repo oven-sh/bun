@@ -1577,28 +1577,32 @@ extern "C"
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
+  // Gets the remote address and port
+  // Returns 0 if failure / unix socket
   uint64_t uws_res_get_remote_address_info(uws_res_t *res, const char **dest, int *port, bool *is_ipv6)
   {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     //      AsyncSocket::addressAsText
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
-    if (length == 4) {
-        length = sprintf(b, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    if (length == 0) {
+      return 0; // unix socket or other failure
+    } else if (length == 4) {
+        length = snprintf(b, 64, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
         *is_ipv6 = false;
     } else {
-        length = sprintf(b, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+        // TODO: print compact ipv6 strings if possible.
+        length = snprintf(b, 64, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
             b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
             b[12], b[13], b[14], b[15]);
         *is_ipv6 = true;
     }
 
     *dest = b;
-
     return (unsigned int) length;
   }
 }

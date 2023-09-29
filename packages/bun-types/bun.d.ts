@@ -2359,11 +2359,7 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
-     * Returns the client IP address of the given Request.
-     *
-     * @param request The incoming request
-     *
-     * @returns An ipv4/ipv6 address string, or null if it couldn't find one.
+     * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
      * ```js

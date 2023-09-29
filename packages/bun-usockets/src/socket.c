@@ -281,6 +281,8 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
  return us_socket_write(ssl, s, data, length, msg_more);
 }
 
+#include <stdio.h>
+
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
     // This function is manual inlining + modification of
@@ -290,7 +292,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return 0;
-    } 
+    }
 
     int length = bsd_addr_get_ip_length(&addr);
     if (!length) {
@@ -299,6 +301,8 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
 
     memcpy(buf, bsd_addr_get_ip(&addr), length);
     *port = bsd_addr_get_port(&addr);
+
+    buf[length] = '\0';
 
     return length;
 }

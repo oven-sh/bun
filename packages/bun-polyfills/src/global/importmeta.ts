@@ -19,6 +19,7 @@ export default function polyfillImportMeta(metaIn: ImportMeta) {
         dir: path.dirname(metapath),
         file: path.basename(metapath),
         require: require2,
+        // @ts-expect-error conflict with @types/node
         async resolve(id: string, parent?: string) {
             return this.resolveSync(id, parent);
         },

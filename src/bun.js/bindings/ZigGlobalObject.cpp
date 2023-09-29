@@ -1761,10 +1761,11 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "internal/crypto"_s) {
+            // auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
             // bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
-            // //             if (!isBuiltin) {
-            // //                 return JSC::JSValue::encode(JSC::jsUndefined());
-            // //             }
+            // if (!isBuiltin) {
+            //     return JSC::JSValue::encode(JSC::jsUndefined());
+            // }
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, WebCrypto__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
@@ -1777,6 +1778,9 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, WebCrypto__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, WebCrypto__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
             return JSValue::encode(obj);
         }

@@ -10,5 +10,5 @@ JSC::EncodedJSValue WebCrypto__SymmetricKeySize(JSC::JSGlobalObject* globalObjec
 JSC::EncodedJSValue WebCrypto__Equals(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 JSC::EncodedJSValue WebCrypto__createSecretKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-
+JSC::EncodedJSValue WebCrypto__createPublicKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 }

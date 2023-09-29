@@ -4,7 +4,7 @@
 #include <bun-uws/src/AsyncSocket.h>
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
-#include <c-ares/include/ares.h>
+#include <ares.h>
 
 extern "C"
 {

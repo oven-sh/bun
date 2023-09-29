@@ -109,19 +109,7 @@ export const sleepSync = (ms => {
 //? This is not 1:1 matching, but no one should be relying on the exact output of this function anyway.
 //? To quote Node's inspect itself: "The output of util.inspect() may change at any time and should not be depended upon programmatically."
 //? Of course in Node's case some didn't listen and relied on the output of util.inspect() anyway, but hopefully this won't happen with this one.
-export const inspect = ((arg: any): string => util.inspect(arg, {
-    breakLength: Infinity,
-    colors: false,
-    compact: true,
-    customInspect: false,
-    depth: Infinity,
-    getters: true,
-    maxArrayLength: Infinity,
-    maxStringLength: Infinity,
-    showHidden: false,
-    showProxy: false,
-    sorted: false
-})) satisfies typeof Bun.inspect;
+export const inspect = util.inspect satisfies typeof Bun.inspect;
 
 export const resolveSync = ((id: string, parent: string) => import.meta.resolveSync(id, parent)) satisfies typeof Bun.resolveSync;
 export const resolve = (async (id: string, parent: string) => import.meta.resolve!(id, parent)) satisfies typeof Bun.resolve;

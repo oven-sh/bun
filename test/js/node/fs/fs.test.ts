@@ -1002,6 +1002,47 @@ describe("exist", () => {
   });
 });
 
+describe("fs.exists", () => {
+  it("should throw TypeError with invalid argument", done => {
+    let err = undefined;
+    try {
+      // @ts-ignore
+      fs.exists(import.meta.path);
+    } catch (e) {
+      err = e;
+    }
+    try {
+      expect(err).not.toBeUndefined();
+      expect(err).toBeInstanceOf(TypeError);
+      // @ts-ignore
+      expect(err.code).toStrictEqual("ERR_INVALID_ARG_TYPE");
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
+  it("should return false with invalid path", done => {
+    fs.exists(`${tmpdir()}/test-fs-exists-${Date.now()}`, exists => {
+      try {
+        expect(exists).toBe(false);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+  it("should return true with existed path", done => {
+    fs.exists(import.meta.path, exists => {
+      try {
+        expect(exists).toBe(true);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+});
+
 describe("rm", () => {
   it("removes a file", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;

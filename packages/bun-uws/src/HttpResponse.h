@@ -439,6 +439,24 @@ public:
         return {internalEnd(data, totalSize, true, true, closeConnection), hasResponded()};
     }
 
+    /* Write the end of chunked encoded stream */
+    bool sendTerminatingChunk(bool closeConnection = false) {
+        writeStatus(HTTP_200_OK);
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* Write mark on first call to write */
+            writeMark();
+
+            writeHeader("Transfer-Encoding", "chunked");
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
+        }
+
+        /* Terminating 0 chunk */
+        Super::write("\r\n0\r\n\r\n", 7);
+
+        return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+    }
+
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data) {
         writeStatus(HTTP_200_OK);

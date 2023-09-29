@@ -72,3 +72,7 @@ const nestedObject = {
   },
 };
 console.log(nestedObject);
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: 0, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: -1, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: 1.2, colors: false }, "Some ignored arg");
+console.dir({ 1: { 2: { 3: 3 } } }, { depth: Infinity, colors: false }, "Some ignored arg");

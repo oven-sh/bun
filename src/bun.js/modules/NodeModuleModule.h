@@ -304,6 +304,39 @@ JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
   return false;
 }
 
+// These two setters are only used if you directly hit
+// `Module.prototype.require` or `module.require`. When accessing the cjs
+// require argument, this is a bound version of `require`, which calls into the
+// overridden one.
+//
+// This require function also intentionally does not have .resolve on it, nor
+// does it have any of the other properties.
+//
+// Note: allowing require to be overridable at all is only needed for Next.js to
+// work (they do Module.prototype.require = ...)
+
+JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue, JSC::PropertyName)) {
+  return JSValue::encode(globalObject->getDirect(
+      globalObject->vm(), WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue value,
+                          JSC::PropertyName propertyName)) {
+  globalObject->putDirect(globalObject->vm(),
+                          WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName(),
+                          JSValue::decode(value), 0);
+  return true;
+}
+
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
@@ -330,12 +363,17 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(15);
-  exportValues.ensureCapacity(15);
+  exportNames.reserveCapacity(16);
+  exportValues.ensureCapacity(16);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
 
   put(Identifier::fromString(vm, "Module"_s), defaultObject);
+
+  // Module._extensions === require.extensions
+  put(Identifier::fromString(vm, "_extensions"_s),
+      globalObject->requireFunctionUnbound()->get(
+          globalObject, Identifier::fromString(vm, "extensions"_s)));
 
   defaultObject->putDirectCustomAccessor(
       vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),
@@ -366,8 +404,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "globalPaths"_s),
       constructEmptyArray(globalObject, nullptr, 0));
 
-  put(Identifier::fromString(vm, "prototype"_s),
-      constructEmptyObject(globalObject));
+  auto prototype =
+      constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+  prototype->putDirectCustomAccessor(
+      vm, JSC::Identifier::fromString(vm, "require"_s),
+      JSC::CustomGetterSetter::create(vm, getterRequireFunction,
+                                      setterRequireFunction),
+      0);
+
+  defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,

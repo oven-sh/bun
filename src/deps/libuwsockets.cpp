@@ -993,22 +993,6 @@ extern "C"
     return value.length();
   }
 
-  size_t uws_res_get_remote_address_as_text(int ssl, uws_res_t *res, const char **dest)
-  {
-      if (ssl)
-      {
-          uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-          std::string_view value = uwsRes->getRemoteAddressAsText();
-          *dest = value.data();
-          return value.length();
-      }
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-
-      std::string_view value = uwsRes->getRemoteAddressAsText();
-      *dest = value.data();
-      return value.length();
-  }
-
   size_t uws_ws_get_remote_address_as_text(int ssl, uws_websocket_t *ws,
                                            const char **dest)
   {
@@ -1593,24 +1577,28 @@ extern "C"
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
-
   uint64_t uws_res_get_remote_address_info(uws_res_t *res, const char **dest, int *port, bool *is_ipv6)
   {
-      static thread_local char b[64];
-      auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+    // This function is manual inlining + modification of
+    //      us_socket_remote_address
+    //      AsyncSocket::getRemoteAddress
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIp()
+    //      AsyncSocket::addressAsText
+    static thread_local char b[64];
+    auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
-      if (length == 4) {
-          length = sprintf(b, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-          *is_ipv6 = false;
-      } else {
-          length = sprintf(b, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-              b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-              b[12], b[13], b[14], b[15]);
-          *is_ipv6 = true;
-      }
+    if (length == 4) {
+        length = sprintf(b, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+        *is_ipv6 = false;
+    } else {
+        length = sprintf(b, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
+            b[12], b[13], b[14], b[15]);
+        *is_ipv6 = true;
+    }
 
-      *dest = b;
+    *dest = b;
 
-      return (unsigned int) length;
+    return (unsigned int) length;
   }
 }

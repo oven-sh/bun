@@ -126,14 +126,27 @@ var access = function access(...args) {
   copyFile = function copyFile(...args) {
     const callback = args[args.length - 1];
     if (typeof callback !== "function") {
-      // TODO: set code
-      throw new TypeError("Callback must be a function");
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
     }
 
     fs.copyFile(...args).then(result => callback(null, result), callback);
   },
-  exists = function exists(...args) {
-    callbackify(fs.exists, args);
+  exists = function exists(path, callback) {
+    if (typeof callback !== "function") {
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    try {
+      fs.exists.apply(fs, [path]).then(
+        existed => callback(existed),
+        _ => callback(false),
+      );
+    } catch (e) {
+      callback(false);
+    }
   },
   chown = function chown(...args) {
     callbackify(fs.chown, args);

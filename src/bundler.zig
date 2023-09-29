@@ -1106,6 +1106,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .import_meta_ref = ast.import_meta_ref,
                 },
                 enable_source_map,
             ),
@@ -1129,6 +1130,7 @@ pub const Bundler = struct {
                         .transform_only = bundler.options.transform_only,
                         .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                         .inline_require_and_import_errors = false,
+                        .import_meta_ref = ast.import_meta_ref,
                     },
                     enable_source_map,
                 ),
@@ -1340,6 +1342,7 @@ pub const Bundler = struct {
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
+                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);

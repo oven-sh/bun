@@ -912,6 +912,14 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Enabled by default, use this to disable dead code elimination.
+     *
+     * Some other transpiler options may still do some specific dead code elimination.
+     */
+    deadCodeElimination?: boolean;
 
     /**
      * This does two things (and possibly more in the future):
@@ -3819,7 +3827,7 @@ declare module "bun" {
       : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
-      ? Uint8Array
+      ? Buffer
       : undefined;
 
     type WritableIO = FileSink | number | undefined;

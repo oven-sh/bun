@@ -20,7 +20,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     mutable JSC::WriteBarrier<JSString> m_id;
     mutable JSC::WriteBarrier<Unknown> m_filename;
@@ -75,12 +75,17 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject,
-        JSC::PropertyName propertyName, JSC::JSValue value,
-        JSC::PutPropertySlot& slot);
-
-    template<typename, SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    template<typename, SubspaceAccess mode> JSC::GCClient::IsoSubspace* JSCommonJSModule::subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); });
+    }
 
     bool hasEvaluated = false;
 

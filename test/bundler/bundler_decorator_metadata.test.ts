@@ -503,3 +503,37 @@ itBundled("decorator_metadata/TypeSerialization", {
     stdout: "true\n".repeat(212),
   },
 });
+
+itBundled("decorator_metadata/ImportIdentifiers", {
+  files: {
+    "/entry.ts": /* ts */ `
+        import "reflect-metadata";
+        import { Foo } from "./foo.js";
+
+        function d1() {}
+
+        @d1
+        class Bar {
+            constructor(foo: Foo) {}
+        }
+
+        console.log(Reflect.getMetadata("design:paramtypes", Bar)[0] === Foo);
+    `,
+    "/foo.js": /* js */ `
+        const f = () => "Foo";
+        module.exports[f()] = class Foo {};
+    `,
+    "/tsconfig.json": /* json */ `
+        {
+            "compilerOptions": {
+                "experimentalDecorators": true,
+                "emitDecoratorMetadata": true,
+            }
+        }
+    `,
+  },
+  install: ["reflect-metadata"],
+  run: {
+    stdout: "true\n",
+  },
+});

@@ -1,5 +1,9 @@
 const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
+// primordials
+const StringPrototypeSplit = Function.prototype.call.bind(String.prototype.split);
+const NumberIsInteger = Number.isInteger;
+
 function ReadStream(fd) {
   if (!(this instanceof ReadStream)) return new ReadStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
@@ -7,30 +11,34 @@ function ReadStream(fd) {
   const stream = require("node:fs").ReadStream.$call(this, "", {
     fd,
   });
+  Object.setPrototypeOf(stream, ReadStream.prototype);
 
   stream.isRaw = false;
-  stream.isTTY = isatty(stream.fd);
+  stream.isTTY = true;
+
+  $assert(stream instanceof ReadStream);
 
   return stream;
 }
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Real = require("node:fs").ReadStream.prototype;
+    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
-    Object.defineProperty(ReadStream, "prototype", { value: Real });
-    ReadStream.prototype.setRawMode = function (flag) {
+    Prototype.setRawMode = function (flag) {
       const mode = flag ? 1 : 0;
       const err = ttySetMode(this.fd, mode);
       if (err) {
-        this.emit("error", new Error("setRawMode failed with errno:", err));
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
         return this;
       }
       this.isRaw = flag;
       return this;
     };
 
-    return Real;
+    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+
+    return Prototype;
   },
   enumerable: true,
   configurable: true,
@@ -284,7 +292,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!Number.isInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
   if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 };
 

@@ -52,8 +52,7 @@ describe("url", () => {
     expect(url.protocol).toBe("mailto:");
     expect(url.origin).toBe("null");
   });
-  it.skip("should work with blob urls", () => {
-    // TODO
+  it("blob urls", () => {
     var url = new URL("blob:https://example.com/1234-5678");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("https://example.com");
@@ -72,6 +71,9 @@ describe("url", () => {
     url = new URL("blob:ws://example.com");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("ws://example.com");
+    url = new URL("blob:file:///folder/else/text.txt");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("file://");
   });
   it("prints", () => {
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {

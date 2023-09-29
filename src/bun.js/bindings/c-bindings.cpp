@@ -49,3 +49,6 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
     return 0;
 #endif
 }
+extern "C" ssize_t bun_sysconf__SC_NPROCESSORS_ONLN() {
+    return sysconf(_SC_NPROCESSORS_ONLN);
+}

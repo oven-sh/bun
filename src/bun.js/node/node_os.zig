@@ -15,8 +15,9 @@ pub const Os = struct {
     pub const code = @embedFile("../os.exports.js");
 
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 22);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 23);
 
+        module.put(globalObject, JSC.ZigString.static("availableParallelism"), JSC.NewFunction(globalObject, JSC.ZigString.static("availableParallelism"), 0, availableParallelism, true));
         module.put(globalObject, JSC.ZigString.static("arch"), JSC.NewFunction(globalObject, JSC.ZigString.static("arch"), 0, arch, true));
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
         module.put(globalObject, JSC.ZigString.static("endianness"), JSC.NewFunction(globalObject, JSC.ZigString.static("endianness"), 0, endianness, true));
@@ -716,6 +717,37 @@ pub const Os = struct {
     pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
         return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
+    }
+
+    pub fn availableParallelism(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return if (comptime Environment.isLinux)
+            availableParallelismImplLinux(globalThis)
+        else if (comptime Environment.isMac)
+            availableParallelismImplDarwin(globalThis)
+        else
+            JSC.JSValue.jsNumber(1);
+    }
+
+    extern fn bun_sysconf__SC_NPROCESSORS_ONLN() isize;
+    fn availableParallelismImplLinux(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalThis;
+        var cpu_count: i64 = undefined;
+        if (std.os.sched_getaffinity(0)) |set| {
+            cpu_count = std.os.CPU_COUNT(set);
+        } else |_| {
+            cpu_count = bun_sysconf__SC_NPROCESSORS_ONLN();
+        }
+        return JSC.JSValue.jsNumber(cpu_count);
+    }
+
+    fn availableParallelismImplDarwin(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalThis;
+        var cpu_count: u32 = 1;
+        var count_len: usize = @sizeOf(@TypeOf(cpu_count));
+        std.c.sysctlbyname("hw.logicalcpu", &cpu_count, &count_len, null, 0);
+        return JSC.JSValue.jsNumber(cpu_count);
     }
 };
 

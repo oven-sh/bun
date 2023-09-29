@@ -4029,12 +4029,24 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, JSValue origin)
 {
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
+
     ErrorableString res;
     res.success = false;
+
+    if (key.isString()) {
+        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+            auto keyString = key.toWTFString(globalObject);
+            if (virtualModules->contains(keyString)) {
+                return JSC::Identifier::fromString(globalObject->vm(), keyString);
+            }
+        }
+    }
+
     BunString keyZ = Bun::toString(globalObject, key);
     BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toString(globalObject, referrer) : BunStringEmpty;
     ZigString queryString = { 0, 0 };
@@ -4053,17 +4065,31 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     }
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject,
+JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
     JSValue parameters,
     const SourceOrigin& sourceOrigin)
 {
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+        auto keyString = moduleNameValue->value(globalObject);
+        if (virtualModules->contains(keyString)) {
+            auto resolvedIdentifier = JSC::Identifier::fromString(vm, keyString);
+
+            auto result = JSC::importModule(globalObject, resolvedIdentifier,
+                JSC::jsUndefined(), parameters, JSC::jsUndefined());
+
+            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+            return result;
+        }
+    }
 
     auto sourceURL = sourceOrigin.url();
     ErrorableString resolved;

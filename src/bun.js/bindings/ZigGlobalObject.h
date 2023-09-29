@@ -381,9 +381,8 @@ public:
         return false;
     }
 
-    BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
-    BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
-    BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+    BunPlugin::OnLoad onLoadPlugins {};
+    BunPlugin::OnResolve onResolvePlugins {};
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

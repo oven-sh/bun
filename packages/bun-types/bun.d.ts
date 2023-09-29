@@ -3264,6 +3264,37 @@ declare module "bun" {
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
+
+    /**
+     * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
+     *
+     * @param specifier The module specifier to register the callback for
+     * @param callback The function to run when the module is imported or required
+     *
+     * ### Example
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.module("hello:world", () => {
+     *       return { exports: { foo: "bar" }, loader: "object" };
+     *     });
+     *   },
+     * });
+     *
+     * // sometime later
+     * const { foo } = await import("hello:world");
+     * console.log(foo); // "bar"
+     *
+     * // or
+     * const { foo } = require("hello:world");
+     * console.log(foo); // "bar"
+     * ```
+     */
+    module(
+      specifier: string,
+      callback: () => OnLoadResult | Promise<OnLoadResult>,
+    ): void;
   }
 
   interface BunPlugin {

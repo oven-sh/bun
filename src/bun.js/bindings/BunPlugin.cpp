@@ -17,7 +17,7 @@
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "BunClientData.h"
-
+#include "isBuiltinModule.h"
 #include "JavaScriptCore/RegularExpression.h"
 
 namespace Zig {
@@ -86,6 +86,58 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
     return JSValue::encode(jsUndefined());
 }
 
+static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callframe->argumentCount() < 2) {
+        throwException(globalObject, scope, createError(globalObject, "module() needs 2 arguments: a module ID and a function to call"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue moduleIdValue = callframe->uncheckedArgument(0);
+    JSValue functionValue = callframe->uncheckedArgument(1);
+
+    if (!moduleIdValue.isString()) {
+        throwException(globalObject, scope, createError(globalObject, "module() expects first argument to be a string for the module ID"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (!functionValue.isCallable()) {
+        throwException(globalObject, scope, createError(globalObject, "module() expects second argument to be a function"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    String moduleId = moduleIdValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    if (moduleId.isEmpty()) {
+        throwException(globalObject, scope, createError(globalObject, "virtual module cannot be blank"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (Bun::isBuiltinModule(moduleId)) {
+        throwException(globalObject, scope, createError(globalObject, makeString("module() cannot be used to override builtin module \""_s, moduleId, "\""_s)));
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (moduleId.startsWith("."_s)) {
+        throwException(globalObject, scope, createError(globalObject, "virtual module cannot start with \".\""_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
+    if (global->onLoadPlugins.virtualModules == nullptr) {
+        global->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
+    }
+    auto* virtualModules = global->onLoadPlugins.virtualModules;
+
+    virtualModules->add(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
+
+    return JSValue::encode(jsUndefined());
+}
+
 static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     JSC::VM& vm = globalObject->vm();
@@ -143,7 +195,7 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject*
 {
     Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
 
-    auto& plugins = global->onResolvePlugins[target];
+    auto& plugins = global->onResolvePlugins;
     auto callback = Bun__onDidAppendPlugin;
     return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
 }
@@ -152,7 +204,7 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* gl
 {
     Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
 
-    auto& plugins = global->onLoadPlugins[target];
+    auto& plugins = global->onLoadPlugins;
     auto callback = Bun__onDidAppendPlugin;
     return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
 }
@@ -182,6 +234,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBun, (JSC::JSGlobalObjec
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBun);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendVirtualModule, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return jsFunctionAppendVirtualModulePluginBody(globalObject, callframe);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
@@ -190,12 +247,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
 extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    for (uint8_t i = 0; i < BunPluginTargetMax + 1; i++) {
-        global->onLoadPlugins[i].fileNamespace.clear();
-        global->onResolvePlugins[i].fileNamespace.clear();
-        global->onLoadPlugins[i].groups.clear();
-        global->onResolvePlugins[i].namespaces.clear();
-    }
+    global->onLoadPlugins.fileNamespace.clear();
+    global->onResolvePlugins.fileNamespace.clear();
+    global->onLoadPlugins.groups.clear();
+    global->onResolvePlugins.namespaces.clear();
+
+    delete global->onLoadPlugins.virtualModules;
 
     return JSValue::encode(jsUndefined());
 }
@@ -239,76 +296,37 @@ extern "C" EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC:
     }
 
     JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
-    JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-    switch (target) {
-    case BunPluginTargetNode: {
-        builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("node"_s)), 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onLoad"_s),
-            1,
-            jsFunctionAppendOnLoadPluginNode,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onResolve"_s),
-            1,
-            jsFunctionAppendOnResolvePluginNode,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        break;
-    }
-    case BunPluginTargetBun: {
-        builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onLoad"_s),
-            1,
-            jsFunctionAppendOnLoadPluginBun,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onResolve"_s),
-            1,
-            jsFunctionAppendOnResolvePluginBun,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        break;
-    }
-    case BunPluginTargetBrowser: {
-        builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("browser"_s)), 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onLoad"_s),
-            1,
-            jsFunctionAppendOnLoadPluginBrowser,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        builderObject->putDirectNativeFunction(
-            vm,
-            globalObject,
-            JSC::Identifier::fromString(vm, "onResolve"_s),
-            1,
-            jsFunctionAppendOnResolvePluginBrowser,
-            ImplementationVisibility::Public,
-            NoIntrinsic,
-            JSC::PropertyAttribute::DontDelete | 0);
-        break;
-    }
-    }
+    builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "onLoad"_s),
+        1,
+        jsFunctionAppendOnLoadPluginBun,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "onResolve"_s),
+        1,
+        jsFunctionAppendOnResolvePluginBun,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "module"_s),
+        1,
+        jsFunctionAppendVirtualModule,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
 
     JSC::MarkedArgumentBuffer args;
     args.append(builderObject);
@@ -329,9 +347,7 @@ extern "C" EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC:
 extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    BunPluginTarget target = global->defaultBunPluginTarget;
-
-    return setupBunPlugin(globalObject, callframe, target);
+    return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }
 
 void BunPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func)
@@ -513,10 +529,60 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
 extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
 {
-    return globalObject->onResolvePlugins[target].run(globalObject, namespaceString, path, from);
+    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
 extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
 {
-    return globalObject->onLoadPlugins[target].run(globalObject, namespaceString, path);
+    return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
+}
+
+namespace Bun {
+JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier)
+{
+    auto fallback = [&]() -> JSC::JSValue {
+        return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
+    };
+
+    if (!globalObject->onLoadPlugins.virtualModules) {
+        return fallback();
+    }
+    auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
+    WTF::String specifierString = Bun::toWTFString(*specifier);
+    if (auto virtualModuleFn = virtualModules.get(specifierString)) {
+        auto& vm = globalObject->vm();
+        JSC::JSObject* function = virtualModuleFn.get();
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+        JSC::MarkedArgumentBuffer arguments;
+        JSC::CallData callData = JSC::getCallData(function);
+        RELEASE_ASSERT(callData.type != JSC::CallData::Type::None);
+
+        auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+        RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
+
+        if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
+            switch (promise->status(vm)) {
+            case JSPromise::Status::Rejected:
+            case JSPromise::Status::Pending: {
+                return promise;
+            }
+            case JSPromise::Status::Fulfilled: {
+                result = promise->result(vm);
+                break;
+            }
+            }
+        }
+
+        if (!result.isObject()) {
+            JSC::throwTypeError(globalObject, throwScope, "virtual module expects an object returned"_s);
+            return JSC::jsUndefined();
+        }
+
+        return result;
+    }
+
+    return fallback();
+}
+
 }

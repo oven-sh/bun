@@ -3541,8 +3541,50 @@ pub fn handleResponseMetadata(
                     {
                         // - Set request’s method to `GET` and request’s body to null.
                         this.method = .GET;
-                        // - For each headerName of request-body-header name, delete headerName from request’s header list.
-                        this.header_entries.len = 0;
+
+                        // https://github.com/oven-sh/bun/issues/6053
+                        if (this.header_entries.len > 0) {
+                            // A request-body-header name is a header name that is a byte-case-insensitive match for one of:
+                            // - `Content-Encoding`
+                            // - `Content-Language`
+                            // - `Content-Location`
+                            // - `Content-Type`
+                            const @"request-body-header" = &.{
+                                "Content-Encoding",
+                                "Content-Language",
+                                "Content-Location",
+                            };
+                            var i: usize = 0;
+
+                            // - For each headerName of request-body-header name, delete headerName from request’s header list.
+                            const names = this.header_entries.items(.name);
+                            var len = names.len;
+                            outer: while (i < len) {
+                                const name = this.headerStr(names[i]);
+                                switch (name.len) {
+                                    "Content-Type".len => {
+                                        const hash = hashHeaderName(name);
+                                        if (hash == comptime hashHeaderConst("Content-Type")) {
+                                            _ = this.header_entries.orderedRemove(i);
+                                            len = this.header_entries.len;
+                                            continue :outer;
+                                        }
+                                    },
+                                    "Content-Encoding".len => {
+                                        const hash = hashHeaderName(name);
+                                        inline for (@"request-body-header") |hash_value| {
+                                            if (hash == comptime hashHeaderConst(hash_value)) {
+                                                _ = this.header_entries.orderedRemove(i);
+                                                len = this.header_entries.len;
+                                                continue :outer;
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+                                i += 1;
+                            }
+                        }
                     }
 
                     // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
@@ -3557,7 +3599,7 @@ pub fn handleResponseMetadata(
                             if (name.len == "Authorization".len) {
                                 const hash = hashHeaderName(name);
                                 if (hash == authorization_header_hash) {
-                                    this.header_entries.swapRemove(i);
+                                    this.header_entries.orderedRemove(i);
                                     break;
                                 }
                             }

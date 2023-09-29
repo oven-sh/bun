@@ -11890,7 +11890,7 @@ function getCurves() {
 }
 const $lazy = globalThis[Symbol.for("Bun.lazy")];
 
-const { symmetricKeySize, asymmetricKeyType, equals, exports, createSecretKey } = $lazy("internal/crypto");
+const { symmetricKeySize, asymmetricKeyType, equals, exports, createSecretKey, createPublicKey } = $lazy("internal/crypto");
 
 class KeyObject {
   #cryptoKey;
@@ -11899,6 +11899,12 @@ class KeyObject {
   }
 
   static from(key) {
+    if (key instanceof KeyObject) {
+      key = key.#cryptoKey;
+    }
+    if (!(key instanceof CryptoKey)) {
+      throw new TypeError("otherKey must be a KeyObject");
+    }
     return new KeyObject(key);
   }
 
@@ -11947,12 +11953,76 @@ class KeyObject {
   }
 }
 crypto_exports.createSecretKey = function (key, encoding) {
-  //TODO: Handle KeyObject and CryptoKey
+  if(key instanceof KeyObject) {
+    if(key.type !== "secret") {
+      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`);
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    return KeyObject.from(key);
+  }
+  if(key instanceof KeyObject) {
+    if(key.type !== "secret") {
+      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`);
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    return KeyObject.from(key);
+  }
+  
   const buffer = getArrayBufferOrView(key, encoding || "utf8");
   return KeyObject.from(createSecretKey(buffer));
 };
 crypto_exports.createPublicKey = function (key) {
-  console.log("createPublicKey", key);
+  if(typeof key === "string") {
+    key = Buffer.from(key, "utf8");
+    return createPublicKey({ key, format: "pem" });
+  } else if(isAnyArrayBuffer(key) || isArrayBufferView(key)) {
+    return createPublicKey({ key, format: "pem" });
+  } else if(typeof key === "object") {
+    if(key instanceof KeyObject) {
+      if(key.type === "private") {
+        //TODO: if key is a KeyObject with type 'private', the public key is derived from the given private key; otherwise, key must be an object with the properties described above.
+        throw new Error("Not implemented");
+      }
+      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`);
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    } else {
+      const actual_key = key.key;
+      if(typeof actual_key === "string") {
+        key.key = Buffer.from(actual_key, key.encoding || "utf8");
+      } else if (actual_key instanceof KeyObject) {
+        if(key.type === "private") {
+          //TODO: if key is a KeyObject with type 'private', the public key is derived from the given private key; otherwise, key must be an object with the properties described above.
+          throw new Error("Not implemented");
+        }
+        const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`);
+        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+        throw error;
+      }
+      if(!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key)) {
+        var error = new TypeError(
+          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+            key,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;    
+      }
+      if(!key.format) {
+        key.format = "pem";
+      }
+      return createSecretKey(key);
+    }
+
+  } else {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+        key,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
 };
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;

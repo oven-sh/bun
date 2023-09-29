@@ -727,7 +727,7 @@ test("decorators with different property key types", () => {
       "string" = 30;
       @d1("string method")
       "string method"() {}
-      @d1(12e3)
+      @d1(12000)
       12e3 = "number key";
       @d1(12e3 + 1)
       [12e3 + 1]() {}

@@ -194,11 +194,25 @@ static const HashTableValue RequireFunctionPrototypeValues[] = {
     { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
 };
 
+Structure* RequireFunctionPrototype::createStructure(
+    JSC::VM& vm,
+    JSC::JSGlobalObject* globalObject)
+{
+    return Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
+}
+
+Structure* RequireResolveFunctionPrototype::createStructure(
+    JSC::VM& vm,
+    JSC::JSGlobalObject* globalObject)
+{
+    return Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
+}
+
 RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
 
-    auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
+    auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject);
     RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
@@ -209,7 +223,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
 {
     auto& vm = globalObject->vm();
 
-    auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
+    auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject);
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
@@ -221,8 +235,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    // TODO: why does this fail?
-    // ASSERT(inherits(info()));
+    ASSERT(inherits(info()));
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
@@ -480,6 +493,14 @@ public:
         return prototype;
     }
 
+    static JSC::Structure* createStructure(
+        JSC::VM& vm,
+        JSC::JSGlobalObject* globalObject,
+        JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
     DECLARE_INFO;
 
     JSCommonJSModulePrototype(
@@ -499,8 +520,7 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
-        // TODO: why does this fail?
-        // ASSERT(inherits(info()));
+        ASSERT(inherits(info()));
 
         reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
@@ -520,8 +540,7 @@ const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "ModulePrototype"_s, 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
 {
     Base::finishCreation(vm);
-    // TODO: why does this fail?
-    // ASSERT(inherits(info()));
+    ASSERT(inherits(info()));
     m_id.set(vm, this, id);
     m_filename.set(vm, this, filename);
     m_dirname.set(vm, this, dirname);
@@ -887,8 +906,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    // TODO: why does this fail?
-    // ASSERT(inherits(info()));
+    ASSERT(inherits(info()));
 
     reifyStaticProperties(vm, info(), RequireResolveFunctionPrototypeValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();

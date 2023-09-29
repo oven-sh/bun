@@ -3076,7 +3076,7 @@ int64_t JSC__JSValue__toInt64(JSC__JSValue val)
     }
     if (value.isInt32())
         return value.asInt32();
-    return static_cast<int64_t>(floor(value.asDouble()));
+    return static_cast<int64_t>(value.asDouble());
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
@@ -3137,28 +3137,28 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
 
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+
+    if (value.isInt32()) {
+        return static_cast<uint64_t>(value.asInt32());
+    }
+    ASSERT(value.isDouble());
+
+    int64_t result = JSC::tryConvertToInt52(value.asDouble());
     if (result != JSC::JSValue::notInt52) {
         if (result < 0)
             return 0;
 
         return static_cast<uint64_t>(result);
     }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
-            return heapBigInt->toBigUInt64(heapBigInt);
-        }
-    }
-
-    if (!_val.isNumber()) {
-        return 0;
-    }
-
-    return static_cast<uint64_t>(_val.asAnyInt());
+    return 0;
 }
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,

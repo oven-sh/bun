@@ -188,7 +188,7 @@ public:
     JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values, bool clone);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), info());
     }
 
     bool need_update() { return version_db->version.load() != version; }
@@ -339,10 +339,6 @@ void JSSQLStatement::destroy(JSC::JSCell* cell)
     JSSQLStatement* thisObject = static_cast<JSSQLStatement*>(cell);
     sqlite3_finalize(thisObject->stmt);
     thisObject->stmt = nullptr;
-}
-
-void JSSQLStatementConstructor::destroy(JSC::JSCell* cell)
-{
 }
 
 static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope, bool clone)

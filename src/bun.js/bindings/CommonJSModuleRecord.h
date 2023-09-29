@@ -116,6 +116,7 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 
@@ -140,6 +141,7 @@ class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
     RequireFunctionPrototype(
         JSC::VM& vm,

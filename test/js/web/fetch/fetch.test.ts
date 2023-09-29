@@ -1501,10 +1501,12 @@ describe("should strip headers", () => {
       method: "POST",
       headers: {
         "I-Am-Here": "yes",
+        "Content-Language": "This should be stripped",
       },
     });
 
-    expect(headers.get("I-Am-Here")).toBeNull();
+    expect(headers.get("I-Am-Here")).toBe("yes");
+    expect(headers.get("Content-Language")).toBeNull();
     expect(url).toEndWith("/redirected");
     expect(redirected).toBe(true);
     server.stop(true);

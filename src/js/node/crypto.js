@@ -11911,7 +11911,27 @@ class KeyObject {
   }
 
   ["export"](options) {
-
+    if (!options) {
+      switch (this.type) {
+        case "secret":
+          options = {
+            format: "buffer",
+          };
+          break;
+        case "public":
+          options = {
+            format: "pem",
+            type: "spki",
+          };
+          break;
+        case "private":
+          options = {
+            format: "pem",
+            type: "pkcs8",
+          };
+          break;
+      }
+    }
     return exports(this.#cryptoKey, options);
   }
 

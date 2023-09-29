@@ -1082,65 +1082,13 @@ static JSC::EncodedJSValue WebCrypto__Exports(JSC::JSGlobalObject* globalObject,
                 return JSC::JSValue::encode(JSC::JSValue {});
             } else {
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
+                JSC::throwTypeError(globalObject, scope, "expected options to be a object"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
         }
-        // default options
-        if (key_type == CryptoKeyType::Secret) {
-            switch (id) {
-            case CryptoKeyClass::HMAC: {
-                const auto& hmac = downcast<WebCore::CryptoKeyHMAC>(wrapped);
-                auto keyData = hmac.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
-            }
-            case CryptoKeyClass::AES: {
-                const auto& aes = downcast<WebCore::CryptoKeyAES>(wrapped);
-                auto keyData = aes.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
-            }
-            case CryptoKeyClass::OKP: {
-                const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
-                auto keyData = okpKey.platformKey();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
-            }
-            case CryptoKeyClass::Raw: {
-                const auto& raw = downcast<WebCore::CryptoKeyRaw>(wrapped);
-                auto keyData = raw.key();
-                auto size = keyData.size();
-                auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(globalObject, size)));
-                if (size > 0)
-                    memcpy(buffer->vector(), keyData.data(), size);
-
-                return JSC::JSValue::encode(buffer);
-            }
-            default: {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-            }
-
-        } else {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSC::throwTypeError(globalObject, scope, "Not implemented"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(globalObject, scope, "expected options to be a object"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
     }
 
     // No JSCryptoKey instance

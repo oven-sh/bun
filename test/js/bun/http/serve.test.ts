@@ -1212,3 +1212,39 @@ it("#5859 arrayBuffer", async () => {
   await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
   expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
 });
+
+it("server.requestIP (v4)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "127.0.0.1",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "127.0.0.1",
+    family: "IPv4",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});
+
+it("server.requestIP (v6)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "0000:0000:0000:0000:0000:0000:0000:0001",
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "0000:0000:0000:0000:0000:0000:0000:0001",
+    family: "IPv6",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});

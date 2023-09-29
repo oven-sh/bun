@@ -206,6 +206,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "AddEventListenerOptions.h"
+#include "JSSocketAddress.h"
 
 #include "ErrorStackTrace.h"
 #include "CallSite.h"
@@ -2884,6 +2885,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
+    m_JSSocketAddressStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
+        });
+
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3858,6 +3864,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
+    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
 

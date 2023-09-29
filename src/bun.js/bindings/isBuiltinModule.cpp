@@ -38,6 +38,8 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "process"_s,
     "bun:wrap"_s,
     "punycode"_s,
+    "bun:test"_s,
+    "bun:main"_s,
     "readline"_s,
     "_tls_wrap"_s,
     "constants"_s,

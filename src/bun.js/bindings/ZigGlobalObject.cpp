@@ -1768,19 +1768,22 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             // }
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, WebCrypto__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "symmetricKeySize"_s)), JSC::JSFunction::create(vm, globalObject, 1, "symmetricKeySize"_s, KeyObject__SymmetricKeySize, ImplementationVisibility::Public, NoIntrinsic), 0);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, WebCrypto__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "asymmetricKeyType"_s)), JSC::JSFunction::create(vm, globalObject, 1, "asymmetricKeyType"_s, KeyObject__AsymmetricKeyType, ImplementationVisibility::Public, NoIntrinsic), 0);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, WebCrypto__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "equals"_s)), JSC::JSFunction::create(vm, globalObject, 2, "equals"_s, KeyObject__Equals, ImplementationVisibility::Public, NoIntrinsic), 0);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, WebCrypto__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "exports"_s)), JSC::JSFunction::create(vm, globalObject, 2, "exports"_s, KeyObject__Exports, ImplementationVisibility::Public, NoIntrinsic), 0);
 
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, WebCrypto__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createSecretKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createSecretKey"_s, KeyObject__createSecretKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, WebCrypto__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPublicKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPublicKey"_s, KeyObject__createPublicKey, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createPrivateKey"_s)), JSC::JSFunction::create(vm, globalObject, 1, "createPrivateKey"_s, KeyObject__createPrivateKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
             return JSValue::encode(obj);
         }

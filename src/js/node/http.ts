@@ -134,9 +134,9 @@ var FakeSocket = class Socket extends Duplex {
 
   #address;
   address() {
-    // Call server.requestIp() without doing any propety getter twice.
+    // Call server.requestIP() without doing any propety getter twice.
     var internalData;
-    return (this.#address ??= (internalData = this[kInternalSocketData])[0].requestIp(internalData[2]));
+    return (this.#address ??= (internalData = this[kInternalSocketData])[0].requestIP(internalData[2]));
   }
 
   get bufferSize() {

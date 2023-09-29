@@ -286,7 +286,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIp()
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return 0;

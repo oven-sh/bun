@@ -4847,7 +4847,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
         pub const doFetch = onFetch;
-        pub const doRequestIp = JSC.wrapInstanceMethod(ThisServer, "requestIp", false);
+        pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
 
         pub usingnamespace NamespaceType;
 
@@ -4858,7 +4858,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
 
-        pub fn requestIp(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+        pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,

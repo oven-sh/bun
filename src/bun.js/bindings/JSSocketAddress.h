@@ -1,4 +1,4 @@
-// The object returned by Bun.serve's .requestIp()
+// The object returned by Bun.serve's .requestIP()
 #pragma once
 #include "root.h"
 #include "JavaScriptCore/JSObjectInlines.h"

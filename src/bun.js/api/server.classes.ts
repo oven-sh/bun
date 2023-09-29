@@ -24,8 +24,8 @@ function generate(name) {
         fn: "doStop",
         length: 1,
       },
-      requestIp: {
-        fn: "doRequestIp",
+      requestIP: {
+        fn: "doRequestIP",
         length: 1,
       },
       port: {

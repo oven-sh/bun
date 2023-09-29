@@ -4197,8 +4197,8 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__publishCallback);
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback);
 
-extern "C" EncodedJSValue DebugHTTPSServerPrototype__doRequestIp(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIpCallback);
+extern "C" EncodedJSValue DebugHTTPSServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIPCallback);
 
 extern "C" EncodedJSValue DebugHTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback);
@@ -4219,7 +4219,7 @@ static const HashTableValue JSDebugHTTPSServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPSServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__reloadCallback, 2 } },
-    { "requestIp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__requestIpCallback, 1 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPSServerPrototype__upgradeCallback, 1 } }
 };
@@ -4444,7 +4444,7 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__reloadCallback, (JSGlobalObj
     return DebugHTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIpCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -4469,7 +4469,7 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__requestIpCallback, (JSGlobal
     }
 #endif
 
-    return DebugHTTPSServerPrototype__doRequestIp(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return DebugHTTPSServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -4711,8 +4711,8 @@ JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__publishCallback);
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback);
 
-extern "C" EncodedJSValue DebugHTTPServerPrototype__doRequestIp(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIpCallback);
+extern "C" EncodedJSValue DebugHTTPServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIPCallback);
 
 extern "C" EncodedJSValue DebugHTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback);
@@ -4733,7 +4733,7 @@ static const HashTableValue JSDebugHTTPServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DebugHTTPServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__reloadCallback, 2 } },
-    { "requestIp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__requestIpCallback, 1 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DebugHTTPServerPrototype__upgradeCallback, 1 } }
 };
@@ -4958,7 +4958,7 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__reloadCallback, (JSGlobalObje
     return DebugHTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIpCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -4983,7 +4983,7 @@ JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__requestIpCallback, (JSGlobalO
     }
 #endif
 
-    return DebugHTTPServerPrototype__doRequestIp(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return DebugHTTPServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(DebugHTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -11684,8 +11684,8 @@ JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__publishCallback);
 extern "C" EncodedJSValue HTTPSServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback);
 
-extern "C" EncodedJSValue HTTPSServerPrototype__doRequestIp(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__requestIpCallback);
+extern "C" EncodedJSValue HTTPSServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__requestIPCallback);
 
 extern "C" EncodedJSValue HTTPSServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback);
@@ -11706,7 +11706,7 @@ static const HashTableValue JSHTTPSServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPSServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__reloadCallback, 2 } },
-    { "requestIp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__requestIpCallback, 1 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSServerPrototype__upgradeCallback, 1 } }
 };
@@ -11931,7 +11931,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__reloadCallback, (JSGlobalObject *
     return HTTPSServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__requestIpCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -11956,7 +11956,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__requestIpCallback, (JSGlobalObjec
     }
 #endif
 
-    return HTTPSServerPrototype__doRequestIp(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return HTTPSServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(HTTPSServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -12198,8 +12198,8 @@ JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__publishCallback);
 extern "C" EncodedJSValue HTTPServerPrototype__doReload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback);
 
-extern "C" EncodedJSValue HTTPServerPrototype__doRequestIp(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__requestIpCallback);
+extern "C" EncodedJSValue HTTPServerPrototype__doRequestIP(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__requestIPCallback);
 
 extern "C" EncodedJSValue HTTPServerPrototype__doStop(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(HTTPServerPrototype__stopCallback);
@@ -12220,7 +12220,7 @@ static const HashTableValue JSHTTPServerPrototypeTableValues[] = {
     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, HTTPServerPrototype__protocolGetterWrap, 0 } },
     { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__publishCallback, 3 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__reloadCallback, 2 } },
-    { "requestIp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__requestIpCallback, 1 } },
+    { "requestIP"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__requestIPCallback, 1 } },
     { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__stopCallback, 1 } },
     { "upgrade"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPServerPrototype__upgradeCallback, 1 } }
 };
@@ -12445,7 +12445,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__reloadCallback, (JSGlobalObject * 
     return HTTPServerPrototype__doReload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__requestIpCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__requestIPCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -12470,7 +12470,7 @@ JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__requestIpCallback, (JSGlobalObject
     }
 #endif
 
-    return HTTPServerPrototype__doRequestIp(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return HTTPServerPrototype__doRequestIP(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(HTTPServerPrototype__stopCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -2196,6 +2196,21 @@ declare module "bun" {
     tls?: TLSOptions;
   }
 
+  export interface SocketAddress {
+    /**
+     * The IP address of the client.
+     */
+    address: string;
+    /**
+     * The port of the client.
+     */
+    port: number;
+    /**
+     * The IP family ("IPv4" or "IPv6").
+     */
+    family: "IPv4" | "IPv6";
+  }
+
   /**
    * HTTP & HTTPS Server
    *
@@ -2354,12 +2369,12 @@ declare module "bun" {
      * ```js
      * export default {
      *  async fetch(request, server) {
-     *    return new Response(server.requestIp(request));
+     *    return new Response(server.requestIP(request));
      *  }
      * }
      * ```
      */
-    requestIp(request: Request): string | null;
+    requestIP(request: Request): SocketAddress | null;
 
     /**
      * How many requests are in-flight right now?

@@ -1213,11 +1213,11 @@ it("#5859 arrayBuffer", async () => {
   expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
 });
 
-it("server.requestIp (v4)", async () => {
+it("server.requestIP (v4)", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req, server) {
-      return Response.json(server.requestIp(req));
+      return Response.json(server.requestIP(req));
     },
     hostname: "127.0.0.1",
   });
@@ -1231,11 +1231,11 @@ it("server.requestIp (v4)", async () => {
   server.stop(true);
 });
 
-it("server.requestIp (v6)", async () => {
+it("server.requestIP (v6)", async () => {
   const server = Bun.serve({
     port: 0,
     fetch(req, server) {
-      return Response.json(server.requestIp(req));
+      return Response.json(server.requestIP(req));
     },
     hostname: "0000:0000:0000:0000:0000:0000:0000:0001",
   });

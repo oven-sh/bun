@@ -1202,9 +1202,7 @@ static JSC::EncodedJSValue WebCrypto__SymmetricKeySize(JSC::JSGlobalObject* glob
             break;
         }
         default: {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope, "Invalid Operation"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return JSC::JSValue::encode(JSC::jsUndefined());
         }
         }
 

@@ -5,7 +5,7 @@ Bun reads your `.env` files automatically and provides idiomatic ways to read an
 Bun reads the following files automatically (listed in order of increasing precedence).
 
 - `.env`
-- `.env.production` or `.env.development` (depending on value of `NODE_ENV`)
+- `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
 ```txt#.env
@@ -52,6 +52,31 @@ FOOBAR=aaaaaa
 <lots more lines>
 ```
 
+## TypeScript
+
+In TypeScript, all properties of `process.env` are typed as `string | undefined`.
+
+```ts
+Bun.env.whatever;
+// string | undefined
+```
+
+To get autocompletion and tell TypeScript to treat a variable as a non-optional string, we'll use [interface merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#merging-interfaces).
+
+```ts
+declare module "bun" {
+  interface Env {
+    AWESOME: string;
+  }
+}
+```
+
+Add this line to any file in your project. It will globally add the `AWESOME` property to `process.env` and `Bun.env`.
+
+```ts
+process.env.AWESOME; // => string
+```
+
 ## Configuring Bun
 
 These environment variables are read by Bun and configure aspects of its behavior.
@@ -79,6 +104,6 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `DO_NOT_TRACK`
-- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
+- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
 
 {% /table %}

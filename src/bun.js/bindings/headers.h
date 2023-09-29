@@ -298,7 +298,7 @@ CPP_DECL void JSC__JSMap__set(JSC__JSMap* arg0, JSC__JSGlobalObject* arg1, JSC__
 
 #pragma mark - JSC::JSValue
 
-CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1)) __attribute__((nonnull (3, 4)));
+CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSCell* JSC__JSValue__asCell(JSC__JSValue JSValue0);

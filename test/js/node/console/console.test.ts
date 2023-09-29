@@ -64,3 +64,27 @@ describe("console.Console", () => {
     expect(await errValue()).toBe("uh oh!\n");
   });
 });
+
+test("console._stdout", () => {
+  // @ts-ignore
+  expect(console._stdout).toBe(process.stdout);
+
+  expect(Object.getOwnPropertyDescriptor(console, "_stdout")).toEqual({
+    value: process.stdout,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
+test("console._stderr", () => {
+  // @ts-ignore
+  expect(console._stderr).toBe(process.stderr);
+
+  expect(Object.getOwnPropertyDescriptor(console, "_stderr")).toEqual({
+    value: process.stderr,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});

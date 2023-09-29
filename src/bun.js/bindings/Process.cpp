@@ -45,7 +45,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.15.0"
+#define REPORTED_NODE_VERSION "20.8.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define processObjectMainModuleCodeGenerator moduleMainCodeGenerator
 
@@ -810,12 +810,12 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("10.8.168.20-node.8"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.44.2"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("8"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("11.3.244.8-node.15"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.46.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("108"))));
+        JSC::JSValue(JSC::jsString(vm, makeAtomString("115"))));
 
     return object;
 }
@@ -1326,6 +1326,16 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     }
 
     return process;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(LINUX) || OS(FREEBSD)
+    return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
+#else
+    return JSValue::encode(jsUndefined());
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
@@ -1864,6 +1874,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
   connected                        processConnected                         CustomAccessor
+  constrainedMemory                Process_functionConstrainedMemory        Function 0
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor

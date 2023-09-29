@@ -1697,6 +1697,7 @@ pub const PackageManager = struct {
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     onWake: WakeHandler = .{},
+    ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1715,6 +1716,14 @@ pub const PackageManager = struct {
 
     pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
         return this.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn computeIsContinuousIntegration(this: *PackageManager) bool {
+        return this.env.isCI();
+    }
+
+    pub inline fn isContinuousIntegration(this: *PackageManager) bool {
+        return this.ci_mode.get();
     }
 
     pub const WakeHandler = struct {
@@ -1884,6 +1893,38 @@ pub const PackageManager = struct {
         try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
         this.preinstall_state.expandToCapacity();
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
+    }
+
+    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+        switch (resolution.tag) {
+            Resolution.Tag.npm => {
+                if (resolution.value.npm.version.tag.hasPre())
+                    // TODO:
+                    return null;
+
+                // We skip this in CI because we don't want any performance impact in an environment you'll probably never use
+                // and it makes tests more consistent
+                if (this.isContinuousIntegration())
+                    return null;
+
+                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
+                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
+                        this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
+                        break :brk this.manifests.getPtr(name_hash).?;
+                    }
+
+                    return null;
+                };
+
+                if (manifest.findByDistTag("latest")) |latest_version| {
+                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
+                    return latest_version.version;
+                }
+
+                return null;
+            },
+            else => return null,
+        }
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
@@ -2089,14 +2130,21 @@ pub const PackageManager = struct {
                 github_api_domain = api_domain;
             }
         }
+
+        const owner = this.lockfile.str(&repository.owner);
+        const repo = this.lockfile.str(&repository.repo);
+        const committish = this.lockfile.str(&repository.committish);
+
         return std.fmt.allocPrint(
             this.allocator,
-            "https://{s}/repos/{s}/{s}/tarball/{s}",
+            "https://{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
                 github_api_domain,
-                this.lockfile.str(&repository.owner),
-                this.lockfile.str(&repository.repo),
-                this.lockfile.str(&repository.committish),
+                owner,
+                repo,
+                // repo might be empty if dep is https://github.com/... style
+                if (repo.len > 0) "/" else "",
+                committish,
             },
         ) catch unreachable;
     }
@@ -2633,8 +2681,8 @@ pub const PackageManager = struct {
                 }
             },
             .workspace => {
-                // relative to cwd
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+                // package name hash should be used to find workspace path from map
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
@@ -2908,7 +2956,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .git, .github, .npm, .tarball => String.Builder.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -4501,6 +4549,7 @@ pub const PackageManager = struct {
             env: *DotEnv.Loader,
             cli_: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
+            subcommand: Subcommand,
         ) !void {
             var base = Api.NpmRegistry{
                 .url = "",
@@ -4715,6 +4764,12 @@ pub const PackageManager = struct {
 
             if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
                 this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
+            // Update should never read from manifest cache
+            if (subcommand == .update) {
+                this.enable.manifest_cache = false;
+                this.enable.manifest_cache_control = false;
             }
 
             if (cli_) |cli| {
@@ -5322,6 +5377,7 @@ pub const PackageManager = struct {
             env,
             cli,
             ctx.install,
+            subcommand,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
@@ -5407,6 +5463,7 @@ pub const PackageManager = struct {
             env,
             cli,
             bun_install,
+            .install,
         );
 
         manager.timestamp_for_manifest_cache_control = @as(
@@ -5788,7 +5845,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
@@ -5804,7 +5861,7 @@ pub const PackageManager = struct {
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
@@ -6032,7 +6089,7 @@ pub const PackageManager = struct {
 
                 var value = input;
                 var alias: ?string = null;
-                if (strings.isNPMPackageName(input)) {
+                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
                     alias = input;
                     value = input[input.len..];
                 } else if (input.len > 1) {
@@ -6149,7 +6206,7 @@ pub const PackageManager = struct {
     ) !void {
         var update_requests = try UpdateRequest.Array.init(0);
 
-        if (manager.options.positionals.len == 1) {
+        if (manager.options.positionals.len <= 1) {
             var examples_to_print: [3]string = undefined;
 
             const off = @as(u64, @intCast(std.time.milliTimestamp()));

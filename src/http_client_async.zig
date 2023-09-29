@@ -33,7 +33,7 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const c_ares = @import("./deps/c_ares.zig");
 
-const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
+const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
@@ -1071,17 +1071,24 @@ pub fn onClose(
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail;
 
-    // if the peer closed after a full chunk, treat this
-    // as if the transfer had complete, browsers appear to ignore
-    // a missing 0\r\n chunk
-    if (in_progress and client.state.isChunkedEncoding()) {
-        if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-            var buf = client.state.getBodyBuffer();
-            if (buf.list.items.len > 0) {
-                client.state.received_last_chunk = true;
-                client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
-                return;
+    if (in_progress) {
+        // if the peer closed after a full chunk, treat this
+        // as if the transfer had complete, browsers appear to ignore
+        // a missing 0\r\n chunk
+        if (client.state.isChunkedEncoding()) {
+            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+                var buf = client.state.getBodyBuffer();
+                if (buf.list.items.len > 0) {
+                    client.state.received_last_chunk = true;
+                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
             }
+        } else if (client.state.content_length == null and client.state.response_stage == .body) {
+            // no content length informed so we are done here
+            client.state.received_last_chunk = true;
+            client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+            return;
         }
     }
 
@@ -1121,12 +1128,31 @@ pub fn onConnectError(
 pub fn onEnd(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onEnd  {s}\n", .{client.url.href});
-
-    if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionClosed);
+    const in_progress = client.state.stage != .done and client.state.stage != .fail;
+    if (in_progress) {
+        // if the peer closed after a full chunk, treat this
+        // as if the transfer had complete, browsers appear to ignore
+        // a missing 0\r\n chunk
+        if (client.state.isChunkedEncoding()) {
+            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+                var buf = client.state.getBodyBuffer();
+                if (buf.list.items.len > 0) {
+                    client.state.received_last_chunk = true;
+                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
+            }
+        } else if (client.state.content_length == null and client.state.response_stage == .body) {
+            // no content length informed so we are done here
+            client.state.received_last_chunk = true;
+            client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+            return;
+        }
+    }
+    client.fail(error.ConnectionClosed);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -1369,8 +1395,8 @@ pub const InternalState = struct {
             return this.total_body_received >= content_length;
         }
 
-        // TODO: in future to handle Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
-        return true;
+        // Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
+        return this.received_last_chunk;
     }
 
     fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
@@ -2695,6 +2721,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             }
 
             if (!can_continue) {
+                log("onData: can_continue is false", .{});
                 // this means that the request ended
                 // clone metadata and return the progress at this point
                 this.cloneMetadata();
@@ -3089,10 +3116,10 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
     // is it exactly as much as we need?
-    if (is_only_buffer and incoming_data.len >= content_length) {
-        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length]);
+    if (is_only_buffer and content_length != null and incoming_data.len >= content_length.?) {
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length.?]);
         return true;
     } else {
         return handleResponseBodyFromMultiplePackets(this, incoming_data);
@@ -3135,16 +3162,19 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
 
-    if (buffer.list.items.len == 0 and
-        content_length > 0 and incoming_data.len < preallocate_max)
-    {
+    if (buffer.list.items.len == 0 and incoming_data.len < preallocate_max) {
         buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
     }
 
-    const remaining_content_length = content_length -| this.state.total_body_received;
-    var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
+    var remainder: []const u8 = undefined;
+    if (content_length != null) {
+        const remaining_content_length = content_length.? -| this.state.total_body_received;
+        remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
+    } else {
+        remainder = incoming_data;
+    }
 
     _ = try buffer.write(remainder);
 
@@ -3157,7 +3187,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     // done or streaming
-    const is_done = this.state.total_body_received >= content_length;
+    const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming)) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
@@ -3479,22 +3509,23 @@ pub fn handleResponseMetadata(
                         this.redirect = url_buf;
                     } else {
                         var url_buf = URLBufferPool.get(default_allocator);
+                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
                         const original_url = this.url;
-                        const port = original_url.getPortAuto();
 
-                        if (port == original_url.getDefaultPort()) {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                            ) catch return error.RedirectURLTooLong);
-                        } else {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}:{d}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
-                            ) catch return error.RedirectURLTooLong);
+                        const new_url_ = bun.JSC.URL.join(
+                            bun.String.fromUTF8(original_url.href),
+                            bun.String.fromUTF8(location),
+                        );
+                        defer new_url_.deref();
+
+                        if (new_url_.isEmpty()) {
+                            return error.InvalidRedirectURL;
                         }
+
+                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
+                            return error.RedirectURLTooLong;
+                        };
+                        this.url = URL.parse(new_url);
 
                         is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;
@@ -3510,8 +3541,50 @@ pub fn handleResponseMetadata(
                     {
                         // - Set request’s method to `GET` and request’s body to null.
                         this.method = .GET;
-                        // - For each headerName of request-body-header name, delete headerName from request’s header list.
-                        this.header_entries.len = 0;
+
+                        // https://github.com/oven-sh/bun/issues/6053
+                        if (this.header_entries.len > 0) {
+                            // A request-body-header name is a header name that is a byte-case-insensitive match for one of:
+                            // - `Content-Encoding`
+                            // - `Content-Language`
+                            // - `Content-Location`
+                            // - `Content-Type`
+                            const @"request-body-header" = &.{
+                                "Content-Encoding",
+                                "Content-Language",
+                                "Content-Location",
+                            };
+                            var i: usize = 0;
+
+                            // - For each headerName of request-body-header name, delete headerName from request’s header list.
+                            const names = this.header_entries.items(.name);
+                            var len = names.len;
+                            outer: while (i < len) {
+                                const name = this.headerStr(names[i]);
+                                switch (name.len) {
+                                    "Content-Type".len => {
+                                        const hash = hashHeaderName(name);
+                                        if (hash == comptime hashHeaderConst("Content-Type")) {
+                                            _ = this.header_entries.orderedRemove(i);
+                                            len = this.header_entries.len;
+                                            continue :outer;
+                                        }
+                                    },
+                                    "Content-Encoding".len => {
+                                        const hash = hashHeaderName(name);
+                                        inline for (@"request-body-header") |hash_value| {
+                                            if (hash == comptime hashHeaderConst(hash_value)) {
+                                                _ = this.header_entries.orderedRemove(i);
+                                                len = this.header_entries.len;
+                                                continue :outer;
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+                                i += 1;
+                            }
+                        }
                     }
 
                     // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
@@ -3526,7 +3599,7 @@ pub fn handleResponseMetadata(
                             if (name.len == "Authorization".len) {
                                 const hash = hashHeaderName(name);
                                 if (hash == authorization_header_hash) {
-                                    this.header_entries.swapRemove(i);
+                                    this.header_entries.orderedRemove(i);
                                     break;
                                 }
                             }
@@ -3544,7 +3617,12 @@ pub fn handleResponseMetadata(
     }
 
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
+    if (content_length) |length| {
+        log("handleResponseMetadata: content_length is {} and transfer_encoding {}", .{ length, this.state.transfer_encoding });
+    } else {
+        log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
+    }
     // if no body is expected we should stop processing
-    return this.method.hasBody() and (content_length > 0 or this.state.transfer_encoding == .chunked);
+    return this.method.hasBody() and (content_length == null or content_length.? > 0 or this.state.transfer_encoding == .chunked);
 }

@@ -695,6 +695,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    if(sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This build of sqlite3 does not support dynamic extension loading"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
     char* error;

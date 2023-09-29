@@ -308,6 +308,10 @@ pub export fn Bun__Process__send(
     }
 }
 
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
+    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+}
+
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,

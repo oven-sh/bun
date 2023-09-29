@@ -27,7 +27,6 @@
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
 
-#include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>

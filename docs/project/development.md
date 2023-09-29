@@ -46,8 +46,7 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm16 clang16 lld
-
+$ sudo pacman -S llvm clang lld
 ```
 
 {% /codetabs %}
@@ -96,7 +95,7 @@ $ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#Arch
-$ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
+$ sudo pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja pkg-config python rust sed unzip
 ```
 
 {% /codetabs %}

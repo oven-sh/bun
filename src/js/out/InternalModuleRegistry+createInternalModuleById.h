@@ -18,8 +18,14 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::InternalFSCp: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:fs/cp"_s, "internal/fs/cp.js"_s, InternalModuleRegistryConstants::InternalFSCpCode, "builtin://internal/fs/cp"_s);
     }
+    case Field::InternalPrimordials: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:primordials"_s, "internal/primordials.js"_s, InternalModuleRegistryConstants::InternalPrimordialsCode, "builtin://internal/primordials"_s);
+    }
     case Field::InternalShared: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:shared"_s, "internal/shared.js"_s, InternalModuleRegistryConstants::InternalSharedCode, "builtin://internal/shared"_s);
+    }
+    case Field::InternalUtilInspect: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:util/inspect"_s, "internal/util/inspect.js"_s, InternalModuleRegistryConstants::InternalUtilInspectCode, "builtin://internal/util/inspect"_s);
     }
     case Field::NodeAssert: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:assert"_s, "node/assert.js"_s, InternalModuleRegistryConstants::NodeAssertCode, "builtin://node/assert"_s);

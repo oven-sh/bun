@@ -662,11 +662,11 @@ pub const Log = struct {
     }
 
     pub const Level = enum(i8) {
-        verbose,
-        debug,
-        info,
-        warn,
-        err,
+        verbose, // 0
+        debug, // 1
+        info, // 2
+        warn, //  3
+        err, // 4
 
         pub fn atLeast(this: Level, other: Level) bool {
             return @intFromEnum(this) <= @intFromEnum(other);

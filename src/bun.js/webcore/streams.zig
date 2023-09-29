@@ -2634,6 +2634,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn flushFromJSNoWait(this: *@This()) JSC.Node.Maybe(JSValue) {
+            log("flushFromJSNoWait", .{});
             if (this.hasBackpressure() or this.done) {
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
             }

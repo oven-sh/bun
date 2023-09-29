@@ -189,24 +189,28 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     if (dependency.len < 3) return false;
 
     var hash_index: usize = 0;
-    var slash_index: usize = 0;
+
+    // the branch could have slashes
+    // - oven-sh/bun#brach/name
+    var first_slash_index: usize = 0;
 
     for (dependency, 0..) |c, i| {
         switch (c) {
             '/' => {
                 if (i == 0) return false;
-                if (slash_index > 0) return false;
-                slash_index = i;
+                if (first_slash_index == 0) {
+                    first_slash_index = i;
+                }
             },
             '#' => {
                 if (i == 0) return false;
                 if (hash_index > 0) return false;
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
                 hash_index = i;
             },
             // Not allowed in username
             '.', '_' => {
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
             },
             // Must be alphanumeric
             '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
@@ -214,7 +218,27 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
         }
     }
 
-    return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
+    return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
+}
+
+// Github allows for the following format of URL:
+// https://github.com/<org>/<repo>/tarball/<ref>
+// This is a legacy (but still supported) method of retrieving a tarball of an
+// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+// can have arbitrary number of slashes)
+pub inline fn isGitHubTarballPath(dependency: string) bool {
+    var parts = strings.split(dependency, "/");
+
+    var n_parts: usize = 0;
+
+    while (parts.next()) |part| {
+        n_parts += 1;
+        if (n_parts == 3) {
+            return strings.eql(part, "tarball");
+        }
+    }
+
+    return false;
 }
 
 // This won't work for query string params, but I'll let someone file an issue
@@ -490,8 +514,11 @@ pub const Version = struct {
                                 else => {},
                             }
                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                const path = url["github.com/".len..];
+                                if (isGitHubTarballPath(path)) return .tarball;
+                                if (isGitHubRepoPath(path)) return .github;
                             }
+                            return .tarball;
                         }
                     }
                 },

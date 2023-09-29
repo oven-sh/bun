@@ -1697,7 +1697,7 @@ pub const Expect = struct {
             const result: JSValue = result_.?;
             var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
-            if (expected_value.isEmpty()) {
+            if (expected_value.isEmpty() or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
                     const name = err.get(globalObject, "name") orelse JSValue.undefined;
@@ -1780,7 +1780,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
         if (did_throw) {
-            if (expected_value.isEmpty()) return thisValue;
+            if (expected_value.isEmpty() or expected_value.isUndefined()) return thisValue;
 
             const result: JSValue = if (result_.?.toError()) |r|
                 r
@@ -1915,7 +1915,7 @@ pub const Expect = struct {
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const received_line = "Received function did not throw\n";
 
-        if (expected_value.isEmpty()) {
+        if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const fmt = comptime getSignature("toThrow", "", false) ++ "\n\n" ++ received_line;
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{});

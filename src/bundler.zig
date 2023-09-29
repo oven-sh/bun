@@ -398,7 +398,8 @@ pub const Bundler = struct {
             DotEnv.instance = env_loader;
         }
 
-        env_loader.quiet = !log.level.atLeast(.warn);
+        // hide elapsed time when loglevel is warn or error
+        env_loader.quiet = !log.level.atLeast(.info);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
@@ -435,13 +436,14 @@ pub const Bundler = struct {
         );
 
         if (auto_jsx) {
-            // If we don't explicitly pass JSX, try to get it from the root tsconfig
-            if (bundler.options.transform_options.jsx == null) {
-                // Most of the time, this will already be cached
-                if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
-                    if (root_dir.tsconfig_json) |tsconfig| {
+            // Most of the time, this will already be cached
+            if (bundler.resolver.readDirInfo(bundler.fs.top_level_dir) catch null) |root_dir| {
+                if (root_dir.tsconfig_json) |tsconfig| {
+                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                    if (bundler.options.transform_options.jsx == null) {
                         bundler.options.jsx = tsconfig.jsx;
                     }
+                    bundler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                 }
             }
         }
@@ -472,11 +474,11 @@ pub const Bundler = struct {
                 }
 
                 if (!has_production_env and this.options.isTest()) {
-                    try this.env.load(&this.fs.fs, dir, .@"test");
+                    try this.env.load(dir, .@"test");
                 } else if (this.options.production) {
-                    try this.env.load(&this.fs.fs, dir, .production);
+                    try this.env.load(dir, .production);
                 } else {
-                    try this.env.load(&this.fs.fs, dir, .development);
+                    try this.env.load(dir, .development);
                 }
             },
             .disable => {
@@ -780,6 +782,7 @@ pub const Bundler = struct {
                         .file_descriptor = file_descriptor,
                         .file_hash = filepath_hash,
                         .macro_remappings = bundler.options.macro_remap,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                         .jsx = resolve_result.jsx,
                     },
                     client_entry_point,
@@ -899,6 +902,7 @@ pub const Bundler = struct {
                         .file_hash = null,
                         .macro_remappings = bundler.options.macro_remap,
                         .jsx = resolve_result.jsx,
+                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -1102,6 +1106,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .import_meta_ref = ast.import_meta_ref,
                 },
                 enable_source_map,
             ),
@@ -1125,6 +1130,7 @@ pub const Bundler = struct {
                         .transform_only = bundler.options.transform_only,
                         .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
                         .inline_require_and_import_errors = false,
+                        .import_meta_ref = ast.import_meta_ref,
                     },
                     enable_source_map,
                 ),
@@ -1188,6 +1194,7 @@ pub const Bundler = struct {
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
+        emit_decorator_metadata: bool = false,
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
@@ -1300,7 +1307,9 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
+
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
+                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
@@ -1333,6 +1342,7 @@ pub const Bundler = struct {
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;
+                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
@@ -1375,43 +1385,127 @@ pub const Bundler = struct {
                 };
             },
             // TODO: use lazy export AST
-            .json => {
-                var expr = json_parser.ParseJSON(&source, bundler.log, allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
-                    .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{
-                        .loc = logger.Loc{},
-                        .ref = Ref.None,
-                    },
-                }, logger.Loc{ .start = 0 });
-                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
-                stmts[0] = stmt;
-                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
-                parts[0] = js_ast.Part{ .stmts = stmts };
+            inline .toml, .json => |kind| {
+                var expr = if (kind == .json)
+                    // We allow importing tsconfig.*.json or jsconfig.*.json with comments
+                    // These files implicitly become JSONC files, which aligns with the behavior of text editors.
+                    if (source.path.isJSONCFile())
+                        json_parser.ParseTSConfig(&source, bundler.log, allocator) catch return null
+                    else
+                        json_parser.ParseJSON(&source, bundler.log, allocator) catch return null
+                else if (kind == .toml)
+                    TOML.parse(&source, bundler.log, allocator) catch return null
+                else
+                    @compileError("unreachable");
 
-                return ParseResult{
-                    .ast = js_ast.Ast.initTest(parts),
-                    .source = source,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                var symbols: []js_ast.Symbol = &.{};
+
+                var parts = brk: {
+                    if (expr.data == .e_object) {
+                        var properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
+                        if (properties.len > 0) {
+                            var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
+                            var decls = allocator.alloc(js_ast.G.Decl, properties.len) catch return null;
+                            symbols = allocator.alloc(js_ast.Symbol, properties.len) catch return null;
+                            var export_clauses = allocator.alloc(js_ast.ClauseItem, properties.len) catch return null;
+                            var duplicate_key_checker = bun.StringHashMap(u32).init(allocator);
+                            defer duplicate_key_checker.deinit();
+                            var count: usize = 0;
+                            for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
+                                const name = prop.key.?.data.e_string.slice(allocator);
+                                // Do not make named exports for "default" exports
+                                if (strings.eqlComptime(name, "default"))
+                                    continue;
+
+                                var visited = duplicate_key_checker.getOrPut(name) catch continue;
+                                if (visited.found_existing) {
+                                    decls[visited.value_ptr.*].value = prop.value.?;
+                                    continue;
+                                }
+                                visited.value_ptr.* = @truncate(i);
+
+                                symbol.* = js_ast.Symbol{
+                                    .original_name = MutableString.ensureValidIdentifier(name, allocator) catch return null,
+                                };
+
+                                const ref = Ref.init(@truncate(i), 0, false);
+                                decl.* = js_ast.G.Decl{
+                                    .binding = js_ast.Binding.alloc(allocator, js_ast.B.Identifier{
+                                        .ref = ref,
+                                    }, prop.key.?.loc),
+                                    .value = prop.value.?,
+                                };
+                                export_clauses[i] = js_ast.ClauseItem{
+                                    .name = .{
+                                        .ref = ref,
+                                        .loc = prop.key.?.loc,
+                                    },
+                                    .alias = name,
+                                    .alias_loc = prop.key.?.loc,
+                                };
+                                prop.value = js_ast.Expr.initIdentifier(ref, prop.value.?.loc);
+                                count += 1;
+                            }
+
+                            stmts[0] = js_ast.Stmt.alloc(
+                                js_ast.S.Local,
+                                js_ast.S.Local{
+                                    .decls = js_ast.G.Decl.List.init(decls[0..count]),
+                                    .kind = .k_var,
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+                            stmts[1] = js_ast.Stmt.alloc(
+                                js_ast.S.ExportClause,
+                                js_ast.S.ExportClause{
+                                    .items = export_clauses[0..count],
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+                            stmts[2] = js_ast.Stmt.alloc(
+                                js_ast.S.ExportDefault,
+                                js_ast.S.ExportDefault{
+                                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                                    .default_name = js_ast.LocRef{
+                                        .loc = logger.Loc{},
+                                        .ref = Ref.None,
+                                    },
+                                },
+                                logger.Loc{
+                                    .start = 0,
+                                },
+                            );
+
+                            var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                            parts_[0] = js_ast.Part{ .stmts = stmts };
+                            break :brk parts_;
+                        }
+                    }
+
+                    {
+                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        stmts[0] = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                            .value = js_ast.StmtOrExpr{ .expr = expr },
+                            .default_name = js_ast.LocRef{
+                                .loc = logger.Loc{},
+                                .ref = Ref.None,
+                            },
+                        }, logger.Loc{ .start = 0 });
+
+                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        parts_[0] = js_ast.Part{ .stmts = stmts };
+                        break :brk parts_;
+                    }
                 };
-            },
-            .toml => {
-                var expr = TOML.parse(&source, bundler.log, allocator) catch return null;
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
-                    .value = js_ast.StmtOrExpr{ .expr = expr },
-                    .default_name = js_ast.LocRef{
-                        .loc = logger.Loc{},
-                        .ref = Ref.None,
-                    },
-                }, logger.Loc{ .start = 0 });
-                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
-                stmts[0] = stmt;
-                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
-                parts[0] = js_ast.Part{ .stmts = stmts };
+                var ast = js_ast.Ast.fromParts(parts);
+                ast.symbols = js_ast.Symbol.List.init(symbols);
 
                 return ParseResult{
-                    .ast = js_ast.Ast.initTest(parts),
+                    .ast = ast,
                     .source = source,
                     .loader = loader,
                     .input_fd = input_fd,

@@ -150,6 +150,10 @@ declare module "bun" {
   export function write(
     destination: BunFile | PathLike,
     input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
+    options?: {
+      /** If writing to a PathLike, set the permissions of the file. */
+      mode?: number;
+    },
   ): Promise<number>;
 
   /**
@@ -908,6 +912,14 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Enabled by default, use this to disable dead code elimination.
+     *
+     * Some other transpiler options may still do some specific dead code elimination.
+     */
+    deadCodeElimination?: boolean;
 
     /**
      * This does two things (and possibly more in the future):
@@ -2223,7 +2235,7 @@ declare module "bun" {
      * });
      *
      * // Update the server to return a different response
-     * server.update({
+     * server.reload({
      *   fetch(request) {
      *     return new Response("Hello World v2")
      *   }
@@ -3834,7 +3846,7 @@ declare module "bun" {
       : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
-      ? Uint8Array
+      ? Buffer
       : undefined;
 
     type WritableIO = FileSink | number | undefined;

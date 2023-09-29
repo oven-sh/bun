@@ -44,7 +44,7 @@ test.todo("unimplemented feature", () => {
 
 ---
 
-If an implementation is provides, it will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
+If an implementation is provided, it will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
 
 ```sh
 $ bun test

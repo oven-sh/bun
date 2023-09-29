@@ -985,6 +985,7 @@ pub const Fetch = struct {
             }
 
             const promise = promise_value.asAnyPromise().?;
+            _ = promise;
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
@@ -1007,15 +1008,51 @@ pub const Fetch = struct {
             result.ensureStillAlive();
 
             promise_value.ensureStillAlive();
+            const Holder = struct {
+                held: JSC.Strong,
+                promise: JSC.Strong,
+                globalObject: *JSC.JSGlobalObject,
+                task: JSC.AnyTask,
 
-            switch (success) {
-                true => {
-                    promise.resolve(globalThis, result);
-                },
-                false => {
-                    promise.reject(globalThis, result);
-                },
-            }
+                pub fn resolve(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    var globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
+                    res.ensureStillAlive();
+
+                    bun.default_allocator.destroy(held);
+                    prom.resolve(globalObject, res);
+                }
+
+                pub fn reject(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    var globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
+                    res.ensureStillAlive();
+
+                    bun.default_allocator.destroy(held);
+                    prom.reject(globalObject, res);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch unreachable;
+            holder.* = .{
+                .held = JSC.Strong.create(result, globalThis),
+                .promise = ref.strong,
+                .globalObject = globalThis,
+                .task = undefined,
+            };
+            ref.strong = .{};
+            holder.task = switch (success) {
+                true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
+                false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
+            };
+
+            globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
         }
 
         pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: HTTPClient.CertificateInfo) bool {
@@ -1526,7 +1563,7 @@ pub const Fetch = struct {
 
         var url_proxy_buffer: []const u8 = undefined;
         var is_file_url = false;
-        var reject_unauthorized = true;
+        var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone

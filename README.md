@@ -24,7 +24,7 @@
 
 ## What is Bun?
 
-> **​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
+> **​​Bun is under active development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
 
 Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun​`.
 
@@ -93,7 +93,8 @@ bun upgrade --canary
   - [`bun run`](https://bun.sh/docs/cli/run)
   - [`bun install`](https://bun.sh/docs/cli/install)
   - [`bun test`](https://bun.sh/docs/cli/test)
-  - [`bun create`](https://bun.sh/docs/cli/create)
+  - [`bun init`](https://bun.sh/docs/templates#bun-init)
+  - [`bun create`](https://bun.sh/docs/templates#bun-create)
   - [`bunx`](https://bun.sh/docs/cli/bunx)
 - Runtime
   - [Runtime](https://bun.sh/docs/runtime/index)

@@ -15,7 +15,7 @@ let $debug_log_enabled = ((env) => (
     .split(/[-_./]/g)
     .join("_")
     .toUpperCase()})
-))(@Bun.env);
+))(Bun.env);
 let $debug_log = $debug_log_enabled ? (...args) => {
   // warn goes to stderr without colorizing
   console.warn(Bun.enableANSIColors ? '\\x1b[90m[${publicName}]\\x1b[0m' : '[${publicName}]', ...args);
@@ -27,10 +27,18 @@ export function createAssertClientJS(publicName: string) {
   return `
 let $assert = function(check, sourceString, ...message) {
   if (!check) {
-    console.error('[${publicName}] ASSERTION FAILED: ' + sourceString);
-    if(message.length)console.warn (' ${" ".repeat(publicName.length)}', ...message);
+    const prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, stack) => {
+      return e.name + ': ' + e.message + '\\n' + stack.slice(1).map(x => '  at ' + x.toString()).join('\\n');
+    };
     const e = new Error(sourceString);
+    e.stack; // materialize stack
     e.name = 'AssertionError';
+    Error.prepareStackTrace = prevPrepareStackTrace;
+    console.error('[${publicName}] ASSERTION FAILED: ' + sourceString);
+    if (message.length) console.warn(...message);
+    console.warn(e.stack.split('\\n')[1] + '\\n');
+    if (Bun.env.ASSERT === 'CRASH') process.exit(0xAA);
     throw e;
   }
 }

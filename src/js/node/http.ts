@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const { getHeader, setHeader } = $lazy("http");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -75,13 +76,9 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-const StringPrototypeIndexOf = String.prototype.indexOf;
 const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
@@ -126,12 +123,6 @@ function validateFunction(callable: any, field: string) {
   return callable;
 }
 
-function getHeader(headers, name) {
-  if (!headers) return;
-  const result = headers.get(name);
-  return result == null ? undefined : result;
-}
-
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
   [kInternalSocketData]: any;
@@ -141,7 +132,6 @@ var FakeSocket = class Socket extends Duplex {
   remoteAddress: string | null = null;
   remotePort;
   timeout = 0;
-
   isServer = false;
 
   address() {
@@ -449,7 +439,7 @@ class Server extends EventEmitter {
   listen(port, host, backlog, onListen) {
     const server = this;
     let socketPath;
-    if (typeof port == "string") {
+    if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
       socketPath = port;
     }
     if (typeof host === "function") {
@@ -549,7 +539,7 @@ class Server extends EventEmitter {
       });
       setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
-      setTimeout(emitListeningNextTick, 1, this, onListen, err);
+      server.emit("error", err);
     }
 
     return this;
@@ -610,6 +600,7 @@ class IncomingMessage extends Readable {
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
+    if (url.protocol === "https:") socket.encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
@@ -958,8 +949,11 @@ let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 class ServerResponse extends Writable {
   declare _writableState: any;
 
-  constructor({ req, reply }) {
+  constructor(c) {
     super();
+    if (!c) c = {};
+    var req = c.req || {};
+    var reply = c.reply;
     this.req = req;
     this._reply = reply;
     this.sendDate = true;
@@ -1174,7 +1168,7 @@ class ServerResponse extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    headers.set(name, value);
+    setHeader(headers, name, value);
     return this;
   }
 

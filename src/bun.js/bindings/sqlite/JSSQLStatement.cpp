@@ -83,6 +83,11 @@ static JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
+static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
+{
+    int64_t num = sqlite3_column_int64(stmt, i);
+    return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+}
 
 #define CHECK_THIS                                                                                               \
     if (UNLIKELY(!castedThis)) {                                                                                 \
@@ -690,6 +695,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    if(sqlite3_compileoption_used("SQLITE_OMIT_LOAD_EXTENSION")) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This build of sqlite3 does not support dynamic extension loading"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
     char* error;
@@ -1090,7 +1100,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             switch (sqlite3_column_type(stmt, i)) {
             case SQLITE_INTEGER: {
                 // https://github.com/oven-sh/bun/issues/1536
-                value = jsNumber(sqlite3_column_int64(stmt, i));
+                value = jsNumberFromSQLite(stmt, i);
                 break;
             }
             case SQLITE_FLOAT: {
@@ -1146,11 +1156,11 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             switch (sqlite3_column_type(stmt, i)) {
             case SQLITE_INTEGER: {
                 // https://github.com/oven-sh/bun/issues/1536
-                result->putDirect(vm, name, jsNumber(sqlite3_column_int64(stmt, i)), 0);
+                result->putDirect(vm, name, jsNumberFromSQLite(stmt, i), 0);
                 break;
             }
             case SQLITE_FLOAT: {
-                result->putDirect(vm, name, jsNumber(sqlite3_column_double(stmt, i)), 0);
+                result->putDirect(vm, name, jsDoubleNumber(sqlite3_column_double(stmt, i)), 0);
                 break;
             }
             // > Note that the SQLITE_TEXT constant was also used in SQLite version
@@ -1205,11 +1215,11 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {
             // https://github.com/oven-sh/bun/issues/1536
-            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_int64(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsNumberFromSQLite(stmt, i));
             break;
         }
         case SQLITE_FLOAT: {
-            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_double(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsDoubleNumber(sqlite3_column_double(stmt, i)));
             break;
         }
         // > Note that the SQLITE_TEXT constant was also used in SQLite version

@@ -33,7 +33,7 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const c_ares = @import("./deps/c_ares.zig");
 
-const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
+const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
@@ -1071,17 +1071,24 @@ pub fn onClose(
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail;
 
-    // if the peer closed after a full chunk, treat this
-    // as if the transfer had complete, browsers appear to ignore
-    // a missing 0\r\n chunk
-    if (in_progress and client.state.isChunkedEncoding()) {
-        if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-            var buf = client.state.getBodyBuffer();
-            if (buf.list.items.len > 0) {
-                client.state.received_last_chunk = true;
-                client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
-                return;
+    if (in_progress) {
+        // if the peer closed after a full chunk, treat this
+        // as if the transfer had complete, browsers appear to ignore
+        // a missing 0\r\n chunk
+        if (client.state.isChunkedEncoding()) {
+            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+                var buf = client.state.getBodyBuffer();
+                if (buf.list.items.len > 0) {
+                    client.state.received_last_chunk = true;
+                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
             }
+        } else if (client.state.content_length == null and client.state.response_stage == .body) {
+            // no content length informed so we are done here
+            client.state.received_last_chunk = true;
+            client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+            return;
         }
     }
 
@@ -1121,12 +1128,31 @@ pub fn onConnectError(
 pub fn onEnd(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onEnd  {s}\n", .{client.url.href});
-
-    if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionClosed);
+    const in_progress = client.state.stage != .done and client.state.stage != .fail;
+    if (in_progress) {
+        // if the peer closed after a full chunk, treat this
+        // as if the transfer had complete, browsers appear to ignore
+        // a missing 0\r\n chunk
+        if (client.state.isChunkedEncoding()) {
+            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+                var buf = client.state.getBodyBuffer();
+                if (buf.list.items.len > 0) {
+                    client.state.received_last_chunk = true;
+                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
+            }
+        } else if (client.state.content_length == null and client.state.response_stage == .body) {
+            // no content length informed so we are done here
+            client.state.received_last_chunk = true;
+            client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+            return;
+        }
+    }
+    client.fail(error.ConnectionClosed);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -1369,8 +1395,8 @@ pub const InternalState = struct {
             return this.total_body_received >= content_length;
         }
 
-        // TODO: in future to handle Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
-        return true;
+        // Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
+        return this.received_last_chunk;
     }
 
     fn decompressConst(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
@@ -2122,7 +2148,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!override_accept_encoding) {
+    if (!override_accept_encoding and !this.disable_decompression) {
         request_headers_buf[header_count] = accept_encoding_header;
         header_count += 1;
     }
@@ -2289,10 +2315,6 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 };
             }
 
-            if (this.verbose) {
-                printRequest(request);
-            }
-
             const headers_len = list.items.len;
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0 and !this.proxy_tunneling) {
@@ -2326,6 +2348,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
             this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
+
+            if (has_sent_headers and this.verbose) {
+                printRequest(request);
+            }
 
             if (has_sent_headers and this.state.request_body.len > 0) {
                 this.state.request_body = this.state.request_body[this.state.request_sent_len - headers_len ..];
@@ -2637,6 +2663,14 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.state.pending_response = response;
 
             var body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
+            // handle the case where we have a 100 Continue
+            if (response.status_code == 100) {
+                // we still can have the 200 OK in the same buffer sometimes
+                if (body_buf.len > 0) {
+                    this.onData(is_ssl, body_buf, ctx, socket);
+                }
+                return;
+            }
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
@@ -2687,6 +2721,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             }
 
             if (!can_continue) {
+                log("onData: can_continue is false", .{});
                 // this means that the request ended
                 // clone metadata and return the progress at this point
                 this.cloneMetadata();
@@ -3081,10 +3116,10 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
     // is it exactly as much as we need?
-    if (is_only_buffer and incoming_data.len >= content_length) {
-        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length]);
+    if (is_only_buffer and content_length != null and incoming_data.len >= content_length.?) {
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..content_length.?]);
         return true;
     } else {
         return handleResponseBodyFromMultiplePackets(this, incoming_data);
@@ -3127,16 +3162,19 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
 
-    if (buffer.list.items.len == 0 and
-        content_length > 0 and incoming_data.len < preallocate_max)
-    {
+    if (buffer.list.items.len == 0 and incoming_data.len < preallocate_max) {
         buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
     }
 
-    const remaining_content_length = content_length -| this.state.total_body_received;
-    var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
+    var remainder: []const u8 = undefined;
+    if (content_length != null) {
+        const remaining_content_length = content_length.? -| this.state.total_body_received;
+        remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
+    } else {
+        remainder = incoming_data;
+    }
 
     _ = try buffer.write(remainder);
 
@@ -3149,7 +3187,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     // done or streaming
-    const is_done = this.state.total_body_received >= content_length;
+    const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming)) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
@@ -3399,11 +3437,16 @@ pub fn handleResponseMetadata(
         this.proxy_tunneling = false;
     }
 
-    const is_redirect = response.status_code >= 300 and response.status_code <= 399;
+    const status_code = response.status_code;
+
+    // if is no redirect or if is redirect == "manual" just proceed
+    const is_redirect = status_code >= 300 and status_code <= 399;
     if (is_redirect) {
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
-            switch (response.status_code) {
+            switch (status_code) {
                 302, 301, 307, 308, 303 => {
+                    var is_same_origin = true;
+
                     if (strings.indexOf(location, "://")) |i| {
                         var url_buf = URLBufferPool.get(default_allocator);
 
@@ -3434,7 +3477,9 @@ pub fn handleResponseMetadata(
                             bun.copy(u8, &url_buf.data, location);
                         }
 
-                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                        this.url = new_url;
                         this.redirect = url_buf;
                     } else if (strings.hasPrefixComptime(location, "//")) {
                         var url_buf = URLBufferPool.get(default_allocator);
@@ -3458,49 +3503,65 @@ pub fn handleResponseMetadata(
                             url_buf_len += "https:".len;
                         }
 
-                        this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                        const new_url = URL.parse(url_buf.data[0..url_buf_len]);
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                        this.url = new_url;
                         this.redirect = url_buf;
                     } else {
                         var url_buf = URLBufferPool.get(default_allocator);
+                        var fba = std.heap.FixedBufferAllocator.init(&url_buf.data);
                         const original_url = this.url;
-                        const port = original_url.getPortAuto();
 
-                        if (port == original_url.getDefaultPort()) {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                            ) catch return error.RedirectURLTooLong);
-                        } else {
-                            this.url = URL.parse(std.fmt.bufPrint(
-                                &url_buf.data,
-                                "{s}://{s}:{d}{s}",
-                                .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
-                            ) catch return error.RedirectURLTooLong);
+                        const new_url_ = bun.JSC.URL.join(
+                            bun.String.fromUTF8(original_url.href),
+                            bun.String.fromUTF8(location),
+                        );
+                        defer new_url_.deref();
+
+                        if (new_url_.isEmpty()) {
+                            return error.InvalidRedirectURL;
                         }
 
+                        const new_url = new_url_.toOwnedSlice(fba.allocator()) catch {
+                            return error.RedirectURLTooLong;
+                        };
+                        this.url = URL.parse(new_url);
+
+                        is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                         deferred_redirect.* = this.redirect;
                         this.redirect = url_buf;
                     }
 
-                    // Note: RFC 1945 and RFC 2068 specify that the client is not allowed to change
-                    // the method on the redirected request. However, most existing user agent
-                    // implementations treat 302 as if it were a 303 response, performing a GET on
-                    // the Location field-value regardless of the original request method. The
-                    // status codes 303 and 307 have been added for servers that wish to make
-                    // unambiguously clear which kind of reaction is expected of the client.
-                    if (response.status_code == 302) {
-                        switch (this.method) {
-                            .GET, .HEAD => {},
-                            else => {
-                                this.method = .GET;
-                            },
-                        }
+                    // If one of the following is true
+                    // - internalResponse’s status is 301 or 302 and request’s method is `POST`
+                    // - internalResponse’s status is 303 and request’s method is not `GET` or `HEAD`
+                    // then:
+                    if (((status_code == 301 or status_code == 302) and this.method == .POST) or
+                        (status_code == 303 and this.method != .GET and this.method != .HEAD))
+                    {
+                        // - Set request’s method to `GET` and request’s body to null.
+                        this.method = .GET;
+                        // - For each headerName of request-body-header name, delete headerName from request’s header list.
+                        this.header_entries.len = 0;
                     }
 
-                    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
-                    if (response.status_code == 303 and this.method != .HEAD) {
-                        this.method = .GET;
+                    // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+                    // If request’s current URL’s origin is not same origin with
+                    // locationURL’s origin, then for each headerName of CORS
+                    // non-wildcard request-header name, delete headerName from
+                    // request’s header list.
+                    if (!is_same_origin and this.header_entries.len > 0) {
+                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
+                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
+                            const name = this.headerStr(name_ptr);
+                            if (name.len == "Authorization".len) {
+                                const hash = hashHeaderName(name);
+                                if (hash == authorization_header_hash) {
+                                    this.header_entries.swapRemove(i);
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     return error.Redirect;
@@ -3513,9 +3574,13 @@ pub fn handleResponseMetadata(
         }
     }
 
-    // if is no redirect or if is redirect == "manual" just proceed
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
-    const content_length = this.state.content_length orelse 0;
+    const content_length = this.state.content_length;
+    if (content_length) |length| {
+        log("handleResponseMetadata: content_length is {} and transfer_encoding {}", .{ length, this.state.transfer_encoding });
+    } else {
+        log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
+    }
     // if no body is expected we should stop processing
-    return this.method.hasBody() and (content_length > 0 or this.state.transfer_encoding == .chunked);
+    return this.method.hasBody() and (content_length == null or content_length.? > 0 or this.state.transfer_encoding == .chunked);
 }

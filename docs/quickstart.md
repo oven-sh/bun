@@ -35,18 +35,34 @@ Open `index.ts` and paste the following code snippet, which implements a simple 
 const server = Bun.serve({
   port: 3000,
   fetch(req) {
-    return new Response(`Bun!`);
+    return new Response("Bun!");
   },
 });
 
-console.log(`Listening on http://localhost:${server.port}...`);
+console.log(`Listening on http://localhost:${server.port} ...`);
+```
+
+If you're using TypeScript, you may see a type error on the `Bun` global. To fix this, install `bun-types`.
+
+```sh
+$ bun add -d bun-types
+```
+
+Then add the following line to your `compilerOptions` in `tsconfig.json`.
+
+```json-diff#tsconfig.json
+{
+  "compilerOptions": {
++   "types": ["bun-types"]
+  }
+}
 ```
 
 Run the file from your shell.
 
 ```bash
 $ bun index.ts
-Listening at http://localhost:3000...
+Listening on http://localhost:3000 ...
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to test the server. You should see a simple page that says "Bun!".
@@ -74,7 +90,7 @@ Then run it with `bun run start`.
 ```bash
 $ bun run start
   $ bun run index.ts
-  Listening on http://localhost:4000...
+  Listening on http://localhost:3000 ...
 ```
 
 {% callout %}
@@ -97,9 +113,9 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 
   const server = Bun.serve({
     fetch() {
-+     const body = figlet.textSync('Bun!');
++     const body = figlet.textSync("Bun!");
 +     return new Response(body);
--     return new Response(`Bun!`);
+-     return new Response("Bun!");
     },
     port: 3000,
   });

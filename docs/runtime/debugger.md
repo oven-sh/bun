@@ -2,7 +2,7 @@
 name: Debugger
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts). For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
 
 ```ts#server.ts
 Bun.serve({
@@ -48,7 +48,7 @@ $ bun --inspect=localhost:4000/prefix server.ts
 
 ## Debuggers
 
-Various debugging tools can connect to this server to provide an interactive debugging experience. Bun hosts a web-based debugger at [debug.bun.sh](https://debug.bun.sh). It is a modified version of WebKit's [Web Inspector Interface](https://webkit.org/web-inspector/web-inspector-interface/), which will look familiar to Safari users.
+Various debugging tools can connect to this server to provide an interactive debugging experience.
 
 ### `debug.bun.sh`
 

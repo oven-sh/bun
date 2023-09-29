@@ -23,9 +23,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## Manage dependencies
-
-### `bun install`
+## `bun install`
 
 To install all dependencies of a project:
 
@@ -43,7 +41,7 @@ Running `bun install` will:
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
-To install in production mode (i.e. without `devDependencies`):
+To install in production mode (i.e. without `devDependencies` or `optionalDependencies`):
 
 ```bash
 $ bun install --production
@@ -69,7 +67,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]
@@ -95,7 +93,7 @@ dryRun = false
 
 {% /details %}
 
-### `bun add`
+## `bun add`
 
 To add a particular package:
 
@@ -177,7 +175,7 @@ To view a complete list of options for a given command:
 $ bun add --help
 ```
 
-### `bun remove`
+## `bun remove`
 
 To remove a dependency:
 
@@ -185,7 +183,17 @@ To remove a dependency:
 $ bun remove preact
 ```
 
-## Local packages (`bun link`)
+## `bun update`
+
+To update all dependencies to the latest version _that's compatible with the version range specified in your `package.json`_:
+
+```sh
+$ bun update
+```
+
+This will not edit your `package.json`. There's currently no command to force-update all dependencies to the latest version regardless version ranges.
+
+## `bun link`
 
 Use `bun link` in a local directory to register the current package as a "linkable" package.
 
@@ -197,7 +205,7 @@ $ cat package.json
   "version": "1.0.0"
 }
 $ bun link
-bun link v0.5.7 (7416672e)
+bun link v1.x (7416672e)
 Success! Registered "cool-pkg"
 
 To use cool-pkg in a project, run:
@@ -289,7 +297,7 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 
 ## Tarball dependencies
 
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
+A package name can correspond to a publicly hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
 
 ```json#package.json
 {

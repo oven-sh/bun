@@ -664,7 +664,7 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
-pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
+pub const HTTPThread = @import("./http_client_async.zig").HTTPThread;
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
@@ -1841,3 +1841,68 @@ pub fn fdi32(fd_: anytype) i32 {
 }
 
 pub const OSPathSlice = if (Environment.isWindows) [:0]const u16 else [:0]const u8;
+pub const LazyBoolValue = enum {
+    unknown,
+    no,
+    yes,
+};
+/// Create a lazily computed boolean value.
+/// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
+/// Parent must be a type which contains the field we are getting.
+pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
+    return struct {
+        value: LazyBoolValue = .unknown,
+        pub fn get(self: *@This()) bool {
+            if (self.value == .unknown) {
+                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                    true => .yes,
+                    false => .no,
+                };
+            }
+
+            return self.value == .yes;
+        }
+    };
+}
+
+pub fn serializable(input: anytype) @TypeOf(input) {
+    const T = @TypeOf(input);
+    comptime {
+        if (std.meta.trait.isExtern(T)) {
+            if (@typeInfo(T) == .Union) {
+                @compileError("Extern unions must be serialized with serializableInto");
+            }
+        }
+    }
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(T)) |field_name| {
+        @field(result, field_name) = @field(input, field_name);
+    }
+
+    return result.*;
+}
+
+pub inline fn serializableInto(comptime T: type, init: anytype) T {
+    var zeroed: [@sizeOf(T)]u8 align(@alignOf(T)) = comptime brk: {
+        var buf: [@sizeOf(T)]u8 align(@alignOf(T)) = undefined;
+        for (&buf) |*ptr| {
+            ptr.* = 0;
+        }
+        break :brk buf;
+    };
+    const result: *T = @ptrCast(&zeroed);
+
+    inline for (comptime std.meta.fieldNames(@TypeOf(init))) |field_name| {
+        @field(result, field_name) = @field(init, field_name);
+    }
+
+    return result.*;
+}

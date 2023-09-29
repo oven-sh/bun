@@ -33,11 +33,18 @@ const animalSchema = new mongoose.Schema(
   {
     name: {type: String, required: true},
     sound: {type: String, required: true},
+  },
+  {
+    methods: {
+      speak() {
+        console.log(`${this.sound}!`);
+      },
+    },
   }
 );
 
 export type Animal = mongoose.InferSchemaType<typeof animalSchema>;
-export const Animal = mongoose.model('Kitten', animalSchema);
+export const Animal = mongoose.model('Animal', animalSchema);
 ```
 
 ---
@@ -62,13 +69,13 @@ await cow.save(); // saves to the database
 const animals = await Animal.find();
 animals[0].speak(); // logs "Moo!"
 
-// disconect
+// disconnect
 await mongoose.disconnect();
 ```
 
 ---
 
-Lets run this with `bun run`.
+Let's run this with `bun run`.
 
 ```bash
 $ bun run index.ts

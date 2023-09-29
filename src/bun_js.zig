@@ -243,8 +243,10 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.debug.hot_reload != .none) {
-            JSC.HotReloader.enableHotModuleReloading(vm);
+        switch (this.ctx.debug.hot_reload) {
+            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            else => {},
         }
 
         if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
@@ -273,6 +275,7 @@ pub const Run = struct {
                 } else {
                     vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                vm.log.msgs.items.len = 0;
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }

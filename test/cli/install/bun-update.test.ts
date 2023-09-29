@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
+import { readFile, access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -185,7 +185,7 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([
-    `${root_url}/@barn/moo`,
+    `${root_url}/@barn%2fmoo`,
     `${root_url}/@barn/moo-0.1.0.tgz`,
     `${root_url}/baz`,
     `${root_url}/baz-0.0.3.tgz`,
@@ -236,7 +236,7 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([
-    `${root_url}/@barn/moo`,
+    `${root_url}/@barn%2fmoo`,
     `${root_url}/@barn/moo-0.1.0.tgz`,
     `${root_url}/baz`,
     `${root_url}/baz-0.0.5.tgz`,
@@ -256,4 +256,72 @@ it("should update to latest versions of dependencies", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("lockfile should not be modified when there are no version changes, issue#5888", async () => {
+  // Install packages
+  const urls: string[] = [];
+  const registry = {
+    "0.0.3": {
+      bin: {
+        "baz-run": "index.js",
+      },
+    },
+    latest: "0.0.3",
+  };
+  setHandler(dummyRegistry(urls, registry));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        baz: "0.0.3",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await exited).toBe(0);
+  const err1 = await new Response(stderr).text();
+  expect(err1).not.toContain("error:");
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out1 = await new Response(stdout).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.3",
+    "",
+    " 1 packages installed",
+  ]);
+
+  // Test if the lockb has been modified by `bun update`.
+  const getLockbContent = async () => {
+    const { exited } = spawn({
+      cmd: [bunExe(), "update"],
+      cwd: package_dir, // package.json is not changed
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await exited).toBe(0);
+    return await readFile(join(package_dir, "bun.lockb"));
+  };
+
+  let prev = await getLockbContent();
+  urls.length = 0;
+  const count = 5;
+  for (let i = 0; i < count; i++) {
+    const content = await getLockbContent();
+    expect(prev).toStrictEqual(content);
+    prev = content;
+  }
+
+  // Assert we actually made a request to the registry for each update
+  expect(urls).toHaveLength(count);
 });

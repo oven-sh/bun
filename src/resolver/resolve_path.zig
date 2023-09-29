@@ -471,7 +471,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         Fs.FileSystem.instance.top_level_dir,
         &relative_from_buf,
         &[_][]const u8{
-            normalizeStringBuf(from, relative_from_buf[1..], false, platform, true),
+            normalizeStringBuf(from, relative_from_buf[1..], true, platform, true),
         },
         platform,
     );
@@ -484,7 +484,7 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         Fs.FileSystem.instance.top_level_dir,
         &relative_to_buf,
         &[_][]const u8{
-            normalizeStringBuf(to, relative_to_buf[1..], false, platform, true),
+            normalizeStringBuf(to, relative_to_buf[1..], true, platform, true),
         },
         platform,
     );
@@ -829,7 +829,25 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
 
     var written: usize = 0;
     const platform = comptime _platform.resolve();
-    var temp_buf: [4096]u8 = undefined;
+    var temp_buf_: [4096]u8 = undefined;
+    var temp_buf: []u8 = &temp_buf_;
+    var free_temp_buf = false;
+    defer {
+        if (free_temp_buf) {
+            bun.default_allocator.free(temp_buf);
+        }
+    }
+
+    var count: usize = 0;
+    for (_parts) |part| {
+        count += if (part.len > 0) part.len + 1 else 0;
+    }
+
+    if (count * 2 > temp_buf.len) {
+        temp_buf = bun.default_allocator.alloc(u8, count * 2) catch @panic("Out of memory");
+        free_temp_buf = true;
+    }
+
     temp_buf[0] = 0;
 
     for (_parts) |part| {

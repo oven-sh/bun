@@ -2,7 +2,7 @@
 name: Convert a Blob to a ReadableStream
 ---
 
-The [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) class provides a number of methods for consuming its contents in different formats, inluding `.stream()`. This returns `Promise<ReadableStream>`.
+The [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) class provides a number of methods for consuming its contents in different formats, including `.stream()`. This returns `Promise<ReadableStream>`.
 
 ```ts
 const blob = new Blob(["hello world"]);

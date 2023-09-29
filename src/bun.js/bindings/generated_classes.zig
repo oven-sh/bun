@@ -2513,6 +2513,87 @@ pub const JSExpectAnything = struct {
         }
     }
 };
+pub const JSExpectArrayContaining = struct {
+    const ExpectArrayContaining = Classes.ExpectArrayContaining;
+    const GetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectArrayContaining, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectArrayContaining, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectArrayContaining {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__fromJS(value);
+    }
+
+    extern fn ExpectArrayContainingPrototype__arrayValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectArrayContainingPrototype__arrayValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectArrayContaining.arrayValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectArrayContainingPrototype__arrayValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectArrayContaining.arrayValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn arrayValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectArrayContainingPrototype__arrayValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectArrayContaining
+    pub fn toJS(this: *ExpectArrayContaining, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectArrayContaining__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectArrayContaining).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectArrayContaining__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectArrayContaining.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectArrayContaining) bool {
+        JSC.markBinding(@src());
+        return ExpectArrayContaining__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectArrayContaining, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectArrayContaining__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectArrayContaining__fromJS(JSC.JSValue) ?*ExpectArrayContaining;
+    extern fn ExpectArrayContaining__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectArrayContaining) JSC.JSValue;
+
+    extern fn ExpectArrayContaining__dangerouslySetPtr(JSC.JSValue, ?*ExpectArrayContaining) bool;
+
+    comptime {
+        if (@TypeOf(ExpectArrayContaining.finalize) != (fn (*ExpectArrayContaining) callconv(.C) void)) {
+            @compileLog("ExpectArrayContaining.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectArrayContaining.call) != StaticCallbackType)
+            @compileLog("Expected ExpectArrayContaining.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectArrayContaining.call, .{ .name = "ExpectArrayContainingClass__call" });
+            @export(ExpectArrayContaining.finalize, .{ .name = "ExpectArrayContainingClass__finalize" });
+        }
+    }
+};
 pub const JSExpectStringContaining = struct {
     const ExpectStringContaining = Classes.ExpectStringContaining;
     const GetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -7018,6 +7099,7 @@ comptime {
     _ = JSExpect;
     _ = JSExpectAny;
     _ = JSExpectAnything;
+    _ = JSExpectArrayContaining;
     _ = JSExpectStringContaining;
     _ = JSExpectStringMatching;
     _ = JSFFI;

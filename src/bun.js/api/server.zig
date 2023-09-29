@@ -1496,6 +1496,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn endStream(this: *RequestContext, closeConnection: bool) void {
+            ctxLog("endStream", .{});
             if (this.resp) |resp| {
                 if (this.flags.is_waiting_for_request_body) {
                     this.flags.is_waiting_for_request_body = false;
@@ -1590,8 +1591,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.flags.aborted);
-            //mark request as aborted
+            // mark request as aborted
             this.flags.aborted = true;
+            var any_js_calls = false;
+            var vm = this.server.vm;
+            defer {
+                // This is a task in the event loop.
+                // If we called into JavaScript, we must drain the microtask queue
+                if (any_js_calls) {
+                    vm.drainMicrotasks();
+                }
+            }
 
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
@@ -1600,6 +1610,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
+                    any_js_calls = true;
                 }
                 _ = signal.unref();
             }
@@ -1631,6 +1642,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         } else if (body.value.Locked.readable != null) {
                             body.value.Locked.readable.?.abort(this.server.globalThis);
                             body.value.Locked.readable = null;
+                            any_js_calls = true;
                         }
                         body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
@@ -1641,6 +1653,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (response.body.value.Locked.readable) |*readable| {
                             response.body.value.Locked.readable = null;
                             readable.abort(this.server.globalThis);
+                            any_js_calls = true;
                         }
                     }
                 }
@@ -1650,10 +1663,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.pending_promises_for_abort += 1;
                     this.promise = null;
                     promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
-                }
-
-                if (this.pending_promises_for_abort > 0) {
-                    this.server.vm.tick();
+                    any_js_calls = true;
                 }
             }
         }
@@ -1773,6 +1783,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this: *RequestContext,
             headers: *JSC.FetchHeaders,
         ) void {
+            ctxLog("writeHeaders", .{});
             headers.fastRemove(.ContentLength);
             headers.fastRemove(.TransferEncoding);
             if (!ssl_enabled) headers.fastRemove(.StrictTransportSecurity);
@@ -2144,6 +2155,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn doRenderStream(pair: *StreamPair) void {
+            ctxLog("doRenderStream", .{});
             var this = pair.this;
             var stream = pair.stream;
             if (this.resp == null or this.flags.aborted) {
@@ -2267,6 +2279,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                     }
                     return;
+                } else {
+                    // if is not a promise we treat it as Error
+                    streamLog("returned an error", .{});
+                    if (!this.flags.aborted) resp.clearAborted();
+                    response_stream.detach();
+                    this.sink = null;
+                    response_stream.sink.destroy();
+                    return this.handleReject(assignment_result);
                 }
             }
 
@@ -2276,6 +2296,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer stream.value.unprotect();
                 response_stream.sink.markDone();
                 this.finalizeForAbort();
+                response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
                 return;
@@ -2299,7 +2320,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
-            this.finalize();
+            response_stream.sink.onFirstWrite = null;
+            response_stream.sink.ctx = null;
+            response_stream.detach();
+            stream.cancel(globalThis);
+            response_stream.sink.markDone();
+            this.renderMissing();
         }
 
         const streamLog = Output.scoped(.ReadableStream, false);
@@ -2499,7 +2525,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onResolve({any})", .{wrote_anything});
-
             //aborted so call finalizeForAbort
             if (req.flags.aborted or req.resp == null) {
                 req.finalizeForAbort();
@@ -2776,7 +2801,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRender(this: *RequestContext) void {
-            ctxLog("render", .{});
+            ctxLog("doRender", .{});
 
             if (this.flags.aborted) {
                 this.finalizeForAbort();
@@ -3092,7 +3117,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (last) {
                     var bytes = this.request_body_buf;
-                    defer this.request_body_buf = .{};
+
                     var old = body.value;
 
                     const total = bytes.items.len + chunk.len;
@@ -3123,6 +3148,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         };
                         // }
                     }
+                    this.request_body_buf = .{};
 
                     if (old == .Locked) {
                         var vm = this.server.vm;
@@ -5146,7 +5172,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSPromise.rejectedPromiseValue(ctx, err);
             }
 
-            var request = ctx.bunVM().allocator.create(Request) catch unreachable;
+            var request = bun.default_allocator.create(Request) catch unreachable;
             request.* = existing_request;
 
             const response_value = this.config.onRequest.callWithThis(
@@ -5308,6 +5334,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
+
+            if (!ssl_enabled_)
+                this.vm.removeListeningSocketForWatchMode(@intCast(listener.socket().fd()));
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
@@ -5442,24 +5472,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (error_instance == .zero) {
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                     .unix => |unix| {
-                        error_instance = ZigString.init(
-                            std.fmt.bufPrint(
-                                &output_buf,
-                                "Failed to listen on unix socket {}",
-                                .{
-                                    strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) },
-                                },
-                            ) catch "Failed to start server",
-                        ).toErrorInstance(
-                            this.globalThis,
-                        );
+                        error_instance = (JSC.SystemError{
+                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{strings.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
+                            .code = bun.String.static("EADDRINUSE"),
+                            .syscall = bun.String.static("listen"),
+                        }).toErrorInstance(this.globalThis);
                     },
                 }
             }
@@ -5482,6 +5506,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.listener = socket;
             this.vm.event_loop_handle = uws.Loop.get();
+            if (!ssl_enabled_)
+                this.vm.addListeningSocketForWatchMode(@intCast(socket.?.socket().fd()));
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -5566,7 +5592,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
-            var request_object: *JSC.WebCore.Request = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+            this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
+            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;

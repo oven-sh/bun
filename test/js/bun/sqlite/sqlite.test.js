@@ -268,6 +268,9 @@ it("supports serialize/deserialize", () => {
   } catch (e) {
     expect(e.message).toBe("attempt to write a readonly database");
   }
+
+  // https://github.com/oven-sh/bun/issues/3712#issuecomment-1725259824
+  expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
 it("db.query()", () => {
@@ -346,6 +349,13 @@ it("db.query()", () => {
       }),
     ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
+
+  const domjit = db.query("SELECT * FROM test");
+  (function (domjit) {
+    for (let i = 0; i < 100000; i++) {
+      domjit.get().name;
+    }
+  })(domjit);
 
   db.close();
 

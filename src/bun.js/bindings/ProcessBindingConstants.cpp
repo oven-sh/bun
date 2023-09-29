@@ -1082,15 +1082,18 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     return object;
 }
 
-static const HashTableValue ProcessBindingConstantsValues[] = {
-    { "os"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetOs } },
-    { "fs"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetFs } },
-    { "crypto"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetCrypto } },
-    { "zlib"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetZlib } },
-    { "trace"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetTrace } },
-};
+/* Source for ProcessBindingConstants.lut.h
+@begin processBindingConstantsTable
+    os             processBindingConstantsGetOs                PropertyCallback
+    fs             processBindingConstantsGetFs                PropertyCallback
+    crypto         processBindingConstantsGetCrypto            PropertyCallback
+    zlib           processBindingConstantsGetZlib              PropertyCallback
+    trace          processBindingConstantsGetTrace             PropertyCallback
+@end
+*/
+#include "ProcessBindingConstants.lut.h"
 
-const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
+const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, Base::info(), &processBindingConstantsTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
 
 ProcessBindingConstants* ProcessBindingConstants::create(VM& vm, Structure* structure)
 {
@@ -1107,7 +1110,6 @@ Structure* ProcessBindingConstants::createStructure(VM& vm, JSGlobalObject* glob
 void ProcessBindingConstants::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ProcessBindingConstants::info(), ProcessBindingConstantsValues, *this);
     ASSERT(inherits(vm, info()));
 }
 

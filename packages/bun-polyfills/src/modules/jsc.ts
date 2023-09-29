@@ -1,6 +1,5 @@
 import type jsc from 'bun:jsc';
 import v8 from 'node:v8';
-//import { setRandomSeed, getRandomSeed } from './mathrandom.js';
 import { NotImplementedError, getCallSites } from '../utils/errors.js';
 import { gc } from './bun.js';
 
@@ -59,9 +58,6 @@ export const startRemoteDebugger = STUB satisfies typeof jsc.startRemoteDebugger
 //! this is a really poor polyfill but it's better than nothing
 export const getProtectedObjects = (() => { return [globalThis]; }) satisfies typeof jsc.getProtectedObjects;
 
-export const getRandomSeed = 0; // TODO
-export const setRandomSeed = 0; // TODO
-
 export const heapSize = (() => { return v8.getHeapStatistics().used_heap_size; }) satisfies typeof jsc.heapSize;
 export const heapStats = (() => {
     const stats = v8.getHeapStatistics();
@@ -109,3 +105,5 @@ export const profile = (() => {
 export const optimizeNextInvocation = (() => {
     throw new NotImplementedError('jsc.optimizeNextInvocation is not polyfillable', STUB, true);
 }) satisfies typeof jsc.optimizeNextInvocation;
+
+export { setRandomSeed, getRandomSeed } from '../global/mathrandom.js';

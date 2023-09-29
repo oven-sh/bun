@@ -84,6 +84,66 @@ static bool WebCrypto__IsEncryptedPrivateKeyInfo(const unsigned char* data, size
     return len >= 1 && data[offset] != 2;
 }
 
+struct AsymmetricKeyValue {
+    EVP_PKEY* key;
+    bool owned;
+};
+
+struct AsymmetricKeyValueWithDER {
+    EVP_PKEY* key;
+    unsigned char* der_data;
+    long der_len;
+};
+
+AsymmetricKeyValueWithDER WebCrypto__TryParsePublicKey(
+    BIO* bp,
+    const char* name,
+    // NOLINTNEXTLINE(runtime/int)
+    const std::function<EVP_PKEY*(const unsigned char** p, long l)>& parse)
+{
+
+    auto result = (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
+    // This skips surrounding data and decodes PEM to DER.
+    {
+        if (PEM_bytes_read_bio(&result.der_data, &result.der_len, nullptr, name,
+                bp, nullptr, nullptr)
+            != 1)
+            return result;
+    }
+
+    // OpenSSL might modify the pointer, so we need to make a copy before parsing.
+    const unsigned char* p = result.der_data;
+    result.key = parse(&p, result.der_len);
+    if (!result.key) {
+        OPENSSL_clear_free(result.der_data, result.der_len);
+    }
+
+    return result;
+}
+
+AsymmetricKeyValueWithDER WebCrypto__ParsePublicKeyPEM(const char* key_pem,
+    size_t key_pem_len)
+{
+    auto bp = BIOPtr(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
+    if (!bp)
+        return (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
+
+    // Try parsing as a SubjectPublicKeyInfo first.
+    auto ret = WebCrypto__TryParsePublicKey(bp.get(), "PUBLIC KEY",
+        [](const unsigned char** p, long l) { // NOLINT(runtime/int)
+            return d2i_PUBKEY(nullptr, p, l);
+        });
+    if (ret.key)
+        return ret;
+
+    // Maybe it is PKCS#1.
+    BIO_reset(bp.get());
+    return WebCrypto__TryParsePublicKey(bp.get(), "RSA PUBLIC KEY",
+        [](const unsigned char** p, long l) { // NOLINT(runtime/int)
+            return d2i_PublicKey(EVP_PKEY_RSA, nullptr, p, l);
+        });
+}
+
 JSC::EncodedJSValue WebCrypto__createPublicKey(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSValue optionsArg = callFrame->uncheckedArgument(0);
@@ -225,9 +285,88 @@ JSC::EncodedJSValue WebCrypto__createPublicKey(JSC::JSGlobalObject* globalObject
 
             auto format = formatJSValue.toWTFString(globalObject);
             if (format == "pem"_s) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                throwException(globalObject, scope, createTypeError(globalObject, "Not implemented"_s));
-                return JSValue::encode(JSC::jsUndefined());
+                auto pem = WebCrypto__ParsePublicKeyPEM((const char*)data, byteLength);
+                if (!pem.key) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid PEM data"_s));
+                    return JSValue::encode(JSC::jsUndefined());
+                }
+                auto pkey = EvpPKeyPtr(pem.key);
+                auto pKeyID = EVP_PKEY_id(pem.key);
+                if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
+                    OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                } else if (pKeyID == EVP_PKEY_ED25519) {
+                    auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    if (result == nullptr) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    auto impl = result.releaseNonNull();
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                } else if (pKeyID == EVP_PKEY_X25519) {
+                    auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    if (result == nullptr) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    auto impl = result.releaseNonNull();
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                } else if (pKeyID == EVP_PKEY_EC) {
+                    EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
+                    if (ec_key == nullptr) {
+                        OPENSSL_clear_free(pem.der_data, pem.der_len);
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
+                    // Get the curve name
+                    int curve_name = EC_GROUP_get_curve_name(ec_group);
+                    if (curve_name == NID_undef) {
+                        OPENSSL_clear_free(pem.der_data, pem.der_len);
+                        EC_KEY_free(ec_key);
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    CryptoKeyEC::NamedCurve curve;
+                    if (curve_name == NID_X9_62_prime256v1)
+                        curve = CryptoKeyEC::NamedCurve::P256;
+                    else if (curve_name == NID_secp384r1)
+                        curve = CryptoKeyEC::NamedCurve::P384;
+                    else if (curve_name == NID_secp521r1)
+                        curve = CryptoKeyEC::NamedCurve::P521;
+                    else {
+                        OPENSSL_clear_free(pem.der_data, pem.der_len);
+                        EC_KEY_free(ec_key);
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    if (result == nullptr) {
+                        result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    }
+                    OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    if (result == nullptr) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    auto impl = result.releaseNonNull();
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                } else {
+                    OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    throwException(globalObject, scope, createTypeError(globalObject, "Unsupported public key"_s));
+                    return JSValue::encode(JSC::jsUndefined());
+                }
             }
             if (format == "der"_s) {
                 JSValue typeJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "type"_s)));
@@ -274,7 +413,6 @@ JSC::EncodedJSValue WebCrypto__createPublicKey(JSC::JSGlobalObject* globalObject
                         auto impl = result.releaseNonNull();
                         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                     } else if (pKeyID == EVP_PKEY_X25519) {
-                        Vector<uint8_t> vec_data((uint8_t*)data, byteLength);
                         auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
                         if (result == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -284,7 +422,6 @@ JSC::EncodedJSValue WebCrypto__createPublicKey(JSC::JSGlobalObject* globalObject
                         auto impl = result.releaseNonNull();
                         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                     } else if (pKeyID == EVP_PKEY_EC) {
-                        Vector<uint8_t> vec_data((uint8_t*)data, byteLength);
                         EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
                         if (ec_key == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1088,11 +1225,6 @@ JSC::EncodedJSValue WebCrypto__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlo
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
-
-struct AsymmetricKeyValue {
-    EVP_PKEY* key;
-    bool owned;
-};
 
 static Vector<uint8_t> GetRawKeyFromSecret(WebCore::CryptoKey& key)
 {

@@ -5856,59 +5856,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
     };
 }
 
-const SocketAddress = struct {
-    tag: Tag,
-    value: []const u8,
-
-    pub const Tag = enum {
-        ipv4,
-        ipv6,
-        // unix,
-    };
-
-    /// Parses address bytes into a text representation.
-    pub fn parse_binary(allocator: std.mem.Allocator, addr: []const u8) !SocketAddress {
-        var result = SocketAddress{ .tag = .ipv4, .value = undefined };
-
-        if (addr.len == 4) {
-            result.tag = .ipv4;
-            result.value = try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{
-                addr[0],
-                addr[1],
-                addr[2],
-                addr[3],
-            });
-        } else if (addr.len == 16) {
-            result.tag = .ipv6;
-
-            const ip = std.mem.readIntSlice(u128, addr, .Big);
-            const buf = try allocator.alloc(u8, 4 * 8 + 7); // 8 groups of 4 digits, seperated by 7 colons
-
-            // iterate through buf, printing 4 bits at a time from ip, and placing colons every 5 chars
-            for (buf, 0..) |*c, i| {
-                if ((i + 1) % 5 == 0 and i != 0) {
-                    c.* = ':';
-                    continue;
-                }
-
-                const shift = 124 - (i - @divFloor(i, 5)) * 4;
-                c.* = hex_from_bits(@truncate(ip >> @intCast(shift)));
-            }
-
-            result.value = buf;
-        } else return error.InvalidAddress;
-
-        return result;
-    }
-
-    inline fn hex_from_bits(b: u4) u8 {
-        return if (b < 10)
-            '0' + @as(u8, b)
-        else
-            'a' + @as(u8, b - 10);
-    }
-};
-
 pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);

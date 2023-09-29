@@ -2348,8 +2348,7 @@ declare module "bun" {
      *
      * @param request The incoming request
      *
-     * @returns An ipv6 address `string`, or `undefined` if it couldn't find one.
-     * @todo Return a `SocketAddress` object instead.
+     * @returns An ipv4/ipv6 address string, or null if it couldn't find one.
      *
      * @example
      * ```js
@@ -2360,7 +2359,7 @@ declare module "bun" {
      * }
      * ```
      */
-    requestIp(request: Request): string | undefined;
+    requestIp(request: Request): string | null;
 
     /**
      * How many requests are in-flight right now?

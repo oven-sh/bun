@@ -1127,54 +1127,87 @@ fn NewFlags(comptime debug_mode: bool) type {
 
 /// A generic wrapper for the HTTP(s) Server`RequestContext`s.
 /// Only really exists because of `NewServer()` and `NewRequestContext()` generics.
-pub const AnyRequestContext = union(enum) {
-    none: void,
-    RequestContext: *HTTPServer.RequestContext,
-    SSLRequestContext: *HTTPSServer.RequestContext,
-    DebugRequestContext: *DebugHTTPServer.RequestContext,
-    DebugSSLRequestContext: *DebugHTTPSServer.RequestContext,
+pub const AnyRequestContext = struct {
+    pub const Pointer = bun.TaggedPointerUnion(.{
+        HTTPServer.RequestContext,
+        HTTPSServer.RequestContext,
+        DebugHTTPServer.RequestContext,
+        DebugHTTPSServer.RequestContext,
+    });
 
-    pub fn fromExisting(comptime Server: type, request_ctx: anytype) AnyRequestContext {
-        return switch (Server) {
-            HTTPServer => .{ .RequestContext = request_ctx },
-            HTTPSServer => .{ .SSLRequestContext = request_ctx },
-            DebugHTTPServer => .{ .DebugRequestContext = request_ctx },
-            DebugHTTPSServer => .{ .DebugSSLRequestContext = request_ctx },
-            else => .{ .none = {} },
-        };
+    tagged_pointer: Pointer,
+
+    pub const Null = .{ .tagged_pointer = Pointer.Null };
+
+    pub fn init(request_ctx: anytype) AnyRequestContext {
+        return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
 
-    pub fn getRemoteAddressAsText(self: AnyRequestContext, out: *?[]const u8) void {
-        switch (self) {
-            .none => out.* = null,
+    pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
+        if (self.tagged_pointer.isNull()) {
+            return null;
+        }
 
-            inline else => |req_ctx| {
-                if (req_ctx.resp) |response| {
-                    var dest: [*]const u8 = undefined;
-                    const len: usize = response.getRemoteAddressAsText(&dest);
-                    out.* = if (len > 0) dest[0..len] else null;
-                } else {
-                    out.* = null;
-                }
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).getRemoteSocketInfo();
             },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).getRemoteSocketInfo();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getRemoteSocketInfo();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getRemoteSocketInfo();
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
 
     /// Wont actually set anything if `self` is `.none`
     pub fn setRequest(self: AnyRequestContext, req: *uws.Request) void {
-        switch (self) {
-            .none => {},
-            inline else => |ctx| {
-                ctx.req = req;
+        if (self.tagged_pointer.isNull()) {
+            return;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPServer.RequestContext).req = req;
             },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(HTTPSServer.RequestContext).req = req;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPServer.RequestContext).req = req;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req = req;
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
 
     pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
-        return switch (self) {
-            .none => null,
-            inline else => |req_ctx| req_ctx.req,
-        };
+        if (self.tagged_pointer.isNull()) {
+            return null;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).req;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).req;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).req;
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req;
+            },
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
     }
 };
 
@@ -2348,7 +2381,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // This object dies after the stack frame is popped
             // so we have to clear it in here too
-            request_object.request_context = .{ .none = {} };
+            request_object.request_context = JSC.API.AnyRequestContext.Null;
         }
 
         fn toAsync(
@@ -3219,6 +3252,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onStartStreamingRequestBodyCallback(this: *anyopaque) JSC.WebCore.DrainResult {
             return onStartStreamingRequestBody(bun.cast(*RequestContext, this));
+        }
+
+        pub fn getRemoteSocketInfo(this: *RequestContext) ?uws.SocketAddress {
+            return (this.resp orelse return null).getRemoteSocketInfo();
         }
 
         pub const Export = shim.exportFunctions(.{
@@ -4819,14 +4856,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return null;
         }
 
-        pub fn requestIp(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
-            var text: ?[]const u8 = null;
-            request.request_context.getRemoteAddressAsText(&text);
+        extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
 
-            return if (text) |ip|
-                bun.String.init(ip).toJSConst(this.globalThis)
+        pub fn requestIp(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            return if (request.request_context.getRemoteSocketInfo()) |info|
+                JSSocketAddress__create(
+                    this.globalThis,
+                    bun.String.static(info.ip).toJSConst(this.globalThis),
+                    info.port,
+                    info.is_ipv6,
+                )
             else
-                JSValue.jsUndefined();
+                JSValue.jsNull();
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
@@ -5605,7 +5646,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .request_context = AnyRequestContext.fromExisting(ThisServer, ctx),
+                .request_context = AnyRequestContext.init(ctx),
                 .https = ssl_enabled,
                 .signal = ctx.signal,
                 .body = body.ref(),
@@ -5674,7 +5715,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = .{ .none = {} };
+                request_object.request_context = JSC.API.AnyRequestContext.Null;
             }
 
             var should_deinit_context = false;
@@ -5689,7 +5730,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
-                request_object.request_context = .{ .none = {} };
+                request_object.request_context = JSC.API.AnyRequestContext.Null;
                 ctx.deinit();
                 return;
             }
@@ -5726,7 +5767,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             request_object.* = .{
                 .method = ctx.method,
-                .request_context = AnyRequestContext.fromExisting(ThisServer, ctx),
+                .request_context = AnyRequestContext.init(ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = ctx.signal,
@@ -5744,7 +5785,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = .{ .none = {} };
+                request_object.request_context = JSC.API.AnyRequestContext.Null;
             }
 
             var should_deinit_context = false;
@@ -5759,7 +5800,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = null;
 
             if (should_deinit_context) {
-                request_object.request_context = .{ .none = {} };
+                request_object.request_context = JSC.API.AnyRequestContext.Null;
                 ctx.deinit();
                 return;
             }

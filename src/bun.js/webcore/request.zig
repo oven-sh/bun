@@ -68,7 +68,7 @@ pub const Request = struct {
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
     method: Method = Method.GET,
-    request_context: JSC.API.AnyRequestContext = .{ .none = {} },
+    request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
     upgrader: ?*anyopaque = null,
 

@@ -75,7 +75,8 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    template<typename, SubspaceAccess mode> JSC::GCClient::IsoSubspace* JSCommonJSModule::subspaceFor(JSC::VM& vm)
+    template<typename, SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
@@ -145,8 +146,11 @@ public:
 class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
     static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+
+    DECLARE_INFO;
 
     RequireFunctionPrototype(
         JSC::VM& vm,
@@ -161,8 +165,6 @@ public:
         STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
-
-    DECLARE_INFO;
 
     void finishCreation(JSC::VM&);
 };

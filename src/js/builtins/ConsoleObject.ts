@@ -657,7 +657,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (!expression) {
         args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
         // The arguments will be formatted in warn() again
-        Reflect.$apply(this.warn, this, args);
+        this.warn.$apply(this, args);
       }
     },
 
@@ -698,7 +698,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     group(...data) {
       if (data.length > 0) {
-        Reflect.$apply(this.log, this, data);
+        this.log.$apply(this, data);
       }
       this[kGroupIndent] += StringPrototypeRepeat.$call(" ", this[kGroupIndentationWidth]);
     },
@@ -880,5 +880,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   Console.prototype.error = Console.prototype.warn;
   Console.prototype.groupCollapsed = Console.prototype.group;
 
+  console.log("loaded console");
   return Console;
 }

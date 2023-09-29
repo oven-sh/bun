@@ -1,7 +1,6 @@
 const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 // primordials
-const StringPrototypeSplit = Function.prototype.call.bind(String.prototype.split);
 const NumberIsInteger = Number.isInteger;
 
 function ReadStream(fd) {
@@ -193,7 +192,7 @@ Object.defineProperty(WriteStream, "prototype", {
         // Lazy load for startup performance.
         if (OSRelease === undefined) {
           const { release } = require("node:os");
-          OSRelease = StringPrototypeSplit(release(), ".");
+          OSRelease = release().split(".");
         }
         // Windows 10 build 10586 is the first Windows release that supports 256
         // colors. Windows 10 build 14931 is the first release that supports

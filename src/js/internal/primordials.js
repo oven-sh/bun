@@ -1,4 +1,5 @@
 // TODO: Use native code and JSC intrinsics for everything in this file.
+// Avoid using this file if possible.
 // It is primarily used for `internal/util`
 
 const createSafeIterator = (factory, next) => {
@@ -20,22 +21,16 @@ const createSafeIterator = (factory, next) => {
 };
 
 function getGetter(cls, getter) {
-  // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor doesn't work on built-ins like Typed Arrays.
-  return Function.prototype.call.bind(cls.prototype.__lookupGetter__(getter));
+  var g = cls.prototype.__lookupGetter__(getter);
+  return (...args) => g.$call(...args);
 }
 
-// function getterCaller(getter) {
-//   return val => {
-//     return val.constructor.prototype.__lookupGetter__(getter).call(val);
-//   };
-// }
-
 function uncurryThis(func) {
-  return Function.prototype.call.bind(func);
+  return (...args) => func.$call(...args);
 }
 
 const copyProps = (src, dest) => {
-  Array.prototype.forEach.call(Reflect.ownKeys(src), key => {
+  ArrayPrototypeForEach(Reflect.ownKeys(src), key => {
     if (!Reflect.getOwnPropertyDescriptor(dest, key)) {
       Reflect.defineProperty(dest, key, Reflect.getOwnPropertyDescriptor(src, key));
     }
@@ -47,13 +42,13 @@ const makeSafe = (unsafe, safe) => {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
-    Array.prototype.forEach.call(Reflect.ownKeys(unsafe.prototype), key => {
+    ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
       if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
         const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
         if (
           typeof desc.value === "function" &&
           desc.value.length === 0 &&
-          Symbol.iterator in (Function.prototype.call.call(desc.value, dummy) || {})
+          Symbol.iterator in (desc.value.$call(dummy) || {})
         ) {
           const createIterator = uncurryThis(desc.value);
           next ??= uncurryThis(createIterator(dummy).next);
@@ -74,8 +69,9 @@ const makeSafe = (unsafe, safe) => {
   return safe;
 };
 
-const StringIterator = Function.prototype.call.bind(String.prototype[Symbol.iterator]);
+const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
 const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
+const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
 
 function ErrorCaptureStackTrace(targetObject) {
   const stack = new Error().stack;
@@ -83,40 +79,40 @@ function ErrorCaptureStackTrace(targetObject) {
   targetObject.stack = stack.replace(/.*\n.*/, "$1");
 }
 
+const arrayProtoPush = Array.prototype.push;
+
 export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
   ArrayIsArray: Array.isArray,
-  ArrayPrototypeFlat: Function.prototype.call.bind(Array.prototype.flat),
-  ArrayPrototypeFilter: Function.prototype.call.bind(Array.prototype.filter),
-  ArrayPrototypeForEach: Function.prototype.call.bind(Array.prototype.forEach),
-  ArrayPrototypeIncludes: Function.prototype.call.bind(Array.prototype.includes),
-  ArrayPrototypeIndexOf: Function.prototype.call.bind(Array.prototype.indexOf),
-  ArrayPrototypeJoin: Function.prototype.call.bind(Array.prototype.join),
-  ArrayPrototypeMap: Function.prototype.call.bind(Array.prototype.map),
-  ArrayPrototypePop: Function.prototype.call.bind(Array.prototype.pop),
-  ArrayPrototypePush: Function.prototype.call.bind(Array.prototype.push),
-  ArrayPrototypePushApply: Function.apply.bind(Array.prototype.push),
-  ArrayPrototypeSlice: Function.prototype.call.bind(Array.prototype.slice),
-  ArrayPrototypeSort: Function.prototype.call.bind(Array.prototype.sort),
-  ArrayPrototypeSplice: Function.prototype.call.bind(Array.prototype.splice),
-  ArrayPrototypeUnshift: Function.prototype.call.bind(Array.prototype.unshift),
-  BigIntPrototypeValueOf: Function.prototype.call.bind(BigInt.prototype.valueOf),
-  BooleanPrototypeValueOf: Function.prototype.call.bind(Boolean.prototype.valueOf),
-  DatePrototypeGetTime: Function.prototype.call.bind(Date.prototype.getTime),
-  DatePrototypeToISOString: Function.prototype.call.bind(Date.prototype.toISOString),
-  DatePrototypeToString: Function.prototype.call.bind(Date.prototype.toString),
+  ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
+  ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
+  ArrayPrototypeForEach,
+  ArrayPrototypeIncludes: uncurryThis(Array.prototype.includes),
+  ArrayPrototypeIndexOf: uncurryThis(Array.prototype.indexOf),
+  ArrayPrototypeJoin: uncurryThis(Array.prototype.join),
+  ArrayPrototypeMap: uncurryThis(Array.prototype.map),
+  ArrayPrototypePop: uncurryThis(Array.prototype.pop),
+  ArrayPrototypePush: uncurryThis(arrayProtoPush),
+  ArrayPrototypePushApply: (a, b) => arrayProtoPush.$apply(a, b),
+  ArrayPrototypeSlice: uncurryThis(Array.prototype.slice),
+  ArrayPrototypeSort: uncurryThis(Array.prototype.sort),
+  ArrayPrototypeSplice: uncurryThis(Array.prototype.splice),
+  ArrayPrototypeUnshift: uncurryThis(Array.prototype.unshift),
+  BigIntPrototypeValueOf: uncurryThis(BigInt.prototype.valueOf),
+  BooleanPrototypeValueOf: uncurryThis(Boolean.prototype.valueOf),
+  DatePrototypeGetTime: uncurryThis(Date.prototype.getTime),
+  DatePrototypeToISOString: uncurryThis(Date.prototype.toISOString),
+  DatePrototypeToString: uncurryThis(Date.prototype.toString),
   ErrorCaptureStackTrace,
-  ErrorPrototypeToString: Function.prototype.call.bind(Error.prototype.toString),
-  FunctionPrototypeBind: Function.prototype.call.bind(Function.prototype.bind),
-  FunctionPrototypeCall: Function.prototype.call.bind(Function.prototype.call),
-  FunctionPrototypeToString: Function.prototype.call.bind(Function.prototype.toString),
+  ErrorPrototypeToString: uncurryThis(Error.prototype.toString),
+  FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
   JSONStringify: JSON.stringify,
   MapPrototypeGetSize: getGetter(Map, "size"),
-  MapPrototypeEntries: Function.prototype.call.bind(Map.prototype.entries),
-  MapPrototypeValues: Function.prototype.call.bind(Map.prototype.values),
-  MapPrototypeKeys: Function.prototype.call.bind(Map.prototype.keys),
+  MapPrototypeEntries: uncurryThis(Map.prototype.entries),
+  MapPrototypeValues: uncurryThis(Map.prototype.values),
+  MapPrototypeKeys: uncurryThis(Map.prototype.keys),
   MathFloor: Math.floor,
   MathMax: Math.max,
   MathMin: Math.min,
@@ -128,8 +124,8 @@ export default {
   NumberIsNaN: Number.isNaN,
   NumberParseFloat: Number.parseFloat,
   NumberParseInt: Number.parseInt,
-  NumberPrototypeToString: Function.prototype.call.bind(Number.prototype.toString),
-  NumberPrototypeValueOf: Function.prototype.call.bind(Number.prototype.valueOf),
+  NumberPrototypeToString: uncurryThis(Number.prototype.toString),
+  NumberPrototypeValueOf: uncurryThis(Number.prototype.valueOf),
   Object,
   ObjectAssign: Object.assign,
   ObjectCreate: Object.create,
@@ -142,20 +138,20 @@ export default {
   ObjectGetPrototypeOf: Object.getPrototypeOf,
   ObjectIs: Object.is,
   ObjectKeys: Object.keys,
-  ObjectPrototypeHasOwnProperty: Function.prototype.call.bind(Object.prototype.hasOwnProperty),
-  ObjectPrototypePropertyIsEnumerable: Function.prototype.call.bind(Object.prototype.propertyIsEnumerable),
-  ObjectPrototypeToString: Function.prototype.call.bind(Object.prototype.toString),
+  ObjectPrototypeHasOwnProperty: uncurryThis(Object.prototype.hasOwnProperty),
+  ObjectPrototypePropertyIsEnumerable: uncurryThis(Object.prototype.propertyIsEnumerable),
+  ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectApply: Reflect.apply,
+  ReflectApply: Reflect["apply"],
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
-  RegExpPrototypeExec: Function.prototype.call.bind(RegExp.prototype.exec),
-  RegExpPrototypeSymbolReplace: Function.prototype.call.bind(RegExp.prototype[Symbol.replace]),
-  RegExpPrototypeSymbolSplit: Function.prototype.call.bind(RegExp.prototype[Symbol.split]),
-  RegExpPrototypeTest: Function.prototype.call.bind(RegExp.prototype.test),
-  RegExpPrototypeToString: Function.prototype.call.bind(RegExp.prototype.toString),
-  SafeStringIterator: createSafeIterator(StringIterator, Function.prototype.call.bind(StringIteratorPrototype.next)),
+  RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),
+  RegExpPrototypeSymbolReplace: uncurryThis(RegExp.prototype[Symbol.replace]),
+  RegExpPrototypeSymbolSplit: uncurryThis(RegExp.prototype[Symbol.split]),
+  RegExpPrototypeTest: uncurryThis(RegExp.prototype.test),
+  RegExpPrototypeToString: uncurryThis(RegExp.prototype.toString),
+  SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
   SafeMap: makeSafe(
     Map,
     class SafeMap extends Map {
@@ -173,30 +169,32 @@ export default {
     },
   ),
   SetPrototypeGetSize: getGetter(Set, "size"),
-  SetPrototypeEntries: Function.prototype.call.bind(Set.prototype.entries),
-  SetPrototypeValues: Function.prototype.call.bind(Set.prototype.values),
+  SetPrototypeEntries: uncurryThis(Set.prototype.entries),
+  SetPrototypeValues: uncurryThis(Set.prototype.values),
   String,
-  StringPrototypeCharCodeAt: Function.prototype.call.bind(String.prototype.charCodeAt),
-  StringPrototypeCodePointAt: Function.prototype.call.bind(String.prototype.codePointAt),
-  StringPrototypeEndsWith: Function.prototype.call.bind(String.prototype.endsWith),
-  StringPrototypeIncludes: Function.prototype.call.bind(String.prototype.includes),
-  StringPrototypeIndexOf: Function.prototype.call.bind(String.prototype.indexOf),
-  StringPrototypeLastIndexOf: Function.prototype.call.bind(String.prototype.lastIndexOf),
-  StringPrototypeMatch: Function.prototype.call.bind(String.prototype.match),
-  StringPrototypeNormalize: Function.prototype.call.bind(String.prototype.normalize),
-  StringPrototypePadEnd: Function.prototype.call.bind(String.prototype.padEnd),
-  StringPrototypePadStart: Function.prototype.call.bind(String.prototype.padStart),
-  StringPrototypeRepeat: Function.prototype.call.bind(String.prototype.repeat),
-  StringPrototypeReplace: Function.prototype.call.bind(String.prototype.replace),
-  StringPrototypeReplaceAll: Function.prototype.call.bind(String.prototype.replaceAll),
-  StringPrototypeSlice: Function.prototype.call.bind(String.prototype.slice),
-  StringPrototypeSplit: Function.prototype.call.bind(String.prototype.split),
-  StringPrototypeStartsWith: Function.prototype.call.bind(String.prototype.startsWith),
-  StringPrototypeToLowerCase: Function.prototype.call.bind(String.prototype.toLowerCase),
-  StringPrototypeTrim: Function.prototype.call.bind(String.prototype.trim),
-  StringPrototypeValueOf: Function.prototype.call.bind(String.prototype.valueOf),
-  SymbolPrototypeToString: Function.prototype.call.bind(Symbol.prototype.toString),
-  SymbolPrototypeValueOf: Function.prototype.call.bind(Symbol.prototype.valueOf),
+  StringPrototypeCharCodeAt: uncurryThis(String.prototype.charCodeAt),
+  StringPrototypeCodePointAt: uncurryThis(String.prototype.codePointAt),
+  StringPrototypeEndsWith: uncurryThis(String.prototype.endsWith),
+  StringPrototypeIncludes: uncurryThis(String.prototype.includes),
+  StringPrototypeIndexOf: uncurryThis(String.prototype.indexOf),
+  StringPrototypeLastIndexOf: uncurryThis(String.prototype.lastIndexOf),
+  StringPrototypeMatch: uncurryThis(String.prototype.match),
+  StringPrototypeNormalize: uncurryThis(String.prototype.normalize),
+  StringPrototypePadEnd: uncurryThis(String.prototype.padEnd),
+  StringPrototypePadStart: uncurryThis(String.prototype.padStart),
+  StringPrototypeRepeat: uncurryThis(String.prototype.repeat),
+  StringPrototypeReplace: uncurryThis(String.prototype.replace),
+  StringPrototypeReplaceAll: uncurryThis(String.prototype.replaceAll),
+  StringPrototypeSlice: uncurryThis(String.prototype.slice),
+  StringPrototypeSplit: uncurryThis(String.prototype.split),
+  StringPrototypeStartsWith: uncurryThis(String.prototype.startsWith),
+  StringPrototypeToLowerCase: uncurryThis(String.prototype.toLowerCase),
+  StringPrototypeTrim: uncurryThis(String.prototype.trim),
+  StringPrototypeValueOf: uncurryThis(String.prototype.valueOf),
+  SymbolPrototypeToString: uncurryThis(Symbol.prototype.toString),
+  SymbolPrototypeValueOf: uncurryThis(Symbol.prototype.valueOf),
+  FunctionPrototypeToString: uncurryThis(Function.prototype.toString),
+  FunctionPrototypeBind: uncurryThis(Function.prototype.bind),
   SymbolIterator: Symbol.iterator,
   SymbolFor: Symbol.for,
   SymbolToStringTag: Symbol.toStringTag,

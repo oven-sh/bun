@@ -140,7 +140,7 @@ var access = function access(...args) {
       throw err;
     }
     try {
-      fs.exists.apply(fs, [path]).then(
+      fs.exists.$apply(fs, [path]).then(
         existed => callback(existed),
         _ => callback(false),
       );

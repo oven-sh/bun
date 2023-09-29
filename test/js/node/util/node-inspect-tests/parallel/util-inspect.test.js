@@ -1868,6 +1868,7 @@ test("no assertion failures 3", () => {
   assert.strictEqual(util.inspect("'"), '"\'"');
   assert.strictEqual(util.inspect("\"'"), "`\"'`");
   assert.strictEqual(util.inspect("\"'${a}"), "'\"\\'${a}'");
+  console.log(1);
 
   // Errors should visualize as much information as possible.
   // If the name is not included in the stack, visualize it as well.
@@ -3017,6 +3018,7 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(x, { maxStringLength: 4 }), "'aaaa'... 999996 more characters");
     assert.match(util.inspect(x, { maxStringLength: null }), /a'$/);
   }
+  console.log(8);
 
   {
     // Verify that util.inspect() invokes custom inspect functions on objects
@@ -3103,6 +3105,7 @@ test("no assertion failures 3", () => {
     // Consistency check.
     assert(fullObjectGraph(global).has(Function.prototype));
   }
+  console.log(9);
 
   {
     // Confirm that own constructor value displays correctly.

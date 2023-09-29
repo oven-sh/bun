@@ -209,6 +209,7 @@ pub const Diagnostic = struct {
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     pub fn report(diag: Diagnostic, stream: anytype, err: anyerror) !void {
+        std.debug.print("starting diag report", .{});
         const Arg = struct {
             prefix: []const u8,
             name: []const u8,
@@ -220,6 +221,7 @@ pub const Diagnostic = struct {
         else
             Arg{ .prefix = "", .name = diag.arg };
 
+        std.debug.print("switching in diag.report", .{});
         switch (err) {
             error.DoesntTakeValue => try stream.print("The argument '{s}{s}' does not take a value\n", .{ a.prefix, a.name }),
             error.MissingValue => try stream.print("The argument '{s}{s}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
@@ -229,6 +231,9 @@ pub const Diagnostic = struct {
                 try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
             else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
         }
+
+        // print error
+
     }
 };
 

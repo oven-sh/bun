@@ -95,6 +95,7 @@ pub const Cli = struct {
                 },
                 else => {
                     // Always dump the logs
+                    // std.debug.print("dump logs", .{});
                     if (Output.enable_ansi_colors_stderr) {
                         log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                     } else {
@@ -375,6 +376,7 @@ pub const Arguments = struct {
     }
 
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+        std.debug.print("starting parse\n", .{});
         var diag = clap.Diagnostic{};
         const params_to_use = comptime cmd.params();
 
@@ -386,12 +388,16 @@ pub const Arguments = struct {
             else
                 0,
         }) catch |err| {
+            std.debug.print("error caught\n", .{});
             // Report useful error and exit
             clap.help(Output.errorWriter(), params_to_use) catch {};
             Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
+            std.debug.print("done printing\n", .{});
             Global.exit(1);
         };
+
+        std.debug.print("past parsing\n", .{});
 
         if (args.flag("--version")) {
             printVersionAndExit();
@@ -529,6 +535,7 @@ pub const Arguments = struct {
         opts.no_summary = args.flag("--no-summary");
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
+            std.debug.print("autocommand\n", .{});
             const preloads = args.options("--preload");
             if (ctx.preloads.len > 0 and preloads.len > 0) {
                 var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
@@ -578,7 +585,9 @@ pub const Arguments = struct {
         }
 
         const print_help = args.flag("--help");
+
         if (print_help) {
+            std.debug.print("printing help\n", .{});
             clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
@@ -1076,7 +1085,10 @@ pub const Command = struct {
             ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
+                std.debug.print("arguments.parse\n", .{});
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
+            } else {
+                std.debug.print("doesnt use global options\n", .{});
             }
 
             return ctx;
@@ -1578,6 +1590,7 @@ pub const Command = struct {
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
+                            std.debug.print("missing entry point\n", .{});
                             HelpCommand.execWithReason(allocator, .explicit);
                             return;
                         },
@@ -1685,6 +1698,7 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
+                std.debug.print("fallback to help\n", .{});
                 try HelpCommand.exec(allocator);
             },
             else => unreachable,

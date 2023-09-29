@@ -389,24 +389,32 @@ static JSC::EncodedJSValue WebCrypto__createSecretKey(JSC::JSGlobalObject* lexic
 }
 static JSC::EncodedJSValue WebCrypto__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    // TODO: make this strings static constants
+    static const NeverDestroyed<String> values[] = {
+        MAKE_STATIC_STRING_IMPL("rsa"),
+        MAKE_STATIC_STRING_IMPL("rsa-pss"),
+        MAKE_STATIC_STRING_IMPL("dsa"),
+        MAKE_STATIC_STRING_IMPL("dh"),
+        MAKE_STATIC_STRING_IMPL("X25519"),
+        MAKE_STATIC_STRING_IMPL("ed25519"),
+    };
+
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         auto id = key->wrapped().algorithmIdentifier();
         switch (id) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_OAEP:
-            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("rsa"_s)));
+            return JSC::JSValue::encode(JSC::jsStringWithCache(lexicalGlobalObject->vm(), values[0]));
         case CryptoAlgorithmIdentifier::RSA_PSS:
-            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("rsa-pss"_s)));
+            return JSC::JSValue::encode(JSC::jsStringWithCache(lexicalGlobalObject->vm(), values[1]));
         case CryptoAlgorithmIdentifier::ECDSA:
-            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("dsa"_s)));
+            return JSC::JSValue::encode(JSC::jsStringWithCache(lexicalGlobalObject->vm(),values[2]));
         case CryptoAlgorithmIdentifier::ECDH:
-            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String("dh"_s)));
+            return JSC::JSValue::encode(JSC::jsStringWithCache(lexicalGlobalObject->vm(), values[3]));
         case CryptoAlgorithmIdentifier::Ed25519: {
             const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key->wrapped());
             //TODO: CHECK THIS WHEN X488 AND ED448 ARE ADDED
-            return JSC::JSValue::encode(JSC::jsString(lexicalGlobalObject->vm(), String(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? "X25519"_s : "ed25519"_s)));
+            return JSC::JSValue::encode(JSC::jsStringWithCache(lexicalGlobalObject->vm(), String(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? values[4] : values[5])));
         }
         default:
             return JSC::JSValue::encode(JSC::jsUndefined());

@@ -306,6 +306,15 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
 
+        pub fn localAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
+            return us_socket_local_address(
+                comptime ssl_int,
+                this.socket,
+                buf,
+                length,
+            );
+        }
+
         pub fn connect(
             host: []const u8,
             port: i32,
@@ -1138,6 +1147,7 @@ extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8
 
 extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
+extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_header_iterator_s = opaque {};

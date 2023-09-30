@@ -1,8 +1,11 @@
+#pragma once
+
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/JSBoundFunction.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "_NativeModule.h"
+#include "isBuiltinModule.h"
 
 using namespace Zig;
 using namespace JSC;
@@ -88,18 +91,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "zlib"_s,
 };
 
-static bool isBuiltinModule(const String &namePossiblyWithNodePrefix) {
-  String name = namePossiblyWithNodePrefix;
-  if (name.startsWith("node:"_s))
-    name = name.substringSharingImpl(5);
-
-  for (auto &builtinModule : builtinModuleNames) {
-    if (name == builtinModule)
-      return true;
-  }
-  return false;
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
@@ -158,7 +149,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
   auto moduleStr = moduleName.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
-  return JSValue::encode(jsBoolean(isBuiltinModule(moduleStr)));
+  return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,

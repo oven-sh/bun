@@ -38,6 +38,7 @@ pub const API = struct {
     pub const HTTPSServer = @import("./bun.js/api/server.zig").HTTPSServer;
     pub const DebugHTTPServer = @import("./bun.js/api/server.zig").DebugHTTPServer;
     pub const DebugHTTPSServer = @import("./bun.js/api/server.zig").DebugHTTPSServer;
+    pub const AnyRequestContext = @import("./bun.js/api/server.zig").AnyRequestContext;
     pub const Bun = @import("./bun.js/api/bun.zig");
     pub const FileSystemRouter = @import("./bun.js/api/filesystem_router.zig").FileSystemRouter;
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;

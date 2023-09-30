@@ -53,7 +53,6 @@ pub const Cli = struct {
 
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
-
         Command.start(allocator, log) catch |err| {
             switch (err) {
                 error.MissingEntryPoint => {
@@ -167,7 +166,7 @@ pub const Arguments = struct {
     pub const ParamType = clap.Param(clap.Help);
 
     const shared_public_params = [_]ParamType{
-        clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
+        clap.parseParam("-h, --help") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
@@ -241,14 +240,14 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
-        clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
-        clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
-        clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
-        clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
-        clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
-        clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
-        clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--timeout <NUMBER>") catch unreachable,
+        clap.parseParam("--update-snapshots") catch unreachable,
+        clap.parseParam("--rerun-each <NUMBER>") catch unreachable,
+        clap.parseParam("--only") catch unreachable,
+        clap.parseParam("--todo") catch unreachable,
+        clap.parseParam("--coverage") catch unreachable,
+        clap.parseParam("--bail <NUMBER>?") catch unreachable,
+        clap.parseParam("-t, --test-name-pattern <STR>") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -588,10 +587,11 @@ pub const Arguments = struct {
 
         if (print_help) {
             std.debug.print("printing help\n", .{});
-            clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
-            Output.prettyln("\n-------\n\n", .{});
+            cmd.print_helptext();
+            // clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
+            // Output.prettyln("\n-------\n\n", .{});
             Output.flush();
-            HelpCommand.printWithReason(.explicit);
+            // HelpCommand.printWithReason(.explicit);
             Global.exit(0);
         }
 
@@ -894,35 +894,35 @@ pub const HelpCommand = struct {
         "elysia",
     };
 
-    pub fn printWithReason(comptime reason: Reason) void {
-        // the spacing between commands here is intentional
-        const fmt =
-            \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
-            \\  <b><magenta>test<r>                           Run unit tests with Bun
-            \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
-            \\  <b><magenta>repl<r>                           Start a REPL session with Bun
-            \\
-            \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
-            \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
-            \\
-            \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
-            \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
-            \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
-            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
-            \\  <b><blue>link<r>                           Link an npm package globally
-            \\  <b><blue>unlink<r>                         Globally unlink an npm package
-            \\  <b>pm<r>                             More commands for managing packages
-            \\
-            \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
-            \\
-            \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
-            \\  <b>bun --help<r>                     Show all supported flags and commands
-            \\
-            \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
-            \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
-            \\
-        ;
+    // the spacing between commands here is intentional
+    pub const cli_helptext_fmt =
+        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
+        \\  <b><magenta>test<r>                           Run unit tests with Bun
+        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
+        \\  <b><magenta>repl<r>                           Start a REPL session with Bun
+        \\
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
+        \\
+        \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
+        \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
+        \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
+        \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>link<r>                           Link an npm package globally
+        \\  <b><blue>unlink<r>                         Globally unlink an npm package
+        \\  <b>pm<r>                             More commands for managing packages
+        \\
+        \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+        \\
+        \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
+        \\  <b>bun --help<r>                     Show all supported flags and commands
+        \\
+        \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
+        \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
+        \\
+    ;
 
+    pub fn printWithReason(comptime reason: Reason) void {
         var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
 
@@ -941,11 +941,11 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ fmt,
+                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ cli_helptext_fmt,
                 args,
             ),
             .invalid_command => Output.prettyError(
-                "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt,
+                "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ cli_helptext_fmt,
                 args,
             ),
         }
@@ -1090,7 +1090,6 @@ pub const Command = struct {
             } else {
                 std.debug.print("doesnt use global options\n", .{});
             }
-
             return ctx;
         }
     };
@@ -1586,8 +1585,10 @@ pub const Command = struct {
                 return;
             },
             .AutoCommand => {
+                std.debug.print("running autocommand\n", .{});
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+                    std.debug.print("error in context.create()\n", .{});
                     switch (e) {
                         error.MissingEntryPoint => {
                             std.debug.print("missing entry point\n", .{});
@@ -1698,7 +1699,9 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
-                std.debug.print("fallback to help\n", .{});
+                // Output.prettyWarnln("<r><yellow>warn<r><d>:<r> failed to parse command\n", .{});
+                // std.debug.print("fallback to help\n", .{});
+                // Output.flush();
                 try HelpCommand.exec(allocator);
             },
             else => unreachable,
@@ -1806,6 +1809,78 @@ pub const Command = struct {
                 Command.Tag.BuildCommand => Arguments.build_params,
                 Command.Tag.TestCommand => Arguments.test_params,
                 else => Arguments.params,
+            };
+        }
+
+        pub fn print_helptext(cmd: Tag) void {
+            return switch (cmd) {
+                Command.Tag.BuildCommand => {
+                    const build_helptext =
+                        \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
+                        \\
+                        \\<b>Flags:<r>
+                        \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
+                        \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
+                        \\  <cyan>--minify<r>             Enable all minification flags
+                        \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
+                        \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
+                        \\  <cyan>--minify-identifiers<r> Shorten variable names
+                        \\  <cyan>--sourcemap<r>          Generate sourcemaps
+                        \\                       ("none", "inline", or "external")
+                        \\  <cyan>--target<r>             The intended execution environment for the bundle.
+                        \\                       ("browser", "bun" or "node")
+                        \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
+                        \\  <cyan>--watch<r>              Run bundler in watch mode
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>Frontend web apps:<r>
+                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
+                        \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+                        \\
+                        \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
+                        \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
+                        \\
+                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
+                        \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
+                        \\
+                        \\Run `bun build --help --all` A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                    ;
+                    Output.pretty(build_helptext, .{});
+                    Output.flush();
+                },
+                Command.Tag.TestCommand => {
+                    const test_helptext =
+                        \\<b>Usage<r>: <b><green>bun test<r> [flags] [patterns...]
+                        \\  Run all matching test files and print the results to stdout
+                        \\
+                        \\<b>Flags:<r>
+                        \\  <cyan>    --timeout N<r>          	        Set the per-test timeout in milliseconds. Default 5000.
+                        \\  <cyan>    --update-snapshots<r>          	Update snapshot files
+                        \\  <cyan>    --rerun-each N<r>       	        Re-run each test file N times, helps catch certain bugs
+                        \\  <cyan>    --only<r>                      	Only run tests that are marked with "test.only()"
+                        \\  <cyan>    --todo<r>                      	Include tests that are marked with "test.todo()"
+                        \\  <cyan>    --coverage<r>                  	Generate a coverage profile
+                        \\  <cyan>    --bail [N]<r>            	        Exit the test suite after N failures. Default 1.
+                        \\  <cyan>-t, --test-name-pattern [patterns...]<r>   	Run only tests with a name that matches the given regex.
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>Run all test files <r>
+                        \\  <b><green>bun test<r>
+                        \\
+                        \\  <d>Run all test files with "foo" or "bar" in the file name<r>
+                        \\  <b><green>bun test foo bar<r>
+                        \\
+                        \\  <d>Run all test files, only including tests whose names includes "baz"<r>
+                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
+                        \\
+                        \\Run `bun test --help --all` A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                    ;
+                    Output.pretty(test_helptext, .{});
+                    Output.flush();
+                },
+                else => {
+                    HelpCommand.printWithReason(.explicit);
+                },
             };
         }
 

@@ -74,6 +74,9 @@ pub fn ComptimeClap(
 
             while (try stream.next()) |arg| {
                 const param = arg.param;
+                // std.debug.print("arg: {s}\n", .{arg.value orelse "~null~"});
+                // std.debug.print("arg: {s}\n", .{arg.param.names.long orelse arg.param.names.short orelse "~noname~"});
+                // std.debug.print("state: {s}\n", .{@tagName(stream.state)});
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {

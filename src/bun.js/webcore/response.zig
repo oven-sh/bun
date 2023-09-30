@@ -527,12 +527,10 @@ pub const Response = struct {
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        if (Init.init(allocator, globalThis, arguments[1]) catch null) |_init| {
-                            break :brk _init;
-                        }
+                        break :brk Init.init(allocator, globalThis, arguments[1]) catch null;
                     }
 
-                    std.debug.assert(arguments[1].isEmptyOrUndefinedOrNull());
+                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);

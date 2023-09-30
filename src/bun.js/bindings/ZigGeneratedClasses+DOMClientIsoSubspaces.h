@@ -16,6 +16,7 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEndTag;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAny;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAnything;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectArrayContaining;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectStringContaining;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectStringMatching;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFI;

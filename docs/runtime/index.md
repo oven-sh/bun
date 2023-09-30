@@ -2,7 +2,7 @@ Bun is a new JavaScript & TypeScript runtime designed to be a faster, leaner, an
 
 ## Speed
 
-Bun is designed to start fast and run fast. It's transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+Bun is designed to start fast and run fast. Its transpiler and runtime are written in Zig, a modern, high-performance language. On Linux, this translates into startup times [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
 
 {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
 
@@ -27,7 +27,7 @@ Some aspects of Bun's runtime behavior are affected by the contents of your `tsc
 
 <!--
 
-every file before execution. It's transpiler  can directly run TypeScript and JSX `{.js|.jsx|.ts|.tsx}` files directly. During execution, Bun internally transpiles all files (including `.js` files) to vanilla JavaScript with it's fast native transpiler. -->
+every file before execution. Its transpiler  can directly run TypeScript and JSX `{.js|.jsx|.ts|.tsx}` files directly. During execution, Bun internally transpiles all files (including `.js` files) to vanilla JavaScript with its fast native transpiler. -->
 
 <!-- A loader determines how to map imports &amp; file extensions to transforms and output. -->
 
@@ -117,7 +117,7 @@ $ bun run ./my-wasm-app.whatever
 
 {% callout %}
 
-**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
+**Note** — WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not fully optimized for performance; this will become more of a priority as WASM grows in popularity.
 {% /callout %}
 
 ## Node.js compatibility

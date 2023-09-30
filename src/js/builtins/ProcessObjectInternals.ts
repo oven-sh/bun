@@ -24,27 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// TODO: move this to native code?
-export function binding(bindingName) {
-  if (bindingName === "constants") {
-    return $processBindingConstants;
-  }
-  const issue = {
-    fs: 3546,
-    buffer: 2020,
-    natives: 2254,
-    uv: 2891,
-  }[bindingName];
-  if (issue) {
-    throw new Error(
-      `process.binding("${bindingName}") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/${issue}`,
-    );
-  }
-  throw new TypeError(
-    `process.binding("${bindingName}") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample.`,
-  );
-}
-
 export function getStdioWriteStream(fd) {
   const tty = require("node:tty");
 
@@ -110,7 +89,8 @@ export function getStdinStream(fd) {
 
   const tty = require("node:tty");
 
-  const stream = new tty.ReadStream(fd);
+  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(fd);
 
   const originalOn = stream.on;
   stream.on = function (event, listener) {

@@ -27,7 +27,6 @@
 #include "EventEmitter.h"
 #include "JSEventEmitter.h"
 
-#include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -459,7 +458,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
         switch (promise->status(vm)) {
         case JSPromise::Status::Rejected: {
@@ -514,6 +513,29 @@ JSValue fetchCommonJSModule(
     if (!res->success) {
         throwException(scope, res->result.err, globalObject);
         RELEASE_AND_RETURN(scope, {});
+    }
+
+    // The JSONForObjectLoader tag is source code returned from Bun that needs
+    // to go through the JSON parser in JSC.
+    //
+    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+    // object to be accessible as named imports.
+    //
+    // We don't use Bun's JSON parser because JSON.parse is faster and
+    // handles stack overflow better.
+    //
+    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+    // parser instead to support comments and trailing commas.
+    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        if (!value) {
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
+
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, value.isCell() && value.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
+        target->hasEvaluated = true;
+        RELEASE_AND_RETURN(scope, target);
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -611,7 +633,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    if (JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier)) {
         return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
     }
 
@@ -645,6 +667,34 @@ static JSValue fetchESMSourceCode(
         auto* exception = scope.exception();
         scope.clearException();
         return reject(exception);
+    }
+
+    // The JSONForObjectLoader tag is source code returned from Bun that needs
+    // to go through the JSON parser in JSC.
+    //
+    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+    // object to be accessible as named imports.
+    //
+    // We don't use Bun's JSON parser because JSON.parse is faster and
+    // handles stack overflow better.
+    //
+    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+    // parser instead to support comments and trailing commas.
+    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        if (!value) {
+            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s)));
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), Bun::toWTFString(*specifier)));
+        JSC::ensureStillAliveHere(value);
+        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);

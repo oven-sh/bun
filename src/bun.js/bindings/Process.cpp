@@ -20,6 +20,8 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include "JSNextTickQueue.h"
+#include "ProcessBindingUV.h"
+#include "ProcessBindingNatives.h"
 
 #pragma mark - Node.js Process
 
@@ -39,11 +41,11 @@
 #include <unistd.h> // setuid, getuid
 #endif
 
-namespace Zig {
+namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.15.0"
+#define REPORTED_NODE_VERSION "20.8.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define processObjectMainModuleCodeGenerator moduleMainCodeGenerator
 
@@ -226,7 +228,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -808,12 +810,12 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("10.8.168.20-node.8"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.44.2"_s))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("8"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("11.3.244.8-node.15"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.46.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("108"))));
+        JSC::JSValue(JSC::jsString(vm, makeAtomString("115"))));
 
     return object;
 }
@@ -950,7 +952,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), Bun__Process__send, ImplementationVisibility::Public);
     } else {
-        return jsNumber(4);
+        return jsUndefined();
     }
 }
 
@@ -1121,6 +1123,91 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+#define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \
+    {                                                                                                                                                                                                                                    \
+        throwScope.throwException(globalObject, createError(globalObject, String("process.binding(\"" str "\") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" issue ""_s))); \
+        return JSValue::encode(JSValue {});                                                                                                                                                                                              \
+    }
+
+#define PROCESS_BINDING_NOT_IMPLEMENTED(str)                                                                                                                                                                                            \
+    {                                                                                                                                                                                                                                   \
+        throwScope.throwException(globalObject, createError(globalObject, String("process.binding(\"" str "\") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample."_s))); \
+        return JSValue::encode(JSValue {});                                                                                                                                                                                             \
+    }
+
+inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
+{
+    auto& builtinNames = WebCore::builtinNames(vm);
+    auto fn = globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName());
+    auto callData = JSC::getCallData(fn);
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, String("util/types"_s)));
+    return JSC::call(globalObject, fn, callData, globalObject, args);
+}
+
+inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)
+{
+    auto config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
+#ifdef BUN_DEBUG
+    config->putDirect(vm, Identifier::fromString(vm, "isDebugBuild"_s), jsBoolean(true), 0);
+#else
+    config->putDirect(vm, Identifier::fromString(vm, "isDebugBuild"_s), jsBoolean(false), 0);
+#endif
+    config->putDirect(vm, Identifier::fromString(vm, "hasOpenSSL"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "fipsMode"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasIntl"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasTracing"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasNodeOptions"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "hasInspector"_s), jsBoolean(true), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "noBrowserGlobals"_s), jsBoolean(false), 0);
+    config->putDirect(vm, Identifier::fromString(vm, "bits"_s), jsNumber(64), 0);
+    return config;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto process = jsCast<Process*>(globalObject->processObject());
+    auto moduleName = callFrame->argument(0).toWTFString(globalObject);
+
+    // clang-format off
+    if (moduleName == "async_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("async_wrap");
+    if (moduleName == "buffer"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("buffer", "2020");
+    if (moduleName == "cares_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("cares_wrap");
+    if (moduleName == "config"_s) return JSValue::encode(processBindingConfig(globalObject, vm));
+    if (moduleName == "constants"_s) return JSValue::encode(globalObject->processBindingConstants());
+    if (moduleName == "contextify"_s) PROCESS_BINDING_NOT_IMPLEMENTED("contextify");
+    if (moduleName == "crypto"_s) PROCESS_BINDING_NOT_IMPLEMENTED("crypto");
+    if (moduleName == "fs"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("fs", "3546");
+    if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
+    if (moduleName == "http_parser"_s) PROCESS_BINDING_NOT_IMPLEMENTED("http_parser");
+    if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");
+    if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
+    if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
+    if (moduleName == "natives"_s) return JSValue::encode(process->bindingNatives());
+    if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
+    if (moduleName == "pipe_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("pipe_wrap");
+    if (moduleName == "process_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("process_wrap");
+    if (moduleName == "signal_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("signal_wrap");
+    if (moduleName == "spawn_sync"_s) PROCESS_BINDING_NOT_IMPLEMENTED("spawn_sync");
+    if (moduleName == "stream_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("stream_wrap", "4957");
+    if (moduleName == "tcp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tcp_wrap");
+    if (moduleName == "tls_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tls_wrap");
+    if (moduleName == "tty_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("tty_wrap", "4694");
+    if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
+    if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
+    if (moduleName == "util"_s) return JSValue::encode(processBindingUtil(globalObject, vm));
+    if (moduleName == "uv"_s) return JSValue::encode(process->bindingUV());
+    if (moduleName == "v8"_s) PROCESS_BINDING_NOT_IMPLEMENTED("v8");
+    if (moduleName == "zlib"_s) PROCESS_BINDING_NOT_IMPLEMENTED("zlib");
+    // clang-format on
+
+    throwScope.throwException(globalObject, createError(globalObject, makeString("No such module: "_s, moduleName)));
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -1158,8 +1245,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Process* thisObject = jsCast<Process*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->cpuUsageStructure.visit(visitor);
-    thisObject->memoryUsageStructure.visit(visitor);
+    thisObject->m_cpuUsageStructure.visit(visitor);
+    thisObject->m_memoryUsageStructure.visit(visitor);
+    thisObject->m_bindingUV.visit(visitor);
+    thisObject->m_bindingNatives.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -1239,6 +1328,16 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if OS(LINUX) || OS(FREEBSD)
+    return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
+#else
+    return JSValue::encode(jsUndefined());
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1252,7 +1351,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
-    Structure* cpuUsageStructure = process->cpuUsageStructure.getInitializedOnMainThread(process);
+    Structure* cpuUsageStructure = process->cpuUsageStructure();
 
     constexpr double MICROS_PER_SEC = 1000000.0;
 
@@ -1405,7 +1504,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure.getInitializedOnMainThread(process));
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
     if (UNLIKELY(throwScope.exception())) {
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -1770,11 +1869,12 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   argv                             constructArgv                            PropertyCallback
   argv0                            constructArgv0                           PropertyCallback
   assert                           Process_functionAssert                   Function 1
-  binding                          JSBuiltin                                Function 1
+  binding                          Process_functionBinding                  Function 1
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
   connected                        processConnected                         CustomAccessor
+  constrainedMemory                Process_functionConstrainedMemory        Function 0
   cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
   debugPort                        processDebugPort                         CustomAccessor
@@ -1831,7 +1931,6 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   _kill                            Process_functionReallyKill               Function 2
 @end
 */
-
 #include "Process.lut.h"
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
     CREATE_METHOD_TABLE(Process) };
@@ -1840,17 +1939,24 @@ void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 
-    this->wrapped().onDidChangeListener = &onDidChangeListeners;
+    wrapped().onDidChangeListener = &onDidChangeListeners;
 
-    this->cpuUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+    m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
     });
 
-    this->memoryUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+    m_memoryUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructMemoryUsageStructure(init.vm, init.owner->globalObject()));
     });
 
-    this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
+    m_bindingUV.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
+        init.set(Bun::ProcessBindingUV::create(init.vm, init.owner->globalObject()));
+    });
+    m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
+        init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+
+    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
 }
 
-} // namespace Zig
+} // namespace Bun

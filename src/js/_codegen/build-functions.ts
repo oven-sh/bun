@@ -1,40 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
-import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
+import { applyGlobalReplacements, define } from "./replacements";
 import { cap, fmtCPPString, low } from "./helpers";
-import { spawn } from "bun";
 
-async function createStaticHashtables() {
-  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp", "src/bun.js/bindings/BunObject.cpp"];
-  console.time("Creating static hash tables...");
-  const create_hash_table = path.join(import.meta.dir, "../../../src/bun.js/scripts/create_hash_table");
-  if (!create_hash_table) {
-    console.warn(
-      "Could not find create_hash_table executable. Run `bun i` or clone webkit to build static hash tables",
-    );
-    return;
-  }
-  for (let cpp of STATIC_HASH_TABLES) {
-    cpp = path.join(import.meta.dir, "../../../", cpp);
-    const { stdout, exited } = spawn({
-      cmd: [create_hash_table, cpp],
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    await exited;
-    let str = await new Response(stdout).text();
-    str = str.replaceAll(/^\/\/.*$/gm, "");
-    str = str.replaceAll(/^#include.*$/gm, "");
-    str = str.replaceAll(`namespace JSC {`, "");
-    str = str.replaceAll(`} // namespace JSC`, "");
-    str = "// File generated via `make generate-builtins`\n" + str.trim() + "\n";
-    await Bun.write(cpp.replace(/\.cpp$/, ".lut.h"), str);
-  }
-  console.timeEnd("Creating static hash tables...");
-}
-
-const staticHashTablePromise = createStaticHashtables();
 console.log("Bundling Bun builtin functions...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
@@ -48,24 +17,6 @@ const TMP_DIR = path.join(SRC_DIR, "../out/tmp/builtins");
 if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR, { recursive: true });
 
-const define = {
-  "process.env.NODE_ENV": "production",
-  "IS_BUN_DEVELOPMENT": "false",
-};
-
-for (const name in enums) {
-  const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
-  define[`__intrinsic__${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`__intrinsic__${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k)}`).join(", ") + "}";
-}
-
-for (const name of globalsToPrefix) {
-  define[name] = "__intrinsic__" + name;
-}
-
 interface ParsedBuiltin {
   name: string;
   params: string[];
@@ -77,9 +28,9 @@ interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
   isGetter: boolean;
-  isConstructor: boolean;
+  constructAbility: string;
+  constructKind: string;
   isLinkTimeConstant: boolean;
-  isNakedConstructor: boolean;
   intrinsic: string;
   overriddenName: string;
   source: string;
@@ -146,12 +97,13 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         throw new SyntaxError("Could not parse directive value " + directive[2] + " (must be JSON parsable)");
       }
       if (name === "constructor") {
-        throw new SyntaxError("$constructor not implemented");
+        directives.ConstructAbility = "CanConstruct";
+      } else if (name === "nakedConstructor") {
+        directives.ConstructAbility = "CanConstruct";
+        directives.ConstructKind = "Naked";
+      } else {
+        directives[name] = value;
       }
-      if (name === "nakedConstructor") {
-        throw new SyntaxError("$nakedConstructor not implemented");
-      }
-      directives[name] = value;
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
       const declaration = contents.match(
@@ -218,7 +170,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
-      minify: { syntax: true, whitespace: true },
+      minify: { syntax: true, whitespace: false },
     });
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
@@ -231,7 +183,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        // .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({
@@ -241,9 +193,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       params: fn.params,
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
       isGetter: !!fn.directives.getter,
-      isConstructor: !!fn.directives.constructor,
+      constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
+      constructKind: fn.directives.ConstructKind ?? "None",
       isLinkTimeConstant: !!fn.directives.linkTimeConstant,
-      isNakedConstructor: !!fn.directives.nakedConstructor,
       intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
@@ -254,12 +206,14 @@ $$capture_start$$(${fn.async ? "async " : ""}${
   }
 
   return {
-    functions: bundledFunctions,
+    functions: bundledFunctions.sort((a, b) => a.name.localeCompare(b.name)),
     internal,
   };
 }
 
-const filesToProcess = readdirSync(SRC_DIR).filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"));
+const filesToProcess = readdirSync(SRC_DIR)
+  .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
+  .sort();
 
 const files: Array<{ basename: string; functions: BundledBuiltin[]; internal: boolean }> = [];
 async function processFile(x: string) {
@@ -305,8 +259,8 @@ for (const { basename, functions } of files) {
   for (const fn of functions) {
     const name = `${lowerBasename}${cap(fn.name)}Code`;
     bundledCPP += `// ${fn.name}
-const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
+const JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
+const JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
 const JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 const int s_${name}Length = ${fn.source.length};
 static const JSC::Intrinsic s_${name}Intrinsic = JSC::NoIntrinsic;
@@ -459,7 +413,7 @@ public:
     explicit ${basename}BuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }, JSC::SourceTaintedOrigin::Untainted))
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
@@ -651,8 +605,6 @@ const totalJSSize = files.reduce(
 if (!KEEP_TMP) {
   await rmSync(TMP_DIR, { recursive: true });
 }
-
-await staticHashTablePromise;
 
 console.log(
   `Embedded JS size: %s bytes (across %s functions, %s files)`,

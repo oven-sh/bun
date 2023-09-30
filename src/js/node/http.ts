@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const { getHeader, setHeader } = $lazy("http");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -75,13 +76,9 @@ const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in No
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-const StringPrototypeIndexOf = String.prototype.indexOf;
 const ArrayIsArray = Array.isArray;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
@@ -126,30 +123,20 @@ function validateFunction(callable: any, field: string) {
   return callable;
 }
 
-function getHeader(headers, name) {
-  if (!headers) return;
-  const result = headers.get(name);
-  return result == null ? undefined : result;
-}
-
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]: any;
+  [kInternalSocketData]!: [import("bun").Server, OutgoingMessage, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
-  remoteAddress: string | null = null;
-  remotePort;
   timeout = 0;
-
   isServer = false;
 
+  #address;
   address() {
-    return {
-      address: this.localAddress,
-      family: this.localFamily,
-      port: this.localPort,
-    };
+    // Call server.requestIP() without doing any propety getter twice.
+    var internalData;
+    return (this.#address ??= (internalData = this[kInternalSocketData])[0].requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -193,8 +180,31 @@ var FakeSocket = class Socket extends Duplex {
 
   ref() {}
 
+  get remoteAddress() {
+    return this.address()?.address;
+  }
+
+  set remoteAddress(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().address = val;
+  }
+
+  get remotePort() {
+    return this.address()?.port;
+  }
+
+  set remotePort(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().port = val;
+  }
+
   get remoteFamily() {
-    return "IPv4";
+    return this.address()?.family;
+  }
+
+  set remoteFamily(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().family = val;
   }
 
   resetAndDestroy() {}
@@ -449,7 +459,7 @@ class Server extends EventEmitter {
   listen(port, host, backlog, onListen) {
     const server = this;
     let socketPath;
-    if (typeof port == "string") {
+    if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
       socketPath = port;
     }
     if (typeof host === "function") {
@@ -521,14 +531,14 @@ class Server extends EventEmitter {
           const http_req = new RequestClass(req);
           const http_res = new ResponseClass({ reply, req: http_req });
 
+          http_req.socket[kInternalSocketData] = [_server, http_res, req];
+
           http_req.once("error", err => reject(err));
           http_res.once("error", err => reject(err));
 
           const upgrade = req.headers.get("upgrade");
           if (upgrade) {
-            const socket = http_req.socket;
-            socket[kInternalSocketData] = [_server, http_res, req];
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
           } else {
             server.emit("request", http_req, http_res);
           }
@@ -549,7 +559,7 @@ class Server extends EventEmitter {
       });
       setTimeout(emitListeningNextTick, 1, this, onListen, null, this.#server.hostname, this.#server.port);
     } catch (err) {
-      setTimeout(emitListeningNextTick, 1, this, onListen, err);
+      server.emit("error", err);
     }
 
     return this;
@@ -608,12 +618,11 @@ class IncomingMessage extends Readable {
 
     this.#bodyStream = undefined;
     const socket = new FakeSocket();
-    socket.remoteAddress = url.hostname;
-    socket.remotePort = url.port;
+    if (url.protocol === "https:") socket.encrypted = true;
     this.#fakeSocket = socket;
 
     this.url = url.pathname + url.search;
-    this.#nodeReq = this.req = nodeReq;
+    this.req = nodeReq;
     assignHeaders(this, req);
   }
 
@@ -628,7 +637,6 @@ class IncomingMessage extends Readable {
   #req;
   url;
   #type;
-  #nodeReq;
 
   _construct(callback) {
     // TODO: streaming
@@ -958,8 +966,11 @@ let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 class ServerResponse extends Writable {
   declare _writableState: any;
 
-  constructor({ req, reply }) {
+  constructor(c) {
     super();
+    if (!c) c = {};
+    var req = c.req || {};
+    var reply = c.reply;
     this.req = req;
     this._reply = reply;
     this.sendDate = true;
@@ -1174,7 +1185,7 @@ class ServerResponse extends Writable {
 
   setHeader(name, value) {
     var headers = (this.#headers ??= new Headers());
-    headers.set(name, value);
+    setHeader(headers, name, value);
     return this;
   }
 

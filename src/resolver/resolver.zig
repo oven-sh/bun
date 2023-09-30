@@ -187,6 +187,8 @@ pub const Result = struct {
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
 
+    emit_decorator_metadata: bool = false,
+
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: StoredFileDescriptorType = 0,
@@ -539,7 +541,7 @@ pub const Resolver = struct {
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
-            bun.HTTPThead.init() catch unreachable;
+            bun.HTTPThread.init() catch unreachable;
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
@@ -965,6 +967,7 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
+                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
             }
 
             // If you use mjs or mts, then you're using esm
@@ -1128,41 +1131,6 @@ pub const Resolver = struct {
                         .diff_case = entry.diff_case,
                         .package_json = entry.package_json,
                         .file_fd = entry.file_fd,
-                        .jsx = r.opts.jsx,
-                    },
-                };
-            }
-
-            return .{ .not_found = {} };
-        }
-
-        if (strings.hasPrefixComptime(import_path, "file:///")) {
-            const path = import_path[7..];
-
-            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(path)) {
-                // If the string literal in the source text is an absolute path and has
-                // been marked as an external module, mark it as *not* an absolute path.
-                // That way we preserve the literal text in the output and don't generate
-                // a relative path from the output directory to that path.
-                if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{path});
-                }
-
-                return .{
-                    .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
-                        .is_external = true,
-                    },
-                };
-            }
-
-            if (r.loadAsFile(path, r.extension_order)) |file| {
-                return .{
-                    .success = Result{
-                        .dirname_fd = file.dirname_fd,
-                        .path_pair = .{ .primary = Path.init(file.path) },
-                        .diff_case = file.diff_case,
-                        .file_fd = file.file_fd,
                         .jsx = r.opts.jsx,
                     },
                 };
@@ -3840,7 +3808,7 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
-        {
+        if (r.opts.load_tsconfig_json) {
             var tsconfig_path: ?string = null;
             if (r.opts.tsconfig_override == null) {
                 if (entries.getComptimeQuery("tsconfig.json")) |lookup| {
@@ -3871,10 +3839,10 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
-                    if (err == error.ENOENT) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file \"{s}\"", .{pretty}) catch unreachable;
-                    } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file \"{s}\": {s}", .{ pretty, @errorName(err) }) catch unreachable;
+                    if (err == error.ENOENT or err == error.FileNotFound) {
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.strings.QuotedFormatter{ .text = pretty }}) catch {};
+                    } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.strings.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -3886,7 +3854,12 @@ pub const Resolver = struct {
                         var ts_dir_name = Dirname.dirname(current.abs_path);
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
                         var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        var parent_config_maybe = try r.parseTSConfig(abs_path, 0);
+                        var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch |err| {
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{ @errorName(err), strings.QuotedFormatter{
+                                .text = abs_path,
+                            } }) catch {};
+                            break;
+                        };
                         if (parent_config_maybe) |parent_config| {
                             try parent_configs.append(parent_config);
                             current = parent_config;
@@ -3899,6 +3872,7 @@ pub const Resolver = struct {
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.popOrNull()) |parent_config| {
+                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;

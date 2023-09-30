@@ -640,6 +640,12 @@ describe("expect()", () => {
     expect(g).not.toEqual(a);
   });
 
+  test("deepEquals and typed arrays", () => {
+    expect(new Uint8Array([0, 255])).not.toEqual(new Uint8ClampedArray([0, 255]));
+    expect(new Int8Array([0, -1])).not.toEqual(new Uint8Array([0, 255]));
+    expect(new Float32Array([0])).not.toEqual(new Uint8Array([0, 0, 0, 0]));
+  });
+
   test("deepEquals throw getters", () => {
     let a = {
       get x() {
@@ -1298,6 +1304,16 @@ describe("expect()", () => {
     a = { a: 1, b: 2, c: 3 };
     b = { a: 1, b: 2 };
     expect(a).not.toEqual(b);
+
+    array1 = [1, 2, 3];
+    expect(array1).toEqual(expect.arrayContaining([]));
+    expect(array1).toEqual(expect.arrayContaining([1, 2]));
+    expect(array1).not.toEqual(expect.arrayContaining([1, 2, 4]));
+
+    array2 = [{ a: 1, b: 2 }, { a: { a: 1 } }];
+    expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
+    expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
+    expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));
   });
 
   test("symbol based keys in arrays are processed correctly", () => {
@@ -2623,6 +2639,12 @@ describe("expect()", () => {
       expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
       expect({ a: [1, 2, 3] }).toMatchObject({ a: [1, 2, 3] });
       expect({ a: [1, 2, 4] }).not.toMatchObject({ a: [1, 2, 3] });
+
+      expect({ a: [1, 2, 3] }).toMatchObject({ a: expect.arrayContaining([1, 2]) });
+      expect({ a: [1, 2, 3] }).not.toMatchObject({ a: expect.arrayContaining([4]) });
+      expect({ a: ["hello", "world"] }).toMatchObject({ a: expect.arrayContaining([]) });
+      expect({ a: ["hello", "world"] }).toMatchObject({ a: expect.arrayContaining(["world"]) });
+      expect({ a: ["hello", "world"] }).not.toMatchObject({ a: expect.arrayContaining(["hello", "mars"]) });
 
       expect([]).toMatchObject([]);
       expect([]).toMatchObject({});

@@ -79,12 +79,14 @@ export function sliceSourceCode(
       i = 1;
     } else if (endOnComma && contents.startsWith(",")) {
       if (bracketCount <= 1) {
-        result += ",";
         contents = contents.slice(1);
-        // if the next non-whitespace character is ), also consume
+        // if the next non-whitespace character is ), we will treat it like a )
         let match = contents.match(/^\s*\)/);
         if (match) {
           contents = contents.slice(match[0].length);
+          result += ")";
+        } else {
+          result += ",";
         }
         break;
       }

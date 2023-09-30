@@ -66,6 +66,11 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
+function endNT(socket, callback, err) {
+  socket.end();
+  callback(err);
+}
+
 var SocketClass;
 const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -74,17 +79,15 @@ const Socket = (function (InternalSocket) {
     enumerable: false,
   });
 
-  return Object.defineProperty(
-    function Socket(options) {
-      return new InternalSocket(options);
+  function Socket(options) {
+    return new InternalSocket(options);
+  }
+  Socket.prototype = InternalSocket.prototype;
+  return Object.defineProperty(Socket, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalSocket;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalSocket;
-      },
-    },
-  );
+  });
 })(
   class Socket extends Duplex {
     static #Handlers = {
@@ -446,34 +449,11 @@ const Socket = (function (InternalSocket) {
       } else if (connectListener) this.on("connect", connectListener);
 
       // start using existing connection
-      if (connection) {
-        const socket = connection[bunSocketInternal];
+      try {
+        if (connection) {
+          const socket = connection[bunSocketInternal];
 
-        if (socket) {
-          this.connecting = true;
-          this.#upgraded = true;
-          const result = socket.upgradeTLS({
-            data: this,
-            tls,
-            socket: Socket.#Handlers,
-          });
-          if (result) {
-            const [raw, tls] = result;
-            // replace socket
-            connection[bunSocketInternal] = raw;
-            raw.timeout(raw.timeout);
-            raw.connecting = false;
-            this[bunSocketInternal] = tls;
-          } else {
-            this[bunSocketInternal] = null;
-            throw new Error("Invalid socket");
-          }
-        } else {
-          // wait to be connected
-          connection.once("connect", () => {
-            const socket = connection[bunSocketInternal];
-            if (!socket) return;
-
+          if (socket) {
             this.connecting = true;
             this.#upgraded = true;
             const result = socket.upgradeTLS({
@@ -481,7 +461,6 @@ const Socket = (function (InternalSocket) {
               tls,
               socket: Socket.#Handlers,
             });
-
             if (result) {
               const [raw, tls] = result;
               // replace socket
@@ -493,38 +472,66 @@ const Socket = (function (InternalSocket) {
               this[bunSocketInternal] = null;
               throw new Error("Invalid socket");
             }
+          } else {
+            // wait to be connected
+            connection.once("connect", () => {
+              const socket = connection[bunSocketInternal];
+              if (!socket) return;
+
+              this.connecting = true;
+              this.#upgraded = true;
+              const result = socket.upgradeTLS({
+                data: this,
+                tls,
+                socket: Socket.#Handlers,
+              });
+
+              if (result) {
+                const [raw, tls] = result;
+                // replace socket
+                connection[bunSocketInternal] = raw;
+                raw.timeout(raw.timeout);
+                raw.connecting = false;
+                this[bunSocketInternal] = tls;
+              } else {
+                this[bunSocketInternal] = null;
+                throw new Error("Invalid socket");
+              }
+            });
+          }
+        } else if (path) {
+          // start using unix socket
+          bunConnect({
+            data: this,
+            unix: path,
+            socket: Socket.#Handlers,
+            tls,
+          }).catch(error => {
+            this.emit("error", error);
+            this.emit("close");
+          });
+        } else {
+          // default start
+          bunConnect({
+            data: this,
+            hostname: host || "localhost",
+            port: port,
+            socket: Socket.#Handlers,
+            tls,
+          }).catch(error => {
+            this.emit("error", error);
+            this.emit("close");
           });
         }
-      } else if (path) {
-        // start using unix socket
-        bunConnect({
-          data: this,
-          unix: path,
-          socket: Socket.#Handlers,
-          tls,
-        }).catch(error => {
-          this.emit("error", error);
-          this.emit("close");
-        });
-      } else {
-        // default start
-        bunConnect({
-          data: this,
-          hostname: host || "localhost",
-          port: port,
-          socket: Socket.#Handlers,
-          tls,
-        }).catch(error => {
-          this.emit("error", error);
-          this.emit("close");
-        });
+      } catch (error) {
+        process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
       return this;
     }
 
     _destroy(err, callback) {
-      this[bunSocketInternal]?.end();
-      callback(err);
+      const socket = this[bunSocketInternal];
+      socket && process.nextTick(endNT, socket, callback, err);
     }
 
     _final(callback) {
@@ -862,6 +869,11 @@ class Server extends EventEmitter {
 
 function emitErrorNextTick(self, error) {
   self.emit("error", error);
+}
+
+function emitErrorAndCloseNextTick(self, error) {
+  self.emit("error", error);
+  self.emit("close");
 }
 
 function emitListeningNextTick(self, onListen) {

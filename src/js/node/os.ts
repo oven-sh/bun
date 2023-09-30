@@ -77,6 +77,9 @@ function lazyCpus({ cpus }) {
 
 function bound(obj) {
   return {
+    availableParallelism: () => {
+      return navigator.hardwareConcurrency;
+    },
     arch: obj.arch.bind(obj),
     cpus: lazyCpus(obj),
     endianness: obj.endianness.bind(obj),

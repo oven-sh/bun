@@ -835,12 +835,12 @@ pub const Loop = extern struct {
         return us_wakeup_loop(this);
     }
 
-    pub fn tick(this: *Loop) void {
-        us_loop_run_bun_tick(this, 0);
+    pub fn tick(this: *Loop, ctx: ?*anyopaque) void {
+        us_loop_run_bun_tick(this, 0, ctx);
     }
 
-    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64) void {
-        us_loop_run_bun_tick(this, timeoutMs);
+    pub fn tickWithTimeout(this: *Loop, timeoutMs: i64, ctx: ?*anyopaque) void {
+        us_loop_run_bun_tick(this, timeoutMs, ctx);
     }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -902,7 +902,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64, ?*anyopaque) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
@@ -1404,6 +1404,12 @@ extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
 extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
 
+pub const SocketAddress = struct {
+    ip: []const u8,
+    port: i32,
+    is_ipv6: bool,
+};
+
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
         const ssl_flag = @as(i32, @intFromBool(ssl));
@@ -1786,6 +1792,33 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getNativeHandle(res: *Response) i32 {
                 return @as(i32, @intCast(@intFromPtr(uws_res_get_native_handle(ssl_flag, res.downcast()))));
             }
+            pub fn getRemoteAddress(res: *Response) ?[]const u8 {
+                var buf: [*]const u8 = undefined;
+                const size = uws_res_get_remote_address(ssl_flag, res.downcast(), &buf);
+                return if (size > 0) buf[0..size] else null;
+            }
+            pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
+                var buf: [*]const u8 = undefined;
+                const size = uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
+                return if (size > 0) buf[0..size] else null;
+            }
+            pub fn getRemoteSocketInfo(res: *Response) ?SocketAddress {
+                var address = SocketAddress{
+                    .ip = undefined,
+                    .port = undefined,
+                    .is_ipv6 = undefined,
+                };
+                // This function will fill in the slots and return len.
+                // if len is zero it will not fill in the slots so it is ub to
+                // return the struct in that case.
+                address.ip.len = uws_res_get_remote_address_info(
+                    res.downcast(),
+                    &address.ip.ptr,
+                    &address.port,
+                    &address.is_ipv6,
+                );
+                return if (address.ip.len > 0) address else null;
+            }
             pub fn onWritable(
                 res: *Response,
                 comptime UserDataType: type,
@@ -2069,6 +2102,8 @@ pub fn NewApp(comptime ssl: bool) type {
 extern fn uws_res_end_stream(ssl: i32, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
+extern fn uws_res_get_remote_address(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
+extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) *uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
 extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
@@ -2122,6 +2157,8 @@ extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]c
 extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
 extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
+extern fn uws_res_get_remote_address_info(res: *uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
+
 const uws_res = opaque {};
 extern fn uws_res_uncork(ssl: i32, res: *uws_res) void;
 extern fn uws_res_end(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;

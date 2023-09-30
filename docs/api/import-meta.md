@@ -39,7 +39,7 @@ import.meta.resolveSync("zod")
 ---
 
 - `import.meta.resolve{Sync}`
-- Resolve a module specifier (e.g. `"zod"` or `"./file.tsx`) to an absolute path. While file would be imported if the specifier were imported from this file?
+- Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to an absolute path. While file would be imported if the specifier were imported from this file?
 
   ```ts
   import.meta.resolveSync("zod");

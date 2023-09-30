@@ -1,5 +1,3 @@
-import * as tls from 'node:tls';
-
 /**
  * "blob" is not supported yet
  */
@@ -105,6 +103,15 @@ type MultipleResolveListener = (
 ) => void;
 // type WorkerListener = (worker: Worker) => void;
 
+interface ConsoleOptions {
+  stdout: import("stream").Writable;
+  stderr?: import("stream").Writable;
+  ignoreErrors?: boolean;
+  colorMode?: boolean | "auto";
+  inspectOptions?: import("util").InspectOptions;
+  groupIndentation?: number;
+}
+
 interface Console {
   /**
    * Asynchronously read lines from standard input (fd 0)
@@ -205,7 +212,19 @@ interface Console {
   warn(...data: any[]): void;
 }
 
-declare var console: Console;
+declare var console: Console & {
+  /**
+   * Creates a new Console with one or two writable stream instances. stdout is a writable stream to print log or info output. stderr is used for warning or error output. If stderr is not provided, stdout is used for stderr.
+   */
+  Console: {
+    new (options: ConsoleOptions): Console;
+    new (
+      stdout: import("stream").Writable,
+      stderr?: import("stream").Writable,
+      ignoreErrors?: boolean,
+    ): Console;
+  };
+};
 
 declare namespace NodeJS {
   interface RequireResolve {
@@ -706,6 +725,14 @@ interface Process {
    * @param listener The event handler function
    */
   listenerCount(eventName: string | symbol, listener?: Function): number;
+
+  /**
+   * Get the constrained memory size for the process.
+   *
+   * On Linux, this is the memory limit for the process, accounting for cgroups 1 and 2.
+   * On other operating systems, this returns `undefined`.
+   */
+  constrainedMemory(): number | undefined;
 }
 
 interface MemoryUsageObject {
@@ -1290,7 +1317,6 @@ interface RequestInit {
 }
 
 interface FetchRequestInit extends RequestInit {
-  
   /**
    * Log the raw HTTP request & response to stdout. This API may be
    * removed in a future version of Bun without notice.
@@ -1309,7 +1335,7 @@ interface FetchRequestInit extends RequestInit {
    */
   tls?: {
     rejectUnauthorized?: boolean | undefined; // Defaults to true
-    checkServerIdentity?: typeof tls.checkServerIdentity | undefined;
+    checkServerIdentity?: any | undefined; // TODO: change `any` to `checkServerIdentity`
   };
 }
 
@@ -2448,6 +2474,14 @@ declare var URL: {
   createObjectURL(obj: Blob): string;
   /** Not implemented yet */
   revokeObjectURL(url: string): void;
+
+  /**
+   * Check if `url` is a valid URL string
+   *
+   * @param url URL string to parse
+   * @param base URL to resolve against
+   */
+  canParse(url: string, base?: string): boolean;
 };
 
 type TimerHandler = (...args: any[]) => void;
@@ -3500,8 +3534,9 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
+
 interface ArrayBuffer {
   /**
    * Read-only. The length of the ArrayBuffer (in bytes).
@@ -3800,3 +3835,11 @@ interface PromiseConstructor {
     reject: (reason?: any) => void;
   };
 }
+
+interface Navigator {
+  readonly userAgent: string;
+  readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
+  readonly hardwareConcurrency: number;
+}
+
+declare var navigator: Navigator;

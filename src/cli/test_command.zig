@@ -669,7 +669,7 @@ pub const TestCommand = struct {
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,
             .fs = vm.bundler.fs,
-            .filter_names = ctx.positionals[1..],
+            .filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
         const dir_to_scan = brk: {
@@ -685,8 +685,13 @@ pub const TestCommand = struct {
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
-            if (vm.hot_reload != .none)
-                JSC.HotReloader.enableHotModuleReloading(vm);
+
+            switch (vm.hot_reload) {
+                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                else => {},
+            }
+
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunRun, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -255,6 +255,47 @@ test(".env process variables no comments", () => {
   expect(stdout).toBe('test#1 "test#2"');
 });
 
+describe("package scripts load from .env.production and .env.development", () => {
+  test("NODE_ENV=production", () => {
+    const dir = tempDirWithFiles("dotenv-package-script-prod", {
+      "index.ts": "console.log(process.env.TEST);",
+      "package.json": `
+      {
+        "name": "foo",
+        "version": "2.0",
+        "scripts": {
+          "test": "NODE_ENV=production ${bunExe()} run index.ts",
+        }
+      }
+      `,
+      ".env.production": "TEST=prod",
+      ".env.development": "TEST=dev",
+    });
+
+    const { stdout } = bunRunAsScript(dir, "test");
+    expect(stdout).toBe("prod");
+  });
+  test("NODE_ENV=development", () => {
+    const dir = tempDirWithFiles("dotenv-package-script-prod", {
+      "index.ts": "console.log(process.env.TEST);",
+      "package.json": `
+        {
+          "name": "foo",
+          "version": "2.0",
+          "scripts": {
+            "test": "NODE_ENV=development ${bunExe()} run index.ts",
+          }
+        }
+        `,
+      ".env.production": "TEST=prod",
+      ".env.development": "TEST=dev",
+    });
+
+    const { stdout } = bunRunAsScript(dir, "test");
+    expect(stdout).toBe("dev");
+  });
+});
+
 test(".env escaped dollar sign", () => {
   const dir = tempDirWithFiles("dotenv-dollar", {
     ".env": "FOO=foo\nBAR=\\$FOO",
@@ -342,6 +383,16 @@ test(".env with zero length strings", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("||0|0");
+});
+
+test("process with zero length environment variable", () => {
+  const dir = tempDirWithFiles("process-issue-zerolength", {
+    "index.ts": "console.log(`'${process.env.TEST_ENV_VAR}'`);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, {
+    TEST_ENV_VAR: "",
+  });
+  expect(stdout).toBe("''");
 });
 
 test(".env in a folder doesn't throw an error", () => {

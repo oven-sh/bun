@@ -154,21 +154,26 @@ const BunDebugHolder = struct {
     pub var lock: bun.Lock = undefined;
 };
 
-fn dumpSource(specifier: string, printer: anytype) !void {
+/// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
+///
+/// This can technically fail if concurrent access across processes happens, or permission issues.
+/// Errors here should always be ignored.
+fn dumpSource(specifier: string, printer: anytype) void {
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
+        BunDebugHolder.dir = std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{}) catch return;
         BunDebugHolder.lock = bun.Lock.init();
     }
 
     BunDebugHolder.lock.lock();
     defer BunDebugHolder.lock.unlock();
 
+    const dir = BunDebugHolder.dir orelse return;
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{});
+        var parent = dir.dir.makeOpenPathIterable(dir_path[1..], .{}) catch return;
         defer parent.close();
-        try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     } else {
-        try BunDebugHolder.dir.?.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        dir.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     }
 }
 
@@ -363,18 +368,15 @@ pub const RuntimeTranspilerStore = struct {
             var package_json: ?*PackageJSON = null;
             const hash = JSC.Watcher.getHash(path.text);
 
-            if (vm.bun_dev_watcher) |watcher| {
-                if (watcher.indexOf(hash)) |index| {
-                    const _fd = watcher.watchlist.items(.fd)[index];
-                    fd = if (_fd > 0) _fd else null;
-                    package_json = watcher.watchlist.items(.package_json)[index];
-                }
-            } else if (vm.bun_watcher) |watcher| {
-                if (watcher.indexOf(hash)) |index| {
-                    const _fd = watcher.watchlist.items(.fd)[index];
-                    fd = if (_fd > 0) _fd else null;
-                    package_json = watcher.watchlist.items(.package_json)[index];
-                }
+            switch (vm.bun_watcher) {
+                .hot, .watch => {
+                    if (vm.bun_watcher.indexOf(hash)) |index| {
+                        const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
+                        fd = if (_fd > 0) _fd else null;
+                        package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
+                    }
+                },
+                else => {},
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
@@ -405,6 +407,7 @@ pub const RuntimeTranspilerStore = struct {
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
                 .jsx = bundler.options.jsx,
+                .emit_decorator_metadata = bundler.options.emit_decorator_metadata,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -438,9 +441,9 @@ pub const RuntimeTranspilerStore = struct {
             ) orelse {
                 if (vm.isWatcherEnabled()) {
                     if (input_file_fd != 0) {
-                        if (vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                        if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
-                            vm.bun_watcher.?.addFile(
+                            vm.bun_watcher.addFile(
                                 input_file_fd,
                                 path.text,
                                 hash,
@@ -459,11 +462,11 @@ pub const RuntimeTranspilerStore = struct {
 
             if (vm.isWatcherEnabled()) {
                 if (input_file_fd != 0) {
-                    if (vm.bun_watcher != null and !is_node_override and
+                    if (!is_node_override and
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
                         should_close_input_file_fd = false;
-                        vm.bun_watcher.?.addFile(
+                        vm.bun_watcher.addFile(
                             input_file_fd,
                             path.text,
                             hash,
@@ -482,10 +485,6 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = String.create(specifier),
                     .source_url = ZigString.init(path.text),
-                    // // TODO: change hash to a bitfield
-                    // .hash = 1,
-
-                    // having JSC own the memory causes crashes
                     .hash = 0,
                 };
                 return;
@@ -551,7 +550,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer) catch {};
+                dumpSource(specifier, &printer);
             }
 
             this.resolved_source = ResolvedSource{
@@ -1236,7 +1235,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                try dumpSource(specifier, &printer);
+                dumpSource(specifier, &printer);
             }
 
             var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1248,8 +1247,8 @@ pub const ModuleLoader = struct {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
 
                 if (parse_result.input_fd) |fd_| {
-                    if (jsc_vm.bun_watcher != null and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                        jsc_vm.bun_watcher.?.addFile(
+                    if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                        jsc_vm.bun_watcher.addFile(
                             fd_,
                             path.text,
                             this.hash,
@@ -1290,10 +1289,7 @@ pub const ModuleLoader = struct {
                     std.math.maxInt(u32)
                 else
                     0,
-                // // TODO: change hash to a bitfield
-                // .hash = 1,
 
-                // having JSC own the memory causes crashes
                 .hash = 0,
             };
         }
@@ -1386,18 +1382,10 @@ pub const ModuleLoader = struct {
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
 
-                if (jsc_vm.bun_dev_watcher) |watcher| {
-                    if (watcher.indexOf(hash)) |index| {
-                        const _fd = watcher.watchlist.items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
-                        package_json = watcher.watchlist.items(.package_json)[index];
-                    }
-                } else if (jsc_vm.bun_watcher) |watcher| {
-                    if (watcher.indexOf(hash)) |index| {
-                        const _fd = watcher.watchlist.items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
-                        package_json = watcher.watchlist.items(.package_json)[index];
-                    }
+                if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
+                    const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
+                    fd = if (_fd > 0) _fd else null;
+                    package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
                 var old = jsc_vm.bundler.log;
@@ -1445,6 +1433,7 @@ pub const ModuleLoader = struct {
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
+                    .emit_decorator_metadata = jsc_vm.bundler.options.emit_decorator_metadata,
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
@@ -1466,31 +1455,36 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                var parse_result = jsc_vm.bundler.parseMaybeReturnFileOnly(
-                    parse_options,
-                    null,
-                    disable_transpilying,
-                ) orelse {
-                    if (comptime !disable_transpilying) {
-                        if (jsc_vm.isWatcherEnabled()) {
-                            if (input_file_fd != 0) {
-                                if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                                    should_close_input_file_fd = false;
-                                    jsc_vm.bun_watcher.?.addFile(
-                                        input_file_fd,
-                                        path.text,
-                                        hash,
-                                        loader,
-                                        0,
-                                        package_json,
-                                        true,
-                                    ) catch {};
+                var parse_result = switch (disable_transpilying or
+                    (loader == .json and !path.isJSONCFile())) {
+                    inline else => |return_file_only| brk: {
+                        break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
+                            parse_options,
+                            null,
+                            return_file_only,
+                        ) orelse {
+                            if (comptime !disable_transpilying) {
+                                if (jsc_vm.isWatcherEnabled()) {
+                                    if (input_file_fd != 0) {
+                                        if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                            should_close_input_file_fd = false;
+                                            jsc_vm.bun_watcher.addFile(
+                                                input_file_fd,
+                                                path.text,
+                                                hash,
+                                                loader,
+                                                0,
+                                                package_json,
+                                                true,
+                                            ) catch {};
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
 
-                    return error.ParseError;
+                            return error.ParseError;
+                        };
+                    },
                 };
 
                 if (parse_result.loader == .wasm) {
@@ -1515,9 +1509,9 @@ pub const ModuleLoader = struct {
                 if (comptime !disable_transpilying) {
                     if (jsc_vm.isWatcherEnabled()) {
                         if (input_file_fd != 0) {
-                            if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                            if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
-                                jsc_vm.bun_watcher.?.addFile(
+                                jsc_vm.bun_watcher.addFile(
                                     input_file_fd,
                                     path.text,
                                     hash,
@@ -1533,6 +1527,18 @@ pub const ModuleLoader = struct {
 
                 if (jsc_vm.bundler.log.errors > 0) {
                     return error.ParseError;
+                }
+
+                if (loader == .json and !path.isJSONCFile()) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.create(parse_result.source.contents),
+                        .specifier = input_specifier,
+                        .source_url = ZigString.init(path.text),
+
+                        .hash = 0,
+                        .tag = ResolvedSource.Tag.json_for_object_loader,
+                    };
                 }
 
                 if (comptime disable_transpilying) {
@@ -1555,10 +1561,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
-                        // // TODO: change hash to a bitfield
-                        // .hash = 1,
 
-                        // having JSC own the memory causes crashes
                         .hash = 0,
                     };
                 }
@@ -1628,7 +1631,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    try dumpSource(specifier, &printer);
+                    dumpSource(specifier, &printer);
                 }
 
                 var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1692,10 +1695,6 @@ pub const ModuleLoader = struct {
                         std.math.maxInt(u32)
                     else
                         0,
-                    // // TODO: change hash to a bitfield
-                    // .hash = 1,
-
-                    // having JSC own the memory causes crashes
                     .hash = 0,
 
                     .tag = tag,
@@ -1712,7 +1711,7 @@ pub const ModuleLoader = struct {
             //     const hash = http.Watcher.getHash(path.text);
             //     if (jsc_vm.watcher) |watcher| {
             //         if (watcher.indexOf(hash)) |index| {
-            //             const _fd = watcher.watchlist.items(.fd)[index];
+            //             const _fd = watcher.watchlist().items(.fd)[index];
             //             fd = if (_fd > 0) _fd else null;
             //         }
             //     }
@@ -1943,14 +1942,21 @@ pub const ModuleLoader = struct {
             }
         }
 
-        const synchronous_loader = loader orelse
-            // Unknown extensions are to be treated as file loader
-            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
-            options.Loader.file
-        else
-            // Unless it's potentially the main module
-            // This is important so that "bun run ./foo-i-have-no-extension" works
-            options.Loader.js;
+        const synchronous_loader = loader orelse loader: {
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
+                // Extensionless files in this context are treated as the JS loader
+                if (path.name.ext.len == 0) {
+                    break :loader options.Loader.tsx;
+                }
+
+                // Unknown extensions are to be treated as file loader
+                break :loader options.Loader.file;
+            } else {
+                // Unless it's potentially the main module
+                // This is important so that "bun run ./foo-i-have-no-extension" works
+                break :loader options.Loader.tsx;
+            }
+        };
 
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
@@ -1978,6 +1984,7 @@ pub const ModuleLoader = struct {
                 if (err == error.PluginError) {
                     return null;
                 }
+
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
                 return null;
             },
@@ -2149,7 +2156,7 @@ pub const ModuleLoader = struct {
         const path = Fs.Path.init(specifier);
 
         const loader = if (loader_ != ._none)
-            options.Loader.fromString(@tagName(loader_)).?
+            options.Loader.fromAPI(loader_)
         else
             jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
                 if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -2168,7 +2175,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                options.Loader.fromString(@tagName(loader)).?,
+                loader,
                 &log,
                 &virtual_source,
                 ret,

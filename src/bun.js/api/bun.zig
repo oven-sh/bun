@@ -782,11 +782,17 @@ fn doResolveWithArgs(
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
+    const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
+        bun.JSC.URL.pathFromFileURL(specifier)
+    else
+        specifier.dupeRef();
+    defer specifier_decoded.deref();
+
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
             &errorable,
             ctx.ptr(),
-            specifier,
+            specifier_decoded,
             from,
             &query_string,
             is_esm,
@@ -795,7 +801,7 @@ fn doResolveWithArgs(
         VirtualMachine.resolveForAPI(
             &errorable,
             ctx.ptr(),
-            specifier,
+            specifier_decoded,
             from,
             &query_string,
             is_esm,
@@ -4431,7 +4437,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.map.map.get(sliced.slice()) orelse return null;
+        const value = vm.bundler.env.map.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };

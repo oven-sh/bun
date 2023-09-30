@@ -1556,41 +1556,17 @@ ${[...exports]
 
 function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) {
   return `
-        JSC::Structure* ${className(typeName)}Structure() { return m_${className(
+  JSC::Structure* ${className(typeName)}Structure() { return m_${className(
     typeName,
   )}.getInitializedOnMainThread(this); }
-        JSC::JSObject* ${className(typeName)}Constructor() { return m_${className(
+  JSC::JSObject* ${className(typeName)}Constructor() { return m_${className(
     typeName,
   )}.constructorInitializedOnMainThread(this); }
-        JSC::JSValue ${className(typeName)}Prototype() { return m_${className(
+  JSC::JSValue ${className(typeName)}Prototype() { return m_${className(
     typeName,
   )}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
-  bool has${className(typeName)}SetterValue { false };
-  mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
     `.trim();
-}
-
-function generateLazyStructureHeader(typeName, { klass = {}, proto = {} }) {
-  return `
-        JSC::Structure* ${className(typeName)}Structure() { return m_${className(typeName)}.get(this); }
-  JSC::LazyProperty<Zig::GlobalObject, Structure> m_${className(typeName)};
-  bool has${className(typeName)}SetterValue { false };
-  mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
-    `.trim();
-}
-
-function generateLazyStructureImpl(typeName, { klass = {}, proto = {} }) {
-  return `
-          m_${className(typeName)}.initLater(
-            [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-                 auto *prototype = WebCore::${className(
-                   typeName,
-                 )}::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner));
-                 init.set(WebCore::${className(typeName)}::createStructure(init.vm, init.owner, prototype));
-              });
-  
-      `.trim();
 }
 
 function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false }) {
@@ -1685,7 +1661,7 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 function initLazyClasses(initLaterFunctions) {
   return `
 
-void GlobalObject::initGeneratedLazyClasses() {
+ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
     ${initLaterFunctions.map(a => a.trim()).join("\n    ")}
 }
     
@@ -1698,14 +1674,7 @@ function visitLazyClasses(classes) {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
-      ${classes
-        .map(
-          a =>
-            `thisObject->m_${className(a.name)}.visit(visitor);  visitor.append(thisObject->m_${className(
-              a.name,
-            )}SetterValue);`,
-        )
-        .join("\n      ")}
+      ${classes.map(a => `thisObject->m_${className(a.name)}.visit(visitor);`).join("\n      ")}
 }
       
   `.trim();

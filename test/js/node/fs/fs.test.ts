@@ -136,6 +136,35 @@ describe("copyFileSync", () => {
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
 
+  it("constants are right", () => {
+    expect(fs.constants.COPYFILE_EXCL).toBe(1);
+    expect(fs.constants.COPYFILE_FICLONE).toBe(2);
+    expect(fs.constants.COPYFILE_FICLONE_FORCE).toBe(4);
+  });
+
+  it("FICLONE option does not error ever", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.FICLONE/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+  });
+
+  it("COPYFILE_EXCL works", () => {
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.COPYFILE_EXCL/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    expect(() => {
+      copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    }).toThrow();
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
@@ -212,7 +241,7 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
+    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.mkdirSync/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
@@ -953,6 +982,64 @@ describe("stat", () => {
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
     }
+
+    try {
+      statSync("");
+      throw "statSync should throw";
+    } catch (e: any) {
+      expect(e.code).toBe("ENOENT");
+    }
+  });
+});
+
+describe("exist", () => {
+  it("should return false with invalid path", () => {
+    expect(existsSync("/pathNotExist")).toBe(false);
+  });
+
+  it("should return false with empty string", () => {
+    expect(existsSync("")).toBe(false);
+  });
+});
+
+describe("fs.exists", () => {
+  it("should throw TypeError with invalid argument", done => {
+    let err = undefined;
+    try {
+      // @ts-ignore
+      fs.exists(import.meta.path);
+    } catch (e) {
+      err = e;
+    }
+    try {
+      expect(err).not.toBeUndefined();
+      expect(err).toBeInstanceOf(TypeError);
+      // @ts-ignore
+      expect(err.code).toStrictEqual("ERR_INVALID_ARG_TYPE");
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
+  it("should return false with invalid path", done => {
+    fs.exists(`${tmpdir()}/test-fs-exists-${Date.now()}`, exists => {
+      try {
+        expect(exists).toBe(false);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+  it("should return true with existed path", done => {
+    fs.exists(import.meta.path, exists => {
+      try {
+        expect(exists).toBe(true);
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
   });
 });
 
@@ -1016,19 +1103,41 @@ describe("rmdir", () => {
       done();
     });
   });
-  it("does not remove a dir with a file in it", done => {
+
+  it("removes a dir x 512", async () => {
+    var queue = new Array(512);
+    var paths = new Array(512);
+    for (let i = 0; i < 512; i++) {
+      const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
+      try {
+        mkdirSync(path);
+      } catch (e) {}
+      paths[i] = path;
+      queue[i] = promises.rmdir(path);
+    }
+
+    await Promise.all(queue);
+
+    for (let i = 0; i < 512; i++) {
+      expect(existsSync(paths[i])).toBe(false);
+    }
+  });
+  it("does not remove a dir with a file in it", async () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
       writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
     } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, err => {
+    try {
+      await promises.rmdir(path);
+    } catch (err) {
       expect("ENOTEMPTY EPERM").toContain(err!.code);
-      done();
-    });
+    }
+
     expect(existsSync(path + "/file.txt")).toBe(true);
-    rmdir(path, { recursive: true }, () => {});
+
+    await promises.rmdir(path, { recursive: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
   it("removes a dir recursively", done => {
@@ -2038,6 +2147,12 @@ it("test syscall errno, issue#4198", () => {
 
   mkdirSync(path);
   expect(() => mkdirSync(path)).toThrow("File or folder exists");
-  expect(() => unlinkSync(path)).toThrow("Operation not permitted");
+  expect(() => unlinkSync(path)).toThrow(
+    {
+      ["darwin"]: "Operation not permitted",
+      ["linux"]: "Is a directory",
+      // TODO: windows
+    }[process.platform] as const,
+  );
   rmdirSync(path);
 });

@@ -286,6 +286,7 @@ COPY packages/bun-uws ${BUN_DIR}/packages/bun-uws
 COPY packages/bun-usockets ${BUN_DIR}/packages/bun-usockets
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
+COPY src/deps/c-ares/include ${BUN_DIR}/src/deps/c-ares/include
 COPY src/deps/libuwsockets.cpp ${BUN_DIR}/src/deps/libuwsockets.cpp
 COPY src/deps/_libusockets.h ${BUN_DIR}/src/deps/_libusockets.h
 

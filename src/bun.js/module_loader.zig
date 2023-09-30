@@ -154,21 +154,26 @@ const BunDebugHolder = struct {
     pub var lock: bun.Lock = undefined;
 };
 
-fn dumpSource(specifier: string, printer: anytype) !void {
+/// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
+///
+/// This can technically fail if concurrent access across processes happens, or permission issues.
+/// Errors here should always be ignored.
+fn dumpSource(specifier: string, printer: anytype) void {
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
+        BunDebugHolder.dir = std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{}) catch return;
         BunDebugHolder.lock = bun.Lock.init();
     }
 
     BunDebugHolder.lock.lock();
     defer BunDebugHolder.lock.unlock();
 
+    const dir = BunDebugHolder.dir orelse return;
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{});
+        var parent = dir.dir.makeOpenPathIterable(dir_path[1..], .{}) catch return;
         defer parent.close();
-        try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     } else {
-        try BunDebugHolder.dir.?.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        dir.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten()) catch return;
     }
 }
 
@@ -545,7 +550,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer) catch {};
+                dumpSource(specifier, &printer);
             }
 
             this.resolved_source = ResolvedSource{
@@ -1230,7 +1235,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                try dumpSource(specifier, &printer);
+                dumpSource(specifier, &printer);
             }
 
             var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1626,7 +1631,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    try dumpSource(specifier, &printer);
+                    dumpSource(specifier, &printer);
                 }
 
                 var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1979,6 +1984,7 @@ pub const ModuleLoader = struct {
                 if (err == error.PluginError) {
                     return null;
                 }
+
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
                 return null;
             },

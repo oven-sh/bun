@@ -12,7 +12,7 @@ for (const [name, copy] of impls) {
     try {
       await (copy as any)(...args);
     } catch (e: any) {
-      if (e?.code?.toUpperCase() === "TODO") {
+      if ((e?.code? ?? "").toUpperCase() === "TODO") {
         throw new Error("Expected " + name + "() to throw non TODO error");
       }
       return e;

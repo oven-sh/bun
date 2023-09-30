@@ -25,8 +25,6 @@
   global                          GlobalObject_getGlobalThis                           PropertyCallback
   EventSource                     getEventSourceConstructor                            PropertyCallback
   
-  $_BunCommonJSModule_$           BunCommonJSModule_getter                             CustomAccessor|DontDelete|ReadOnly
-
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
   File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
   crypto                          GlobalObject::m_cryptoObject                         CellProperty

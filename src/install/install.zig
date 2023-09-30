@@ -1764,7 +1764,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
-        bun.Mimalloc.mi_collect(false);
+        Output.flush();
         _ = this.waiter.wait() catch 0;
     }
 
@@ -1829,7 +1829,7 @@ pub const PackageManager = struct {
                 switch (this.options.log_level) {
                     inline else => |log_level| {
                         if (log_level.showProgress()) this.startProgressBarIfNone();
-                        while (this.pending_tasks > 0) : (this.sleep()) {
+                        while (this.pending_tasks > 0) {
                             this.runTasks(
                                 void,
                                 {},
@@ -1843,6 +1843,13 @@ pub const PackageManager = struct {
                             ) catch |err| {
                                 return .{ .failure = err };
                             };
+
+                            if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                            }
+
+                            if (this.pending_tasks > 0)
+                                this.sleep();
                         }
                     },
                 }
@@ -2681,8 +2688,8 @@ pub const PackageManager = struct {
                 }
             },
             .workspace => {
-                // relative to cwd
-                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+                // package name hash should be used to find workspace path from map
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
 
                 const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
@@ -2956,7 +2963,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .git, .github, .npm, .tarball => String.Builder.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -6089,7 +6096,7 @@ pub const PackageManager = struct {
 
                 var value = input;
                 var alias: ?string = null;
-                if (strings.isNPMPackageName(input)) {
+                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
                     alias = input;
                     value = input[input.len..];
                 } else if (input.len > 1) {
@@ -7297,7 +7304,10 @@ pub const PackageManager = struct {
                 // We use this file descriptor to know where to put it.
                 installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
                     // Avoid extra mkdir() syscall
-                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    //
+                    // note: this will recursively delete any dangling symlinks
+                    // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
+                    try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
 
@@ -7351,7 +7361,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) : (this.sleep()) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -7363,6 +7373,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                }
+
+                if (this.pending_tasks > 0)
+                    this.sleep();
             }
 
             if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -7733,7 +7750,7 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) : (manager.sleep()) {
+            while (manager.pending_tasks > 0) {
                 try manager.runTasks(
                     *PackageManager,
                     manager,
@@ -7746,6 +7763,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                }
+
+                if (manager.pending_tasks > 0)
+                    manager.sleep();
             }
 
             if (comptime log_level.showProgress()) {

@@ -55,43 +55,43 @@ pub const Cli = struct {
         MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
             switch (err) {
-                error.MissingEntryPoint => {
-                    Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                    Output.prettyErrorln(
-                        \\<r><red>error: Missing entrypoints. What would you like to bundle?<r>
-                        \\
-                        \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
-                        \\
-                        \\<b>Common Flags:<r>
-                        \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
-                        \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
-                        \\  <cyan>--minify<r>             Enable all minification flags
-                        \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
-                        \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
-                        \\  <cyan>--minify-identifiers<r> Shorten variable names
-                        \\  <cyan>--sourcemap<r>          Generate sourcemaps
-                        \\                       ("none", "inline", or "external")
-                        \\  <cyan>--target<r>             The intended execution environment for the bundle.
-                        \\                       ("browser", "bun" or "node")
-                        \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
-                        \\  <cyan>--watch<r>              Run bundler in watch mode
-                        \\
-                        \\<b>Examples:<r>
-                        \\  <d>Frontend web apps:<r>
-                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
-                        \\
-                        \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
-                        \\
-                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
-                        \\
-                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
-                        \\
-                    , .{});
-                    Global.exit(1);
-                },
+                // error.MissingEntryPoint => {
+                //     Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                //     Output.prettyErrorln(
+                //         \\<r><red>error: Missing entrypoints. What would you like to bundle?<r>
+                //         \\
+                //         \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
+                //         \\
+                //         \\<b>Common Flags:<r>
+                //         \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
+                //         \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
+                //         \\  <cyan>--minify<r>             Enable all minification flags
+                //         \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
+                //         \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
+                //         \\  <cyan>--minify-identifiers<r> Shorten variable names
+                //         \\  <cyan>--sourcemap<r>          Generate sourcemaps
+                //         \\                          none | inline | external
+                //         \\  <cyan>--target<r>             The intended execution environment for the bundle.
+                //         \\                         browser | bun | node
+                //         \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
+                //         \\  <cyan>--watch<r>              Run bundler in watch mode
+                //         \\
+                //         \\<b>Examples:<r>
+                //         \\  <d>Frontend web apps:<r>
+                //         \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
+                //         \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+                //         \\
+                //         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
+                //         \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
+                //         \\
+                //         \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
+                //         \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
+                //         \\
+                //         \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                //         \\
+                //     , .{});
+                //     Global.exit(1);
+                // },
                 else => {
                     // Always dump the logs
                     // std.debug.print("dump logs", .{});
@@ -804,7 +804,17 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0 and opts.framework == null) {
-                return error.MissingEntryPoint;
+                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                // Output.flush();
+                // cmd.print_helptext();
+                // Output.pretty("\n-------------\n", .{});
+                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+                Output.flush();
+                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] [flags]  \n", .{});
+                Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
+                Output.flush();
+                // return error.MissingEntryPoint;
+                Global.exit(1);
             }
         }
 
@@ -1815,35 +1825,53 @@ pub const Command = struct {
         pub fn print_helptext(cmd: Tag) void {
             return switch (cmd) {
                 Command.Tag.BuildCommand => {
+                    //             clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
+                    // clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+                    // clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+                    // clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
+                    // clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
+                    // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
+                    // clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+                    // clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
+                    // clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+                    // clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
+                    // clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
+                    // clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
+                    // clap.parseParam("--compile                       Generate a standalone Bun executable containing your bundled code") catch unreachable,
                     const build_helptext =
                         \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
                         \\
                         \\<b>Flags:<r>
-                        \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
-                        \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
-                        \\  <cyan>--minify<r>             Enable all minification flags
-                        \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
-                        \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
-                        \\  <cyan>--minify-identifiers<r> Shorten variable names
-                        \\  <cyan>--sourcemap<r>          Generate sourcemaps
-                        \\                       ("none", "inline", or "external")
-                        \\  <cyan>--target<r>             The intended execution environment for the bundle.
-                        \\                       ("browser", "bun" or "node")
-                        \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
-                        \\  <cyan>--watch<r>              Run bundler in watch mode
+                        // \\  <cyan>--format<r>            Specify the module format of the bundle. Only "esm".
+                        \\  <cyan>--target<r>              The intended execution environment for the bundle.
+                        \\                        One of <magenta>browser<r> | <magenta>bun<r> | <magenta>node<r>
+                        \\  <cyan>--outfile<r>             Write the output to a specific file (default: stdout)
+                        \\  <cyan>--outdir<r>              Write the output to a directory (required for splitting)
+                        \\  <cyan>--sourcemap<r>           Generate sourcemaps
+                        \\                        One of <magenta>none<r> | <magenta>inline<r> | <magenta>external<r>
+                        \\  <cyan>--splitting<r>           Enable code splitting (requires --outdir)
+                        \\  <cyan>--watch<r>               Run bundler in watch mode
+                        \\  <cyan>--compile<r>             Compile code into a standalone executable
+                        \\  <cyan>--root<r>                Root directory used for multiple entry points
+                        \\  <cyan>--public-path<r>         A prefix, often a URL, appended to all import paths
+                        \\  <cyan>--minify<r>              Enable all minification flags
+                        \\  <cyan>--minify-whitespace<r>   Remove unneeded whitespace
+                        \\  <cyan>--minify-syntax<r>       Transform code to use less syntax
+                        \\  <cyan>--minify-identifiers<r>  Shorten variable names
                         \\
                         \\<b>Examples:<r>
                         \\  <d>Frontend web apps:<r>
                         \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+                        \\  <b><green>bun build<r> <blue>./index.jsx ./lib/worker.ts<r> <cyan>--minify --splitting --outdir=out<r>
                         \\
                         \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
+                        \\  <b><green>bun build<r> <blue>./server.ts<r> <cyan>--target=bun --outfile=server.js<r>
                         \\
                         \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
+                        \\  <b><green>bun build<r> <blue>./cli.ts<r> <cyan>--compile --outfile=my-app<r>
                         \\
-                        \\Run `bun build --help --all` A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\
                     ;
                     Output.pretty(build_helptext, .{});
                     Output.flush();
@@ -1873,7 +1901,7 @@ pub const Command = struct {
                         \\  <d>Run all test files, only including tests whose names includes "baz"<r>
                         \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
                         \\
-                        \\Run `bun test --help --all` A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\Full documenatation is available at <magenta>https://bun.sh/docs/cli/test<r>
                     ;
                     Output.pretty(test_helptext, .{});
                     Output.flush();

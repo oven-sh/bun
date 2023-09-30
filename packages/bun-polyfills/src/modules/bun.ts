@@ -17,6 +17,7 @@ import {
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
 import TranspilerImpl from './bun/transpiler.js';
+import { mmap as mmapper } from './bun/mmap.js';
 import fs from 'node:fs';
 import v8 from 'node:v8';
 import path from 'node:path';
@@ -33,7 +34,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '776af14918d9a895facd1ad60e83ee837bb7193a' satisfies typeof Bun.revision;
+export const revision = 'f33646e4d870bd532261530f92ea3b5669f31f2e' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -116,6 +117,8 @@ export const resolve = (async (id: string, parent: string) => import.meta.resolv
 
 //? Yes, this is faster than new Uint8Array(Buffer.allocUnsafe(size).buffer) by about 2.5x in Node.js
 export const allocUnsafe = ((size: number) => new Uint8Array(size)) satisfies typeof Bun.allocUnsafe;
+
+export const mmap = mmapper satisfies typeof Bun.mmap;
 
 export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
     process.emitWarning('The polyfill for Bun.generateHeapShot is asynchronous, unlike the original which is synchronous.', {

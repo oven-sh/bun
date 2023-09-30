@@ -23,6 +23,7 @@
     "bun-wasm": "link:bun-wasm",
     "chalk": "^5.3.0",
     "js-md4": "^0.3.2",
+    "mmap-utils": "^1.0.0",
     "open-editor": "^4.1.1",
     "supports-color": "^9.4.0",
     "which": "^4.0.0"

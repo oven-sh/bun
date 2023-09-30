@@ -400,14 +400,23 @@ jobs:
           tag: "canary"
           artifacts: "${{runner.temp}}/release/${{matrix.tag}}.zip,${{runner.temp}}/release/${{matrix.tag}}-profile.zip"
       - uses: sarisia/actions-status-discord@v1
-        if: always() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
+        if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
         with:
-          title: "Build **[${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})** @${{ github.actor }} ${{matrix.tag}}"
+          title: ""
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: ${{ job.status }}
           noprefix: true
+          nocontext: true
           description: |
+            ### [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})
+
+            @${{ github.actor }}
+
+            Build failed on ${{ matrix.tag }}:
+
             **[View build output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
   macOS-test:
     name: Tests ${{matrix.tag}}
     runs-on: ${{ matrix.runner }}
@@ -462,30 +471,17 @@ jobs:
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:
-          title: "**[❌ ${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})** @${{ github.actor }} ${{ steps.test.outputs.failing_tests_count }} files in ${{ matrix.tag }}"
+          title: ""
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: "failure"
           noprefix: true
+          nocontext: true
           description: |
-            **[${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})**
+            ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})
 
-            ❌ @${{ github.actor }} there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:
+            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:
 
             ${{ steps.test.outputs.failing_tests }}
-
-            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
-
-      - uses: sarisia/actions-status-discord@v1
-        if: always() && steps.test.outputs.failing_tests == '' && github.event_name == 'pull_request'
-        with:
-          title: "**[✅ ${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})** @${{ github.actor }} tests passed on ${{ matrix.tag }}!"
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          status: ${{ job.status }}
-          noprefix: true
-          description: |
-            **[${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pulls/${{github.event.number}})**
-
-            Nice work @${{ github.actor }}! All tests passed on ${{ matrix.tag }} for PR #${{github.event.number}}.
 
             **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
       - name: Comment on PR

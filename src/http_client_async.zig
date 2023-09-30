@@ -1156,7 +1156,7 @@ pub fn onEnd(
             return;
         }
     }
-    client.closeAndFail(error.ConnectionClosed);
+    client.fail(error.ConnectionClosed);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {

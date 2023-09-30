@@ -1702,3 +1702,95 @@ it("should throw RedirectURLTooLong when location is too long", async () => {
   expect(err.code).toStrictEqual("RedirectURLTooLong");
   server.stop(true);
 });
+
+it("304 not modified with missing content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with missing content-length and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with content-length 0 and connection close does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});
+
+it("304 not modified with 0 content-length does not cause a request timeout", async () => {
+  const server = await Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write("HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n");
+        socket.flush();
+        setTimeout(() => {
+          socket.end();
+        }, 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(304);
+  expect(await response.arrayBuffer()).toHaveLength(0);
+  server.stop(true);
+});

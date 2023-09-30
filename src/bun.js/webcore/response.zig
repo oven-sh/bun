@@ -178,7 +178,7 @@ pub const Response = struct {
     }
 
     pub fn isOK(this: *const Response) bool {
-        return this.init.status_code == 304 or (this.init.status_code >= 200 and this.init.status_code <= 299);
+        return this.init.status_code >= 200 and this.init.status_code <= 299;
     }
 
     pub fn getURL(

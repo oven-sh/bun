@@ -122,6 +122,53 @@ describe("fetch() with streaming", () => {
     }
   });
 
+  it(`should be locked after start buffering when calling getReader`, async () => {
+    let server: Server | null = null;
+    try {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.enqueue("Hello, World!");
+                await Bun.sleep(10);
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain",
+              },
+            },
+          );
+        },
+      });
+
+      const server_url = `http://${server.hostname}:${server.port}`;
+      const res = await fetch(server_url);
+      try {
+        const body = res.body as ReadableStream<Uint8Array>;
+        const promise = res.text(); // start buffering
+        body.getReader(); // get a reader
+        const result = await promise; // should throw the right error
+        expect(result).toBe("unreachable");
+      } catch (err: any) {
+        if (err.name !== "TypeError") throw err;
+        expect(err.message).toBe("ReadableStream is locked");
+      }
+    } finally {
+      server?.stop();
+    }
+  });
+
   it("can deflate with and without headers #4478", async () => {
     let server: Server | null = null;
     try {

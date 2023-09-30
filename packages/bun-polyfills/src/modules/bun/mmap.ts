@@ -24,10 +24,10 @@ export const mmap: typeof Bun.mmap = (path, opts = {}): Uint8Array => {
 
     const fd = fs.openSync(path as fs.PathLike, 'r+');
     const size = fs.fstatSync(fd).size;
-    return mmapper.map(
+    return new Uint8Array(mmapper.map(
         size,
         <MapProtectionFlags>(mmapper.PROT_READ | mmapper.PROT_WRITE),
         opts.shared ? mmapper.MAP_SHARED : mmapper.MAP_PRIVATE,
         fd
-    );
+    ).buffer);
 };

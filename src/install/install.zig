@@ -5212,19 +5212,18 @@ pub const PackageManager = struct {
 
         // Step 1. Find the nearest package.json directory
         //
-        // We will walk up from the cwd, calling chdir on each directory until we find a package.json
-        // If we fail to find one, we will report an error saying no packages to install
+        // We will walk up from the cwd, trying to find the nearest package.json file.
         const package_json_file = brk: {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
-                    var dir = std.fs.openDirAbsolute(this_cwd, .{}) catch |err| {
-                        Output.prettyErrorln("Error {s} accessing {s}", .{ @errorName(err), this_cwd });
-                        Output.flush();
-                        return err;
-                    };
-                    defer dir.close();
-                    break :child dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                    const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
+                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
+                    buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                    buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
+
+                    break :child std.fs.cwd().openFileZ(buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                         if (std.fs.path.dirname(this_cwd)) |parent| {
                             this_cwd = parent;
                             continue;
@@ -5240,9 +5239,13 @@ pub const PackageManager = struct {
             // Check if this is a workspace; if so, use root package
             var found = false;
             while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
-                var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
-                defer dir.close();
-                const json_file = dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
+                var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+
+                const json_file = std.fs.cwd().openFileZ(buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                     continue;
                 };
                 defer if (!found) json_file.close();

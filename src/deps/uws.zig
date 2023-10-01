@@ -40,6 +40,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return us_socket_timeout(comptime ssl_int, this.socket, seconds);
         }
 
+        pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
+            if (seconds > 254) {
+                us_socket_timeout(comptime ssl_int, this.socket, 0);
+                us_socket_long_timeout(comptime ssl_int, this.socket, seconds / 60);
+            } else {
+                us_socket_timeout(comptime ssl_int, this.socket, seconds);
+                us_socket_long_timeout(comptime ssl_int, this.socket, 0);
+            }
+        }
+
+        pub fn setTimeoutMinutes(this: ThisSocket, minutes: c_uint) void {
+            return us_socket_long_timeout(comptime ssl_int, this.socket, minutes);
+        }
+
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
             _ = us_socket_open(comptime ssl_int, this.socket, @intFromBool(is_client), null, 0);
         }
@@ -126,6 +140,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
+                pub fn on_long_timeout(socket: *Socket) callconv(.C) ?*Socket {
+                    Fields.onLongTimeout(
+                        getValue(socket),
+                        TLSSocket{ .socket = socket },
+                    );
+                    return socket;
+                }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
                         getValue(socket),
@@ -155,6 +176,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_connect_error = SocketHandler.on_connect_error,
                 .on_end = SocketHandler.on_end,
                 .on_handshake = SocketHandler.on_handshake,
+                .on_long_timeout = SocketHandler.on_long_timeout,
             };
 
             const socket = us_socket_wrap_with_tls(ssl_int, this.socket, options, events, socket_ext_size) orelse return null;
@@ -578,6 +600,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
+                pub fn on_long_timeout(socket: *Socket) callconv(.C) ?*Socket {
+                    Fields.onLongTimeout(
+                        getValue(socket),
+                        ThisSocket{ .socket = socket },
+                    );
+                    return socket;
+                }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
                         getValue(socket),
@@ -614,6 +643,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
             if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
+            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .Null)
+                us_socket_context_on_long_timeout(ssl_int, ctx, SocketHandler.on_long_timeout);
         }
 
         pub fn from(socket: *Socket) ThisSocket {
@@ -985,6 +1016,7 @@ extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_w
 extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_handshake: *const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;
 
 extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_long_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
@@ -1089,6 +1121,7 @@ pub const Poll = opaque {
 extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
 extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
+extern fn us_socket_long_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
 extern fn us_socket_ext(ssl: i32, s: ?*Socket) ?*anyopaque;
 extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;

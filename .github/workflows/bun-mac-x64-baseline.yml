@@ -406,6 +406,7 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
+            Pull Request
             ### [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
             @${{ github.actor }}
@@ -475,6 +476,7 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
+            Pull Request
             ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
             Hey @${{ github.actor }},

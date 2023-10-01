@@ -3447,7 +3447,7 @@ pub fn handleResponseMetadata(
     if (this.proxy_tunneling and this.proxy_tunnel == null) {
         if (response.status_code == 200) {
             // signal to continue the proxing
-            return ShouldContinue.finished;
+            return ShouldContinue.continue_streaming;
         }
 
         //proxy denied connection so return proxy result (407, 403 etc)

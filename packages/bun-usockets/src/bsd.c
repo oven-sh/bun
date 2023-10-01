@@ -665,9 +665,39 @@ int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
     return 0; // no ecn defaults to 0
 }
 
-static int bsd_do_connect(struct addrinfo *result, int fd)
+static int bsd_do_connect_raw(struct addrinfo *rp, int fd)
 {
-    return connect(fd, result->ai_addr, (socklen_t) result->ai_addrlen);
+     do {
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
+            return 0;
+        }
+    } while (errno == EINTR);
+
+    return LIBUS_SOCKET_ERROR;
+}
+
+static int bsd_do_connect(struct addrinfo *rp, int *fd)
+{
+    while (rp != NULL) {
+        if (bsd_do_connect_raw(rp, *fd) == 0) {
+            return 0;
+        }
+
+        rp = rp->ai_next;
+        bsd_close_socket(*fd);
+
+        if (rp == NULL) {
+            return -1;
+        }
+
+        int resultFd = bsd_create_socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (resultFd == LIBUS_SOCKET_ERROR) {
+            return -1;
+        }
+        *fd = resultFd;
+    }
+
+    return LIBUS_SOCKET_ERROR;
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
@@ -700,18 +730,21 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
                 return LIBUS_SOCKET_ERROR;
             }
         }
-    }
-    
-    do {
-        if (bsd_do_connect(result, fd) != 0 && errno != EINPROGRESS) {
+
+        if (bsd_do_connect_raw(result, fd) != 0 && errno != EINPROGRESS) {
             bsd_close_socket(fd);
             freeaddrinfo(result);
             return LIBUS_SOCKET_ERROR;
         }
-    } while (errno == EINTR);
-
+    } else {
+        if (bsd_do_connect(result, &fd) != 0 && errno != EINPROGRESS) {
+            freeaddrinfo(result);
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+    
+    
     freeaddrinfo(result);
-
     return fd;
 }
 

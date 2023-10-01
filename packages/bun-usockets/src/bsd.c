@@ -737,7 +737,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
             return LIBUS_SOCKET_ERROR;
         }
     } else {
-        if (bsd_do_connect(result, &fd) != 0 && errno != EINPROGRESS) {
+        if (bsd_do_connect(result, &fd) != 0) {
             freeaddrinfo(result);
             return LIBUS_SOCKET_ERROR;
         }

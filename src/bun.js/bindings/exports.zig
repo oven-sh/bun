@@ -983,22 +983,42 @@ pub const ZigConsoleClient = struct {
         else
             console.writer;
         var writer = buffered_writer.writer();
-
         const Writer = @TypeOf(writer);
-        if (len > 0)
+
+        var print_length = len;
+        var print_options: FormatOptions = .{
+            .enable_colors = enable_colors,
+            .add_newline = true,
+            .flush = true,
+        };
+
+        if (message_type == .Dir and len >= 2) {
+            print_length = 1;
+            var opts = vals[1];
+            if (opts.isObject()) {
+                if (opts.get(global, "depth")) |depth_prop| {
+                    if (depth_prop.isNumber())
+                        print_options.max_depth = depth_prop.toU16();
+                    if (depth_prop.isNull() or depth_prop.toInt64() == std.math.maxInt(i64))
+                        print_options.max_depth = std.math.maxInt(u16);
+                }
+                if (opts.get(global, "colors")) |colors_prop| {
+                    if (colors_prop.isBoolean())
+                        print_options.enable_colors = colors_prop.toBoolean();
+                }
+            }
+        }
+
+        if (print_length > 0)
             format(
                 level,
                 global,
                 vals,
-                len,
+                print_length,
                 @TypeOf(buffered_writer.unbuffered_writer.context),
                 Writer,
                 writer,
-                .{
-                    .enable_colors = enable_colors,
-                    .add_newline = true,
-                    .flush = true,
-                },
+                print_options,
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;

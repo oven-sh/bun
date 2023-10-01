@@ -71,6 +71,17 @@ test("Overwriting _resolveFilename", () => {
   expect(exitCode).toBe(0);
 });
 
+test("Overwriting Module.prototype.require", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
 test("Module.prototype._compile", () => {
   const module = new Module("module id goes here");
   const starting_exports = module.exports;
@@ -86,4 +97,11 @@ test("Module.prototype._compile", () => {
   expect(req).toBe(module.require);
   expect(fn).toBe("/file/path/goes/here.js");
   expect(dn).toBe("/file/path/goes");
+});
+
+test("Module._extensions", () => {
+  expect(".js" in Module._extensions).toBeTrue();
+  expect(".json" in Module._extensions).toBeTrue();
+  expect(".node" in Module._extensions).toBeTrue();
+  expect(require.extensions).toBe(Module._extensions);
 });

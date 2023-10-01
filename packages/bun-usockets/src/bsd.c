@@ -691,7 +691,7 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
         }
 
         int resultFd = bsd_create_socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (resultFd == LIBUS_SOCKET_ERROR) {
+        if (resultFd < 0) {
             return -1;
         }
         *fd = resultFd;

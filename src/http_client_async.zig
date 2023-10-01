@@ -1343,7 +1343,7 @@ pub const InternalState = struct {
         return this.transfer_encoding == Encoding.chunked;
     }
 
-    pub fn reset(this: *InternalState, buffering: bool, allocator: std.mem.Allocator) void {
+    pub fn reset(this: *InternalState, allocator: std.mem.Allocator) void {
         this.compressed_body.deinit();
         this.response_message_buffer.deinit();
 
@@ -1352,12 +1352,6 @@ pub const InternalState = struct {
         if (this.zlib_reader) |reader| {
             this.zlib_reader = null;
             reader.deinit();
-        }
-
-        if (!buffering) {
-            // if we are holding a cloned_metadata we need to deinit it
-            // this should never happen because we should always return the metadata to the user
-            std.debug.assert(this.cloned_metadata == null);
         }
 
         // just in case we check and free to avoid leaks
@@ -2186,7 +2180,7 @@ pub fn doRedirect(this: *HTTPClient) void {
         this.fail(error.TooManyRedirects);
         return;
     }
-    this.state.reset(this.signals.isEmpty(), this.allocator);
+    this.state.reset(this.allocator);
     // also reset proxy to redirect
     this.proxy_tunneling = false;
     if (this.proxy_tunnel != null) {
@@ -2907,7 +2901,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
 
-    this.state.reset(this.signals.isEmpty(), this.allocator);
+    this.state.reset(this.allocator);
     this.proxy_tunneling = false;
 
     this.state.request_stage = .fail;
@@ -2993,7 +2987,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 socket.close(0, null);
             }
 
-            this.state.reset(this.signals.isEmpty(), this.allocator);
+            this.state.reset(this.allocator);
             this.state.response_stage = .done;
             this.state.request_stage = .done;
             this.state.stage = .done;
@@ -3447,7 +3441,7 @@ pub fn handleResponseMetadata(
     if (this.proxy_tunneling and this.proxy_tunnel == null) {
         if (response.status_code == 200) {
             // signal to continue the proxing
-            return ShouldContinue.finished;
+            return ShouldContinue.continue_streaming;
         }
 
         //proxy denied connection so return proxy result (407, 403 etc)

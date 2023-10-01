@@ -41,7 +41,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
-            if (seconds > 254) {
+            if (seconds > 240) {
                 us_socket_timeout(comptime ssl_int, this.socket, 0);
                 us_socket_long_timeout(comptime ssl_int, this.socket, seconds / 60);
             } else {

@@ -681,7 +681,7 @@ interface Process {
    */
   setSourceMapsEnabled(enabled: boolean): void;
 
-  kill(pid: number, signal?: string | number): void;
+  kill(pid: number, signal?: string | number): true;
 
   on(event: "beforeExit", listener: BeforeExitListener): this;
   // on(event: "disconnect", listener: DisconnectListener): this;

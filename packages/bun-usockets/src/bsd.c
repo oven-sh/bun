@@ -687,12 +687,12 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
         bsd_close_socket(*fd);
 
         if (rp == NULL) {
-            return -1;
+            return LIBUS_SOCKET_ERROR;
         }
 
         int resultFd = bsd_create_socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (resultFd < 0) {
-            return -1;
+            return LIBUS_SOCKET_ERROR;
         }
         *fd = resultFd;
     }

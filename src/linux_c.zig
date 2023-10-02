@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const heap_allocator = bun.default_allocator;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -416,8 +417,42 @@ pub const struct_sysinfo = extern struct {
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
+fn getFreeMemoryFromMemInfo() u64 {
+    const file = std.fs.openFileAbsolute("/proc/meminfo", .{ .mode = .read_only }) catch {
+        return 0;
+    };
+
+    defer file.close();
+
+    const contents = heap_allocator.alloc(u8, 4096) catch return 0;
+    defer heap_allocator.free(contents);
+
+    _ = file.readAll(contents) catch return 0;
+
+    const search_term = "MemAvailable:";
+    if (std.mem.indexOf(u8, contents, search_term)) |found_idx| {
+        const idx = found_idx + search_term.len;
+
+        if (std.mem.indexOf(u8, contents[idx..], "kB")) |kb_index| {
+            const end = idx + kb_index;
+            const kb = std.fmt.parseInt(u64, std.mem.trim(u8, contents[idx..end], " "), 10) catch 0;
+            return kb * 1024;
+        }
+
+        return 0;
+    }
+
+    return 0;
+}
+
 pub fn getFreeMemory() u64 {
     var info: struct_sysinfo = undefined;
+    const free = getFreeMemoryFromMemInfo();
+
+    if (free != 0) {
+        return free;
+    }
+
     if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }

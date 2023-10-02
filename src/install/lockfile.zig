@@ -84,9 +84,9 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
-const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
-const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
-const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
+pub const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
+pub const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
+pub const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
 
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
@@ -703,7 +703,7 @@ pub fn cleanWithLogger(
     //     }
     // }
 
-    var new = try old.allocator.create(Lockfile);
+    var new: *Lockfile = try old.allocator.create(Lockfile);
     try new.initEmpty(
         old.allocator,
     );
@@ -730,12 +730,72 @@ pub fn cleanWithLogger(
         .clone_queue = clone_queue_,
         .log = log,
     };
+
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
     _ = try root.clone(old, new, package_id_mapping, &cloner);
 
+    // Clone workspace_paths and workspace_versions at the end.
+    if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
+        try new.workspace_paths.ensureTotalCapacity(z_allocator, old.workspace_paths.count());
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+
+        var workspace_paths_builder = new.stringBuilder();
+        //     const WorkspacePathSorter = struct {
+        //         string_buf: []const u8,
+        //         entries: NameHashMap.DataList,
+
+        //         pub fn isLessThan(sorter: @This(), a: usize, b: usize) bool {
+        //             const left = sorter.entries.items(.value)[a];
+        //             const right = sorter.entries.items(.value)[b];
+        //             return strings.order(left.slice(sorter.string_buf), right.slice(sorter.string_buf)) == .lt;
+        //         }
+        //     };
+
+        //     // Sort by name for determinism
+        //     old.workspace_paths.sort(WorkspacePathSorter{
+        //         .entries = old.workspace_paths.entries,
+        //         .string_buf = old.buffers.string_bytes.items,
+        //     });
+
+        for (old.workspace_paths.values()) |*path| {
+            workspace_paths_builder.count(old.str(path));
+        }
+        const versions: []const Semver.Version = old.workspace_versions.values();
+        for (versions) |version| {
+            version.count(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        try workspace_paths_builder.allocate();
+
+        new.workspace_paths.entries.len = old.workspace_paths.entries.len;
+
+        for (old.workspace_paths.values(), new.workspace_paths.values()) |*src, *dest| {
+            dest.* = workspace_paths_builder.append(String, old.str(src));
+        }
+        @memcpy(
+            new.workspace_paths.keys(),
+            old.workspace_paths.keys(),
+        );
+
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+        new.workspace_versions.entries.len = old.workspace_versions.entries.len;
+        for (versions, new.workspace_versions.values()) |src, *dest| {
+            dest.* = src.clone(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        @memcpy(
+            new.workspace_versions.keys(),
+            old.workspace_versions.keys(),
+        );
+
+        workspace_paths_builder.clamp();
+
+        try new.workspace_versions.reIndex(z_allocator);
+        try new.workspace_paths.reIndex(z_allocator);
+    }
+
     // When you run `"bun add react"
     // This is where we update it in the lockfile from "latest" to "^17.0.2"
-
     try cloner.flush();
 
     // Don't allow invalid memory to happen
@@ -3172,7 +3232,7 @@ pub const Package = extern struct {
                 a: usize,
                 b: usize,
             ) bool {
-                return std.mem.order(u8, self.values[a].name, self.values[b].name) == .lt;
+                return strings.order(self.values[a].name, self.values[b].name) == .lt;
             }
         }{
             .values = workspace_names.values(),
@@ -4137,6 +4197,8 @@ pub const Serializer = struct {
     pub const version = "bun-lockfile-format-v0\n";
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
+    const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
+
     pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
         var old_package_list = this.packages;
         this.packages = try this.packages.clone(z_allocator);
@@ -4154,6 +4216,49 @@ pub const Serializer = struct {
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
         try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
         try writer.writeIntLittle(u64, 0);
+
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        if (this.workspace_versions.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_workspace_package_ids_tag));
+
+            // We need to track the "version" field in "package.json" of workspace member packages
+            // We do not necessarily have that in the Resolution struct. So we store it here.
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []u32,
+                this.workspace_versions.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []Semver.Version,
+                this.workspace_versions.values(),
+            );
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []u32,
+                this.workspace_paths.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(&writer),
+                &writer,
+                []String,
+                this.workspace_paths.values(),
+            );
+        }
+
         const end = try stream.getPos();
 
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
@@ -4200,20 +4305,84 @@ pub const Serializer = struct {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
-        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
+        var has_workspace_name_hashes = false;
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readIntLittle(u64);
+                if (next_num == has_workspace_package_ids_tag) {
+                    {
+                        var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(u32),
+                        );
+                        defer workspace_package_name_hashes.deinit(allocator);
+
+                        var workspace_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.Version),
+                        );
+                        comptime {
+                            if (u32 != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                            if (Semver.Version != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).value)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                        }
+                        defer workspace_versions_list.deinit(allocator);
+                        try lockfile.workspace_versions.ensureTotalCapacity(allocator, workspace_versions_list.items.len);
+                        lockfile.workspace_versions.entries.len = workspace_versions_list.items.len;
+                        @memcpy(lockfile.workspace_versions.keys(), workspace_package_name_hashes.items);
+                        @memcpy(lockfile.workspace_versions.values(), workspace_versions_list.items);
+                        try lockfile.workspace_versions.reIndex(allocator);
+                    }
+
+                    {
+                        var workspace_paths_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(u32),
+                        );
+                        defer workspace_paths_hashes.deinit(allocator);
+                        var workspace_paths_strings = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(String),
+                        );
+                        defer workspace_paths_strings.deinit(allocator);
+
+                        try lockfile.workspace_paths.ensureTotalCapacity(allocator, workspace_paths_strings.items.len);
+
+                        lockfile.workspace_paths.entries.len = workspace_paths_strings.items.len;
+                        @memcpy(lockfile.workspace_paths.keys(), workspace_paths_hashes.items);
+                        @memcpy(lockfile.workspace_paths.values(), workspace_paths_strings.items);
+                        try lockfile.workspace_paths.reIndex(allocator);
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
 
         lockfile.scratch = Lockfile.Scratch.init(allocator);
+        lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
+        lockfile.string_pool = StringPool.initContext(allocator, .{});
+        try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
 
-        {
-            lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-            lockfile.string_pool = StringPool.initContext(allocator, .{});
-            try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
+        if (!has_workspace_name_hashes) {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
             for (name_hashes, resolutions, 0..) |name_hash, resolution, id| {
                 try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
 
+                // compatibility with < Bun v1.0.4
                 switch (resolution.tag) {
                     .workspace => {
                         try lockfile.workspace_paths.put(allocator, @as(u32, @truncate(name_hash)), resolution.value.workspace);
@@ -4221,7 +4390,15 @@ pub const Serializer = struct {
                     else => {},
                 }
             }
+        } else {
+            const slice = lockfile.packages.slice();
+            const name_hashes = slice.items(.name_hash);
+            for (name_hashes, 0..) |name_hash, id| {
+                try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
+            }
         }
+
+        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
 
         // const end = try reader.readIntLittle(u64);
     }

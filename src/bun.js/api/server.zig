@@ -4859,6 +4859,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            if (this.config.address == .unix) {
+                return JSValue.jsNull();
+            }
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,

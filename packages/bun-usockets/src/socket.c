@@ -290,7 +290,7 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
         return 0;
-    } 
+    }
 
     int length = bsd_addr_get_ip_length(&addr);
     if (!length) {

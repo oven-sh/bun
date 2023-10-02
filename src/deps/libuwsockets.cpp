@@ -5,6 +5,8 @@
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
 
+extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
+
 extern "C"
 {
 
@@ -1577,28 +1579,29 @@ extern "C"
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
+  // Gets the remote address and port
+  // Returns 0 if failure / unix socket
   uint64_t uws_res_get_remote_address_info(uws_res_t *res, const char **dest, int *port, bool *is_ipv6)
   {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     //      AsyncSocket::addressAsText
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
 
+    if (length == 0) return 0;
     if (length == 4) {
-        length = sprintf(b, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        *is_ipv6 = false;
+      length = snprintf(b, 64, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+      *dest = b;
+      *is_ipv6 = false;
+      return length;
     } else {
-        length = sprintf(b, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-            b[12], b[13], b[14], b[15]);
-        *is_ipv6 = true;
+      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+      *dest = &b[16];
+      *is_ipv6 = true;
+      return strlen(*dest);
     }
-
-    *dest = b;
-
-    return (unsigned int) length;
   }
 }

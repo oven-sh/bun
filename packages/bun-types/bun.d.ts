@@ -2359,11 +2359,7 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
-     * Returns the client IP address of the given Request.
-     *
-     * @param request The incoming request
-     *
-     * @returns An ipv4/ipv6 address string, or null if it couldn't find one.
+     * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
      * ```js
@@ -3297,6 +3293,37 @@ declare module "bun" {
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
+
+    /**
+     * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
+     *
+     * @param specifier The module specifier to register the callback for
+     * @param callback The function to run when the module is imported or required
+     *
+     * ### Example
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.module("hello:world", () => {
+     *       return { exports: { foo: "bar" }, loader: "object" };
+     *     });
+     *   },
+     * });
+     *
+     * // sometime later
+     * const { foo } = await import("hello:world");
+     * console.log(foo); // "bar"
+     *
+     * // or
+     * const { foo } = require("hello:world");
+     * console.log(foo); // "bar"
+     * ```
+     */
+    module(
+      specifier: string,
+      callback: () => OnLoadResult | Promise<OnLoadResult>,
+    ): void;
   }
 
   interface BunPlugin {

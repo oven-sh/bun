@@ -855,17 +855,17 @@ pub const SliceWithUnderlyingString = struct {
     underlying: String,
 
     pub fn toThreadSafe(this: *SliceWithUnderlyingString) void {
-        std.debug.assert(this.underlying.tag == .WTFStringImpl);
+        if (this.underlying.tag == .WTFStringImpl) {
+            var orig = this.underlying.value.WTFStringImpl;
+            this.underlying.toThreadSafe();
+            if (this.underlying.value.WTFStringImpl != orig) {
+                orig.deref();
 
-        var orig = this.underlying.value.WTFStringImpl;
-        this.underlying.toThreadSafe();
-        if (this.underlying.value.WTFStringImpl != orig) {
-            orig.deref();
-
-            if (this.utf8.allocator.get()) |allocator| {
-                if (String.isWTFAllocator(allocator)) {
-                    this.utf8.deinit();
-                    this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                if (this.utf8.allocator.get()) |allocator| {
+                    if (String.isWTFAllocator(allocator)) {
+                        this.utf8.deinit();
+                        this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                    }
                 }
             }
         }

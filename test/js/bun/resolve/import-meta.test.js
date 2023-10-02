@@ -102,7 +102,7 @@ it("Module.createRequire(file://url).resolve(file://url)", () => {
 
   const createdRequire = Module.createRequire(import.meta.url);
   const result1 = createdRequire.resolve("./require-json.json");
-  const result2 = createdRequire.resolve("file://./require-json.json");
+  const result2 = createdRequire.resolve(`file://${expected}`);
   expect(result1).toBe(expected);
   expect(result2).toBe(expected);
 });

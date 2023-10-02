@@ -65,7 +65,7 @@ $ bunx --bun astro dev
 
 Open [http://localhost:4321](http://localhost:4321) with your browser to see the result. Astro will hot-reload your app as you edit your source files.
 
-{% image src="https://imgur.com/Dswiu6w" caption="An Astro v3 starter app running on Bun" %}
+{% image src="https://i.imgur.com/Dswiu6w.png" caption="An Astro v3 starter app running on Bun" %}
 
 ---
 

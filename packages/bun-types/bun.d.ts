@@ -912,6 +912,14 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Enabled by default, use this to disable dead code elimination.
+     *
+     * Some other transpiler options may still do some specific dead code elimination.
+     */
+    deadCodeElimination?: boolean;
 
     /**
      * This does two things (and possibly more in the future):
@@ -2188,6 +2196,21 @@ declare module "bun" {
     tls?: TLSOptions;
   }
 
+  export interface SocketAddress {
+    /**
+     * The IP address of the client.
+     */
+    address: string;
+    /**
+     * The port of the client.
+     */
+    port: number;
+    /**
+     * The IP family ("IPv4" or "IPv6").
+     */
+    family: "IPv4" | "IPv6";
+  }
+
   /**
    * HTTP & HTTPS Server
    *
@@ -2334,6 +2357,20 @@ declare module "bun" {
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
+
+    /**
+     * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    return new Response(server.requestIP(request));
+     *  }
+     * }
+     * ```
+     */
+    requestIP(request: Request): SocketAddress | null;
 
     /**
      * How many requests are in-flight right now?
@@ -3256,6 +3293,37 @@ declare module "bun" {
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
+
+    /**
+     * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
+     *
+     * @param specifier The module specifier to register the callback for
+     * @param callback The function to run when the module is imported or required
+     *
+     * ### Example
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.module("hello:world", () => {
+     *       return { exports: { foo: "bar" }, loader: "object" };
+     *     });
+     *   },
+     * });
+     *
+     * // sometime later
+     * const { foo } = await import("hello:world");
+     * console.log(foo); // "bar"
+     *
+     * // or
+     * const { foo } = require("hello:world");
+     * console.log(foo); // "bar"
+     * ```
+     */
+    module(
+      specifier: string,
+      callback: () => OnLoadResult | Promise<OnLoadResult>,
+    ): void;
   }
 
   interface BunPlugin {
@@ -3819,7 +3887,7 @@ declare module "bun" {
       : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
-      ? Uint8Array
+      ? Buffer
       : undefined;
 
     type WritableIO = FileSink | number | undefined;

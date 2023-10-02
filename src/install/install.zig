@@ -1764,7 +1764,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
-        bun.Mimalloc.mi_collect(false);
+        Output.flush();
         _ = this.waiter.wait() catch 0;
     }
 
@@ -1829,7 +1829,7 @@ pub const PackageManager = struct {
                 switch (this.options.log_level) {
                     inline else => |log_level| {
                         if (log_level.showProgress()) this.startProgressBarIfNone();
-                        while (this.pending_tasks > 0) : (this.sleep()) {
+                        while (this.pending_tasks > 0) {
                             this.runTasks(
                                 void,
                                 {},
@@ -1843,6 +1843,13 @@ pub const PackageManager = struct {
                             ) catch |err| {
                                 return .{ .failure = err };
                             };
+
+                            if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                            }
+
+                            if (this.pending_tasks > 0)
+                                this.sleep();
                         }
                     },
                 }
@@ -2942,6 +2949,8 @@ pub const PackageManager = struct {
         );
     }
 
+    const debug = Output.scoped(.PackageManager, true);
+
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -3068,11 +3077,35 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        result.package.meta.id,
+                                    },
+                                );
                         } else if (dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
                             if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = task {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        task_id,
+                                    },
+                                );
 
                             if (!dependency.behavior.isPeer()) {
                                 var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
@@ -3174,6 +3207,18 @@ pub const PackageManager = struct {
                     id,
                 );
 
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
+
                 if (this.git_repositories.get(clone_id)) |repo_fd| {
                     const resolved = try Repository.findCommit(
                         this.allocator,
@@ -3239,6 +3284,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
@@ -3307,6 +3364,18 @@ pub const PackageManager = struct {
 
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
+
+                    if (comptime Environment.allow_assert)
+                        debug(
+                            "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                            .{
+                                id,
+                                @tagName(dependency.version.tag),
+                                this.lockfile.str(&name),
+                                this.lockfile.str(&version.literal),
+                                result.package.meta.id,
+                            },
+                        );
                 } else if (dependency.behavior.isRequired()) {
                     if (comptime dependency_tag == .workspace) {
                         this.log.addErrorFmt(
@@ -3386,6 +3455,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
@@ -5205,19 +5286,18 @@ pub const PackageManager = struct {
 
         // Step 1. Find the nearest package.json directory
         //
-        // We will walk up from the cwd, calling chdir on each directory until we find a package.json
-        // If we fail to find one, we will report an error saying no packages to install
+        // We will walk up from the cwd, trying to find the nearest package.json file.
         const package_json_file = brk: {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
-                    var dir = std.fs.openDirAbsolute(this_cwd, .{}) catch |err| {
-                        Output.prettyErrorln("Error {s} accessing {s}", .{ @errorName(err), this_cwd });
-                        Output.flush();
-                        return err;
-                    };
-                    defer dir.close();
-                    break :child dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                    const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
+                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
+                    buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                    buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
+
+                    break :child std.fs.cwd().openFileZ(buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                         if (std.fs.path.dirname(this_cwd)) |parent| {
                             this_cwd = parent;
                             continue;
@@ -5233,9 +5313,13 @@ pub const PackageManager = struct {
             // Check if this is a workspace; if so, use root package
             var found = false;
             while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
-                var dir = std.fs.openDirAbsolute(parent, .{}) catch break;
-                defer dir.close();
-                const json_file = dir.openFileZ("package.json", .{ .mode = .read_write }) catch {
+                const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
+                var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
+                buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+
+                const json_file = std.fs.cwd().openFileZ(buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr, .{ .mode = .read_write }) catch {
                     continue;
                 };
                 defer if (!found) json_file.close();
@@ -6089,7 +6173,7 @@ pub const PackageManager = struct {
 
                 var value = input;
                 var alias: ?string = null;
-                if (strings.isNPMPackageName(input)) {
+                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
                     alias = input;
                     value = input[input.len..];
                 } else if (input.len > 1) {
@@ -7300,7 +7384,10 @@ pub const PackageManager = struct {
                 // We use this file descriptor to know where to put it.
                 installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
                     // Avoid extra mkdir() syscall
-                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    //
+                    // note: this will recursively delete any dangling symlinks
+                    // in the next.js repo, it encounters a dangling symlink in node_modules/@next/codemod/node_modules/cheerio
+                    try bun.makePath(cwd, bun.span(node_modules.relative_path));
                     break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
                 };
 
@@ -7354,7 +7441,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) : (this.sleep()) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -7366,6 +7453,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and this.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{this.pending_tasks});
+                }
+
+                if (this.pending_tasks > 0)
+                    this.sleep();
             }
 
             if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -7736,7 +7830,7 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) : (manager.sleep()) {
+            while (manager.pending_tasks > 0) {
                 try manager.runTasks(
                     *PackageManager,
                     manager,
@@ -7749,6 +7843,13 @@ pub const PackageManager = struct {
                     },
                     log_level,
                 );
+
+                if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+                    Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+                }
+
+                if (manager.pending_tasks > 0)
+                    manager.sleep();
             }
 
             if (comptime log_level.showProgress()) {

@@ -1,3 +1,4 @@
+// clang-format off
 #pragma once
 
 #include "CommonJSModuleRecord.h"
@@ -152,6 +153,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
   return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDebugNoop,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+
+  auto specifier = callFrame->argument(0);
+  auto paths = jsDynamicCast<JSArray*>(callFrame->argument(1));
+
+  if (!specifier.isString()) {
+    return JSValue::encode(jsBoolean(false));
+  }
+  if (!paths) {
+    return JSValue::encode(jsBoolean(false));
+  }
+
+  auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
+
+  if (JSC::JSValue::decode(result).isString()) {
+    return result;
+  }
+
+  // TODO: iterate
+
+  return JSValue::encode(jsBoolean(false));
+}
+
 // Might be faster as a JS builtin
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModulePreloadModules,
                          (JSC::JSGlobalObject * globalObject,
@@ -230,8 +263,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
                           CallFrame *callFrame)) {
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
-  throwException(globalObject, scope,
-                 createError(globalObject, "Not implemented"_s));
+  throwException(
+      globalObject, scope,
+      createError(globalObject,
+                  "module.findSourceMap is not implemented in Bun"_s));
   return JSValue::encode(jsUndefined());
 }
 
@@ -241,7 +276,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject,
   auto scope = DECLARE_THROW_SCOPE(vm);
   throwException(
       globalObject, scope,
-      createError(globalObject, "Bun does not support ESM loaders"_s));
+      createError(globalObject, "Bun does not support Node.js loaders"_s));
   return JSValue::encode(jsUndefined());
 }
 
@@ -255,8 +290,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject,
                                                CallFrame *callFrame)) {
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
-  throwException(globalObject, scope,
-                 createError(globalObject, "Not implemented"_s));
+  throwException(
+      globalObject, scope,
+      createError(globalObject,
+                  "module.SourceMap is not yet implemented in Bun"_s));
   return JSValue::encode(jsUndefined());
 }
 
@@ -406,43 +443,36 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "Module"_s), defaultObject);
 
   // Module._extensions === require.extensions
-  put(Identifier::fromString(vm, "_extensions"_s),
-      globalObject->requireFunctionUnbound()->get(
-          globalObject, Identifier::fromString(vm, "extensions"_s)));
+  put(
+    Identifier::fromString(vm, "_extensions"_s),
+    globalObject->requireFunctionUnbound()->get(globalObject, Identifier::fromString(vm, "extensions"_s))
+  );
 
-  put(Identifier::fromString(vm, "_pathCache"_s),
-      JSC::constructEmptyObject(globalObject));
+  put(Identifier::fromString(vm, "_pathCache"_s), JSC::constructEmptyObject(globalObject));
 
+  putNativeFn(Identifier::fromString(vm, "__resolveFilename"_s), jsFunctionResolveFileName);
   defaultObject->putDirectCustomAccessor(
       vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),
-      JSC::CustomGetterSetter::create(vm, get_resolveFilename,
-                                      set_resolveFilename),
+      JSC::CustomGetterSetter::create(vm, get_resolveFilename, set_resolveFilename),
       JSC::PropertyAttribute::CustomAccessor | 0);
-  putNativeFn(Identifier::fromString(vm, "__resolveFilename"_s),
-              jsFunctionResolveFileName);
 
-  putNativeFn(Identifier::fromString(vm, "_preloadModules"_s),
-              jsFunctionNodeModulePreloadModules);
-  putNativeFn(Identifier::fromString(vm, "createRequire"_s),
-              jsFunctionNodeModuleCreateRequire);
-  putNativeFn(Identifier::fromString(vm, "paths"_s),
-              Resolver__nodeModulePathsForJS);
-  putNativeFn(Identifier::fromString(vm, "findSourceMap"_s),
-              jsFunctionFindSourceMap);
-  putNativeFn(Identifier::fromString(vm, "syncBuiltinExports"_s),
-              jsFunctionSyncBuiltinExports);
+  putNativeFn(Identifier::fromString(vm, "_preloadModules"_s), jsFunctionNodeModulePreloadModules);
+  putNativeFn(Identifier::fromString(vm, "createRequire"_s), jsFunctionNodeModuleCreateRequire);
+  putNativeFn(Identifier::fromString(vm, "paths"_s), Resolver__nodeModulePathsForJS);
+  putNativeFn(Identifier::fromString(vm, "findSourceMap"_s), jsFunctionFindSourceMap);
+  putNativeFn(Identifier::fromString(vm, "syncBuiltinExports"_s), jsFunctionSyncBuiltinExports);
   putNativeFn(Identifier::fromString(vm, "SourceMap"_s), jsFunctionSourceMap);
-  putNativeFn(Identifier::fromString(vm, "isBuiltin"_s),
-              jsFunctionIsBuiltinModule);
-  putNativeFn(Identifier::fromString(vm, "_nodeModulePaths"_s),
-              Resolver__nodeModulePathsForJS);
+  putNativeFn(Identifier::fromString(vm, "isBuiltin"_s), jsFunctionIsBuiltinModule);
+  putNativeFn(Identifier::fromString(vm, "_nodeModulePaths"_s), Resolver__nodeModulePathsForJS);
   putNativeFn(Identifier::fromString(vm, "wrap"_s), jsFunctionWrap);
 
-  put(Identifier::fromString(vm, "_cache"_s),
-      jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
+  putNativeFn(Identifier::fromString(vm, "_debug"_s), jsFunctionDebugNoop);
 
-  put(Identifier::fromString(vm, "globalPaths"_s),
-      constructEmptyArray(globalObject, nullptr, 0));
+  put(Identifier::fromString(vm, "_load"_s), JSFunction::create(vm, moduleModuleLoadCodeGenerator(vm), globalObject));
+
+  put(Identifier::fromString(vm, "_cache"_s), jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
+
+  put(Identifier::fromString(vm, "globalPaths"_s), constructEmptyArray(globalObject, nullptr, 0));
 
   auto prototype =
       constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);

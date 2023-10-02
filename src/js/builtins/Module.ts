@@ -9,7 +9,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
+  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this?.path ?? ".", false)));
   if (existing) {
     // Scenario where this is necessary:
     //
@@ -46,8 +46,7 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   //
   // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
   // clear the module from the map.
-  //
-  var out = this.$require(id, mod);
+  var out = mod.$require(id, this?.id);
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
@@ -85,4 +84,14 @@ export function requireNativeModule(id: string) {
     return exports.default;
   }
   return $requireESM(id).default;
+}
+
+/** require('node:module')._load */
+export function moduleLoad(request: string, parentPath: CommonJSModuleRecord, isMain: string) {
+  // TODO: `isMain` does four things in node
+  // - sets `process.mainModule`
+  // - sets `module.require.main`
+  // - sets `module.id` to "."
+  // - would pass true to the third argument of _resolveFilename if overridden
+  return $overridableRequire.$call(parentPath, request);
 }

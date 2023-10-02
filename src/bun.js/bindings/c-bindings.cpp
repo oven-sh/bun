@@ -1,10 +1,37 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
+#include "root.h"
 #include <sys/resource.h>
 #include <cstdint>
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <sys/signal.h>
+
+#if CPU(X86_64)
+#include <cstring>
+#include <cpuid.h>
+
+extern "C" void bun_warn_avx_missing(const char* url)
+{
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("avx")) {
+        return;
+    }
+
+    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
+    const size_t len = strlen(str);
+
+    char buf[512];
+    strcpy(buf, str);
+    strcpy(buf + len, url);
+    strcpy(buf + len + strlen(url), "\n\0");
+    write(STDERR_FILENO, buf, strlen(buf));
+}
+#else
+extern "C" void bun_warn_avx_missing(char* url)
+{
+}
+#endif
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {

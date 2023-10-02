@@ -2131,10 +2131,10 @@ pub const PackageManager = struct {
     }
 
     fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
-        var github_api_domain: string = "api.github.com";
-        if (this.env.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-            if (api_domain.len > 0) {
-                github_api_domain = api_domain;
+        var github_api_url: string = "https://api.github.com";
+        if (this.env.map.get("GITHUB_API_URL")) |url| {
+            if (url.len > 0) {
+                github_api_url = url;
             }
         }
 
@@ -2144,9 +2144,9 @@ pub const PackageManager = struct {
 
         return std.fmt.allocPrint(
             this.allocator,
-            "https://{s}/repos/{s}/{s}{s}tarball/{s}",
+            "{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
-                github_api_domain,
+                github_api_url,
                 owner,
                 repo,
                 // repo might be empty if dep is https://github.com/... style

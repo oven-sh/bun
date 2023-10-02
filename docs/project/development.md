@@ -375,7 +375,7 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Updating `WebKit`
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with your run `git status`.
 
 ```bash
 $ git status
@@ -463,7 +463,7 @@ If you see an error about `cmakeconfig.h` not being found, this is because the p
 $ bun install
 ```
 
-Check to see the command installed webkit, and you can manully look for `node_modules/bun-webkit-{platform}-{arch}`:
+Check to see the command installed webkit, and you can manually look for `node_modules/bun-webkit-{platform}-{arch}`:
 
 ```bash
 # this should reveal two directories. if not, something went wrong

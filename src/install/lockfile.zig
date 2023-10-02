@@ -84,9 +84,9 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
-pub const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
+pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
-pub const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
+pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
 
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
@@ -2530,16 +2530,8 @@ pub const Package = extern struct {
                     if (id_mapping) |mapping| {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
-                            .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
-                                const path = to_lockfile.str(path_ptr);
-                                var file = std.fs.cwd().openFile(Path.join(
-                                    &[_]string{ path, "package.json" },
-                                    .auto,
-                                ), .{ .mode = .read_only }) catch break :brk false;
-                                defer file.close();
-                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-                                defer allocator.free(bytes);
-                                const source = logger.Source.initPathString(path, bytes);
+                            .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
+                                
 
                                 var workspace = Package{};
                                 try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
@@ -2688,8 +2680,8 @@ pub const Package = extern struct {
             } else external_alias.hash,
             else => external_alias.hash,
         };
-        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(@truncate(name_hash)) else null;
-        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(@truncate(name_hash)) else workspace_ver;
+        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(name_hash) else null;
+        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(name_hash) else workspace_ver;
 
         switch (dependency_version.tag) {
             .folder => {
@@ -2767,7 +2759,7 @@ pub const Package = extern struct {
                 dependency_version.literal = path;
                 dependency_version.value.workspace = path;
 
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
                 if (workspace_entry.found_existing) {
                     if (strings.eqlComptime(workspace, "*")) return null;
 
@@ -2784,7 +2776,7 @@ pub const Package = extern struct {
                 workspace_entry.value_ptr.* = path;
 
                 if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
+                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
 
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (switch (package_dep.version.tag) {
@@ -3647,6 +3639,11 @@ pub const Package = extern struct {
                     )) |dep| {
                         package_dependencies[total_dependencies_count] = dep;
                         total_dependencies_count += 1;
+
+                        try lockfile.workspace_paths.put(allocator, external_name.hash, dep.version.value.workspace);
+                        if (entry.version) |v| {
+                            try lockfile.workspace_versions.put(allocator, external_name.hash, v);
+                        }
                     }
                 }
             } else {
@@ -4229,7 +4226,7 @@ pub const Serializer = struct {
                 stream,
                 @TypeOf(&writer),
                 &writer,
-                []u32,
+                []PackageNameHash,
                 this.workspace_versions.keys(),
             );
             try Lockfile.Buffers.writeArray(
@@ -4246,7 +4243,7 @@ pub const Serializer = struct {
                 stream,
                 @TypeOf(&writer),
                 &writer,
-                []u32,
+                []PackageNameHash,
                 this.workspace_paths.keys(),
             );
             try Lockfile.Buffers.writeArray(
@@ -4318,7 +4315,7 @@ pub const Serializer = struct {
                         var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
                             stream,
                             allocator,
-                            std.ArrayListUnmanaged(u32),
+                            std.ArrayListUnmanaged(PackageNameHash),
                         );
                         defer workspace_package_name_hashes.deinit(allocator);
 
@@ -4328,7 +4325,7 @@ pub const Serializer = struct {
                             std.ArrayListUnmanaged(Semver.Version),
                         );
                         comptime {
-                            if (u32 != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
+                            if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
                                 @compileError("VersionHashMap must be in sync with serialization");
                             }
                             if (Semver.Version != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).value)) {
@@ -4347,7 +4344,7 @@ pub const Serializer = struct {
                         var workspace_paths_hashes = try Lockfile.Buffers.readArray(
                             stream,
                             allocator,
-                            std.ArrayListUnmanaged(u32),
+                            std.ArrayListUnmanaged(PackageNameHash),
                         );
                         defer workspace_paths_hashes.deinit(allocator);
                         var workspace_paths_strings = try Lockfile.Buffers.readArray(
@@ -4385,7 +4382,7 @@ pub const Serializer = struct {
                 // compatibility with < Bun v1.0.4
                 switch (resolution.tag) {
                     .workspace => {
-                        try lockfile.workspace_paths.put(allocator, @as(u32, @truncate(name_hash)), resolution.value.workspace);
+                        try lockfile.workspace_paths.put(allocator, name_hash, resolution.value.workspace);
                     },
                     else => {},
                 }

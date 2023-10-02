@@ -15,8 +15,9 @@ pub const Os = struct {
     pub const code = @embedFile("../os.exports.js");
 
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 22);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 23);
 
+        module.put(globalObject, JSC.ZigString.static("availableParallelism"), JSC.NewFunction(globalObject, JSC.ZigString.static("availableParallelism"), 0, availableParallelism, true));
         module.put(globalObject, JSC.ZigString.static("arch"), JSC.NewFunction(globalObject, JSC.ZigString.static("arch"), 0, arch, true));
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
         module.put(globalObject, JSC.ZigString.static("endianness"), JSC.NewFunction(globalObject, JSC.ZigString.static("endianness"), 0, endianness, true));
@@ -160,19 +161,27 @@ pub const Os = struct {
 
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
+            const key_cpu_mhz = "cpu MHz\t\t: ";
 
             var cpu_index: u32 = 0;
+            var cpu: JSC.JSValue = undefined;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(0)); // fallback for speed
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
-                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                } else if (strings.hasPrefixComptime(line, key_cpu_mhz)) {
+                    const digits = std.mem.trim(u8, line[key_cpu_mhz.len..], "\t\n");
+                    const mhz = (std.fmt.parseFloat(f64, digits) catch 0);
+                    const speed = @as(u32, @intFromFloat(mhz)); // trunc the speed like nodejs
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
                 }
                 //TODO: special handling for ARM64 (no model name)?
             }
@@ -195,13 +204,10 @@ pub const Os = struct {
 
                 const bytes_read = try file.readAll(&line_buffer);
                 const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
-                const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
-
-                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
-            } else |_| {
-                // Initialize CPU speed to 0
-                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(0));
-            }
+                if (std.fmt.parseInt(u32, digits, 10)) |speed| {
+                    cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed / 1000));
+                } else |_| {}
+            } else |_| {}
         }
 
         return values;
@@ -711,6 +717,85 @@ pub const Os = struct {
     pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
         return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
+    }
+
+    pub fn availableParallelism(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return if (comptime Environment.isLinux)
+            availableParallelismImplLinux(globalThis)
+        else if (comptime Environment.isMac)
+            availableParallelismImplDarwin(globalThis)
+        else
+            JSC.JSValue.jsNumber(1);
+    }
+
+    extern fn bun_sysconf__SC_NPROCESSORS_ONLN() isize;
+    fn availableParallelismImplLinux(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalThis;
+        var cpu_count = cgroupCpuQuota();
+        if (std.os.sched_getaffinity(0)) |set| {
+            cpu_count = @min(cpu_count, std.os.CPU_COUNT(set));
+        } else |_| {
+            cpu_count = @min(cpu_count, bun_sysconf__SC_NPROCESSORS_ONLN());
+        }
+        return JSC.JSValue.jsNumber(cpu_count);
+    }
+
+    fn availableParallelismImplDarwin(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = globalThis;
+        var cpu_count: u32 = 1;
+        var count_len: usize = @sizeOf(@TypeOf(cpu_count));
+        std.c.sysctlbyname("hw.logicalcpu", &cpu_count, &count_len, null, 0);
+        return JSC.JSValue.jsNumber(cpu_count);
+    }
+
+    fn cgroupCpuQuota() i64 {
+        var buffer: [1024 * 8]u8 = undefined;
+        var path_buf: [1024 * 8]u8 = undefined;
+        var len: usize = 0;
+        const mount = "/sys/fs/cgroup";
+        const controller = "/cpu.max";
+        var quota: i64 = std.math.maxInt(i64);
+        if (std.fs.openFileAbsolute("/proc/self/cgroup", .{})) |file| {
+            defer file.close();
+            if (file.readAll(&buffer)) |bytes_read| {
+                const content = buffer[0..bytes_read];
+                if (strings.hasPrefixComptime(content, "0::")) {
+                    // XXX: only support cgroup v2
+                    if (std.mem.indexOfScalar(u8, content, '\n')) |line_end| {
+                        const namespace = content[3..line_end];
+                        @memcpy(path_buf[0..mount.len], mount);
+                        @memcpy(path_buf[mount.len..(mount.len + namespace.len)], namespace);
+                        len = mount.len + namespace.len;
+                    }
+                }
+            } else |_| {}
+        } else |_| {}
+        if (len != 0) {
+            while (strings.hasPrefixComptime(path_buf[0..len], mount)) {
+                @memcpy(path_buf[len..(len + controller.len)], controller);
+                len += controller.len;
+                if (std.fs.openFileAbsolute(path_buf[0..len], .{})) |file| {
+                    defer file.close();
+                    if (file.readAll(&buffer)) |bytes_read| {
+                        var toks = std.mem.tokenize(u8, buffer[0..bytes_read], " \n");
+                        if (toks.next()) |limit_tok| {
+                            if (std.fmt.parseInt(i64, limit_tok, 10)) |limit| {
+                                if (toks.next()) |period_tok| {
+                                    if (std.fmt.parseInt(i64, period_tok, 10)) |period| {
+                                        quota = @min(quota, @divTrunc(limit, period));
+                                    } else |_| {}
+                                }
+                            } else |_| {}
+                        }
+                    } else |_| {}
+                } else |_| {}
+                len -= controller.len;
+                len = std.mem.lastIndexOfScalar(u8, path_buf[0..len], '/') orelse break;
+            }
+        }
+        return @max(quota, 1);
     }
 };
 

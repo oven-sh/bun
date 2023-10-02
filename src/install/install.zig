@@ -2949,6 +2949,8 @@ pub const PackageManager = struct {
         );
     }
 
+    const debug = Output.scoped(.PackageManager, true);
+
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -3075,11 +3077,35 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        result.package.meta.id,
+                                    },
+                                );
                         } else if (dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
                             if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+
+                            if (comptime Environment.allow_assert)
+                                debug(
+                                    "enqueueDependency({d}, {s}, {s}, {s}) = task {d}",
+                                    .{
+                                        id,
+                                        @tagName(dependency.version.tag),
+                                        this.lockfile.str(&name),
+                                        this.lockfile.str(&version.literal),
+                                        task_id,
+                                    },
+                                );
 
                             if (!dependency.behavior.isPeer()) {
                                 var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
@@ -3181,6 +3207,18 @@ pub const PackageManager = struct {
                     id,
                 );
 
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
+
                 if (this.git_repositories.get(clone_id)) |repo_fd| {
                     const resolved = try Repository.findCommit(
                         this.allocator,
@@ -3246,6 +3284,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
@@ -3314,6 +3364,18 @@ pub const PackageManager = struct {
 
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
+
+                    if (comptime Environment.allow_assert)
+                        debug(
+                            "enqueueDependency({d}, {s}, {s}, {s}) = {d}",
+                            .{
+                                id,
+                                @tagName(dependency.version.tag),
+                                this.lockfile.str(&name),
+                                this.lockfile.str(&version.literal),
+                                result.package.meta.id,
+                            },
+                        );
                 } else if (dependency.behavior.isRequired()) {
                     if (comptime dependency_tag == .workspace) {
                         this.log.addErrorFmt(
@@ -3393,6 +3455,18 @@ pub const PackageManager = struct {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
+
+                if (comptime Environment.allow_assert)
+                    debug(
+                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
+                        .{
+                            id,
+                            @tagName(dependency.version.tag),
+                            this.lockfile.str(&name),
+                            this.lockfile.str(&version.literal),
+                            url,
+                        },
+                    );
 
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));

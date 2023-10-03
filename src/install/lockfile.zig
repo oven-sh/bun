@@ -740,22 +740,23 @@ pub fn cleanWithLogger(
         try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
 
         var workspace_paths_builder = new.stringBuilder();
-        //     const WorkspacePathSorter = struct {
-        //         string_buf: []const u8,
-        //         entries: NameHashMap.DataList,
 
-        //         pub fn isLessThan(sorter: @This(), a: usize, b: usize) bool {
-        //             const left = sorter.entries.items(.value)[a];
-        //             const right = sorter.entries.items(.value)[b];
-        //             return strings.order(left.slice(sorter.string_buf), right.slice(sorter.string_buf)) == .lt;
-        //         }
-        //     };
+        const WorkspacePathSorter = struct {
+            string_buf: []const u8,
+            entries: NameHashMap.DataList,
 
-        //     // Sort by name for determinism
-        //     old.workspace_paths.sort(WorkspacePathSorter{
-        //         .entries = old.workspace_paths.entries,
-        //         .string_buf = old.buffers.string_bytes.items,
-        //     });
+            pub fn lessThan(sorter: @This(), a: usize, b: usize) bool {
+                const left = sorter.entries.items(.value)[a];
+                const right = sorter.entries.items(.value)[b];
+                return strings.order(left.slice(sorter.string_buf), right.slice(sorter.string_buf)) == .lt;
+            }
+        };
+
+        // Sort by name for determinism
+        old.workspace_paths.sort(WorkspacePathSorter{
+            .entries = old.workspace_paths.entries,
+            .string_buf = old.buffers.string_bytes.items,
+        });
 
         for (old.workspace_paths.values()) |*path| {
             workspace_paths_builder.count(old.str(path));
@@ -2493,16 +2494,20 @@ pub const Package = extern struct {
                 found: {
                     const prev_i = to_i;
 
+                    // std.debug.print("searching for: {s}, {d}\n", .{ from_lockfile.str(&from_dep.name), from_dep.name_hash });
+
                     // common case, dependency is present in both versions:
                     // - in the same position
                     // - shifted by a constant offset
                     while (to_i < to_deps.len) : (to_i += 1) {
+                        // std.debug.print("comparing: {s}, {d}\n", .{ to_lockfile.str(&to_deps[to_i].name), to_deps[to_i].name_hash });
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
                     // less common, o(n^2) case
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
+                        // std.debug.print("comparing: {s}, {d}\n", .{ to_lockfile.str(&to_deps[to_i].name), to_deps[to_i].name_hash });
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
@@ -2510,6 +2515,8 @@ pub const Package = extern struct {
                         skipped_workspaces += 1;
                         continue;
                     }
+
+                    // std.debug.print("removed {s}\n", .{from_lockfile.str(&from_dep.name)});
 
                     // We found a removed dependency!
                     // We don't need to remove it

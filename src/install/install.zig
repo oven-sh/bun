@@ -1658,6 +1658,12 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
+    // absolute path to package json expr
+    package_json_cache: std.StringArrayHashMap(js_parser.Expr),
+
+    // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
+    workspaces: std.StringArrayHashMap(?Semver.Version),
+
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
     root_download_node: std.Progress.Node = undefined,
@@ -5305,6 +5311,8 @@ pub const PackageManager = struct {
 
         bun.copy(u8, &cwd_buf, original_cwd);
 
+        var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+
         // Step 1. Find the nearest package.json directory
         //
         // We will walk up from the cwd, trying to find the nearest package.json file.
@@ -5353,8 +5361,6 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
-                    defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,
                         .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
@@ -5437,6 +5443,13 @@ pub const PackageManager = struct {
             } else |_| {}
         }
 
+        var workspaces = std.StringArrayHashMap(?Semver.Version).init(ctx.allocator);
+        for (workspace_names.values()) |entry| {
+            try workspaces.put(entry.name, entry.version);
+        }
+
+        workspace_names.map.deinit();
+
         var manager = &instance;
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -5455,6 +5468,8 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
             .waiter = try Waker.init(ctx.allocator),
+            .package_json_cache = std.StringArrayHashMap(js_parser.Expr).init(ctx.allocator),
+            .workspaces = workspaces,
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -5533,6 +5548,8 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
+            .package_json_cache = std.StringArrayHashMap(js_parser.Expr).init(allocator),
+            .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
 

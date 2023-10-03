@@ -2531,7 +2531,22 @@ pub const Package = extern struct {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
-                                
+                                const workspace_path = to_lockfile.str(path_ptr);
+                                var path = try allocator.alloc(u8, workspace_path.len + "/package.json".len);
+                                @memcpy(path[0..workspace_path.len], workspace_path);
+                                @memcpy(path[workspace_path.len..], "/package.json");
+
+                                var file = std.fs.cwd().openFile(Path.join(
+                                    &[_]string{
+                                        path,
+                                    },
+                                    .auto,
+                                ), .{ .mode = .read_only }) catch break :brk false;
+                                defer file.close();
+                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                                defer allocator.free(bytes);
+
+                                const source = logger.Source.initPathString(path, bytes);
 
                                 var workspace = Package{};
                                 try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
@@ -2609,16 +2624,26 @@ pub const Package = extern struct {
         resolver: ResolverContext,
         comptime features: Features,
     ) !void {
-        initializeStore();
-
-        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
+        const json = brk: {
+            const key = strings.withoutTrailingSlash(source.path.name.dir);
+            var gop = try PackageManager.instance.package_json_cache.getOrPut(key);
+            if (gop.found_existing) {
+                break :brk gop.value_ptr.*;
             }
-            Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-            Global.crash();
+
+            initializeStore();
+            const res = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
+                Global.crash();
+            };
+
+            gop.value_ptr.* = res;
+            break :brk res;
         };
 
         try package.parseWithJSON(
@@ -2680,8 +2705,20 @@ pub const Package = extern struct {
             } else external_alias.hash,
             else => external_alias.hash,
         };
-        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(name_hash) else null;
-        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(name_hash) else workspace_ver;
+
+        var workspace_path: ?String = null;
+        var workspace_version = workspace_ver;
+        if (comptime tag == null) {
+            workspace_path = lockfile.workspace_paths.get(name_hash);
+            workspace_version = lockfile.workspace_versions.get(name_hash);
+
+            if (workspace_path == null or workspace_version == null) {
+                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
+                    workspace_path = external_alias.value;
+                    workspace_version = _workspace_version;
+                }
+            }
+        }
 
         switch (dependency_version.tag) {
             .folder => {

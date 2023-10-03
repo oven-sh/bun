@@ -417,6 +417,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: [macOS]
     if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
+    permissions:
+      pull-requests: write
     timeout-minutes: 30
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}

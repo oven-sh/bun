@@ -5053,7 +5053,7 @@ cache = false
     " + tsd@0.22.0",
     " + typescript@5.0.4",
     "",
-    " 119 packages installed",
+    " 118 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -5089,7 +5089,6 @@ cache = false
     "fastq",
     "fill-range",
     "find-up",
-    "function-bind",
     "glob-parent",
     "globby",
     "hard-rejection",

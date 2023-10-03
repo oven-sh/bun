@@ -2538,11 +2538,7 @@ pub const Package = extern struct {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
-                                const workspace_path = to_lockfile.str(path_ptr);
-                                var path = try allocator.alloc(u8, workspace_path.len + "/package.json".len);
-                                @memcpy(path[0..workspace_path.len], workspace_path);
-                                @memcpy(path[workspace_path.len..], "/package.json");
-
+                                const path = to_lockfile.str(path_ptr);
                                 var file = std.fs.cwd().openFile(Path.join(
                                     &[_]string{
                                         path,
@@ -2552,7 +2548,6 @@ pub const Package = extern struct {
                                 defer file.close();
                                 const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
                                 defer allocator.free(bytes);
-
                                 const source = logger.Source.initPathString(path, bytes);
 
                                 var workspace = Package{};

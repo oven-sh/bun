@@ -5550,7 +5550,7 @@ it("should handle installing packages from inside a workspace with `*`", async (
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should handle installing packages from inside a workspace with without prefix", async () => {
+it("should handle installing packages from inside a workspace without prefix", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

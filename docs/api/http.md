@@ -31,6 +31,18 @@ Bun.serve({
 });
 ```
 
+Getting the IP Object of the request (address, family, port)
+
+```ts
+Bun.serve({
+	fetch(req, srv) {
+		const url = new URL(req.url);
+		if (url.pathname === '/') return new Response(JSON.stringify(srv.requestIP(req)));
+		return new Response('404!');
+	},
+});
+```
+
 To configure which port and hostname the server will listen on:
 
 ```ts

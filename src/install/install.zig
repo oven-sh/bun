@@ -216,6 +216,7 @@ const NetworkTask = struct {
     // https://github.com/oven-sh/bun/issues/341
     // https://www.jfrog.com/jira/browse/RTFACT-18398
     const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+    const user_agent_value = "npm/?";
 
     const default_headers_buf: string = "Accept" ++ accept_header_value;
 
@@ -336,6 +337,8 @@ const NetworkTask = struct {
             header_builder.header_count = 1;
             header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
+
+        header_builder.append("User-Agent", user_agent_value);
 
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;

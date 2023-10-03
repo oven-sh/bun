@@ -266,25 +266,24 @@ describe("TextDecoder", () => {
 });
 
 describe("TextDecoder ignoreBOM", () => {
-
   it.each([
     {
-      encoding: 'utf-8',
-      bytes: [0xEF, 0xBB, 0xBF, 0x61, 0x62, 0x63]
+      encoding: "utf-8",
+      bytes: [0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63],
     },
     {
-      encoding: 'utf-16le',
-      bytes: [0xFF, 0xFE, 0x61, 0x00, 0x62, 0x00, 0x63, 0x00]
-    }
-  ])('should ignoreBOM for: %o', ({encoding, bytes}) => {
-    const BOM = '\uFEFF';
+      encoding: "utf-16le",
+      bytes: [0xff, 0xfe, 0x61, 0x00, 0x62, 0x00, 0x63, 0x00],
+    },
+  ])("should ignoreBOM for: %o", ({ encoding, bytes }) => {
+    const BOM = "\uFEFF";
     const array = new Uint8Array(bytes);
 
-    const decoder_ignore_bom = new TextDecoder(encoding, {ignoreBOM: true});
+    const decoder_ignore_bom = new TextDecoder(encoding, { ignoreBOM: true });
     expect(decoder_ignore_bom.decode(array)).toStrictEqual(`${BOM}abc`);
 
-    const decoder_not_ignore_bom = new TextDecoder(encoding, {ignoreBOM: false});
-    expect(decoder_not_ignore_bom.decode(array)).toStrictEqual('abc');
+    const decoder_not_ignore_bom = new TextDecoder(encoding, { ignoreBOM: false });
+    expect(decoder_not_ignore_bom.decode(array)).toStrictEqual("abc");
   });
 });
 

@@ -2626,7 +2626,7 @@ pub const Package = extern struct {
     ) !void {
         const json = brk: {
             const key = strings.withoutTrailingSlash(source.path.name.dir);
-            var gop = try PackageManager.instance.package_json_cache.getOrPut(key);
+            var gop = try PackageManager.instance.package_json_cache.getOrPut(String.Builder.stringHash(key));
             if (gop.found_existing) {
                 break :brk gop.value_ptr.*;
             }

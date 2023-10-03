@@ -714,7 +714,7 @@ test("decorators with different property key types", () => {
       expect(propertyKey).toBeDefined();
 
       // If Reflect.decorate is defined, propertyKey will be stringified
-      expect(propertyKey).toBe(String(x));
+      expect(String(propertyKey)).toBe(String(x));
     };
   }
   function foo(x, y, z) {

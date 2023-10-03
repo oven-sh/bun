@@ -5550,6 +5550,85 @@ it("should handle installing packages from inside a workspace with `*`", async (
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle installing packages from inside a workspace with without prefix", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "p1"), { recursive: true });
+  const p1_package = JSON.stringify({
+    name: "p1",
+    version: "0.0.1",
+    dependencies: {
+      p2: "0.1.0",
+    },
+  });
+  await writeFile(join(package_dir, "packages", "p1", "package.json"), p1_package);
+
+  await mkdir(join(package_dir, "packages", "p2"));
+  const p2_package = JSON.stringify({
+    name: "p2",
+    version: "0.1.0",
+  });
+  await writeFile(join(package_dir, "packages", "p2", "package.json"), p2_package);
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "p1"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + p1@workspace:packages/p1",
+    " + p2@workspace:packages/p2",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "bar"],
+    cwd: join(package_dir, "packages", "p1"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2).toContain("installed bar");
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle installing packages inside workspaces with difference versions", async () => {
   let package_jsons = [
     JSON.stringify({

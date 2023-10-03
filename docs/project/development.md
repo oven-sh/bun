@@ -375,34 +375,12 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Updating `WebKit`
 
-The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with your run `git status`.
-
-```bash
-$ git status
-On branch my-branch
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-	modified:   src/bun.js/WebKit (new commits)
-```
-
-For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see errors in `src/bun.js/bindings` during builds. When you see this, install the latest version of `bun-webkit` and re-compile.
 
 ```bash
 $ bun install
 $ make cpp
 ```
-
-<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
-
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
-
-<!--
-```bash
-$ cd src/bun.js/WebKit
-$ git fetch
-$ git checkout <hash>
-``` -->
 
 ## Troubleshooting
 

@@ -1669,6 +1669,10 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
+                if (ctx.runtime_options.if_present) {
+                    return;
+                }
+
                 if (was_js_like) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],

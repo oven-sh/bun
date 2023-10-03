@@ -648,7 +648,8 @@ pub inline fn parse(
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    return parseWithOptionalTag(allocator, alias, dependency, null, sliced, log);
+    const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
+    return parseWithTag(allocator, alias, dep, Version.Tag.infer(dep), sliced, log);
 }
 
 pub fn parseWithOptionalTag(

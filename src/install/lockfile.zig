@@ -21,6 +21,7 @@ const json_parser = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
+const migration = @import("./migration.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -167,7 +168,7 @@ pub const LoadFromDiskResult = union(Tag) {
     },
     ok: *Lockfile,
 
-    pub const Step = enum { open_file, read_file, parse_file };
+    pub const Step = enum { open_file, read_file, parse_file, migrating };
 
     pub const Tag = enum {
         not_found,
@@ -183,7 +184,16 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
     if (filename.len > 0)
         file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
+                error.FileNotFound => {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        allocator,
+                        log,
+                        filename[0 .. strings.lastIndexOfChar(filename, std.fs.path.sep) orelse 0],
+                    );
+                },
+                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
         };
@@ -934,6 +944,9 @@ pub const Printer = struct {
                         @errorName(cause.value),
                     }),
                     .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
+                        @errorName(cause.value),
+                    }),
+                    .migrating => Output.prettyErrorln("<r><red>error<r> while migrating lockfile:<r> {s}", .{
                         @errorName(cause.value),
                     }),
                 }
@@ -1824,7 +1837,12 @@ pub const Package = extern struct {
     dependencies: DependencySlice = .{},
 
     /// The resolved package IDs for the dependencies
+    /// Each index in this array corresponds to the same index in dependencies
+    /// So this is how you say "what package ID for lodash does this other package depend on?"
+    /// By default, its "invalid_id" which means the package ID was not resolved
     resolutions: DependencyIDSlice = .{},
+
+    // "dependencies_resolutions" { int dependency_id, int resolved_package_id, int package_id }
 
     meta: Meta = .{},
     bin: Bin = .{},

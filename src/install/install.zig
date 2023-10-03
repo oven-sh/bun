@@ -7625,6 +7625,9 @@ pub const PackageManager = struct {
                         .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
                             @errorName(cause.value),
                         }),
+                        .migrating => Output.prettyError("<r><red>error<r> migrating lockfile:<r> {s}\n<r>", .{
+                            @errorName(cause.value),
+                        }),
                     }
 
                     if (manager.options.enable.fail_early) {

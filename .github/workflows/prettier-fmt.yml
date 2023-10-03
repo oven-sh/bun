@@ -12,6 +12,8 @@ jobs:
   prettier-fmt:
     name: prettier
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     outputs:
       prettier_fmt_errs: ${{ steps.fmt.outputs.prettier_fmt_errs }}
     steps:

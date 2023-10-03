@@ -400,7 +400,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 if (this.pending_sockets.get()) |pending| {
                     socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
                     socket.flush();
-                    socket.timeout(300);
+                    socket.timeout(0);
+                    socket.setTimeoutMinutes(5);
 
                     pending.http_socket = socket;
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
@@ -535,7 +536,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     );
                 }
             }
-            pub fn onTimeout(
+            pub fn onLongTimeout(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
@@ -2279,7 +2280,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();
             var writer = &list.writer();
 
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
 
             const request = this.buildRequest(this.state.original_request_body.len());
 
@@ -2389,7 +2390,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .body => {
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
 
             switch (this.state.original_request_body) {
                 .bytes => {
@@ -2435,7 +2436,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
             var proxy = this.proxy_tunnel orelse return;
 
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
 
             const to_send = this.state.request_body;
             const amount = proxy.ssl.write(to_send) catch |err| {
@@ -2457,14 +2458,12 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         .proxy_headers => {
             const proxy = this.proxy_tunnel orelse return;
 
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
             var stack_fallback = std.heap.stackFallback(16384, default_allocator);
             var allocator = stack_fallback.get();
             var list = std.ArrayList(u8).initCapacity(allocator, stack_fallback.buffer.len) catch unreachable;
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();
             var writer = &list.writer();
-
-            this.setTimeout(socket, 60);
 
             const request = this.buildRequest(this.state.request_body.len);
             writeRequest(
@@ -2536,7 +2535,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         else => {
             //Just check if need to call SSL_read if requested to be writable
             var proxy = this.proxy_tunnel orelse return;
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
             var data = proxy.getSSLData(null) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
@@ -2651,7 +2650,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                             }
                         }
 
-                        this.setTimeout(socket, 60);
+                        this.setTimeout(socket, 5);
                     },
                     else => {
                         this.closeAndFail(err, is_ssl, socket);
@@ -2763,7 +2762,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     }
                 }
             } else if (this.state.response_stage == .body_chunk) {
-                this.setTimeout(socket, 500);
+                this.setTimeout(socket, 5);
                 {
                     const report_progress = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
@@ -2785,7 +2784,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
         },
 
         .body => {
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
 
             if (this.proxy_tunnel != null) {
                 var proxy = this.proxy_tunnel.?;
@@ -2820,7 +2819,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
         },
 
         .body_chunk => {
-            this.setTimeout(socket, 500);
+            this.setTimeout(socket, 5);
 
             if (this.proxy_tunnel != null) {
                 var proxy = this.proxy_tunnel.?;
@@ -2857,7 +2856,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
         .fail => {},
         .proxy_headers => {
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
             var proxy = this.proxy_tunnel orelse return;
             var data = proxy.getSSLData(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -2874,7 +2873,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.onData(is_ssl, decoded_data, ctx, socket);
         },
         .proxy_handshake => {
-            this.setTimeout(socket, 60);
+            this.setTimeout(socket, 5);
 
             // put more data into SSL
             const proxy = this.proxy_tunnel orelse return;
@@ -2950,13 +2949,15 @@ fn cloneMetadata(this: *HTTPClient) void {
     }
 }
 
-pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
+pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
     if (this.disable_timeout) {
         socket.timeout(0);
+        socket.setTimeoutMinutes(0);
         return;
     }
 
-    socket.timeout(amount);
+    socket.timeout(0);
+    socket.setTimeoutMinutes(minutes);
 }
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {

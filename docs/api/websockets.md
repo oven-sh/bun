@@ -192,7 +192,7 @@ const server = Bun.serve<{ username: string }>({
     close(ws) {
       const msg = `${ws.data.username} has left the chat`;
       ws.unsubscribe("the-group-chat");
-      ws.publish("the-group-chat", msg);
+      server.publish("the-group-chat", msg);
     },
   },
 });

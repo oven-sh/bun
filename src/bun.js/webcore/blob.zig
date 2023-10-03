@@ -3003,12 +3003,13 @@ pub const Blob = struct {
             }
         }
 
+        const offset = this.offset +| @as(SizeType, @intCast(relativeStart));
         const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @as(SizeType, @intCast(relativeStart));
+        blob.offset = offset;
         blob.size = len;
 
         // infer the content type if it was not specified

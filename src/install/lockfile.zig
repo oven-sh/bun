@@ -2494,20 +2494,16 @@ pub const Package = extern struct {
                 found: {
                     const prev_i = to_i;
 
-                    // std.debug.print("searching for: {s}, {d}\n", .{ from_lockfile.str(&from_dep.name), from_dep.name_hash });
-
                     // common case, dependency is present in both versions:
                     // - in the same position
                     // - shifted by a constant offset
                     while (to_i < to_deps.len) : (to_i += 1) {
-                        // std.debug.print("comparing: {s}, {d}\n", .{ to_lockfile.str(&to_deps[to_i].name), to_deps[to_i].name_hash });
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
                     // less common, o(n^2) case
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
-                        // std.debug.print("comparing: {s}, {d}\n", .{ to_lockfile.str(&to_deps[to_i].name), to_deps[to_i].name_hash });
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
@@ -2515,8 +2511,6 @@ pub const Package = extern struct {
                         skipped_workspaces += 1;
                         continue;
                     }
-
-                    // std.debug.print("removed {s}\n", .{from_lockfile.str(&from_dep.name)});
 
                     // We found a removed dependency!
                     // We don't need to remove it

@@ -2146,7 +2146,7 @@ pub const PackageManager = struct {
             this.allocator,
             "{s}/repos/{s}/{s}{s}tarball/{s}",
             .{
-                github_api_url,
+                strings.withoutTrailingSlash(github_api_url),
                 owner,
                 repo,
                 // repo might be empty if dep is https://github.com/... style

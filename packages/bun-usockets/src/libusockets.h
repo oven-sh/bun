@@ -391,6 +391,7 @@ struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, stru
 int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6);
 
 #ifdef __cplusplus
 }

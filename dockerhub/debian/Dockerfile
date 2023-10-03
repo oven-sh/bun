@@ -65,7 +65,7 @@ RUN groupadd bun \
       --gid bun \
       --shell /bin/sh \
       --create-home \
-    && ln /usr/local/bin/bun /usr/local/bin/bunx \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
     && which bunx \
     && bun --version

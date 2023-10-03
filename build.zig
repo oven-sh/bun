@@ -224,7 +224,7 @@ pub fn build_(b: *Build) !void {
 
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
-            !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
+            !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx));
 
         var git_sha: [:0]const u8 = "";
         if (b.env_map.get("GITHUB_SHA") orelse b.env_map.get("GIT_SHA")) |sha| {

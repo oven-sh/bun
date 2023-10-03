@@ -6,12 +6,12 @@ export const os = process.platform;
 
 export const arch = os === "darwin" && process.arch === "x64" && isRosetta2() ? "arm64" : process.arch;
 
-export const avx2 = (arch === "x64" && os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2());
+export const avx = arch === "x64" && ((os === "linux" && isLinuxAVX()) || (os === "darwin" && isDarwinAVX()));
 
 export type Platform = {
   os: string;
   arch: string;
-  avx2?: boolean;
+  avx?: boolean;
   bin: string;
   exe: string;
 };
@@ -26,7 +26,7 @@ export const platforms: Platform[] = [
   {
     os: "darwin",
     arch: "x64",
-    avx2: true,
+    avx: true,
     bin: "bun-darwin-x64",
     exe: "bin/bun",
   },
@@ -45,7 +45,7 @@ export const platforms: Platform[] = [
   {
     os: "linux",
     arch: "x64",
-    avx2: true,
+    avx: true,
     bin: "bun-linux-x64",
     exe: "bin/bun",
   },
@@ -58,24 +58,24 @@ export const platforms: Platform[] = [
 ];
 
 export const supportedPlatforms: Platform[] = platforms
-  .filter(platform => platform.os === os && platform.arch === arch && (!platform.avx2 || avx2))
-  .sort((a, b) => (a.avx2 === b.avx2 ? 0 : a.avx2 ? -1 : 1));
+  .filter(platform => platform.os === os && platform.arch === arch && (!platform.avx || avx))
+  .sort((a, b) => (a.avx === b.avx ? 0 : a.avx ? -1 : 1));
 
-function isLinuxAVX2(): boolean {
+function isLinuxAVX(): boolean {
   try {
-    return read("/proc/cpuinfo").includes("avx2");
+    return read("/proc/cpuinfo").includes("avx");
   } catch (error) {
-    debug("isLinuxAVX2 failed", error);
+    debug("isLinuxAVX failed", error);
     return false;
   }
 }
 
-function isDarwinAVX2(): boolean {
+function isDarwinAVX(): boolean {
   try {
     const { exitCode, stdout } = spawn("sysctl", ["-n", "machdep.cpu"]);
-    return exitCode === 0 && stdout.includes("AVX2");
+    return exitCode === 0 && stdout.includes("AVX");
   } catch (error) {
-    debug("isDarwinAVX2 failed", error);
+    debug("isDarwinAVX failed", error);
     return false;
   }
 }

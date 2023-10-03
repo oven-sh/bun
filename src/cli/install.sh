@@ -85,15 +85,15 @@ GITHUB=${GITHUB-"https://github.com"}
 github_repo="$GITHUB/oven-sh/bun"
 
 if [[ $target = darwin-x64 ]]; then
-    # If AVX2 isn't supported, use the -baseline build
-    if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
+    # If AVX isn't supported, use the -baseline build
+    if [[ $(sysctl -a | grep machdep.cpu | grep AVX) == '' ]]; then
         target=darwin-x64-baseline
     fi
 fi
 
 if [[ $target = linux-x64 ]]; then
-    # If AVX2 isn't supported, use the -baseline build
-    if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
+    # If AVX isn't supported, use the -baseline build
+    if [[ $(cat /proc/cpuinfo | grep avx) = '' ]]; then
         target=linux-x64-baseline
     fi
 fi

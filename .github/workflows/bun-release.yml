@@ -113,11 +113,20 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: canary
       - name: Install Dependencies
         run: bun install
+      - name: Setup Tag
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        run: |
+          VERSION=$(bun --version)
+          TAG="${VERSION}-canary.$(date +'%Y%m%dT%H%M%S')"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - name: Build
         run: bun run build
+        env:
+          BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
       - name: Release
         uses: JS-DevTools/npm-publish@v1
         with:

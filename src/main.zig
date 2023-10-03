@@ -10,6 +10,7 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr
 }
 
 const CrashReporter = @import("./crash_reporter.zig");
+extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 
 pub fn main() void {
     const bun = @import("root").bun;
@@ -24,25 +25,19 @@ pub fn main() void {
 
     bun.start_time = std.time.nanoTimestamp();
 
-    // The memory allocator makes a massive difference.
-    // std.heap.raw_c_allocator and default_allocator perform similarly.
-    // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
-    // var root_alloc = @import("root").bun.ArenaAllocator.init(std.heap.raw_c_allocator);
-    // var root_alloc_ = &root_alloc.allocator;
-
     var stdout = std.io.getStdOut();
-    // var stdout = std.io.bufferedWriter(stdout_file.writer());
     var stderr = std.io.getStdErr();
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);
     defer Output.flush();
+    if (comptime Environment.isX64) {
+        if (comptime Environment.enableSIMD) {
+            bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
+        }
+    }
 
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
-}
-
-test "panic" {
-    panic("woah", null);
 }
 
 pub const build_options = @import("build_options");

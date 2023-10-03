@@ -142,33 +142,8 @@ This will add the following to your `package.json`:
 }
 ```
 
-To install a package globally:
+To install a package globally, see [`Global Installation of Package`](/docs/install/global-install).
 
-```bash
-$ bun add --global cowsay # or `bun add -g cowsay`
-$ cowsay "Bun!"
- ______
-< Bun! >
- ------
-        \   ^__^
-         \  (oo)\_______
-            (__)\       )\/\
-                ||----w |
-                ||     ||
-```
-
-{% details summary="Configuring global installation behavior" %}
-
-```toml
-[install]
-# where `bun install --global` installs packages
-globalDir = "~/.bun/install/global"
-
-# where globally-installed package bins are linked
-globalBinDir = "~/.bun/bin"
-```
-
-{% /details %}
 To view a complete list of options for a given command:
 
 ```bash

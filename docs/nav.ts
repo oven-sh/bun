@@ -35,15 +35,20 @@ export default {
     page("quickstart", "Quickstart", {
       description: "Get started with Bun by building and running a simple HTTP server in 6 lines of TypeScript.",
     }),
-    page("typescript", "TypeScript", {
-      description: "Install and configure type declarations for Bun's APIs",
-    }),
-    page("templates", "Templates", {
-      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
-    }),
     page("guides", "Guides", {
       description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
       href: "/guides",
+    }),
+
+    divider("Scaffolding"),
+    page("scaffolding/bun-init", "`bun init`", {
+      description: "Scaffold an empty Bun project.",
+    }),
+    page("scaffolding/bun-create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
+    }),
+    page("scaffolding/typescript", "TypeScript", {
+      description: "Install and configure type declarations for Bun's APIs",
     }),
 
     // page("typescript", "TypeScript"),
@@ -81,7 +86,6 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
-    // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
       description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",
@@ -151,6 +155,10 @@ export default {
     page("cli/install", "`bun install`", {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
+    }),
+    page("install/global-install", "Global Installation of Package", {
+      description:
+        "Install a package to your global environment using `bun add --global`.",
     }),
     page("install/cache", "Global cache", {
       description:

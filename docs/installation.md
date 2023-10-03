@@ -34,6 +34,33 @@ $ proto install bun
 
 {% /codetabs %}
 
+### Global Installation Behavior
+{% callout %}
+**Note** — To ensure Bun can install package globally, you might have to manually add `BUN_INSTALL` and `PATH` to your system environment.
+{% /callout %}
+
+{% codetabs %}
+
+```bash#macOS/Linux_(.bash_profile)
+$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.bash_profile
+$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.bash_profile
+$ source ~/.bash_profile
+```
+
+```bash#macOS/Linux_(.bashrc)
+$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.bashrc
+$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.bashrc
+$ source ~/.bashrc
+```
+
+```bash#macOS_(.zshrc)
+$ echo -e export BUN_INSTALL="\$HOME/.bun" >> ~/.zshrc
+$ echo -e export PATH=\$BUN_INSTALL/bin:\$PATH >> ~/.zshrc
+$ source ~/.zshrc
+```
+
+{% /codetabs %}
+
 ## Windows
 
 Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
@@ -65,6 +92,38 @@ $ docker pull oven/bun:slim
 $ docker pull oven/bun:alpine
 $ docker pull oven/bun:distroless
 ```
+
+## Check of Installation
+
+### `bun --version`
+
+To check the version installed, use the `--version` flag (or `--v`).
+
+```sh
+$ bun --version
+```
+
+```sh
+$ bun --v
+```
+
+{% callout %}
+**Note** — This is equalvent to `npm --version` that gives you the installed version.
+**Example** - `1.0.4`
+{% /callout %}
+
+### `bun --revision`
+
+For Bun, there are minor updates within the same version. To check the version with revision, use the `--revision` flag.
+
+```sh
+$ bun --revision
+```
+
+{% callout %}
+**Note** — There will show you both version and revision installed.
+**Example** - `1.0.4+ffe6bb0b7fd801ef6a3bb408708fbbf070904dd8`
+{% /callout %}
 
 ## Upgrading
 

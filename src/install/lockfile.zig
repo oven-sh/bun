@@ -2487,6 +2487,7 @@ pub const Package = extern struct {
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
+            var skipped_workspaces: usize = 0;
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -2503,6 +2504,11 @@ pub const Package = extern struct {
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    }
+
+                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
+                        skipped_workspaces += 1;
+                        continue;
                     }
 
                     // We found a removed dependency!
@@ -2579,7 +2585,7 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
+            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
 
             inline for (Package.Scripts.Hooks) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -2624,26 +2630,15 @@ pub const Package = extern struct {
         resolver: ResolverContext,
         comptime features: Features,
     ) !void {
-        const json = brk: {
-            const key = strings.withoutTrailingSlash(source.path.name.dir);
-            var gop = try PackageManager.instance.package_json_cache.getOrPut(String.Builder.stringHash(key));
-            if (gop.found_existing) {
-                break :brk gop.value_ptr.*;
+        initializeStore();
+        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                },
             }
-
-            initializeStore();
-            const res = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
-                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-                Global.crash();
-            };
-
-            gop.value_ptr.* = res;
-            break :brk res;
+            Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
+            Global.crash();
         };
 
         try package.parseWithJSON(

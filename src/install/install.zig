@@ -1658,9 +1658,6 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
-    // absolute path to package json expr
-    package_json_cache: std.ArrayHashMap(u64, js_parser.Expr, ArrayIdentityContext.U64, false),
-
     // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
     workspaces: std.StringArrayHashMap(?Semver.Version),
 
@@ -5468,7 +5465,6 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
             .waiter = try Waker.init(ctx.allocator),
-            .package_json_cache = std.ArrayHashMap(u64, js_parser.Expr, ArrayIdentityContext.U64, false).init(ctx.allocator),
             .workspaces = workspaces,
             // .progress
         };
@@ -5548,7 +5544,6 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
-            .package_json_cache = std.ArrayHashMap(u64, js_parser.Expr, ArrayIdentityContext.U64, false).init(allocator),
             .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);

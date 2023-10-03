@@ -338,6 +338,12 @@ extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObjec
     return new WTF::URL(WTFMove(url));
 }
 
+extern "C" EncodedJSValue URL__toJS(WTF::URL* wtfUrl, JSC::JSGlobalObject* globalObject)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return JSC::JSValue::encode(jsString(globalObject->vm(), wtfUrl->string()));
+}
+
 extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());

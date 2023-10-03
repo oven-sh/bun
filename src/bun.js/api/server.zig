@@ -5897,6 +5897,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
             }
         }
+
+        pub fn getURL(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue {
+            var href_ = bun.String.init(this.config.base_url.href);
+            var href = href_.toJS(globalThis).toBunString(globalThis);
+            const url = JSC.URL.fromString(href) orelse return JSValue.jsUndefined();
+            return JSC.URL.toJS(url, globalThis);
+        }
     };
 }
 

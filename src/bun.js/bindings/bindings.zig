@@ -5481,6 +5481,7 @@ pub fn untrackFunction(
 
 pub const URL = opaque {
     extern fn URL__fromJS(JSValue, *JSC.JSGlobalObject) ?*URL;
+    extern fn URL__toJS(globalObject: *JSC.JSGlobalObject, in: *URL) JSC.JSValue;
     extern fn URL__fromString(*bun.String) ?*URL;
     extern fn URL__protocol(*URL) String;
     extern fn URL__href(*URL) String;
@@ -5533,6 +5534,11 @@ pub const URL = opaque {
     pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
         JSC.markBinding(@src());
         return URL__fromJS(value, globalObject);
+    }
+
+    pub fn toJS(url: *URL, globalObject: *JSC.JSGlobalObject) JSValue {
+        JSC.markBinding(@src());
+        return URL__toJS(globalObject, url);
     }
 
     pub fn fromUTF8(input: []const u8) ?*URL {

@@ -2540,9 +2540,7 @@ pub const Package = extern struct {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
                                 var file = std.fs.cwd().openFile(Path.join(
-                                    &[_]string{
-                                        path,
-                                    },
+                                    &[_]string{ path, "package.json" },
                                     .auto,
                                 ), .{ .mode = .read_only }) catch break :brk false;
                                 defer file.close();

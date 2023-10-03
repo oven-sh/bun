@@ -1658,6 +1658,9 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
+    // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
+    workspaces: std.StringArrayHashMap(?Semver.Version),
+
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
     root_download_node: std.Progress.Node = undefined,
@@ -2646,6 +2649,27 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
+                if (version.tag == .npm) {
+                    if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
+                        if (this.lockfile.workspace_versions.get(@truncate(name_hash))) |workspace_version| {
+                            if (version.value.npm.version.satisfies(workspace_version)) {
+                                const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+
+                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        return .{
+                                            .package = this.lockfile.packages.get(workspace_package_id),
+                                            .is_first_time = false,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Resolve the version from the loaded NPM manifest
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
@@ -5284,6 +5308,8 @@ pub const PackageManager = struct {
 
         bun.copy(u8, &cwd_buf, original_cwd);
 
+        var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+
         // Step 1. Find the nearest package.json directory
         //
         // We will walk up from the cwd, trying to find the nearest package.json file.
@@ -5332,8 +5358,6 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
-                    defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,
                         .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
@@ -5344,7 +5368,7 @@ pub const PackageManager = struct {
                     };
                     var log = logger.Log.init(ctx.allocator);
                     defer log.deinit();
-                    _ = Package.processWorkspaceNamesArray(
+                    const workspace_packages_count = Package.processWorkspaceNamesArray(
                         &workspace_names,
                         ctx.allocator,
                         &log,
@@ -5353,6 +5377,7 @@ pub const PackageManager = struct {
                         prop.loc,
                         null,
                     ) catch break;
+                    _ = workspace_packages_count;
                     for (workspace_names.keys()) |path| {
                         if (strings.eql(child_cwd, path)) {
                             fs.top_level_dir = parent;
@@ -5415,6 +5440,13 @@ pub const PackageManager = struct {
             } else |_| {}
         }
 
+        var workspaces = std.StringArrayHashMap(?Semver.Version).init(ctx.allocator);
+        for (workspace_names.values()) |entry| {
+            try workspaces.put(entry.name, entry.version);
+        }
+
+        workspace_names.map.deinit();
+
         var manager = &instance;
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -5433,6 +5465,7 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
             .waiter = try Waker.init(ctx.allocator),
+            .workspaces = workspaces,
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -5511,6 +5544,7 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
+            .workspaces = std.StringArrayHashMap(?Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
 
@@ -7753,6 +7787,7 @@ pub const PackageManager = struct {
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
+
                             while (counter_i < changes) : (counter_i += 1) {
                                 if (mapping[counter_i] == invalid_package_id) {
                                     const dependency_i = counter_i + off;

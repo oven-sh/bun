@@ -1160,6 +1160,11 @@ pub const RunCommand = struct {
             }
         }
 
+        // If the script is not present and --if-present is passed, exit with 0
+        if (ctx.runtime_options.if_present) {
+            Global.exit(0);
+        }
+
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
             Global.exit(1);

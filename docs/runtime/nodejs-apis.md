@@ -6,7 +6,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
-🟢 Fully implemented.
+🟡 Missing `doesNotMatch`
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
@@ -30,7 +30,9 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`. Some methods are not optimized yet.
+🟡 Missing `Certificate` `ECDH` `KeyObject` `X509Certificate` `checkPrime` `checkPrimeSync` `createPrivateKey` `createPublicKey` `createSecretKey` `diffieHellman` `generateKey` `generateKeyPair` `generateKeyPairSync` `generateKeySync` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips` `sign` `verify`
+
+Some methods are not optimized yet.
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 
@@ -42,19 +44,19 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented.
+🟡 Missing `cancel`, `setServers`, `getDefaultResultOrder`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
-🟢 Fully implemented.
+🟡 Missing `Domain`, `active`
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `require('node:events').on`.
+🟡 Missing `on` `addAbortListener` `getMaxListeners`
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`, `fs.statfs{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `Dir`, `fdatasync`, `fdatasyncSync`, `openAsBlob`, `opendir`, `opendirSync`, `statfs`, `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -78,7 +80,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList` `net.Server.ref()` `net.Server.unref()` `net.Socket.ref()` `net.Socket.unref()`.
+🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout` `Server#ref()` `Server#unref()` `Socket#ref()` `Socket#unref()`.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -90,7 +92,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Missing `Performance` `PerformanceMark` `PerformanceMeasure` `PerformanceObserverEntryList` `PerformanceResourceTiming` `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -114,7 +116,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:stream`](https://nodejs.org/api/stream.html)
 
-🟢 Fully implemented.
+🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark`
 
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
@@ -142,11 +144,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
-🟡 Missing `url.domainTo{ASCII|Unicode}`. Recommended to use `URL` and `URLSearchParams` globals instead.
+🟡 Missing `domainToASCII` `domainToUnicode`. It's recommended to use `URL` and `URLSearchParams` globals instead.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `util.MIMEParams` `util.MIMEType` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
+🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `parseArgs` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -154,7 +156,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality works, but VM modules are not implemented. `ShadowRealm` can be used.
+🟡 Core functionality works, but VM modules are not implemented. Missing `createScript`. `ShadowRealm` can be used.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 
@@ -166,7 +168,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Missing `zlib.brotli*`. Has not been optimized.
+🟡 Missing `BrotliCompress` `BrotliDecompress` `brotliCompressSync` `brotliDecompress` `brotliDecompressSync` `createBrotliCompress` `createBrotliDecompress`. Unoptimized.
 
 ## Globals
 
@@ -334,7 +336,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`. `process.binding` is partially implemented.
+🟡 Missing `domain` `hasUncaughtExceptionCaptureCallback` `initgroups` `report` `resourceUsage` `setUncaughtExceptionCaptureCallback` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

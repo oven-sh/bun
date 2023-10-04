@@ -1160,6 +1160,10 @@ pub const RunCommand = struct {
             }
         }
 
+        if (ctx.runtime_options.if_present) {
+            return true;
+        }
+
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
             Global.exit(1);

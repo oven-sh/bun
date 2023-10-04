@@ -5300,25 +5300,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
-                    const max_len = @sizeOf(std.os.sockaddr.storage);
-                    var len_: i32 = max_len;
-                    var sa_buf: [max_len]u8 = [_]u8{0} ** max_len;
-
-                    listener.socket().localAddress(&sa_buf, &len_);
-                    const len = @as(usize, @intCast(len_));
-
+                    var buf: [1024]u8 = [_]u8{0} ** 1024;
+                    var len: i32 = 1024;
+                    listener.socket().localAddressText(&buf, &len);
                     if (len > 0) {
-                        const buf_len = 1024;
-                        var buf: [buf_len]u8 = [_]u8{0} ** buf_len;
-                        if (len == @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr))) {
-                            _ = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, &buf, buf_len);
-                            const size = bun.len(bun.cast([*:0]u8, buf[0..]));
-                            this.cached_hostname = bun.String.create(buf[0..size]);
-                        } else if (len == @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr))) {
-                            _ = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, &buf, buf_len);
-                            const size = bun.len(bun.cast([*:0]u8, buf[0..]));
-                            this.cached_hostname = bun.String.create(buf[0..size]);
-                        }
+                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
                     }
                 }
 

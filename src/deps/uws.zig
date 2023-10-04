@@ -306,13 +306,39 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
 
-        pub fn localAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
+        pub fn localAddressBinary(this: ThisSocket, buf: [*]u8, length: *i32) void {
             return us_socket_local_address(
                 comptime ssl_int,
                 this.socket,
                 buf,
                 length,
             );
+        }
+
+        pub fn localAddressText(this: ThisSocket, buf: [*]u8, length: *i32) void {
+            const addr_v4_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in, .addr));
+            const addr_v6_len = @sizeOf(std.meta.FieldType(std.os.sockaddr.in6, .addr));
+
+            var sa_buf_len: i32 = addr_v6_len + 1;
+            var sa_buf: [addr_v6_len + 1]u8 = undefined;
+
+            this.localAddressBinary(&sa_buf, &sa_buf_len);
+            const addr_len = @as(usize, @intCast(sa_buf_len));
+            sa_buf[addr_len] = 0;
+
+            var ret: ?[*:0]const u8 = null;
+            if (addr_len == addr_v4_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET, &sa_buf, buf, @as(u32, @intCast(length.*)));
+            } else if (addr_len == addr_v6_len) {
+                ret = bun.c_ares.ares_inet_ntop(std.os.AF.INET6, &sa_buf, buf, @as(u32, @intCast(length.*)));
+            }
+
+            if (ret != null) {
+                length.* = @intCast(bun.len(bun.cast([*:0]u8, buf)));
+            } else {
+                // error
+                length.* = 0;
+            }
         }
 
         pub fn connect(

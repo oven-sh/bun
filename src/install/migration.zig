@@ -22,6 +22,7 @@ const Bin = @import("./bin.zig").Bin;
 const Semver = @import("./semver.zig");
 const String = Semver.String;
 const ExternalString = Semver.ExternalString;
+const stringHash = String.Builder.stringHash;
 
 const Lockfile = @import("./lockfile.zig");
 const LoadFromDiskResult = Lockfile.LoadFromDiskResult;
@@ -64,8 +65,12 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         };
 
         if (lockfile == .ok) {
-            if (timer) |*t| Output.printElapsed(@as(f64, @floatFromInt(t.read())) / std.time.ns_per_ms);
-            Output.prettyError("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            if (timer) |*t| {
+                Output.printElapsed(@as(f64, @floatFromInt(t.read())) / std.time.ns_per_ms);
+                Output.prettyError(" ", .{});
+            }
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            Output.flush();
         }
 
         return lockfile;
@@ -221,6 +226,23 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 },
             }
         }
+
+        if (pkg.get("resolved")) |resolved_expr| {
+            const resolved = resolved_expr.asString(allocator) orelse return error.InvalidNPMPackageLockfile;
+            if (strings.hasPrefixComptime(resolved, "file:")) {
+                builder.count(resolved[5..]);
+            } else if (strings.hasPrefixComptime(resolved, "git+")) {
+                builder.count(resolved[4..]);
+            } else {
+                builder.count(resolved);
+
+                // this is over-counting but whatever. it would be too hard to determine if the case here
+                // is an `npm`/`dist_tag` version (the only times this is actually used)
+                if (pkg.get("version")) |v| if (v.asString(allocator)) |s| {
+                    builder.count(s);
+                };
+            }
+        }
     }
     if (num_deps == std.math.maxInt(u32)) return error.TooManyDependencies; // lol
 
@@ -236,11 +258,16 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     try this.package_index.ensureTotalCapacity(package_idx);
     try builder.allocate();
 
-    var resolution_slice = this.packages.items(.resolution);
-    resolution_slice.len = package_idx;
-
+    var resolutions = this.packages.items(.resolution);
+    resolutions.len = package_idx;
+    var metas = this.packages.items(.meta);
+    metas.len = package_idx;
     var dependencies_list = this.packages.items(.dependencies);
+    dependencies_list.len = package_idx;
     var resolution_list = this.packages.items(.resolutions);
+    resolution_list.len = package_idx;
+
+    @memset(this.buffers.resolutions.items, Install.invalid_package_id);
 
     // Package Building Phase
     for (packages_properties.slice()) |entry| {
@@ -262,7 +289,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             break :package_name pkg_path[pkg_name_start..];
         };
 
-        const name_hash = bun.hash(pkg_name);
+        const name_hash = stringHash(pkg_name);
 
         const package_id: Install.PackageID = @intCast(this.packages.len);
         if (Environment.allow_assert) {
@@ -378,13 +405,18 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             .scripts = .{},
         });
         try this.getOrPutID(package_id, name_hash);
+
+        package_idx += 1;
     }
 
     if (Environment.allow_assert) {
-        for (resolution_slice) |r| std.debug.assert(r.tag == .uninitialized);
+        for (resolutions) |r| std.debug.assert(r.tag == .uninitialized);
     }
 
     // Dependency Linking Phase
+    resolutions[0] = Resolution.init(.{ .root = {} });
+    metas[0].origin = .local;
+
     package_idx = 0;
     for (packages_properties.slice()) |entry| {
         // this pass is allowed to make more assumptions because we already checked things during
@@ -392,13 +424,11 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         const pkg = entry.value.?.data.e_object;
         if (pkg.get("link") != null) continue;
 
-        package_idx += 1; // todo: find a way to not need this
-
         const pkg_path = entry.key.?.asString(allocator).?;
 
         // unreachable is used safely, because this *must* fail if it's not a link
-        var dependencies: Lockfile.DependencySlice = .{ .len = 0 };
-        var resolutions: Lockfile.PackageIDSlice = .{ .len = 0 };
+        var pkg_dependencies: Lockfile.DependencySlice = .{ .len = 0 };
+        var pkg_resolutions: Lockfile.PackageIDSlice = .{ .len = 0 };
 
         inline for (dependency_keys) |dep_key| {
             if (pkg.get(@tagName(dep_key))) |deps| {
@@ -416,27 +446,27 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                     // this buffer could probably be avoided, since we are only joining strings to then be hashed for a lookup
                     var name_checking_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-                    dependencies = .{
+                    pkg_dependencies = .{
                         .off = @as(u32, @intCast(this.buffers.dependencies.items.len)),
                         .len = @as(u32, @intCast(deps.data.e_object.properties.len)),
                     };
-                    resolutions = .{
+                    pkg_resolutions = .{
                         .off = @as(u32, @intCast(this.buffers.dependencies.items.len)),
                         .len = @as(u32, @intCast(deps.data.e_object.properties.len)),
                     };
-                    this.buffers.resolutions.items.len += dependencies.len;
-                    this.buffers.dependencies.items.len += dependencies.len;
+                    this.buffers.resolutions.items.len += pkg_dependencies.len;
+                    this.buffers.dependencies.items.len += pkg_dependencies.len;
                     if (Environment.allow_assert) {
                         std.debug.assert(this.buffers.dependencies.items.len <= this.buffers.dependencies.capacity);
-                        std.debug.assert(this.buffers.dependencies.items.len >= dependencies.off + dependencies.len);
+                        std.debug.assert(this.buffers.dependencies.items.len >= pkg_dependencies.off + pkg_dependencies.len);
                         std.debug.assert(this.buffers.resolutions.items.len <= this.buffers.resolutions.capacity);
-                        std.debug.assert(this.buffers.resolutions.items.len >= resolutions.off + resolutions.len);
+                        std.debug.assert(this.buffers.resolutions.items.len >= pkg_resolutions.off + pkg_resolutions.len);
                     }
 
                     dep_loop: for (deps.data.e_object.properties.slice(), 0..) |prop, i| {
                         const name_bytes = prop.key.?.asString(this.allocator).?;
                         const version_bytes = prop.value.?.asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
-                        const name_hash = bun.hash(name_bytes);
+                        const name_hash = stringHash(name_bytes);
                         const dep_name = builder.appendWithHash(String, name_bytes, name_hash);
 
                         const dep_version = builder.append(String, version_bytes);
@@ -482,7 +512,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                 }
                                 const id = found.new_package_id;
 
-                                this.buffers.dependencies.items[dependencies.off + i] = Dependency{
+                                this.buffers.dependencies.items[pkg_dependencies.off + i] = Dependency{
                                     .name = dep_name,
                                     .name_hash = name_hash,
                                     .version = version,
@@ -494,27 +524,28 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                         .workspace = is_workspace,
                                     },
                                 };
-                                this.buffers.resolutions.items[dependencies.off + i] = id;
+                                this.buffers.resolutions.items[pkg_dependencies.off + i] = id;
 
                                 // If the package resolution is not set, resolve the target package
                                 // using the information we have from the dependency declaration.
-                                if (resolution_slice[id].tag == .uninitialized) {
+                                if (resolutions[id].tag == .uninitialized) {
                                     const dep_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
                                     const dep_actual_version = (dep_pkg.get("version") orelse return error.InvalidNPMPackageLockfile).asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
 
-                                    const dep_actual_version_str = builder.append(String, dep_actual_version);
-                                    const dep_actual_version_sliced = dep_actual_version_str.sliced(this.buffers.string_bytes.items);
-
                                     const dep_resolved = (dep_pkg.get("resolved") orelse return error.InvalidNPMPackageLockfile).asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
 
-                                    resolution_slice[id] = switch (version.tag) {
-                                        .uninitialized => @panic("how"),
-                                        .npm, .dist_tag => Resolution.init(.{
-                                            .npm = .{
-                                                .url = builder.append(String, dep_resolved), // TODO: count this line
-                                                .version = Semver.Version.parse(dep_actual_version_sliced).version.fill(),
-                                            },
-                                        }),
+                                    const res = switch (version.tag) {
+                                        .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+                                        .npm, .dist_tag => res: {
+                                            const dep_actual_version_str = builder.append(String, dep_actual_version);
+                                            const dep_actual_version_sliced = dep_actual_version_str.sliced(this.buffers.string_bytes.items);
+                                            break :res Resolution.init(.{
+                                                .npm = .{
+                                                    .url = builder.append(String, dep_resolved),
+                                                    .version = Semver.Version.parse(dep_actual_version_sliced).version.fill(),
+                                                },
+                                            });
+                                        },
                                         .tarball => if (strings.hasPrefixComptime(dep_resolved, "file:"))
                                             Resolution.init(.{ .local_tarball = builder.append(String, dep_resolved[5..]) })
                                         else
@@ -543,6 +574,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                                 },
                                             });
                                         },
+                                    };
+                                    resolutions[id] = res;
+                                    metas[id].origin = switch (res.tag) {
+                                        .npm => .npm,
+                                        .root, .folder, .local_tarball, .symlink, .workspace => .local,
+                                        .remote_tarball, .git, .github, .gitlab, .single_file_module => .tarball,
+
+                                        else => if (Environment.allow_assert) unreachable else .local,
                                     };
                                 }
 
@@ -576,13 +615,49 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             }
         }
 
-        dependencies_list[package_idx] = dependencies;
-        resolution_list[package_idx] = resolutions;
+        dependencies_list[package_idx] = pkg_dependencies;
+        resolution_list[package_idx] = pkg_resolutions;
+
+        package_idx += 1; // todo: find a way to not need this
     }
 
-    for (resolution_slice) |r| if (r.tag != .uninitialized) {
-        return error.NotAllPackagesGotResolved;
-    };
+    if (Environment.allow_assert) {
+        for (0..this.packages.len) |i| {
+            debug("package {d}: {}", .{ i, this.packages.get(i) });
+        }
+    }
+
+    if (Environment.allow_assert) {
+        for (dependencies_list, 0..) |deps, i| {
+            debug("dependencies_list {d}: off={d}, len={d}", .{ i, deps.off, deps.len });
+        }
+        for (resolution_list, 0..) |deps, i| {
+            debug("resolution_list {d}: off={d}, len={d}", .{ i, deps.off, deps.len });
+        }
+    }
+
+    if (Environment.allow_assert) {
+        for (this.buffers.dependencies.items, 0..) |dep, i| {
+            debug("dependencies {d}: {}", .{ i, dep });
+        }
+        for (resolution_list, 0..) |deps, i| {
+            debug("resolution_list {d}: off={d}, len={d}", .{ i, deps.off, deps.len });
+        }
+    }
+
+    for (resolutions, 0..) |r, i| {
+        debug("resolution {d}, {}", .{ i, r.fmtForDebug(this.buffers.string_bytes.items) });
+        if (r.tag == .uninitialized) {
+            return error.NotAllPackagesGotResolved;
+        }
+    }
+
+    for (this.buffers.resolutions.items, 0..) |r, i| {
+        debug("resolution_list {d}, {d}", .{ i, r });
+        if (r == Install.invalid_package_id) {
+            return error.NotAllPackagesGotResolved;
+        }
+    }
 
     return LoadFromDiskResult{ .ok = this };
 }

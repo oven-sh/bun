@@ -1054,4 +1054,35 @@ pub const Behavior = packed struct(u8) {
             (features.peer_dependencies and this.isPeer()) or
             this.isWorkspace();
     }
+
+    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var num_fields: u8 = 0;
+        const fields = std.meta.fields(Behavior);
+        inline for (fields) |f| {
+            if (f.type == bool and @field(self, f.name)) {
+                num_fields += 1;
+            }
+        }
+        switch (num_fields) {
+            0 => try writer.writeAll("Behavior.uninitialized"),
+            1 => {
+                inline for (fields) |f| {
+                    if (f.type == bool and @field(self, f.name)) {
+                        try writer.writeAll("Behavior." ++ f);
+                        break;
+                    }
+                }
+            },
+            else => {
+                try writer.writeAll("Behavior{");
+                inline for (fields) |f| {
+                    if (f.type == bool and @field(self, f.name)) {
+                        try writer.writeAll(" " ++ f);
+                        break;
+                    }
+                }
+                try writer.writeAll(" }");
+            },
+        }
+    }
 };

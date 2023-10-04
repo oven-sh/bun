@@ -307,7 +307,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "/tmp/scratchpad_20231002T223334",
+      "cwd": "/tmp/scratchpad_20231004T201031",
       "console": "internalConsole",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"

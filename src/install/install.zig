@@ -170,7 +170,7 @@ pub const ExternalStringMap = extern struct {
     value: ExternalStringList = .{},
 };
 
-pub const PackageNameHash = u64; // Use bun.hash
+pub const PackageNameHash = u64; // Use String.Builder.stringHash to compute this
 
 pub const Aligner = struct {
     pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {

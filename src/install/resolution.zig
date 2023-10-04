@@ -121,12 +121,16 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmt(this: *const Resolution, buf: []const u8) Formatter {
-        return Formatter{ .resolution = this, .buf = buf };
+    pub fn fmt(this: *const Resolution, string_bytes: []const u8) Formatter {
+        return Formatter{ .resolution = this, .buf = string_bytes };
     }
 
-    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, buf: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = buf, .options = options };
+    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, string_bytes: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = string_bytes, .options = options };
+    }
+
+    pub fn fmtForDebug(this: *const Resolution, string_bytes: []const u8) DebugFormatter {
+        return DebugFormatter{ .resolution = this, .buf = string_bytes };
     }
 
     pub fn eql(
@@ -230,6 +234,31 @@ pub const Resolution = extern struct {
                 .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
+        }
+    };
+
+    pub const DebugFormatter = struct {
+        resolution: *const Resolution,
+        buf: []const u8,
+
+        pub fn format(formatter: DebugFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll("Resolution{ .");
+            try writer.writeAll(std.enums.tagName(Tag, formatter.resolution.tag) orelse "invalid");
+            try writer.writeAll(" = ");
+            switch (formatter.resolution.tag) {
+                .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
+                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
+                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
+                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
+                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                else => try writer.writeAll("{}"),
+            }
+            try writer.writeAll(" }");
         }
     };
 

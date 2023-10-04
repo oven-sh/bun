@@ -18,6 +18,8 @@ jobs:
   zig-fmt:
     name: zig fmt
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     outputs:
       zig_fmt_errs: ${{ steps.fmt.outputs.zig_fmt_errs }}
     steps:

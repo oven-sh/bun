@@ -162,6 +162,7 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
+            Pull Request
             ### [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
             @${{ github.actor }}
@@ -177,6 +178,8 @@ jobs:
     needs: [linux]
     if: github.event_name == 'pull_request'
     timeout-minutes: 20
+    permissions:
+      pull-requests: write
     outputs:
       failing_tests: ${{ steps.test.outputs.failing_tests }}
       failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}
@@ -232,6 +235,7 @@ jobs:
           noprefix: true
           nocontext: true
           description: |
+            Pull Request
             ### ❌ [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
             @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:

@@ -1835,7 +1835,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(true));
 }
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)

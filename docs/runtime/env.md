@@ -25,9 +25,47 @@ Or programmatically by assigning a property to `process.env`.
 process.env.FOO = "hello";
 ```
 
+### Quotation marks
+
+Bun supports double quotes, single quotes, and
+
+### Expansion
+
+Environment variables are automatically _expanded_. This means you can reference previously-defined variables in your environment variables.
+
+```txt#.env
+FOO=world
+BAR=hello$FOO
+```
+
+```ts
+process.env.BAR; // => "helloworld"
+```
+
+This is useful for constructing connection strings or other compound values.
+
+```txt#.env
+DB_USER=postgres
+DB_PASSWORD=secret
+DB_HOST=localhost
+DB_PORT=5432
+DB_URL=postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
+```
+
+This can be disabled by escaping the `$` with a backslash.
+
+```txt#.env
+FOO=world
+BAR=hello\$FOO
+```
+
+```ts
+process.env.BAR; // => "hello$FOO"
+```
+
 ### `dotenv`
 
-Generally speaking, you won't need `dotenv` anymore, because Bun reads `.env` files automatically.
+Generally speaking, you won't need `dotenv` or `dotenv-expand` anymore, because Bun reads `.env` files automatically.
 
 ## Reading environment variables
 

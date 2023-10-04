@@ -2906,6 +2906,65 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref) with custom GITHUB_API_URL", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        when: "https://github.com/cujojs/when/tarball/1.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      GITHUB_API_URL: "https://example.com/github/api",
+    },
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + when@https://github.com/cujojs/when/tarball/1.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "when"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "when"))).toEqual([
+    ".gitignore",
+    ".gitmodules",
+    "LICENSE.txt",
+    "README.md",
+    "apply.js",
+    "cancelable.js",
+    "delay.js",
+    "package.json",
+    "test",
+    "timed.js",
+    "timeout.js",
+    "when.js",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle GitHub URL with existing lockfile", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -5475,6 +5534,85 @@ it("should handle installing packages from inside a workspace with `*`", async (
   } = spawn({
     cmd: [bunExe(), "install", "bar"],
     cwd: join(package_dir, "packages", "yolo"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2).toContain("installed bar");
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing packages from inside a workspace without prefix", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "main",
+      workspaces: ["packages/*"],
+      private: true,
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "p1"), { recursive: true });
+  const p1_package = JSON.stringify({
+    name: "p1",
+    version: "0.0.1",
+    dependencies: {
+      p2: "0.1.0",
+    },
+  });
+  await writeFile(join(package_dir, "packages", "p1", "package.json"), p1_package);
+
+  await mkdir(join(package_dir, "packages", "p2"));
+  const p2_package = JSON.stringify({
+    name: "p2",
+    version: "0.1.0",
+  });
+  await writeFile(join(package_dir, "packages", "p2", "package.json"), p2_package);
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(package_dir, "packages", "p1"),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + p1@workspace:packages/p1",
+    " + p2@workspace:packages/p2",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(requested).toBe(0);
+  await access(join(package_dir, "bun.lockb"));
+
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "bar"],
+    cwd: join(package_dir, "packages", "p1"),
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",

@@ -12074,8 +12074,7 @@ crypto_exports.createPublicKey = function (key) {
   } else if (typeof key === "object") {
     if (key instanceof KeyObject || key instanceof CryptoKey) {
       if (key.type === "private") {
-        //TODO: if key is a KeyObject with type 'private', the public key is derived from the given private key; otherwise, key must be an object with the properties described above.
-        throw new Error("Not implemented");
+        return KeyObject.from(createPublicKey({ key, format: "" }));
       }
       const error = new TypeError(
         `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
@@ -12089,8 +12088,7 @@ crypto_exports.createPublicKey = function (key) {
         key.key = actual_key;
       } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
         if (key.type === "private") {
-          //TODO: if key is a KeyObject with type 'private', the public key is derived from the given private key; otherwise, key must be an object with the properties described above.
-          throw new Error("Not implemented");
+          return KeyObject.from(createPublicKey({ key, format: "" }));
         }
         const error = new TypeError(
           `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,

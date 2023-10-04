@@ -18,6 +18,7 @@
 #include <openssl/mem.h>
 #include <openssl/x509.h>
 #include <openssl/pem.h>
+#include <openssl/curve25519.h>
 #include "JSBuffer.h"
 
 using namespace JSC;
@@ -325,28 +326,28 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                 if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
                     auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
-                    // } else if (pKeyID == EVP_PKEY_ED25519) {
-                    // TODO: READ DER FROM PRIVATE
-                    // auto result = CryptoKeyOKP::create(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    // OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    // if (result == nullptr) {
-                    //     auto scope = DECLARE_THROW_SCOPE(vm);
-                    //     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
-                    //     return JSValue::encode(JSC::jsUndefined());
-                    // }
-                    // auto impl = result.releaseNonNull();
-                    // return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
-                    // } else if (pKeyID == EVP_PKEY_X25519) {
-                    // auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    // OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    // if (result == nullptr) {
-                    //     auto scope = DECLARE_THROW_SCOPE(vm);
-                    //     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
-                    //     return JSValue::encode(JSC::jsUndefined());
-                    // }
-                    // auto impl = result.releaseNonNull();
-                    // return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
-                } else if (pKeyID == EVP_PKEY_EC) {
+                    } else if (pKeyID == EVP_PKEY_ED25519 || pKeyID == EVP_PKEY_X25519) {
+                        size_t out_len = 0;
+                        if(!EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &out_len)){
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        Vector<uint8_t> out(out_len);
+                        if(!EVP_PKEY_get_raw_private_key(pkey.get(), out.data(), &out_len) || out_len != out.size()){
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        auto result = CryptoKeyOKP::create(CryptoAlgorithmIdentifier::Ed25519, pKeyID == EVP_PKEY_ED25519 ? CryptoKeyOKP::NamedCurve::Ed25519 : CryptoKeyOKP::NamedCurve::X25519, CryptoKeyType::Private, WTFMove(out), true, CryptoKeyUsageSign);
+                        if (result == nullptr) {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        auto impl = result.releaseNonNull();
+                        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                   } else if (pKeyID == EVP_PKEY_EC) {
                     EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
                     if (ec_key == nullptr) {
                         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -591,8 +592,109 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
 
         void* data;
         size_t byteLength;
+        if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+            auto& wrapped = key->wrapped();
+            auto key_type = wrapped.type();
+            if (key_type != CryptoKeyType::Private) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type, expected private"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto id = wrapped.keyClass();
 
-        if (keyJSValue.isCell()) {
+            switch (id) {
+                case CryptoKeyClass::RSA: {
+                    const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+                    auto* pkey = rsa.platformKey();
+                    const RSA* rsa_key = EVP_PKEY_get0_RSA(pkey);
+
+                    auto publicRSA = RSAPtr(RSAPublicKey_dup(rsa_key));
+                    if (!publicRSA) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
+                    if (EVP_PKEY_set1_RSA(publicPKey.get(), publicRSA.get()) <= 0) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto impl = CryptoKeyRSA::create(wrapped.algorithmIdentifier(), CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(publicPKey), true, CryptoKeyUsageVerify);
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                }
+                case CryptoKeyClass::EC: {
+                    const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+                    auto* pkey = ec.platformKey();
+                    EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(pkey);
+                    auto point = ECPointPtr(EC_POINT_dup(EC_KEY_get0_public_key(ec_key), EC_KEY_get0_group(ec_key)));
+                    if (!point){
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto curve = NID_undef;
+                        
+                    switch (ec.namedCurve()) {
+                    case CryptoKeyEC::NamedCurve::P256:
+                        curve = NID_X9_62_prime256v1;
+                    case CryptoKeyEC::NamedCurve::P384:
+                        curve = NID_secp384r1;
+                    case CryptoKeyEC::NamedCurve::P521:
+                        curve = NID_secp521r1;
+                    }
+                    auto publicECKey = ECKeyPtr(EC_KEY_new_by_curve_name(curve));
+                    if (!publicECKey) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    // OPENSSL_EC_NAMED_CURVE needs to be set to export the key with the curve name, not with the curve parameters.
+                    EC_KEY_set_asn1_flag(publicECKey.get(), OPENSSL_EC_NAMED_CURVE);
+                    if (EC_KEY_set_public_key(publicECKey.get(), point.get()) <= 0){
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
+                    if (EVP_PKEY_set1_EC_KEY(publicPKey.get(), publicECKey.get()) <= 0){
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSC::JSValue::encode(JSC::JSValue {});
+                    }
+                    auto impl = CryptoKeyEC::create(wrapped.algorithmIdentifier(), ec.namedCurve(), CryptoKeyType::Public, WTFMove(publicPKey), true, CryptoKeyUsageVerify);
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                }
+                case CryptoKeyClass::OKP: {
+                   uint8_t public_key[ED25519_PUBLIC_KEY_LEN];
+
+                    const auto& okp = downcast<WebCore::CryptoKeyOKP>(wrapped);
+                    auto keyData = okp.exportKey();
+
+                    if(okp.namedCurve() == CryptoKeyOKP::NamedCurve::Ed25519) {
+                        memcpy(public_key, keyData.data() + ED25519_PRIVATE_KEY_LEN, ED25519_PUBLIC_KEY_LEN);
+                    } else {
+                        X25519_public_from_private(public_key, keyData.data());
+                    }
+                    auto result = CryptoKeyOKP::create(wrapped.algorithmIdentifier(), okp.namedCurve(), CryptoKeyType::Public, Vector<uint8_t>(public_key), true, CryptoKeyUsageVerify);
+                    if (result == nullptr) {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                    auto impl = result.releaseNonNull();
+                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+
+                }
+                default: {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type, expected private"_s);
+                    return JSC::JSValue::encode(JSC::JSValue {});
+                }
+            }
+            
+
+        }else if (keyJSValue.isCell()) {
             auto type = keyJSValue.asCell()->type();
 
             switch (type) {
@@ -1041,7 +1143,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     auto* bio = BIO_new(BIO_s_mem());
                     auto* rsaKey = rsa.platformKey();
-                    auto* rsa_ptr = EVP_PKEY_get1_RSA(rsaKey);
+                    auto* rsa_ptr = EVP_PKEY_get0_RSA(rsaKey);
 
                     if (key_type == CryptoKeyType::Public) {
                         if (string == "pem"_s) {
@@ -1774,10 +1876,6 @@ static Vector<uint8_t> GetRawKeyFromSecret(WebCore::CryptoKey& key)
     case CryptoKeyClass::AES: {
         const auto& aes = downcast<WebCore::CryptoKeyAES>(key);
         return aes.key();
-    }
-    case CryptoKeyClass::OKP: {
-        const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
-        return okpKey.platformKey();
     }
     case CryptoKeyClass::Raw: {
         const auto& raw = downcast<WebCore::CryptoKeyRaw>(key);

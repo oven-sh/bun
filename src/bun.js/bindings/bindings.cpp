@@ -4539,7 +4539,6 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* 
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
     auto* context = thisObject->scriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
-    abortSignal->ref();
     return abortSignal.leakRef();
 }
 

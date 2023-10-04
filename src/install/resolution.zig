@@ -15,6 +15,14 @@ pub const Resolution = extern struct {
     _padding: [7]u8 = .{0} ** 7,
     value: Value = .{ .uninitialized = {} },
 
+    /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
+    pub inline fn init(value: anytype) Resolution {
+        return Resolution{
+            .tag = @field(Tag, @typeInfo(@TypeOf(value)).Struct.fields[0].name),
+            .value = Value.init(value),
+        };
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,

@@ -123,8 +123,8 @@ pub fn ExternalSlice(comptime Type: type) type {
 
 pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type {
     return extern struct {
-        const alignment = alignment_ orelse @alignOf(*Type);
-        const Slice = @This();
+        pub const alignment = alignment_ orelse @alignOf(*Type);
+        pub const Slice = @This();
 
         pub const Child: type = Type;
 
@@ -170,7 +170,7 @@ pub const ExternalStringMap = extern struct {
     value: ExternalStringList = .{},
 };
 
-pub const PackageNameHash = u64;
+pub const PackageNameHash = u64; // Use bun.hash
 
 pub const Aligner = struct {
     pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {

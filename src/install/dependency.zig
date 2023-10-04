@@ -49,7 +49,7 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = .uninitialized,
+behavior: Behavior = Behavior.uninitialized,
 
 /// Sorting order for dependencies is:
 /// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
@@ -147,7 +147,7 @@ pub fn toDependency(
     return Dependency{
         .name = name,
         .name_hash = @as(u64, @bitCast(this[8..16].*)),
-        .behavior = @as(Dependency.Behavior, @enumFromInt(this[16])),
+        .behavior = @bitCast(this[16]),
         .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
     };
 }
@@ -156,7 +156,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
-    bytes[16] = @intFromEnum(this.behavior);
+    bytes[16] = @bitCast(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -929,78 +929,79 @@ pub fn parseWithTag(
     }
 }
 
-pub const Behavior = enum(u8) {
-    uninitialized = 0,
-    _,
+pub const Behavior = packed struct(u8) {
+    pub const uninitialized: Behavior = .{};
 
-    pub const normal: u8 = 1 << 1;
-    pub const optional: u8 = 1 << 2;
-    pub const dev: u8 = 1 << 3;
-    pub const peer: u8 = 1 << 4;
-    pub const workspace: u8 = 1 << 5;
+    normal: bool = false,
+    optional: bool = false,
+    dev: bool = false,
+    peer: bool = false,
+    workspace: bool = false,
+
+    _padding: u3 = 0, //padding
+
+    pub const normal = Behavior{ .normal = true };
+    pub const optional = Behavior{ .optional = true };
+    pub const dev = Behavior{ .dev = true };
+    pub const peer = Behavior{ .peer = true };
+    pub const workspace = Behavior{ .workspace = true };
 
     pub inline fn isNormal(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.normal) != 0;
+        return this.normal;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.optional) != 0 and !this.isPeer();
+        return this.optional and !this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.dev) != 0;
+        return this.dev;
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.peer) != 0;
+        return this.peer;
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.workspace) != 0;
+        return this.workspace;
     }
 
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.normal));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.normal));
-        }
+        var b = this;
+        b.normal = value;
+        return b;
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.optional));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.optional));
-        }
+        var b = this;
+        b.optional = value;
+        return b;
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.dev));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.dev));
-        }
+        var b = this;
+        b.dev = value;
+        return b;
     }
 
     pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.peer));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.peer));
-        }
+        var b = this;
+        b.peer = value;
+        return b;
     }
 
     pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.workspace));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.workspace));
-        }
+        var b = this;
+        b.workspace = value;
+        return b;
+    }
+
+    pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
-        if (@intFromEnum(lhs) == @intFromEnum(rhs)) {
+        if (eq(lhs, rhs)) {
             return .eq;
         }
 

@@ -1429,7 +1429,7 @@ pub const Printer = struct {
                         var behavior = Behavior.uninitialized;
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
-                            if (dep.behavior != behavior) {
+                            if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
@@ -1800,8 +1800,8 @@ pub const StringBuilder = struct {
             std.debug.assert(this.ptr != null); // must call allocate first
         }
 
-        bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
-        const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
+        bun.copy(u8, this.ptr.?[this.len .. this.len + slice.len], slice);
+        const final_slice = this.ptr.?[this.len .. this.len + slice.len];
         this.len += slice.len;
 
         if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
@@ -1888,7 +1888,7 @@ pub const Package = extern struct {
     name: String = .{},
     name_hash: PackageNameHash = 0,
 
-    /// How a package has been resolved
+    /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
@@ -1897,13 +1897,14 @@ pub const Package = extern struct {
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = .{},
 
-    /// The resolved package IDs for the dependencies
+    /// The resolved package IDs for the dependencies. Instead of storing this on `Dependency`, it
+    /// is stored on the package itself so we can access it faster.
+    ///
     /// Each index in this array corresponds to the same index in dependencies
-    /// So this is how you say "what package ID for lodash does this other package depend on?"
+    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
+    ///
     /// By default, its "invalid_id" which means the package ID was not resolved
-    resolutions: DependencyIDSlice = .{},
-
-    // "dependencies_resolutions" { int dependency_id, int resolved_package_id, int package_id }
+    resolutions: PackageIDSlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},
@@ -2041,11 +2042,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.normal)) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.dev)) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.optional)) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.peer)) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @as(Behavior, @enumFromInt(Behavior.workspace)) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -3443,15 +3444,7 @@ pub const Package = extern struct {
                             return error.InvalidPackageJSON;
                         }
                         for (obj.properties.slice()) |item| {
-                            const key = item.key.?.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.key.?.loc, allocator,
-                                    \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
-                                , .{group.prop}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
+                            const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
                                     \\{0s} expects a map of specifiers, e.g.
@@ -3753,12 +3746,15 @@ pub const Package = extern struct {
     pub const List = std.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
+        // TODO: when we bump the lockfile version, we should reorder this to:
+        // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
+        // should allow us to remove padding bytes
+
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
-
         _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
@@ -3944,11 +3940,14 @@ pub fn deinit(this: *Lockfile) void {
 const Buffers = struct {
     trees: Tree.List = .{},
     hoisted_dependencies: DependencyIDList = .{},
-    resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
     dependencies: DependencyList = .{},
+    /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
+    /// Should be the same length as `dependencies`
+    resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     extern_strings: ExternalStringBuffer = .{},
-    // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
-    // node_modules_package_ids: PackageIDList = PackageIDList{},
+    /// This is where all non-inlinable `Semver.String`s are stored.
     string_bytes: StringBuffer = .{},
 
     pub fn deinit(this: *Buffers, allocator: Allocator) void {

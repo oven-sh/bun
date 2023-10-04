@@ -1777,7 +1777,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBlobConstructor::construct(JSC::J
     }
 
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -1871,7 +1871,7 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSBlobStructure();
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Blob__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -17810,7 +17810,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRequestConstructor::construct(JSC
     }
 
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -17904,7 +17904,7 @@ extern "C" EncodedJSValue Request__create(Zig::GlobalObject* globalObject, void*
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSRequestStructure();
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Request__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 
@@ -19137,7 +19137,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSResponseConstructor::construct(JS
     }
 
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(instance->wrapped()));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -19231,7 +19231,7 @@ extern "C" EncodedJSValue Response__create(Zig::GlobalObject* globalObject, void
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSResponseStructure();
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
-    vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(ptr));
+    vm.heap.reportExtraMemoryAllocated(instance, Response__estimatedSize(ptr));
     return JSValue::encode(instance);
 }
 

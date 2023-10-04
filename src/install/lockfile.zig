@@ -1794,8 +1794,8 @@ pub const StringBuilder = struct {
             std.debug.assert(this.ptr != null); // must call allocate first
         }
 
-        bun.copy(u8, this.ptr.?[this.len .. this.len + slice.len], slice);
-        const final_slice = this.ptr.?[this.len .. this.len + slice.len];
+        bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+        const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
         this.len += slice.len;
 
         if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
@@ -3941,11 +3941,11 @@ pub fn deinit(this: *Lockfile) void {
 const Buffers = struct {
     trees: Tree.List = .{},
     hoisted_dependencies: DependencyIDList = .{},
-    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
-    dependencies: DependencyList = .{},
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
     /// Should be the same length as `dependencies`
     resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
+    dependencies: DependencyList = .{},
     /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     extern_strings: ExternalStringBuffer = .{},
     /// This is where all non-inlinable `Semver.String`s are stored.

@@ -195,4 +195,3 @@ it("should work for github repository", async () => {
   expect(out.trim()).toContain("Usage: cowsay");
   expect(await cached.exited).toBe(0);
 });
-

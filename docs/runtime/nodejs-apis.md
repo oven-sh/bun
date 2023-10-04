@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid`, `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
+🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -44,11 +44,11 @@ Some methods are not optimized yet.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟡 Missing `cancel`, `setServers`, `getDefaultResultOrder`
+🟡 Missing `cancel` `setServers` `getDefaultResultOrder`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
-🟡 Missing `Domain`, `active`
+🟡 Missing `Domain` `active`
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
@@ -56,7 +56,7 @@ Some methods are not optimized yet.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `Dir`, `fdatasync`, `fdatasyncSync`, `openAsBlob`, `opendir`, `opendirSync`, `statfs`, `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `Dir` `fdatasync` `fdatasyncSync` `openAsBlob` `opendir` `opendirSync` `statfs` `statfsSync`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
@@ -164,7 +164,7 @@ Some methods are not optimized yet.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `eval`, `argv`, `execArgv`, `stdin`, `stdout`, `stderr`, `trackedUnmanagedFds`, `resourceLimits`. Missing `markAsUntransferable`, `moveMessagePortToContext`, `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `eval` `argv` `execArgv` `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 

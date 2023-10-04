@@ -9,6 +9,7 @@
 #include <wtf/text/AtomString.h>
 
 using namespace JSC;
+extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
 extern "C" bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
 {
@@ -74,7 +75,10 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t
 #endif
     return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
 }
-
+BunString toBunString(const char* bytes, size_t length)
+{
+    return BunString__fromBytes(bytes, length);
+}
 WTF::String toWTFString(const BunString& bunString)
 {
     if (bunString.tag == BunStringTag::ZigString) {

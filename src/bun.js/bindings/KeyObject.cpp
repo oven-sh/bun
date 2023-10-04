@@ -11,12 +11,13 @@
 #include "webcrypto/CryptoKeyUsage.h"
 #include "webcrypto/JsonWebKey.h"
 #include "webcrypto/JSJsonWebKey.h"
+#include "JavaScriptCore/JSObject.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+#include "headers-handwritten.h"
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/x509.h>
 #include <openssl/pem.h>
-#include "../../deps/mimalloc/include/mimalloc.h"
-// #include <mimmalloc.h>
 #include "JSBuffer.h"
 
 using namespace JSC;
@@ -97,53 +98,24 @@ struct AsymmetricKeyValueWithDER {
     long der_len;
 };
 
-struct AsymmetricKeyValueWithDERAndPassphrase {
-    EVP_PKEY* key;
-    unsigned char* der_data;
-    long der_len;
+struct PrivateKeyPassphrase {
     char* passphrase;
     size_t passphrase_len;
 };
 
-
-int PasswordCallback(char* buf, int size, int rwflag, void* u) {
-  auto result = static_cast<AsymmetricKeyValueWithDERAndPassphrase*>(u);
-  if (result != nullptr && size > 0) {
-    size_t buflen = static_cast<size_t>(size);
-    result->passphrase_len = buflen;
-    result->passphrase = static_cast<char*>(mi_malloc(buflen));
-    memcpy(buf, result->passphrase, buflen);
-    return buflen;
-  }
-
-  return -1;
-}
-
-
-AsymmetricKeyValueWithDER KeyObject__TryParsePublicKey(
-    BIO* bp,
-    const char* name,
-    // NOLINTNEXTLINE(runtime/int)
-    const std::function<EVP_PKEY*(const unsigned char** p, long l)>& parse)
+int PasswordCallback(char* buf, int size, int rwflag, void* u)
 {
-
-    auto result = (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
-    // This skips surrounding data and decodes PEM to DER.
-    {
-        if (PEM_bytes_read_bio(&result.der_data, &result.der_len, nullptr, name,
-                bp, nullptr, nullptr)
-            != 1)
-            return result;
+    auto result = static_cast<PrivateKeyPassphrase*>(u);
+    if (result != nullptr && size > 0) {
+        size_t buflen = static_cast<size_t>(size);
+        size_t len = result->passphrase_len;
+        if (buflen < len)
+            return -1;
+        memcpy(buf, result->passphrase, buflen);
+        return buflen;
     }
 
-    // OpenSSL might modify the pointer, so we need to make a copy before parsing.
-    const unsigned char* p = result.der_data;
-    result.key = parse(&p, result.der_len);
-    if (!result.key) {
-        OPENSSL_clear_free(result.der_data, result.der_len);
-    }
-
-    return result;
+    return -1;
 }
 
 AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
@@ -166,8 +138,8 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
         OPENSSL_clear_free(result.der_data, result.der_len);
     }
 
-    BIO_reset(bp.get());        
-    
+    BIO_reset(bp.get());
+
     // Maybe it is PKCS#1.
     if (PEM_bytes_read_bio(&result.der_data, &result.der_len, nullptr, "RSA PUBLIC KEY", bp.get(), nullptr, nullptr) == 1) {
         const unsigned char* p = result.der_data;
@@ -265,7 +237,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                             auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, jwk.usages);
                             if (result == nullptr) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
-                                throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                                throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
                                 return JSValue::encode(JSC::jsUndefined());
                             }
                             auto impl = result.releaseNonNull();
@@ -321,52 +293,70 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
             }
 
             auto format = formatJSValue.toWTFString(globalObject);
+            JSValue passphraseJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
+            PrivateKeyPassphrase passphrase = { nullptr, 0 };
+
+            if (auto* passphraseBuffer = jsCast<JSUint8Array*>(passphraseJSValue)) {
+                passphrase.passphrase = (char*)passphraseBuffer->vector();
+                passphrase.passphrase_len = passphraseBuffer->byteLength();
+            } else {
+                if (!passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty()) {
+                    auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
+                    if (!passphrase_wtfstr.isNull()) {
+                        if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
+                            passphrase.passphrase = const_cast<char*>(pass->data());
+                            passphrase.passphrase_len = pass->length();
+                        }
+                    }
+                }
+            }
+
             if (format == "pem"_s) {
-                auto pem = KeyObject__ParsePublicKeyPEM((const char*)data, byteLength);
-                if (!pem.key) {
+                auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
+                WebCore::EvpPKeyPtr pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
+
+                if (!pkey) {
                     auto scope = DECLARE_THROW_SCOPE(vm);
-                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid PEM data"_s));
+                    throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
                     return JSValue::encode(JSC::jsUndefined());
                 }
-                auto pkey = EvpPKeyPtr(pem.key);
-                auto pKeyID = EVP_PKEY_id(pem.key);
+                auto pKeyID = EVP_PKEY_id(pkey.get());
+
                 if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
+                    auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
-                } else if (pKeyID == EVP_PKEY_ED25519) {
-                    auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    if (result == nullptr) {
-                        auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
-                        return JSValue::encode(JSC::jsUndefined());
-                    }
-                    auto impl = result.releaseNonNull();
-                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
-                } else if (pKeyID == EVP_PKEY_X25519) {
-                    auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    if (result == nullptr) {
-                        auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
-                        return JSValue::encode(JSC::jsUndefined());
-                    }
-                    auto impl = result.releaseNonNull();
-                    return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                    // } else if (pKeyID == EVP_PKEY_ED25519) {
+                    // TODO: READ DER FROM PRIVATE
+                    // auto result = CryptoKeyOKP::create(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    // OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    // if (result == nullptr) {
+                    //     auto scope = DECLARE_THROW_SCOPE(vm);
+                    //     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                    //     return JSValue::encode(JSC::jsUndefined());
+                    // }
+                    // auto impl = result.releaseNonNull();
+                    // return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                    // } else if (pKeyID == EVP_PKEY_X25519) {
+                    // auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
+                    // OPENSSL_clear_free(pem.der_data, pem.der_len);
+                    // if (result == nullptr) {
+                    //     auto scope = DECLARE_THROW_SCOPE(vm);
+                    //     throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                    //     return JSValue::encode(JSC::jsUndefined());
+                    // }
+                    // auto impl = result.releaseNonNull();
+                    // return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                 } else if (pKeyID == EVP_PKEY_EC) {
                     EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
                     if (ec_key == nullptr) {
-                        OPENSSL_clear_free(pem.der_data, pem.der_len);
                         auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
                     const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
                     // Get the curve name
                     int curve_name = EC_GROUP_get_curve_name(ec_group);
                     if (curve_name == NID_undef) {
-                        OPENSSL_clear_free(pem.der_data, pem.der_len);
                         EC_KEY_free(ec_key);
                         auto scope = DECLARE_THROW_SCOPE(vm);
                         throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
@@ -380,28 +370,17 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                     else if (curve_name == NID_secp521r1)
                         curve = CryptoKeyEC::NamedCurve::P521;
                     else {
-                        OPENSSL_clear_free(pem.der_data, pem.der_len);
                         EC_KEY_free(ec_key);
                         auto scope = DECLARE_THROW_SCOPE(vm);
                         throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
-                    auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    if (result == nullptr) {
-                        result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)pem.der_data, (size_t)pem.der_len), true, CryptoKeyUsageVerify);
-                    }
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
-                    if (result == nullptr) {
-                        auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
-                        return JSValue::encode(JSC::jsUndefined());
-                    }
-                    auto impl = result.releaseNonNull();
+                    EC_KEY_free(ec_key);
+                    auto impl = CryptoKeyEC::create(CryptoAlgorithmIdentifier::ECDH, curve, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageSign);
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                 } else {
-                    OPENSSL_clear_free(pem.der_data, pem.der_len);
                     auto scope = DECLARE_THROW_SCOPE(vm);
-                    throwException(globalObject, scope, createTypeError(globalObject, "Unsupported public key"_s));
+                    throwException(globalObject, scope, createTypeError(globalObject, "Unsupported private key"_s));
                     return JSValue::encode(JSC::jsUndefined());
                 }
             }
@@ -420,40 +399,54 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                     auto pkey = EvpPKeyPtr(d2i_PrivateKey(EVP_PKEY_RSA, nullptr, &p, byteLength));
                     if (!pkey) {
                         auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Not implemented"_s));
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid use of PKCS#1 as private key"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
                     auto pKeyID = EVP_PKEY_id(pkey.get());
                     auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
                     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                 } else if (type == "pkcs8"_s) {
-                    // We use d2i_PUBKEY() to import a public key.
-                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data);
-                    auto pkey = EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, byteLength));
+
+                    auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
+                    WebCore::EvpPKeyPtr pkey;
+                    if (KeyObject__IsEncryptedPrivateKeyInfo(const_cast<unsigned char*>((unsigned char*)data), byteLength)) {
+                        pkey = EvpPKeyPtr(d2i_PKCS8PrivateKey_bio(bio.get(),
+                            nullptr,
+                            PasswordCallback,
+                            &passphrase));
+                    } else {
+                        auto* p8inf = d2i_PKCS8_PRIV_KEY_INFO_bio(bio.get(), nullptr);
+                        if (!p8inf) {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid PKCS8 data"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf));
+                    }
                     if (!pkey) {
                         auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid public key"_s));
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
                     auto pKeyID = EVP_PKEY_id(pkey.get());
 
                     if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
-                        auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Public, WTFMove(pkey), true, CryptoKeyUsageEncrypt);
+                        auto impl = CryptoKeyRSA::create(pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageDecrypt);
                         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                     } else if (pKeyID == EVP_PKEY_ED25519) {
-                        auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                        auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
                         if (result == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
-                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
                         auto impl = result.releaseNonNull();
                         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                     } else if (pKeyID == EVP_PKEY_X25519) {
-                        auto result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                        auto result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
                         if (result == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
-                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
                         auto impl = result.releaseNonNull();
@@ -462,7 +455,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                         EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
                         if (ec_key == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
-                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
                         const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
@@ -487,26 +480,69 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                             throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
-                        auto result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                        auto result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDH, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
                         if (result == nullptr) {
-                            result = CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageVerify);
+                            result = CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier::ECDSA, curve, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageSign);
                         }
+                        EC_KEY_free(ec_key);
                         if (result == nullptr) {
                             auto scope = DECLARE_THROW_SCOPE(vm);
-                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC public key"_s));
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
                         auto impl = result.releaseNonNull();
                         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                     } else {
                         auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Unsupported public key"_s));
+                        throwException(globalObject, scope, createTypeError(globalObject, "Unsupported private key"_s));
+                        return JSValue::encode(JSC::jsUndefined());
+                    }
+                } else if (type == "sec1"_s) {
+                    const unsigned char* p = reinterpret_cast<const unsigned char*>(data);
+                    auto pkey = EvpPKeyPtr(d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, byteLength));
+                    auto pKeyID = EVP_PKEY_id(pkey.get());
+
+                    if (pKeyID == EVP_PKEY_EC) {
+                        EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey.get());
+                        if (ec_key == nullptr) {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        const EC_GROUP* ec_group = EC_KEY_get0_group(ec_key);
+                        // Get the curve name
+                        int curve_name = EC_GROUP_get_curve_name(ec_group);
+                        if (curve_name == NID_undef) {
+                            EC_KEY_free(ec_key);
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Unable to identify EC curve"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        CryptoKeyEC::NamedCurve curve;
+                        if (curve_name == NID_X9_62_prime256v1)
+                            curve = CryptoKeyEC::NamedCurve::P256;
+                        else if (curve_name == NID_secp384r1)
+                            curve = CryptoKeyEC::NamedCurve::P384;
+                        else if (curve_name == NID_secp521r1)
+                            curve = CryptoKeyEC::NamedCurve::P521;
+                        else {
+                            EC_KEY_free(ec_key);
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(globalObject, scope, createTypeError(globalObject, "Unsupported EC curve"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                        EC_KEY_free(ec_key);
+                        auto impl = CryptoKeyEC::create(CryptoAlgorithmIdentifier::ECDH, curve, CryptoKeyType::Private, WTFMove(pkey), true, CryptoKeyUsageSign);
+                        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
+                    } else {
+                        auto scope = DECLARE_THROW_SCOPE(vm);
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid EC private key"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
                 }
 
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1' or 'spki'"_s);
+                JSC::throwTypeError(globalObject, scope, "type should be 'pkcs1', 'pkcs8' or 'sec1'"_s);
                 return JSValue::encode(JSC::jsUndefined());
             }
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -521,7 +557,6 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     JSC::throwTypeError(globalObject, scope, "expected options to be a object"_s);
     return JSC::JSValue::encode(JSC::JSValue {});
 }
-
 
 JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -762,7 +797,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                     auto pkey = EvpPKeyPtr(d2i_PublicKey(EVP_PKEY_RSA, nullptr, &p, byteLength));
                     if (!pkey) {
                         auto scope = DECLARE_THROW_SCOPE(vm);
-                        throwException(globalObject, scope, createTypeError(globalObject, "Not implemented"_s));
+                        throwException(globalObject, scope, createTypeError(globalObject, "Invalid use of PKCS#1 as public key"_s));
                         return JSValue::encode(JSC::jsUndefined());
                     }
                     auto pKeyID = EVP_PKEY_id(pkey.get());
@@ -1086,7 +1121,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         } else {
                             cipher = nullptr;
                         }
-                        void* passphrase;
+                        void* passphrase = nullptr;
                         size_t passphrase_len = 0;
                         if (auto* passphraseBuffer = jsCast<JSUint8Array*>(passphraseJSValue)) {
                             passphrase = passphraseBuffer->vector();
@@ -1098,14 +1133,8 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                     if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
                                         passphrase = const_cast<char*>(pass->data());
                                         passphrase_len = pass->length();
-                                    } else {
-                                        passphrase = nullptr;
                                     }
-                                } else {
-                                    passphrase = nullptr;
                                 }
-                            } else {
-                                passphrase = nullptr;
                             }
                         }
 
@@ -1571,6 +1600,134 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
     }
 }
 
+JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+
+    if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
+        auto id = key->wrapped().algorithmIdentifier();
+        auto& vm = lexicalGlobalObject->vm();
+        switch (id) {
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
+        case CryptoAlgorithmIdentifier::RSA_OAEP:
+        case CryptoAlgorithmIdentifier::RSA_PSS: {
+            auto* obj = JSC::constructEmptyObject(lexicalGlobalObject);
+
+            auto& wrapped = key->wrapped();
+            const auto& rsa = downcast<WebCore::CryptoKeyRSA>(wrapped);
+            auto* platformKey = rsa.platformKey();
+            const BIGNUM* e; // Public Exponent
+            const BIGNUM* n; // Modulus
+            const RSA* rsa_key = EVP_PKEY_get0_RSA(platformKey);
+            if (rsa_key == nullptr) {
+                return JSValue::encode(JSC::jsUndefined());
+            }
+
+            RSA_get0_key(rsa_key, &n, &e, nullptr);
+
+            auto modulus_length = BN_num_bits(n);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "modulusLength"_s)), jsNumber(modulus_length), 0);
+
+            auto size = BN_num_bytes(e);
+            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(lexicalGlobalObject, size)));
+            if (size > 0) {
+                BN_bn2binpad(e, (uint8_t*)buffer->vector(), size);
+            }
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicExponent"_s)), buffer, 0);
+
+            if (id == CryptoAlgorithmIdentifier::RSA_PSS) {
+                // Due to the way ASN.1 encoding works, default values are omitted when
+                // encoding the data structure. However, there are also RSA-PSS keys for
+                // which no parameters are set. In that case, the ASN.1 RSASSA-PSS-params
+                // sequence will be missing entirely and RSA_get0_pss_params will return
+                // nullptr. If parameters are present but all parameters are set to their
+                // default values, an empty sequence will be stored in the ASN.1 structure.
+                // In that case, RSA_get0_pss_params does not return nullptr but all fields
+                // of the returned RSA_PSS_PARAMS will be set to nullptr.
+
+                auto* params = RSA_get0_pss_params(rsa_key);
+                if (params != nullptr) {
+                    int hash_nid = NID_sha1;
+                    int mgf_nid = NID_mgf1;
+                    int mgf1_hash_nid = NID_sha1;
+                    int64_t salt_length = 20;
+
+                    if (params->hashAlgorithm != nullptr) {
+                        hash_nid = OBJ_obj2nid(params->hashAlgorithm->algorithm);
+                    }
+                    auto* hash_srt = OBJ_nid2ln(hash_nid);
+                    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "hashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toBunString(hash_srt, strlen(hash_srt))), 0);
+                    if (params->maskGenAlgorithm != nullptr) {
+                        mgf_nid = OBJ_obj2nid(params->maskGenAlgorithm->algorithm);
+                        if (mgf_nid == NID_mgf1) {
+                            mgf1_hash_nid = OBJ_obj2nid(params->maskHash->algorithm);
+                        }
+                    }
+
+                    // If, for some reason, the MGF is not MGF1, then the MGF1 hash function
+                    // is intentionally not added to the object.
+                    if (mgf_nid == NID_mgf1) {
+                        auto* mgf1_hash_srt = OBJ_nid2ln(mgf1_hash_nid);
+                        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "mgf1HashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toBunString(mgf1_hash_srt, strlen(mgf1_hash_srt))), 0);
+                    }
+
+                    if (params->saltLength != nullptr) {
+                        if (ASN1_INTEGER_get_int64(&salt_length, params->saltLength) != 1) {
+                            auto scope = DECLARE_THROW_SCOPE(vm);
+                            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to get saltLenght"_s));
+                            return JSValue::encode(JSC::jsUndefined());
+                        }
+                    }
+                    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "saltLength"_s)), jsNumber(salt_length), 0);
+                }
+            }
+            return JSC::JSValue::encode(obj);
+        }
+        case CryptoAlgorithmIdentifier::ECDSA:
+        case CryptoAlgorithmIdentifier::ECDH: {
+            auto* obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
+
+            auto& wrapped = key->wrapped();
+            const auto& ec = downcast<WebCore::CryptoKeyEC>(wrapped);
+            static const NeverDestroyed<String> values[] = {
+                MAKE_STATIC_STRING_IMPL("prime256v1"),
+                MAKE_STATIC_STRING_IMPL("secp384r1"),
+                MAKE_STATIC_STRING_IMPL("secp521r1"),
+            };
+
+            WTF::String named_curve;
+            switch (ec.namedCurve()) {
+            case CryptoKeyEC::NamedCurve::P256:
+                named_curve = values[0];
+                break;
+            case CryptoKeyEC::NamedCurve::P384:
+                named_curve = values[1];
+                break;
+            case CryptoKeyEC::NamedCurve::P521:
+                named_curve = values[2];
+                break;
+            default:
+                ASSERT_NOT_REACHED();
+                named_curve = WTF::emptyString();
+            }
+
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "namedCurve"_s)), JSC::jsString(vm, named_curve), 0);
+            return JSC::JSValue::encode(obj);
+        }
+        case CryptoAlgorithmIdentifier::Ed25519: {
+            auto* obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
+            auto& wrapped = key->wrapped();
+            const auto& okp = downcast<WebCore::CryptoKeyOKP>(wrapped);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "namedCurve"_s)), JSC::jsString(vm, okp.namedCurveString()), 0);
+            return JSC::JSValue::encode(obj);
+        }
+        default:
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 JSC::EncodedJSValue KeyObject__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     static const NeverDestroyed<String> values[] = {
@@ -1647,7 +1804,6 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     case CryptoAlgorithmIdentifier::Ed25519: {
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(key);
         auto keyData = okpKey.exportKey();
-        // TODO: CHECK THIS WHEN X488 AND ED448 ARE ADDED
         if (okpKey.type() == CryptoKeyType::Private) {
             auto* evp_key = EVP_PKEY_new_raw_private_key(okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519 ? EVP_PKEY_X25519 : EVP_PKEY_ED25519, nullptr, keyData.data(), keyData.size());
             return (AsymmetricKeyValue) { .key = evp_key, .owned = true };

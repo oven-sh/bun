@@ -3080,6 +3080,18 @@ describe("expect()", () => {
     expect(Infinity).not.toBeWithin(-Infinity, Infinity);
   });
 
+  test("toEqualIgnoringWhitespace()", () => {
+    expect("hello world").toEqualIgnoringWhitespace("hello world");
+    expect(" hello world ").toEqualIgnoringWhitespace("hello world");
+    expect(" h e l l o w o r l d ").toEqualIgnoringWhitespace("hello world");
+    expect("  hello\nworld  ").toEqualIgnoringWhitespace("hello\nworld");
+    expect(`h
+    e
+    l
+    l
+    o`).toEqualIgnoringWhitespace("hello");
+  });
+
   test("toBeSymbol()", () => {
     expect(Symbol()).toBeSymbol();
     expect(Symbol("")).toBeSymbol();

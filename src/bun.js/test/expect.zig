@@ -2649,6 +2649,57 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value: JSValue = this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = value.isString() and expected.isString();
+
+        if (pass) {
+            var expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            var valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+
+            // Remove all whitespace from both strings
+            expectedStr = strings.removeWhitespace(default_allocator, expectedStr);
+            valueStr = strings.removeWhitespace(default_allocator, valueStr);
+
+            // Compare the strings
+            pass = strings.eql(expectedStr, valueStr);
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true) ++ "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false) ++ "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalThis);
 

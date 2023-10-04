@@ -7321,6 +7321,9 @@ JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEndWithCallback);
 extern "C" EncodedJSValue ExpectPrototype__toEqual(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualCallback);
 
+extern "C" EncodedJSValue ExpectPrototype__toEqualIgnoringWhitespace(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback);
+
 extern "C" EncodedJSValue ExpectPrototype__toHaveBeenCalled(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback);
 
@@ -7435,6 +7438,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toContainEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toContainEqualCallback, 1 } },
     { "toEndWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEndWithCallback, 1 } },
     { "toEqual"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualCallback, 1 } },
+    { "toEqualIgnoringWhitespace"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toEqualIgnoringWhitespaceCallback, 1 } },
     { "toHaveBeenCalled"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledCallback, 0 } },
     { "toHaveBeenCalledTimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledTimesCallback, 1 } },
     { "toHaveBeenCalledWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveBeenCalledWithCallback, 1 } },
@@ -8600,6 +8604,34 @@ JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualCallback, (JSGlobalObject * lex
 #endif
 
     return ExpectPrototype__toEqual(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toEqualIgnoringWhitespaceCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSExpect* thisObject = jsDynamicCast<JSExpect*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof Expect"_s);
+        return JSValue::encode({});
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return ExpectPrototype__toEqualIgnoringWhitespace(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(ExpectPrototype__toHaveBeenCalledCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

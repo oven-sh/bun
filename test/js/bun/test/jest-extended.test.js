@@ -587,7 +587,17 @@ describe("jest-extended", () => {
   });
 
   // test("toIncludeMultiple()")
-  // test("toEqualIgnoringWhitespace()")
+  test("toEqualIgnoringWhitespace()", () => {
+    expect("hello world").toEqualIgnoringWhitespace("hello world");
+    expect(" hello world ").toEqualIgnoringWhitespace("hello world");
+    expect(" h e l l o w o r l d ").toEqualIgnoringWhitespace("hello world");
+    expect("  hello\nworld  ").toEqualIgnoringWhitespace("hello\nworld");
+    expect(`h
+    e
+    l
+    l
+    o`).toEqualIgnoringWhitespace("hello");
+  });
 
   // Symbol
 

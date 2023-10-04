@@ -1068,7 +1068,7 @@ pub const Behavior = packed struct(u8) {
             1 => {
                 inline for (fields) |f| {
                     if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll("Behavior." ++ f);
+                        try writer.writeAll("Behavior." ++ f.name);
                         break;
                     }
                 }
@@ -1077,7 +1077,7 @@ pub const Behavior = packed struct(u8) {
                 try writer.writeAll("Behavior{");
                 inline for (fields) |f| {
                     if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll(" " ++ f);
+                        try writer.writeAll(" " ++ f.name);
                         break;
                     }
                 }

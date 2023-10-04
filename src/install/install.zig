@@ -7638,8 +7638,10 @@ pub const PackageManager = struct {
             )
         else
             .{ .not_found = {} };
+
         var root = Lockfile.Package{};
-        var needs_new_lockfile = load_lockfile_result != .ok or (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
+        var needs_new_lockfile = load_lockfile_result != .ok or load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0;
+
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
         var had_any_diffs = false;
@@ -7906,7 +7908,7 @@ pub const PackageManager = struct {
 
         if (manager.log.hasErrors()) Global.crash();
 
-        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
+        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0 or load_lockfile_result.ok.format != Lockfile.FormatVersion.current; // (if migrated from npm or previous version);
         var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
             manager.lockfile = try manager.lockfile.cleanWithLogger(

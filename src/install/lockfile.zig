@@ -93,7 +93,7 @@ const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUn
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = .v1,
+format: FormatVersion = FormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -160,7 +160,7 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
 }
 
-pub const LoadFromDiskResult = union(Tag) {
+pub const LoadFromDiskResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
@@ -169,12 +169,6 @@ pub const LoadFromDiskResult = union(Tag) {
     ok: *Lockfile,
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
-
-    pub const Tag = enum {
-        not_found,
-        err,
-        ok,
-    };
 };
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
@@ -1863,12 +1857,15 @@ pub const PackageIndex = struct {
 };
 
 pub const FormatVersion = enum(u32) {
-    v0,
+    v0 = 0,
     // bun v0.0.x - bun v0.1.6
-    v1,
+    v1 = 1,
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
-    v2,
+    v2 = 2,
+
+    // This format is set when migrating from npm/yarn/pnpm, should not be written/read from disk.
+    migrated = std.math.maxInt(u32),
     _,
     pub const current = FormatVersion.v2;
 };
@@ -1892,19 +1889,23 @@ pub const Package = extern struct {
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
+    /// The resolved package IDs for this package's dependencies. Instead of storing this
+    /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
+    /// so we can access it faster.
+    ///
+    /// Each index in this array corresponds to the same index in dependencies.
+    /// Each value in this array corresponds to the resolved package ID for that dependency.
+    ///
+    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
+    ///
+    /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
+    /// was not resolved
+    resolutions: PackageIDSlice = .{},
+
     /// dependencies & resolutions must be the same length
     /// resolutions[i] is the resolved package ID for dependencies[i]
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = .{},
-
-    /// The resolved package IDs for the dependencies. Instead of storing this on `Dependency`, it
-    /// is stored on the package itself so we can access it faster.
-    ///
-    /// Each index in this array corresponds to the same index in dependencies
-    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
-    ///
-    /// By default, its "invalid_id" which means the package ID was not resolved
-    resolutions: PackageIDSlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},

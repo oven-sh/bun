@@ -480,7 +480,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                             &sliced,
                             log,
                         ) orelse {
-                            return error.InvalidNPMPackageLockfileSemver;
+                            return error.InvalidNPMPackageLockfile;
                         };
                         if (Environment.allow_assert) {
                             std.debug.assert(version.tag != .uninitialized);
@@ -500,7 +500,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                 if (found.new_package_id == std.math.maxInt(u32)) {
                                     // it is a workspace package, resolve from the "link": true entry to the real entry.
                                     const ref_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
-                                    const resolved_v = ref_pkg.get("resolved") orelse return error.InvalidNPMPackageLockfile;
+                                    const resolved_v = ref_pkg.get("resolved") orelse return error.LockfileWorkspaceMissingResolved;
                                     const resolved = resolved_v.asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
                                     found = (id_map.get(resolved) orelse return error.InvalidNPMPackageLockfile);
 
@@ -532,7 +532,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                     const dep_pkg = packages_properties.at(found.old_json_index).value.?.data.e_object;
                                     const dep_actual_version = (dep_pkg.get("version") orelse return error.InvalidNPMPackageLockfile).asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
 
-                                    const dep_resolved = (dep_pkg.get("resolved") orelse return error.InvalidNPMPackageLockfile).asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
+                                    const dep_resolved = (dep_pkg.get("resolved") orelse return error.LockfileWorkspaceMissingResolved).asString(this.allocator) orelse return error.InvalidNPMPackageLockfile;
 
                                     const res = switch (version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
@@ -658,6 +658,8 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             return error.NotAllPackagesGotResolved;
         }
     }
+
+    this.format = .migrated;
 
     return LoadFromDiskResult{ .ok = this };
 }

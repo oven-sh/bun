@@ -4534,6 +4534,15 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue4));
 }
 
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    abortSignal->ref();
+    return abortSignal.leakRef();
+}
+
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);

@@ -1430,7 +1430,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     } else {
                         JSValue cipherJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "cipher"_s)));
 
-                        const EVP_CIPHER* cipher;
+                        const EVP_CIPHER* cipher = nullptr;
                         if (!cipherJSValue.isUndefinedOrNull() && !cipherJSValue.isEmpty() && cipherJSValue.isString()) {
                             auto cipher_wtfstr = cipherJSValue.toWTFString(globalObject);
                             if (!cipher_wtfstr.isNull()) {
@@ -1445,19 +1445,19 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                     auto cipher_str = value.data();
                                     if (cipher_str != nullptr) {
                                         cipher = EVP_get_cipherbyname(cipher_str);
-                                    } else {
-                                        cipher = nullptr;
                                     }
                                 }
-                            } else {
-                                cipher = nullptr;
                             }
-                        } else {
-                            cipher = nullptr;
                         }
                         void* passphrase = nullptr;
                         size_t passphrase_len = 0;
                         if (hasPassphrase) {
+                            if(!cipher) {
+                                auto scope = DECLARE_THROW_SCOPE(vm);
+                                JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
+                                BIO_free(bio);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
                             if (passphraseJSValue.isString()) {
                                 auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
                                 if (!passphrase_wtfstr.isNull()) {
@@ -1610,7 +1610,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         JSValue passphraseJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
                         JSValue cipherJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "cipher"_s)));
 
-                        const EVP_CIPHER* cipher;
+                        const EVP_CIPHER* cipher = nullptr;
                         if (!cipherJSValue.isUndefinedOrNull() && !cipherJSValue.isEmpty()) {
                             auto cipher_wtfstr = cipherJSValue.toWTFString(globalObject);
                             if (!cipher_wtfstr.isNull()) {
@@ -1625,21 +1625,21 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                     auto cipher_str = value.data();
                                     if (cipher_str != nullptr) {
                                         cipher = EVP_get_cipherbyname(cipher_str);
-                                    } else {
-                                        cipher = nullptr;
                                     }
                                 }
-                            } else {
-                                cipher = nullptr;
                             }
-                        } else {
-                            cipher = nullptr;
                         }
                         void* passphrase = nullptr;
                         size_t passphrase_len = 0;
                         auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
                         if (hasPassphrase) {
+                            if(!cipher) {
+                                auto scope = DECLARE_THROW_SCOPE(vm);
+                                JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
+                                BIO_free(bio);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
                             if (passphraseJSValue.isString()) {
                                 auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
                                 if (!passphrase_wtfstr.isNull()) {
@@ -1758,7 +1758,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         JSValue passphraseJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
                         JSValue cipherJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "cipher"_s)));
 
-                        const EVP_CIPHER* cipher;
+                        const EVP_CIPHER* cipher = nullptr;
                         if (!cipherJSValue.isUndefinedOrNull() && !cipherJSValue.isEmpty() && cipherJSValue.isString()) {
                             auto cipher_wtfstr = cipherJSValue.toWTFString(globalObject);
                             if (!cipher_wtfstr.isNull()) {
@@ -1774,21 +1774,21 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                     auto cipher_str = value.data();
                                     if (cipher_str != nullptr) {
                                         cipher = EVP_get_cipherbyname(cipher_str);
-                                    } else {
-                                        cipher = nullptr;
                                     }
                                 }
-                            } else {
-                                cipher = nullptr;
                             }
-                        } else {
-                            cipher = nullptr;
                         }
                         void* passphrase = nullptr;
                         size_t passphrase_len = 0;
                         auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
                         if (hasPassphrase) {
+                            if(!cipher) {
+                                auto scope = DECLARE_THROW_SCOPE(vm);
+                                JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
+                                BIO_free(bio);
+                                return JSC::JSValue::encode(JSC::JSValue {});
+                            }
                             if (passphraseJSValue.isString()) {
                                 auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
                                 if (!passphrase_wtfstr.isNull()) {

@@ -1496,6 +1496,50 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should choose the right version with prereleases", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.2-alpha.3": { as: "0.0.2" } }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "^0.0.2-alpha.3+b4d",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2-alpha.3",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle ^0.0.2rc1 in dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.2rc1": { as: "0.0.2" } }));
@@ -2605,6 +2649,169 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(package_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should handle bitbucket git dependencies", async () => {
+  const deps = [
+    "bitbucket:dylan-conway/public-install-test",
+    "bitbucket.org:dylan-conway/public-install-test",
+    "bitbucket.com:dylan-conway/public-install-test",
+    "git@bitbucket.org:dylan-conway/public-install-test",
+  ];
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "public-install-test": dep,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + public-install-test@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      "",
+      " 1 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      ` installed publicinstalltest@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      "",
+      "",
+      " 1 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+}, 20000);
+
+it("should handle gitlab git dependencies", async () => {
+  const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "public-install-test": dep,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+      "",
+      " 1 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      ` installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+      "",
+      "",
+      " 1 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
+}, 10000);
 
 it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {
   const urls: string[] = [];
@@ -5053,7 +5260,7 @@ cache = false
     " + tsd@0.22.0",
     " + typescript@5.0.4",
     "",
-    " 119 packages installed",
+    " 118 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
@@ -5089,7 +5296,6 @@ cache = false
     "fastq",
     "fill-range",
     "find-up",
-    "function-bind",
     "glob-parent",
     "globby",
     "hard-rejection",

@@ -513,12 +513,34 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
+
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 const path = url["github.com/".len..];
                                 if (isGitHubTarballPath(path)) return .tarball;
                                 if (isGitHubRepoPath(path)) return .github;
                             }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
+
                             return .tarball;
+                        }
+                    }
+                },
+                's' => {
+                    if (strings.hasPrefixComptime(dependency, "ssh")) {
+                        var url = dependency["ssh".len..];
+                        if (url.len > 2) {
+                            if (url[0] == ':') {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
                         }
                     }
                 },

@@ -12038,26 +12038,39 @@ class KeyObject {
   }
 
   ["export"](options) {
-    if (arguments.length === 0) {
-      switch (this.type) {
-        case "secret":
-          options = {
-            format: "buffer",
-          };
-          break;
-        case "public":
-          options = {
-            format: "pem",
-            type: "spki",
-          };
-          break;
-        case "private":
-          options = {
-            format: "pem",
-            type: "pkcs8",
-          };
-          break;
-      }
+    switch (arguments.length) {
+      case 0:
+        switch (this.type) {
+          case "secret":
+            options = {
+              format: "buffer",
+            };
+            break;
+          case "public":
+            options = {
+              format: "pem",
+              type: "spki",
+            };
+            break;
+          case "private":
+            options = {
+              format: "pem",
+              type: "pkcs8",
+            };
+            break;
+        }
+        break;
+      case 1:
+        if (typeof options === "object" && !options.format) {
+          switch (this.type) {
+            case "secret":
+              options.format = "buffer";
+              break;
+            default:
+              options.format = "pem";
+              break;
+          }
+        }
     }
     return exports(this[kCryptoKey], options);
   }

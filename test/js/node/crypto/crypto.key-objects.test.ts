@@ -15,8 +15,6 @@ import {
   privateDecrypt,
   privateEncrypt,
   getCurves,
-  generateKeySync,
-  generateKeyPairSync,
 } from "crypto";
 import { test, expect, describe } from "bun:test";
 import fs from "fs";
@@ -164,7 +162,7 @@ test("basics should work", async () => {
     expect(() => publicKey.export(opt)).toThrow(/^expected options to be a object/);
   }
 
-  for (const keyObject of [publicKey, /*derivedPublicKey,*/ publicKeyFromJwk]) {
+  for (const keyObject of [publicKey, derivedPublicKey, publicKeyFromJwk]) {
     const exported = keyObject.export({ format: "jwk" });
     expect(exported).toBeDefined();
     const { kty, n, e } = exported as { kty: string; n: string; e: string };
@@ -221,7 +219,7 @@ test("basics should work", async () => {
       // Test distinguishing PKCS#1 public and private keys based on the
       // DER-encoded data only.
       publicEncrypt({ format: "der", type: "pkcs1", key: publicDER }, plaintext),
-      // publicEncrypt({ format: 'der', type: 'pkcs1', key: privateDER }, plaintext),
+      publicEncrypt({ format: "der", type: "pkcs1", key: privateDER }, plaintext),
     ],
     [
       privateKey,
@@ -243,9 +241,9 @@ test("basics should work", async () => {
 
       // Decrypt using the private key.
       privateKey,
-      // { format: 'pem', key: privatePem },
-      // { format: 'der', type: 'pkcs1', key: privateDER },
-      // { key: jwk, format: 'jwk' },
+      { format: "pem", key: privatePem },
+      { format: "der", type: "pkcs1", key: privateDER },
+      { key: jwk, format: "jwk" },
     ],
   );
 });
@@ -269,88 +267,94 @@ test("BoringSSL will not parse PKCS#1", async () => {
   }).toThrow("Invalid use of PKCS#1 as private key");
 });
 
-// [
-//   { private: fixtures.readKey('ed25519_private.pem', 'ascii'),
-//     public: fixtures.readKey('ed25519_public.pem', 'ascii'),
-//     keyType: 'ed25519',
-//     jwk: {
-//       crv: 'Ed25519',
-//       x: 'K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768',
-//       d: 'wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA',
-//       kty: 'OKP'
-//     } },
-//   { private: fixtures.readKey('ed448_private.pem', 'ascii'),
-//     public: fixtures.readKey('ed448_public.pem', 'ascii'),
-//     keyType: 'ed448',
-//     jwk: {
-//       crv: 'Ed448',
-//       x: 'oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o' +
-//          'Dgc2V5ZUA',
-//       d: '060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX' +
-//          'jcR9mxppY',
-//       kty: 'OKP'
-//     } },
-//   { private: fixtures.readKey('x25519_private.pem', 'ascii'),
-//     public: fixtures.readKey('x25519_public.pem', 'ascii'),
-//     keyType: 'x25519',
-//     jwk: {
-//       crv: 'X25519',
-//       x: 'aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig',
-//       d: 'mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc',
-//       kty: 'OKP'
-//     } },
-//   { private: fixtures.readKey('x448_private.pem', 'ascii'),
-//     public: fixtures.readKey('x448_public.pem', 'ascii'),
-//     keyType: 'x448',
-//     jwk: {
-//       crv: 'X448',
-//       x: 'ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg' +
-//          'vSKsDFPA',
-//       d: 'tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy' +
-//          'S0jlSYJk',
-//       kty: 'OKP'
-//     } },
-// ].forEach((info) => {
-//   const keyType = info.keyType;
+[
+  {
+    private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
+    public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_public.pem"), "ascii"),
+    keyType: "ed25519",
+    jwk: {
+      crv: "Ed25519",
+      x: "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768",
+      d: "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA",
+      kty: "OKP",
+    },
+  },
+  // { private: fixtures.readKey('ed448_private.pem', 'ascii'),
+  //   public: fixtures.readKey('ed448_public.pem', 'ascii'),
+  //   keyType: 'ed448',
+  //   jwk: {
+  //     crv: 'Ed448',
+  //     x: 'oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o' +
+  //        'Dgc2V5ZUA',
+  //     d: '060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX' +
+  //        'jcR9mxppY',
+  //     kty: 'OKP'
+  //   } },
+  {
+    private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
+    public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
+    keyType: "x25519",
+    jwk: {
+      crv: "X25519",
+      x: "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+      d: "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+      kty: "OKP",
+    },
+  },
+  // { private: fixtures.readKey('x448_private.pem', 'ascii'),
+  //   public: fixtures.readKey('x448_public.pem', 'ascii'),
+  //   keyType: 'x448',
+  //   jwk: {
+  //     crv: 'X448',
+  //     x: 'ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg' +
+  //        'vSKsDFPA',
+  //     d: 'tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy' +
+  //        'S0jlSYJk',
+  //     kty: 'OKP'
+  //   } },
+].forEach(info => {
+  const keyType = info.keyType;
 
-//   {
-//     const key = createPrivateKey(info.private);
-//     assert.strictEqual(key.type, 'private');
-//     assert.strictEqual(key.asymmetricKeyType, keyType);
-//     assert.strictEqual(key.symmetricKeySize, undefined);
-//     assert.strictEqual(
-//       key.export({ type: 'pkcs8', format: 'pem' }), info.private);
-//     assert.deepStrictEqual(
-//       key.export({ format: 'jwk' }), info.jwk);
-//   }
+  test(`${keyType} from Buffer should work`, async () => {
+    const key = createPrivateKey(info.private);
+    expect(key.type).toBe("private");
+    expect(key.asymmetricKeyType).toBe(keyType);
+    expect(key.symmetricKeySize).toBe(undefined);
+    expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
+    const jwt = key.export({ format: "jwk" });
+    delete jwt.ext;
+    delete jwt.key_ops;
+    expect(jwt).toEqual(info.jwk);
+  });
 
-//   {
-//     const key = createPrivateKey({ key: info.jwk, format: 'jwk' });
-//     assert.strictEqual(key.type, 'private');
-//     assert.strictEqual(key.asymmetricKeyType, keyType);
-//     assert.strictEqual(key.symmetricKeySize, undefined);
-//     assert.strictEqual(
-//       key.export({ type: 'pkcs8', format: 'pem' }), info.private);
-//     assert.deepStrictEqual(
-//       key.export({ format: 'jwk' }), info.jwk);
-//   }
+  test(`${keyType} createPrivateKey from jwk should work`, async () => {
+    const key = createPrivateKey({ key: info.jwk, format: "jwk" });
+    expect(key.type).toBe("private");
+    expect(key.asymmetricKeyType).toBe(keyType);
+    expect(key.symmetricKeySize).toBe(undefined);
+    expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
+    const jwt = key.export({ format: "jwk" });
+    delete jwt.ext;
+    delete jwt.key_ops;
+    expect(jwt).toEqual(info.jwk);
+  });
 
-//   {
-//     for (const input of [
-//       info.private, info.public, { key: info.jwk, format: 'jwk' }]) {
-//       const key = createPublicKey(input);
-//       assert.strictEqual(key.type, 'public');
-//       assert.strictEqual(key.asymmetricKeyType, keyType);
-//       assert.strictEqual(key.symmetricKeySize, undefined);
-//       assert.strictEqual(
-//         key.export({ type: 'spki', format: 'pem' }), info.public);
-//       const jwk = { ...info.jwk };
-//       delete jwk.d;
-//       assert.deepStrictEqual(
-//         key.export({ format: 'jwk' }), jwk);
-//     }
-//   }
-// });
+  test(`${keyType}  createPublicKey should work`, async () => {
+    for (const input of [info.public, info.private, { key: info.jwk, format: "jwk" }]) {
+      const key = createPublicKey(input);
+      expect(key.type).toBe("public");
+      expect(key.asymmetricKeyType).toBe(keyType);
+      expect(key.symmetricKeySize).toBe(undefined);
+      expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
+      const jwt = { ...info.jwk };
+      delete jwt.d;
+      const jwk_exported = key.export({ format: "jwk" });
+      delete jwk_exported.ext;
+      delete jwk_exported.key_ops;
+      expect(jwk_exported).toEqual(jwt);
+    }
+  });
+});
 
 [
   {
@@ -433,7 +437,7 @@ test("BoringSSL will not parse PKCS#1", async () => {
   });
 
   test(`${keyType} ${namedCurve} createPublicKey should work`, async () => {
-    for (const input of [info.public, { key: info.jwk, format: "jwk" } /*info.private*/]) {
+    for (const input of [info.public, info.private, { key: info.jwk, format: "jwk" }]) {
       const key = createPublicKey(input);
       expect(key.type).toBe("public");
       expect(key.asymmetricKeyType).toBe(keyType);
@@ -504,6 +508,69 @@ test("BoringSSL will not parse PKCS#1", async () => {
 //     { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
 // }
 
+test.todo("RSA-PSS should work", async () => {
+  // Test RSA-PSS.
+  {
+    // This key pair does not restrict the message digest algorithm or salt
+    // length.
+    const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_public_2048.pem"), "ascii");
+    const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_private_2048.pem"), "ascii");
+
+    const publicKey = createPublicKey(publicPem);
+    const privateKey = createPrivateKey(privatePem);
+
+    // Because no RSASSA-PSS-params appears in the PEM, no defaults should be
+    // added for the PSS parameters. This is different from an empty
+    // RSASSA-PSS-params sequence (see test below).
+    const expectedKeyDetails = {
+      modulusLength: 2048,
+      publicExponent: 65537n,
+    };
+
+    expect(publicKey.type).toBe("public");
+    expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(publicKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
+
+    expect(privateKey.type).toBe("private");
+    expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(privateKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
+
+    // assert.throws(
+    //   () => publicKey.export({ format: 'jwk' }),
+    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
+    // assert.throws(
+    //   () => privateKey.export({ format: 'jwk' }),
+    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
+
+    // for (const key of [privatePem, privateKey]) {
+    //   // Any algorithm should work.
+    //   for (const algo of ['sha1', 'sha256']) {
+    //     // Any salt length should work.
+    //     for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
+    //       const signature = createSign(algo)
+    //                         .update('foo')
+    //                         .sign({ key, saltLength });
+
+    //       for (const pkey of [key, publicKey, publicPem]) {
+    //         const okay = createVerify(algo)
+    //                      .update('foo')
+    //                      .verify({ key: pkey, saltLength }, signature);
+
+    //         assert.ok(okay);
+    //       }
+    //     }
+    //   }
+    // }
+
+    // // Exporting the key using PKCS#1 should not work since this would discard
+    // // any algorithm restrictions.
+    // assert.throws(() => {
+    //   publicKey.export({ format: 'pem', type: 'pkcs1' });
+    // }, {
+    //   code: 'ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS'
+    // });
+  }
+});
 // {
 //   // Test RSA-PSS.
 //   {
@@ -716,115 +783,98 @@ test("BoringSSL will not parse PKCS#1", async () => {
 //   });
 // }
 
-// {
-//   // SecretKeyObject export buffer format (default)
-//   const buffer = Buffer.from('Hello World');
-//   const keyObject = createSecretKey(buffer);
-//   assert.deepStrictEqual(keyObject.export(), buffer);
-//   assert.deepStrictEqual(keyObject.export({}), buffer);
-//   assert.deepStrictEqual(keyObject.export({ format: 'buffer' }), buffer);
-//   assert.deepStrictEqual(keyObject.export({ format: undefined }), buffer);
-// }
+test("secret export buffer format (default)", async () => {
+  const buffer = Buffer.from("Hello World");
+  const keyObject = createSecretKey(buffer);
+  expect(keyObject.export()).toEqual(buffer);
+  expect(keyObject.export({})).toEqual(buffer);
+  expect(keyObject.export({ format: "buffer" })).toEqual(buffer);
+  expect(keyObject.export({ format: undefined })).toEqual(buffer);
+});
 
-// {
-//   // Exporting an "oct" JWK from a SecretKeyObject
-//   const buffer = Buffer.from('Hello World');
-//   const keyObject = createSecretKey(buffer);
-//   assert.deepStrictEqual(
-//     keyObject.export({ format: 'jwk' }),
-//     { kty: 'oct', k: 'SGVsbG8gV29ybGQ' }
-//   );
-// }
+test('exporting an "oct" JWK from a secret', async () => {
+  const buffer = Buffer.from("Hello World");
+  const keyObject = createSecretKey(buffer);
+  const jwk = keyObject.export({ format: "jwk" });
+  delete jwk.ext;
+  delete jwk.key_ops;
+  expect(jwk).toEqual({ kty: "oct", k: "SGVsbG8gV29ybGQ" });
+});
 
-// {
-//   // Exporting a JWK unsupported curve EC key
-//   const supported = ['prime256v1', 'secp256k1', 'secp384r1', 'secp521r1'];
-//   // Find an unsupported curve regardless of whether a FIPS compliant crypto
-//   // provider is currently in use.
-//   const namedCurve = getCurves().find((curve) => !supported.includes(curve));
-//   assert(namedCurve);
-//   const keyPair = generateKeyPairSync('ec', { namedCurve });
-//   const { publicKey, privateKey } = keyPair;
-//   assert.throws(
-//     () => publicKey.export({ format: 'jwk' }),
-//     {
-//       code: 'ERR_CRYPTO_JWK_UNSUPPORTED_CURVE',
-//       message: `Unsupported JWK EC curve: ${namedCurve}.`
-//     });
-//   assert.throws(
-//     () => privateKey.export({ format: 'jwk' }),
-//     {
-//       code: 'ERR_CRYPTO_JWK_UNSUPPORTED_CURVE',
-//       message: `Unsupported JWK EC curve: ${namedCurve}.`
-//     });
-// }
+test("secret equals", async () => {
+  {
+    const first = Buffer.from("Hello");
+    const second = Buffer.from("World");
+    const keyObject = createSecretKey(first);
+    expect(createSecretKey(first).equals(createSecretKey(first))).toBeTrue();
+    expect(createSecretKey(first).equals(createSecretKey(second))).toBeFalse();
 
-// {
-//   const first = Buffer.from('Hello');
-//   const second = Buffer.from('World');
-//   const keyObject = createSecretKey(first);
-//   assert(createSecretKey(first).equals(createSecretKey(first)));
-//   assert(!createSecretKey(first).equals(createSecretKey(second)));
+    expect(() => keyObject.equals(0)).toThrow(/otherKey must be a KeyObject/);
 
-//   assert.throws(() => keyObject.equals(0), {
-//     name: 'TypeError',
-//     code: 'ERR_INVALID_ARG_TYPE',
-//     message: 'The "otherKeyObject" argument must be an instance of KeyObject. Received type number (0)'
-//   });
+    expect(keyObject.equals(keyObject)).toBeTrue();
+    expect(keyObject.equals(createPublicKey(publicPem))).toBeFalse();
+    expect(keyObject.equals(createPrivateKey(privatePem))).toBeFalse();
+  }
 
-//   assert(keyObject.equals(keyObject));
-//   assert(!keyObject.equals(createPublicKey(publicPem)));
-//   assert(!keyObject.equals(createPrivateKey(privatePem)));
-// }
+  {
+    const first = createSecretKey(Buffer.alloc(0));
+    const second = createSecretKey(new ArrayBuffer(0));
+    const third = createSecretKey(Buffer.alloc(1));
+    expect(first.equals(first)).toBeTrue();
+    expect(first.equals(second)).toBeTrue();
+    expect(first.equals(third)).toBeFalse();
+    expect(third.equals(first)).toBeFalse();
+  }
+});
 
-// {
-//   const first = generateKeyPairSync('ed25519');
-//   const second = generateKeyPairSync('ed25519');
-//   const secret = generateKeySync('aes', { length: 128 });
+test("ed25519 equals should work", async () => {
+  let firstKeyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+  let secondKeyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
 
-//   assert(first.publicKey.equals(first.publicKey));
-//   assert(first.publicKey.equals(createPublicKey(
-//     first.publicKey.export({ format: 'pem', type: 'spki' }))));
-//   assert(!first.publicKey.equals(second.publicKey));
-//   assert(!first.publicKey.equals(second.privateKey));
-//   assert(!first.publicKey.equals(secret));
+  const first = {
+    publicKey: KeyObject.from(firstKeyPair.publicKey),
+    privateKey: KeyObject.from(firstKeyPair.privateKey),
+  };
+  const second = {
+    publicKey: KeyObject.from(secondKeyPair.publicKey),
+    privateKey: KeyObject.from(secondKeyPair.privateKey),
+  };
 
-//   assert(first.privateKey.equals(first.privateKey));
-//   assert(first.privateKey.equals(createPrivateKey(
-//     first.privateKey.export({ format: 'pem', type: 'pkcs8' }))));
-//   assert(!first.privateKey.equals(second.privateKey));
-//   assert(!first.privateKey.equals(second.publicKey));
-//   assert(!first.privateKey.equals(secret));
-// }
+  const secret = KeyObject.from(
+    await crypto.subtle.generateKey(
+      {
+        name: "AES-GCM",
+        length: 128,
+      },
+      true,
+      ["encrypt"],
+    ),
+  );
 
-// {
-//   const first = generateKeyPairSync('ed25519');
-//   const second = generateKeyPairSync('ed448');
+  expect(first.publicKey.equals(first.publicKey)).toBeTrue();
 
-//   assert(!first.publicKey.equals(second.publicKey));
-//   assert(!first.publicKey.equals(second.privateKey));
-//   assert(!first.privateKey.equals(second.privateKey));
-//   assert(!first.privateKey.equals(second.publicKey));
-// }
+  expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
 
-// {
-//   const first = createSecretKey(Buffer.alloc(0));
-//   const second = createSecretKey(new ArrayBuffer(0));
-//   const third = createSecretKey(Buffer.alloc(1));
-//   assert(first.equals(first));
-//   assert(first.equals(second));
-//   assert(!first.equals(third));
-//   assert(!third.equals(first));
-// }
+  expect(first.publicKey.equals(second.publicKey)).toBeFalse();
+  expect(first.publicKey.equals(second.privateKey)).toBeFalse();
+  expect(first.publicKey.equals(secret)).toBeFalse();
 
-// {
-//   // This should not cause a crash: https://github.com/nodejs/node/issues/44471
-//   for (const key of ['', 'foo', null, undefined, true, Boolean]) {
-//     assert.throws(() => {
-//       createPublicKey({ key, format: 'jwk' });
-//     }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "key\.key" property must be of type object/ });
-//     assert.throws(() => {
-//       createPrivateKey({ key, format: 'jwk' });
-//     }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "key\.key" property must be of type object/ });
-//   }
-// }
+  expect(first.privateKey.equals(first.privateKey)).toBeTrue();
+  expect(
+    first.privateKey.equals(createPrivateKey(first.privateKey.export({ format: "pem", type: "pkcs8" }))),
+  ).toBeTrue();
+  expect(first.privateKey.equals(second.privateKey)).toBeFalse();
+  expect(first.privateKey.equals(second.publicKey)).toBeFalse();
+  expect(first.privateKey.equals(secret)).toBeFalse();
+});
+
+test("This should not cause a crash: https://github.com/nodejs/node/issues/44471", async () => {
+  for (const key of ["", "foo", null, undefined, true, Boolean]) {
+    expect(() => {
+      createPublicKey({ key, format: "jwk" });
+    }).toThrow();
+    expect(() => {
+      createPrivateKey({ key, format: "jwk" });
+    }).toThrow();
+  }
+});

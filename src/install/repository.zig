@@ -27,10 +27,10 @@ pub const Repository = extern struct {
     resolved: GitSHA = .{},
     package_name: String = .{},
 
-    pub const Hosts = bun.ComptimeStringMap(u32, .{
-        .{ "bitbucket", "bitbucket".len },
-        .{ "github", "github".len },
-        .{ "gitlab", "gitlab".len },
+    pub const Hosts = bun.ComptimeStringMap(void, .{
+        .{ "bitbucket", {} },
+        .{ "github", {} },
+        .{ "gitlab", {} },
     });
 
     pub fn verify(this: *const Repository) void {
@@ -142,11 +142,11 @@ pub const Repository = extern struct {
 
             if (colon_index) |colon| {
                 // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |length| {
+                if (Hosts.has(url[0..colon])) {
                     bun.copy(u8, rest, url[0..colon]);
                     bun.copy(u8, rest[colon..], ".com");
                     rest[colon + ".com".len] = '/';
-                    bun.copy(u8, rest[colon + ".com".len + 1 ..], url[length + 1 ..]);
+                    bun.copy(u8, rest[colon + ".com".len + 1 ..], url[colon + 1 ..]);
                     return final_path_buf[0 .. url.len + "https://".len + ".com".len];
                 }
             }

@@ -70,6 +70,7 @@ pub const Cli = struct {
                         \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
                         \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
                         \\  <cyan>--minify-identifiers<r> Shorten variable names
+                        \\  <cyan>--minify-symbols<r>     Remove symbol descriptors
                         \\  <cyan>--sourcemap<r>          Generate sourcemaps
                         \\                       ("none", "inline", or "external")
                         \\  <cyan>--target<r>             The intended execution environment for the bundle.
@@ -191,6 +192,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-symbols                  Minify symbols") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
@@ -596,6 +598,7 @@ pub const Arguments = struct {
         ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
         ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        ctx.bundler_options.minify_symbols = minify_flag or args.flag("--minify-symbols");
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
@@ -1059,6 +1062,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            minify_symbols: bool = false,
         };
 
         const _ctx = Command.Context{

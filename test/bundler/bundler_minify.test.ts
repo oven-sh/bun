@@ -307,4 +307,28 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+
+  itBundled("minify/SymbolMinification", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(Symbol("foo"));
+        capture(Symbol("bar"));
+        capture(Symbol("baz"));
+        capture(Symbol());
+        capture(Symbol.for("qux"));
+        capture(Symbol.iterator);
+      `,
+    },
+    capture: [
+      "Symbol()",
+      "Symbol()",
+      "Symbol()",
+      "Symbol()",
+      "Symbol.for(\"qux\")", // do not minify?
+      "Symbol.iterator" // do not minify
+    ],
+    minifySyntax: true,
+    minifySymbols: true,
+    target: "bun",
+  });
 });

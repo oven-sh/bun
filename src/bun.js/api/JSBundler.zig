@@ -232,6 +232,7 @@ pub const JSBundler = struct {
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;
+                    this.minify.symbols = value;
                 } else if (hot.isObject()) {
                     if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
@@ -241,6 +242,9 @@ pub const JSBundler = struct {
                     }
                     if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
                         this.minify.identifiers = syntax;
+                    }
+                    if (try hot.getOptional(globalThis, "symbols", bool)) |syntax| {
+                        this.minify.symbols = syntax;
                     }
                 } else {
                     globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
@@ -463,6 +467,7 @@ pub const JSBundler = struct {
             whitespace: bool = false,
             identifiers: bool = false,
             syntax: bool = false,
+            symbols: bool = false,
         };
 
         pub const Serve = struct {

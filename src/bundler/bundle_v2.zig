@@ -748,6 +748,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_syntax = bundler.options.minify_syntax;
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        generator.linker.options.minify_symbols = bundler.options.minify_symbols;
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
 
@@ -1626,6 +1627,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_syntax = config.minify.syntax;
         bundler.options.minify_whitespace = config.minify.whitespace;
         bundler.options.minify_identifiers = config.minify.identifiers;
+        bundler.options.minify_symbols = config.minify.symbols;
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
         bundler.resolver.generation = generation;
@@ -2601,6 +2603,7 @@ pub const ParseTask = struct {
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
+        opts.features.minify_symbols = bundler.options.minify_symbols;
         opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
@@ -3554,6 +3557,7 @@ const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        minify_symbols: bool = false,
         source_maps: options.SourceMapOption = .none,
 
         mode: Mode = Mode.bundle,
@@ -6444,6 +6448,7 @@ const LinkerContext = struct {
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
+                .minify_symbols = c.options.minify_symbols,
                 .const_values = c.graph.const_values,
             };
 
@@ -7309,6 +7314,7 @@ const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
+			.minify_symbols = c.options.minify_symbols,
             .const_values = c.graph.const_values,
         };
 
@@ -8588,6 +8594,7 @@ const LinkerContext = struct {
             .const_values = c.graph.const_values,
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
+            .minify_symbols = c.options.minify_symbols,
             .module_type = c.options.output_format,
 
             .allocator = allocator,

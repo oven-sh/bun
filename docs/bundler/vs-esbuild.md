@@ -333,6 +333,11 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 ---
 
+- `--minify-symbols`
+- `--minify-symbols`
+
+---
+
 - `--out-extension`
 - n/a
 - Not supported
@@ -706,7 +711,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
     minify: {
       identifiers: true,
       syntax: true,
-      whitespace: true
+      whitespace: true,
+      symbols: true
     }
   })
   ```
@@ -727,6 +733,12 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `minifyWhitespace`
 - `minify.whitespace`
+- See `minify`
+
+---
+
+- `minifySymbols`
+- `minify.symbols`
 - See `minify`
 
 ---

@@ -174,6 +174,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
       minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
       minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
+      minifySymbols: config.minify === true || (config.minify as MinifyObj)?.symbols,
       outbase: config.root,
       platform: config.target === "bun" ? "node" : config.target,
     },

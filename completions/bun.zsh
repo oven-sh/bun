@@ -434,6 +434,7 @@ _bun_run_completion() {
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-whitespace[Minify Whitespace (experimental)]' \
         '--minify-identifiers[Minify identifiers]' \
+        '--minify-symbols[Removes symbol descriptors]' \
         '--no-macros[Disable macros from being executed in the bundler, transpiler and runtime]' \
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--inspect[Activate Bun'"'"'s Debugger]:inspect' \
@@ -495,6 +496,7 @@ _bun_build_completion() {
         '--minify-whitespace[Remove unneeded whitespace]' \
         '--minify-syntax[Transform code to use less syntax]' \
         '--minify-identifiers[Shorten variable names]' \
+        '--minify-symbols[Remove symbol descriptors]' \
         '--sourcemap[Generate sourcemaps]: :->sourcemap' \
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
@@ -599,6 +601,7 @@ _bun_test_completion() {
         '--minify[Minify (experimental)]' \
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-identifiers[Minify identifiers]' \
+        '--minify-symbols[Remove symbol descriptors]' \
         '--no-macros[Disable macros from being executed in the bundler, transpiler and runtime]' \
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--inspect[Activate Bun'"'"'s Debugger]:inspect' \

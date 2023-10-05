@@ -654,12 +654,13 @@ await Bun.build({
     whitespace: true,
     identifiers: true,
     syntax: true,
+    symbols: true
   },
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+$ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax --minify-symbols
 ```
 
 {% /codetabs %}
@@ -1267,6 +1268,7 @@ interface BuildOptions {
         identifiers?: boolean;
         whitespace?: boolean;
         syntax?: boolean;
+        symbols?: boolean;
       };
 }
 

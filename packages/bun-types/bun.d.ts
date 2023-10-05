@@ -1086,6 +1086,7 @@ declare module "bun" {
           whitespace?: boolean;
           syntax?: boolean;
           identifiers?: boolean;
+          symbols?: boolean;
         };
     // treeshaking?: boolean;
 

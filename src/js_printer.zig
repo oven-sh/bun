@@ -501,6 +501,7 @@ pub const Options = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    minify_symbols: bool = false,
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
 
@@ -1679,6 +1680,18 @@ fn NewPrinter(
             }
         }
 
+        pub fn isSymbolIdentifier(p: *Printer, value: Expr) bool {
+            switch (value.data) {
+                .e_identifier => |ident| {
+                    const symbol = p.symbols().get(p.symbols().follow(ident.ref)) orelse return false;
+                    return strings.eqlComptime(symbol.original_name, "Symbol");
+                },
+                else => {
+                    return false;
+                },
+            }
+        }
+
         inline fn symbols(p: *Printer) js_ast.Symbol.Map {
             return p.renamer.symbols();
         }
@@ -2174,14 +2187,18 @@ fn NewPrinter(
                         p.print("?.");
                     }
                     p.print("(");
-                    const args = e.args.slice();
 
-                    if (args.len > 0) {
-                        p.printExpr(args[0], .comma, ExprFlag.None());
-                        for (args[1..]) |arg| {
-                            p.print(",");
-                            p.printSpace();
-                            p.printExpr(arg, .comma, ExprFlag.None());
+                    std.debug.print("minify_symbols: {?}\n", .{ p.options.minify_symbols });
+
+                    if (!p.options.minify_symbols or !p.isSymbolIdentifier(e.target)) {
+                        const args = e.args.slice();
+                        if (args.len > 0) {
+                            p.printExpr(args[0], .comma, ExprFlag.None());
+                            for (args[1..]) |arg| {
+                                p.print(",");
+                                p.printSpace();
+                                p.printExpr(arg, .comma, ExprFlag.None());
+                            }
                         }
                     }
                     if (e.close_paren_loc.start > expr.loc.start) {

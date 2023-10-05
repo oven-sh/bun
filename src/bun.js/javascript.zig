@@ -1297,6 +1297,7 @@ pub const VirtualMachine = struct {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;
+            this.bundler.options.minify_symbols = false;
             this.bundler.options.debugger = true;
         }
     }

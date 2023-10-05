@@ -88,8 +88,10 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.minify_symbols = ctx.bundler_options.minify_symbols;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_symbols = ctx.bundler_options.minify_symbols;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
@@ -180,8 +182,10 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.minify_symbols = ctx.bundler_options.minify_symbols;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.resolver.opts.minify_symbols = ctx.bundler_options.minify_symbols;
 
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 

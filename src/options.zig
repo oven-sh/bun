@@ -1443,6 +1443,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    minify_symbols: bool = false,
     dead_code_elimination: bool = true,
 
     code_coverage: bool = false,

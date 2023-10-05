@@ -85,6 +85,9 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
 
+        this_bundler.options.minify_symbols = ctx.bundler_options.minify_symbols;
+        this_bundler.resolver.opts.minify_symbols = ctx.bundler_options.minify_symbols;
+
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --splitting", .{});
@@ -328,7 +331,7 @@ pub const BuildCommand = struct {
                         printSummary(
                             bundled_end,
                             minify_duration,
-                            this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax,
+                            this_bundler.options.minify_identifiers or this_bundler.options.minify_whitespace or this_bundler.options.minify_syntax or this_bundler.options.minify_symbols,
                             input_code_length,
                             reachable_file_count,
                             output_files,

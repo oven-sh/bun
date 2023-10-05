@@ -358,11 +358,14 @@ pub fn helpFull(
         if (param.names.short == null and param.names.long == null)
             continue;
 
-        var cs = io.countingWriter(stream);
-        try stream.print("\t", .{});
-        try printParam(cs.writer(), Id, param, Error, context, valueText);
-        try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
-        try stream.print("\t{s}\n", .{try helpText(context, param)});
+        const help_text = try helpText(context, param);
+        if (help_text.len > 0) {
+            var cs = io.countingWriter(stream);
+            try stream.print("\t", .{});
+            try printParam(cs.writer(), Id, param, Error, context, valueText);
+            try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
+            try stream.print("\t{s}\n", .{try helpText(context, param)});
+        }
     }
 }
 

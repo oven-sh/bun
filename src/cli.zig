@@ -166,7 +166,8 @@ pub const Arguments = struct {
     pub const ParamType = clap.Param(clap.Help);
 
     const shared_public_params = [_]ParamType{
-        clap.parseParam("-h, --help") catch unreachable,
+        clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
+        clap.parseParam("--all") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Config file to load Bun from (e.g. -c bunfig.toml") catch unreachable,
@@ -534,7 +535,7 @@ pub const Arguments = struct {
         opts.no_summary = args.flag("--no-summary");
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
-            std.debug.print("autocommand\n", .{});
+            std.debug.print("auto/run/test\n", .{});
             const preloads = args.options("--preload");
             if (ctx.preloads.len > 0 and preloads.len > 0) {
                 var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
@@ -583,11 +584,12 @@ pub const Arguments = struct {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
+        const print_all_help = args.flag("--all");
         const print_help = args.flag("--help");
 
         if (print_help) {
             std.debug.print("printing help\n", .{});
-            cmd.print_helptext();
+            cmd.print_helptext(print_all_help);
             // clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
             // Output.prettyln("\n-------\n\n", .{});
             Output.flush();
@@ -1822,22 +1824,12 @@ pub const Command = struct {
             };
         }
 
-        pub fn print_helptext(cmd: Tag) void {
+        const shared_flags =
+            \\ asdf
+        ;
+        pub fn print_helptext(cmd: Tag, all: bool) void {
             return switch (cmd) {
                 Command.Tag.BuildCommand => {
-                    //             clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
-                    // clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-                    // clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
-                    // clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
-                    // clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
-                    // clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
-                    // clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
-                    // clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
-                    // clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
-                    // clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
-                    // clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
-                    // clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
-                    // clap.parseParam("--compile                       Generate a standalone Bun executable containing your bundled code") catch unreachable,
                     const build_helptext =
                         \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
                         \\
@@ -1859,6 +1851,7 @@ pub const Command = struct {
                         \\  <cyan>--minify-syntax<r>       Transform code to use less syntax
                         \\  <cyan>--minify-identifiers<r>  Shorten variable names
                         \\
+                        \\  {s}
                         \\<b>Examples:<r>
                         \\  <d>Frontend web apps:<r>
                         \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
@@ -1873,7 +1866,8 @@ pub const Command = struct {
                         \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
                         \\
                     ;
-                    Output.pretty(build_helptext, .{});
+
+                    Output.pretty(build_helptext, .{if (all) "<cyan>if</r>" else "<green>else</r>"});
                     Output.flush();
                 },
                 Command.Tag.TestCommand => {
@@ -1889,7 +1883,7 @@ pub const Command = struct {
                         \\  <cyan>    --todo<r>                      	Include tests that are marked with "test.todo()"
                         \\  <cyan>    --coverage<r>                  	Generate a coverage profile
                         \\  <cyan>    --bail [N]<r>            	        Exit the test suite after N failures. Default 1.
-                        \\  <cyan>-t, --test-name-pattern [patterns...]<r>   	Run only tests with a name that matches the given regex.
+                        \\  <cyan>-t, --test-name-pattern [...]<r>   	Run only tests with a name that matches the given regex.
                         \\
                         \\<b>Examples:<r>
                         \\  <d>Run all test files <r>
@@ -1906,6 +1900,91 @@ pub const Command = struct {
                     Output.pretty(test_helptext, .{});
                     Output.flush();
                 },
+                Command.Tag.AddCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.AutoCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.BuildCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.BunxCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.CreateCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.DiscordCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.GetCompletionsCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.HelpCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.InitCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.InstallCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.InstallCompletionsCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.LinkCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.PackageManagerCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.RemoveCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.RunCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.TestCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.UnlinkCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.UpdateCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.UpgradeCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.ReplCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                Command.Tag.ReservedCommand => {
+                    Output.pretty("asdf", .{});
+                    Output.flush();
+                },
+                // Command.Tag
                 else => {
                     HelpCommand.printWithReason(.explicit);
                 },

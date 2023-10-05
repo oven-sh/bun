@@ -27,6 +27,12 @@ pub const Repository = extern struct {
     resolved: GitSHA = .{},
     package_name: String = .{},
 
+    pub const Hosts = bun.ComptimeStringMap(u32, .{
+        .{ "bitbucket", "bitbucket".len },
+        .{ "github", "github".len },
+        .{ "gitlab", "gitlab".len },
+    });
+
     pub fn verify(this: *const Repository) void {
         this.owner.assertDefined();
         this.repo.assertDefined();
@@ -132,23 +138,21 @@ pub const Repository = extern struct {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
 
-            // make sure known hosts have `.com` or `.org`
-            if (strings.eqlComptime(url[0.."bitbucket:".len], "bitbucket:")) {
-                bun.copy(u8, rest, "bitbucket.org/");
-                bun.copy(u8, rest["bitbucket.org/".len..], url["bitbucket:".len..]);
-                return final_path_buf[0 .. url.len + "https://".len + ".org".len];
-            } else if (strings.eqlComptime(url[0.."github:".len], "github:")) {
-                bun.copy(u8, rest, "github.com/");
-                bun.copy(u8, rest["github.com/".len..], url["github:".len..]);
-                return final_path_buf[0 .. url.len + "https://".len + ".com".len];
-            } else if (strings.eqlComptime(url[0.."gitlab:".len], "gitlab:")) {
-                bun.copy(u8, rest, "gitlab.com/");
-                bun.copy(u8, rest["gitlab.com/".len..], url["gitlab:".len..]);
-                return final_path_buf[0 .. url.len + "https://".len + ".com".len];
+            const colon_index = strings.indexOfChar(url, ':');
+
+            if (colon_index) |colon| {
+                // make sure known hosts have `.com` or `.org`
+                if (Hosts.get(url[0..colon])) |length| {
+                    bun.copy(u8, rest, url[0..colon]);
+                    bun.copy(u8, rest[colon..], ".com");
+                    rest[colon + ".com".len] = '/';
+                    bun.copy(u8, rest[colon + ".com".len + 1 ..], url[length + 1 ..]);
+                    return final_path_buf[0 .. url.len + "https://".len + ".com".len];
+                }
             }
 
             bun.copy(u8, rest, url);
-            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
+            if (colon_index) |colon| rest[colon] = '/';
             return final_path_buf[0 .. url.len + "https://".len];
         }
 

@@ -672,6 +672,45 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
+  [2048, 4096].forEach(suffix => {
+    test(`RSA-${suffix} should work`, async () => {
+      {
+        const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", `rsa_public_${suffix}.pem`), "ascii");
+        const privatePem = fs.readFileSync(
+          path.join(import.meta.dir, "fixtures", `rsa_private_${suffix}.pem`),
+          "ascii",
+        );
+        const publicKey = createPublicKey(publicPem);
+        const expectedKeyDetails = {
+          modulusLength: suffix,
+          publicExponent: 65537n,
+        };
+        expect(publicKey.type).toBe("public");
+        expect(publicKey.asymmetricKeyType).toBe("rsa");
+        expect(publicKey.asymmetricKeyDetails).toEqual(expectedKeyDetails);
+
+        const privateKey = createPrivateKey(privatePem);
+        expect(privateKey.type).toBe("private");
+        expect(privateKey.asymmetricKeyType).toBe("rsa");
+        expect(privateKey.asymmetricKeyDetails).toEqual(expectedKeyDetails);
+
+        for (const key of [privatePem, privateKey]) {
+          // Any algorithm should work.
+          for (const algo of ["sha1", "sha256"]) {
+            // Any salt length should work.
+            for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
+              const signature = createSign(algo).update("foo").sign({ key, saltLength });
+              for (const pkey of [key, publicKey, publicPem]) {
+                const okay = createVerify(algo).update("foo").verify({ key: pkey, saltLength }, signature);
+                expect(okay).toBeTrue();
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
   test("Exporting an encrypted private key requires a cipher", async () => {
     // Exporting an encrypted private key requires a cipher
     const privateKey = createPrivateKey(privatePem);

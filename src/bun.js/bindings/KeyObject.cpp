@@ -1952,6 +1952,41 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
     }
 }
 
+static char *bignum_to_string(const BIGNUM *bn) {
+  char *tmp, *ret;
+  size_t len;
+
+  // Display large numbers in hex and small numbers in decimal. Converting to
+  // decimal takes quadratic time and is no more useful than hex for large
+  // numbers.
+  if (BN_num_bits(bn) < 32) {
+    return BN_bn2dec(bn);
+  }
+
+  tmp = BN_bn2hex(bn);
+  if (tmp == NULL) {
+    return NULL;
+  }
+
+  len = strlen(tmp) + 3;
+  ret = (char*)OPENSSL_malloc(len);
+  if (ret == NULL) {
+    OPENSSL_free(tmp);
+    return NULL;
+  }
+
+  // Prepend "0x", but place it after the "-" if negative.
+  if (tmp[0] == '-') {
+    OPENSSL_strlcpy(ret, "-0x", len);
+    OPENSSL_strlcat(ret, tmp + 1, len);
+  } else {
+    OPENSSL_strlcpy(ret, "0x", len);
+    OPENSSL_strlcat(ret, tmp, len);
+  }
+  OPENSSL_free(tmp);
+  return ret;
+}
+
 JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
 
@@ -1980,13 +2015,9 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
             auto modulus_length = BN_num_bits(n);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "modulusLength"_s)), jsNumber(modulus_length), 0);
 
-            auto size = BN_num_bytes(e);
-            auto* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(lexicalGlobalObject, size)));
-            if (size > 0) {
-                BN_bn2binpad(e, (uint8_t*)buffer->vector(), size);
-            }
-
-            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicExponent"_s)), buffer, 0);
+            auto str = bignum_to_string(e);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicExponent"_s)), JSC::JSBigInt::stringToBigInt(lexicalGlobalObject, StringView::fromLatin1(str)), 0);
+            OPENSSL_free(str);
 
             if (id == CryptoAlgorithmIdentifier::RSA_PSS) {
                 // Due to the way ASN.1 encoding works, default values are omitted when

@@ -3,7 +3,6 @@ import { test, expect, describe } from "bun:test";
 
 function testHmac(algo, key, data, expected) {
   if (!Array.isArray(data)) data = [data];
-
   // If the key is a Buffer, test Hmac with a key object as well.
   const keyWrappers = [key => key, ...(typeof key === "string" ? [] : [createSecretKey])];
   const wrapperName = ["default", "KeyObject"];
@@ -371,7 +370,7 @@ describe("crypto.Hmac", () => {
 
     for (const { key, data, hmac } of rfc2202_sha1) {
       describe(`rfc 2202 sha1 case ${hmac}`, async () => {
-        testHmac("md5", key, data, hmac);
+        testHmac("sha1", key, data, hmac);
       });
     }
   });
@@ -385,15 +384,16 @@ describe("crypto.Hmac", () => {
       const expected =
         "\u0010\u0041\u0052\u00c5\u00bf\u00dc\u00a0\u007b\u00c6\u0033" +
         "\u00ee\u00bd\u0046\u0019\u009f\u0002\u0055\u00c9\u00f4\u009d";
-      {
-        const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
-        expect(h.digest("buffer")).toEqual(Buffer.from(""));
-      }
+
       {
         const h = createHmac("sha1", "key").update("data");
         expect(h.digest("latin1")).toEqual(expected);
         expect(h.digest("latin1")).toEqual("");
+      }
+      {
+        const h = createHmac("sha1", "key").update("data");
+        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
+        expect(h.digest("buffer")).toEqual(Buffer.from(""));
       }
     }
     {
@@ -402,13 +402,13 @@ describe("crypto.Hmac", () => {
         "\u00ae\u0072\u0013\u0071\u001e\u00c6\u0007\u0060\u0084\u003f";
       {
         const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
-        expect(h.digest("buffer")).toEqual(Buffer.from(""));
+        expect(h.digest("latin1")).toEqual(expected);
+        expect(h.digest("latin1")).toEqual("");
       }
       {
         const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("latin1")).toEqual(expected);
-        expect(h.digest("latin1")).toEqual("");
+        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
+        expect(h.digest("buffer")).toEqual(Buffer.from(""));
       }
     }
   });

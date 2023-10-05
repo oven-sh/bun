@@ -1296,6 +1296,12 @@ var require_legacy = __commonJS({
       ZEROS = Buffer2.alloc(128),
       blocksize = 64;
     function Hmac(alg, key) {
+      if (key instanceof KeyObject) {
+        key = key.export();
+      } else if (key instanceof CryptoKey) {
+        key = KeyObject.from(key).export();
+      }
+
       Base.call(this, "digest"),
         typeof key == "string" && (key = Buffer2.from(key)),
         (this._alg = alg),
@@ -1381,6 +1387,11 @@ var require_browser3 = __commonJS({
       return hash.update(this._opad).update(h).digest();
     };
     module.exports = function (alg, key) {
+      if (key instanceof KeyObject) {
+        key = key.export();
+      } else if (key instanceof CryptoKey) {
+        key = KeyObject.from(key).export();
+      }
       return (
         (alg = alg.toLowerCase()),
         alg === "rmd160" || alg === "ripemd160"
@@ -1447,23 +1458,28 @@ var require_algorithms = __commonJS({
         hash: "sha1",
         id: "",
       },
+      sha1: {
+        sign: "ecdsa/rsa",
+        hash: "sha1",
+        id: "",
+      },
       sha256: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha256",
         id: "",
       },
       sha224: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha224",
         id: "",
       },
       sha384: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha384",
         id: "",
       },
       sha512: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha512",
         id: "",
       },
@@ -5892,6 +5908,11 @@ var require_utils3 = __commonJS({
     }
     utils.cachedProperty = cachedProperty;
     function parseBytes(bytes) {
+      if (bytes instanceof KeyObject) {
+        bytes = bytes.export();
+      } else if (bytes instanceof CryptoKey) {
+        bytes = KeyObject.from(bytes).export();
+      }
       return typeof bytes == "string" ? utils.toArray(bytes, "hex") : bytes;
     }
     utils.parseBytes = parseBytes;
@@ -7926,6 +7947,12 @@ var require_hmac = __commonJS({
     var utils = require_utils4(),
       assert = require_minimalistic_assert();
     function Hmac(hash, key, enc) {
+      if (key instanceof KeyObject) {
+        key = key.export();
+      } else if (key instanceof CryptoKey) {
+        key = KeyObject.from(key).export();
+      }
+
       if (!(this instanceof Hmac)) return new Hmac(hash, key, enc);
       (this.Hash = hash),
         (this.blockSize = hash.blockSize / 8),

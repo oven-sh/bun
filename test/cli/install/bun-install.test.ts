@@ -2607,41 +2607,48 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
 });
 
 it("should handle bitbucket git dependencies", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        "public-install-test1": "bitbucket:dylan-conway/public-install-test",
-        "public-install-test2": "bitbucket.org:dylan-conway/public-install-test",
-        "public-install-test3": "bitbucket.com:dylan-conway/public-install-test",
-      },
-    }),
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+  const deps = [
+    "bitbucket:dylan-conway/public-install-test",
+    "bitbucket.org:dylan-conway/public-install-test",
+    "bitbucket.com:dylan-conway/public-install-test",
+  ];
+  for (const dep of deps) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "public-install-test": dep,
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    ` + public-install-test1@git+ssh://bitbucket:dylan-conway/public-install-test#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
-    ` + public-install-test2@git+ssh://bitbucket.org:dylan-conway/public-install-test#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
-    ` + public-install-test3@git+ssh://bitbucket.com:dylan-conway/public-install-test#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
-    "",
-    " 3 packages installed",
-  ]);
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      ` + public-install-test@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      "",
+      " 1 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    await access(join(package_dir, "bun.lockb"));
+    dummyAfterEach();
+    dummyBeforeEach();
+  }
 });
 
 it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {

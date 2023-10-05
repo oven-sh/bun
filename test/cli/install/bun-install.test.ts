@@ -2732,7 +2732,7 @@ it("should handle bitbucket git dependencies", async () => {
     dummyAfterEach();
     dummyBeforeEach();
   }
-}, 10000);
+}, 20000);
 
 it("should handle gitlab git dependencies", async () => {
   const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];

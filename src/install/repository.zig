@@ -247,8 +247,6 @@ pub const Repository = extern struct {
         var package_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |not_found| brk: {
             if (not_found != error.FileNotFound) return not_found;
 
-            std.debug.print("checkout: attempt clone: {s}\n", .{url});
-
             _ = exec(allocator, env, cache_dir, &[_]string{
                 "git",
                 "clone",

@@ -4536,6 +4536,8 @@ pub const PackageManager = struct {
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
 
+        use_github_api: bool = true,
+
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
         }
@@ -4665,6 +4667,9 @@ pub const PackageManager = struct {
             if (bun_install_) |bun_install| {
                 if (bun_install.default_registry) |registry| {
                     base = registry;
+                }
+                if (bun_install.use_github_api) |use_github_api| {
+                    this.use_github_api = use_github_api;
                 }
             }
             if (base.url.len == 0) base.url = Npm.Registry.default_url;

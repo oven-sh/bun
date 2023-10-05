@@ -1505,13 +1505,23 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                         },
                     );
                 } else {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
+                    if (failed_dep.version.tag == .github) {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\nIf this is a private repository set install.github.api to false in bunfig.toml\n\n",
+                            .{
+                                failed_dep.name.slice(string_buf),
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    } else {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
+                            .{
+                                failed_dep.name.slice(string_buf),
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    }
                 }
             }
             // track this so we can log each failure instead of just the first

@@ -340,6 +340,14 @@ pub const Bunfig = struct {
                         install.default_registry = try this.parseRegistry(registry);
                     }
 
+                    if (_bun.get("github")) |github| {
+                        if (github.get("api")) |api| {
+                            if (api.asBool()) |use_api| {
+                                install.use_github_api = use_api;
+                            }
+                        }
+                    }
+
                     if (_bun.get("scopes")) |scopes| {
                         var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
                         try this.expect(scopes, .e_object);

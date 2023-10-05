@@ -2685,7 +2685,7 @@ it("should handle bitbucket git dependencies", async () => {
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      ` + public-install-test@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      ` + public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
       " 1 packages installed",
     ]);
@@ -2722,7 +2722,7 @@ it("should handle bitbucket git dependencies", async () => {
     const out = await new Response(stdout).text();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` installed publicinstalltest@git+ssh://${dep}#56ee8a7e167c6ab10b672203f2ab6fbcb752788d`,
+      ` installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
       "",
       "",
       " 1 packages installed",

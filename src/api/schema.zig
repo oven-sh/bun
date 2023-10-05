@@ -2882,6 +2882,9 @@ pub const Api = struct {
         /// exact
         exact: ?bool = null,
 
+        /// use_github_api
+        use_github_api: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2950,6 +2953,9 @@ pub const Api = struct {
                     },
                     20 => {
                         this.exact = try reader.readValue(bool);
+                    },
+                    21 => {
+                        this.use_github_api = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3039,6 +3045,10 @@ pub const Api = struct {
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(exact)));
+            }
+            if (this.use_github_api) |use_github_api| {
+                try writer.writeFieldID(21);
+                try writer.writeInt(@as(u8, @intFromBool(use_github_api)));
             }
             try writer.endMessage();
         }

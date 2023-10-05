@@ -213,6 +213,10 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
     };
 
+    if (Environment.allow_assert) {
+        this.verifyData() catch @panic("lockfile data is corrupt");
+    }
+
     return LoadFromDiskResult{ .ok = this };
 }
 
@@ -1464,21 +1468,19 @@ pub const Printer = struct {
 };
 
 pub fn verifyData(this: *Lockfile) !void {
-    std.debug.assert(this.format == Lockfile.FormatVersion.current);
-    {
-        var i: usize = 0;
-        while (i < this.packages.len) : (i += 1) {
-            const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
-            std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
-            const dependencies = package.dependencies.get(this.buffers.dependencies.items);
-            for (dependencies) |dependency| {
-                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
-            }
+    std.debug.assert(this.format == Lockfile.FormatVersion.current or this.format == Lockfile.FormatVersion.migrated);
+    var i: usize = 0;
+    while (i < this.packages.len) : (i += 1) {
+        const package: Lockfile.Package = this.packages.get(i);
+        std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+        std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+        std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+        const dependencies = package.dependencies.get(this.buffers.dependencies.items);
+        for (dependencies) |dependency| {
+            std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+            std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
 }

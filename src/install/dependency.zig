@@ -785,71 +785,10 @@ pub fn parseWithTag(
             };
         },
         .github => {
-            var from_url = false;
-            var input = dependency;
-            if (strings.hasPrefixComptime(input, "github:")) {
-                input = input["github:".len..];
-            } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
-                input = input["git://github.com/".len..];
-                from_url = true;
-            } else {
-                if (strings.hasPrefixComptime(input, "git+")) {
-                    input = input["git+".len..];
-                }
-                if (strings.hasPrefixComptime(input, "http")) {
-                    var url = input["http".len..];
-                    if (url.len > 2) {
-                        switch (url[0]) {
-                            ':' => {
-                                if (strings.hasPrefixComptime(url, "://")) {
-                                    url = url["://".len..];
-                                }
-                            },
-                            's' => {
-                                if (strings.hasPrefixComptime(url, "s://")) {
-                                    url = url["s://".len..];
-                                }
-                            },
-                            else => {},
-                        }
-                        if (strings.hasPrefixComptime(url, "github.com/")) {
-                            input = url["github.com/".len..];
-                            from_url = true;
-                        }
-                    }
-                }
-            }
-
-            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
-
-            var hash_index: usize = 0;
-            var slash_index: usize = 0;
-            for (input, 0..) |c, i| {
-                switch (c) {
-                    '/' => {
-                        slash_index = i;
-                    },
-                    '#' => {
-                        hash_index = i;
-                        break;
-                    },
-                    else => {},
-                }
-            }
-
-            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
-            if (from_url and strings.endsWithComptime(repo, ".git")) {
-                repo = repo[0 .. repo.len - ".git".len];
-            }
-
             return .{
                 .literal = sliced.value(),
                 .value = .{
-                    .github = .{
-                        .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(repo).value(),
-                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
-                    },
+                    .github = parseGithubURLToRepository(sliced),
                 },
                 .tag = .github,
             };
@@ -927,6 +866,72 @@ pub fn parseWithTag(
             };
         },
     }
+}
+
+/// Parses a github URL into a repository, assumes the input is a github URL
+pub fn parseGithubURLToRepository(sliced: *const SlicedString) Repository {
+    var from_url = false;
+    var input = sliced.slice;
+    if (strings.hasPrefixComptime(input, "github:")) {
+        input = input["github:".len..];
+    } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
+        input = input["git://github.com/".len..];
+        from_url = true;
+    } else {
+        if (strings.hasPrefixComptime(input, "git+")) {
+            input = input["git+".len..];
+        }
+        if (strings.hasPrefixComptime(input, "http")) {
+            var url = input["http".len..];
+            if (url.len > 2) {
+                switch (url[0]) {
+                    ':' => {
+                        if (strings.hasPrefixComptime(url, "://")) {
+                            url = url["://".len..];
+                        }
+                    },
+                    's' => {
+                        if (strings.hasPrefixComptime(url, "s://")) {
+                            url = url["s://".len..];
+                        }
+                    },
+                    else => {},
+                }
+                if (strings.hasPrefixComptime(url, "github.com/")) {
+                    input = url["github.com/".len..];
+                    from_url = true;
+                }
+            }
+        }
+    }
+
+    if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
+
+    var hash_index: usize = 0;
+    var slash_index: usize = 0;
+    for (input, 0..) |c, i| {
+        switch (c) {
+            '/' => {
+                slash_index = i;
+            },
+            '#' => {
+                hash_index = i;
+                break;
+            },
+            else => {},
+        }
+    }
+
+    var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
+    if (from_url and strings.endsWithComptime(repo, ".git")) {
+        repo = repo[0 .. repo.len - ".git".len];
+    }
+
+    return Repository{
+        .owner = sliced.sub(input[0..slash_index]).value(),
+        .repo = sliced.sub(repo).value(),
+        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+    };
 }
 
 pub const Behavior = packed struct(u8) {

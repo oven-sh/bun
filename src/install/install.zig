@@ -6777,6 +6777,7 @@ pub const PackageManager = struct {
             data: ExtractData,
             comptime log_level: Options.LogLevel,
         ) void {
+            Output.debug("-! {} {any}", .{ dependency_id, this.lockfile.buffers.resolutions.items });
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = &this.resolutions[package_id];

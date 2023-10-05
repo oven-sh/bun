@@ -3172,6 +3172,54 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "@vercel/turbopack-node": "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2"
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
+    " + @vercel/turbopack-node@https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@vercel", "loader-runner"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
+    "package.json",
+    "src",
+    "tsconfig.json",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "when", "package.json")).json();
+  expect(package_json.name).toBe("when");
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle GitHub URL with existing lockfile", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

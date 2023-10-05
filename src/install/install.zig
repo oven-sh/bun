@@ -1905,7 +1905,12 @@ pub const PackageManager = struct {
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
-    pub fn laterVersionInCache(this: *PackageManager, name: []const u8, name_hash: PackageNameHash, resolution: Resolution) ?Semver.Version {
+    pub fn formatLaterVersionInCache(
+        this: *PackageManager,
+        name: []const u8,
+        name_hash: PackageNameHash,
+        resolution: Resolution,
+    ) ?Semver.Version.Formatter {
         switch (resolution.tag) {
             Resolution.Tag.npm => {
                 if (resolution.value.npm.version.tag.hasPre())
@@ -1927,8 +1932,12 @@ pub const PackageManager = struct {
                 };
 
                 if (manifest.findByDistTag("latest")) |latest_version| {
-                    if (latest_version.version.order(resolution.value.npm.version, this.lockfile.buffers.string_bytes.items, this.lockfile.buffers.string_bytes.items) != .gt) return null;
-                    return latest_version.version;
+                    if (latest_version.version.order(
+                        resolution.value.npm.version,
+                        manifest.string_buf,
+                        this.lockfile.buffers.string_bytes.items,
+                    ) != .gt) return null;
+                    return latest_version.version.fmt(manifest.string_buf);
                 }
 
                 return null;

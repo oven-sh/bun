@@ -1130,7 +1130,7 @@ pub const Printer = struct {
 
                     if (!installed.isSet(package_id)) continue;
 
-                    if (PackageManager.instance.laterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version| {
+                    if (PackageManager.instance.formatLaterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
                         const fmt = comptime brk: {
                             if (enable_ansi_colors) {
                                 break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
@@ -1143,7 +1143,7 @@ pub const Printer = struct {
                             .{
                                 package_name,
                                 resolved[package_id].fmt(string_buf),
-                                later_version.fmt(string_buf),
+                                later_version_fmt,
                             },
                         );
                     } else {

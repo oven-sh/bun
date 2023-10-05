@@ -113,7 +113,7 @@ int PasswordCallback(char* buf, int size, int rwflag, void* u)
         if (buflen < len)
             return -1;
         memcpy(buf, result->passphrase, buflen);
-        return buflen;
+        return len;
     }
 
     return -1;

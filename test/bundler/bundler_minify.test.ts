@@ -324,8 +324,8 @@ describe("bundler", () => {
       "Symbol()",
       "Symbol()",
       "Symbol()",
-      "Symbol.for(\"qux\")", // do not minify?
-      "Symbol.iterator" // do not minify
+      'Symbol.for("qux")', // do not minify?
+      "Symbol.iterator", // do not minify
     ],
     minifySyntax: true,
     minifySymbols: true,

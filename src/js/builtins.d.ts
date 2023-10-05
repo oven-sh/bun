@@ -438,7 +438,7 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: CommonJSModuleRecord,
+  parent: CommonJSModuleRecord | undefined,
 ): CommonJSModuleRecord;
 
 declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;

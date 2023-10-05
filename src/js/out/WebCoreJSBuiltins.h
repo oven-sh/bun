@@ -1506,6 +1506,14 @@ extern const JSC::ConstructAbility s_moduleMainCodeConstructAbility;
 extern const JSC::ConstructorKind s_moduleMainCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility;
 
+// moduleLoad
+#define WEBCORE_BUILTIN_MODULE_MODULELOAD 1
+extern const char* const s_moduleModuleLoadCode;
+extern const int s_moduleModuleLoadCodeLength;
+extern const JSC::ConstructAbility s_moduleModuleLoadCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleModuleLoadCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleModuleLoadCodeImplementationVisibility;
+
 // overridableRequire
 #define WEBCORE_BUILTIN_MODULE_OVERRIDABLEREQUIRE 1
 extern const char* const s_moduleOverridableRequireCode;
@@ -1540,6 +1548,7 @@ extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementat
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_DATA(macro) \
     macro(main, moduleMain, 0) \
+    macro(moduleLoad, moduleModuleLoad, 3) \
     macro(overridableRequire, moduleOverridableRequire, 1) \
     macro(require, moduleRequire, 1) \
     macro(requireNativeModule, moduleRequireNativeModule, 1) \
@@ -1547,6 +1556,7 @@ extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementat
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_CODE(macro) \
     macro(moduleMainCode, main, "get main"_s, s_moduleMainCodeLength) \
+    macro(moduleModuleLoadCode, moduleLoad, ASCIILiteral(), s_moduleModuleLoadCodeLength) \
     macro(moduleOverridableRequireCode, overridableRequire, ASCIILiteral(), s_moduleOverridableRequireCodeLength) \
     macro(moduleRequireCode, require, ASCIILiteral(), s_moduleRequireCodeLength) \
     macro(moduleRequireNativeModuleCode, requireNativeModule, ASCIILiteral(), s_moduleRequireNativeModuleCodeLength) \
@@ -1554,6 +1564,7 @@ extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementat
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(macro) \
     macro(main) \
+    macro(moduleLoad) \
     macro(overridableRequire) \
     macro(require) \
     macro(requireNativeModule) \

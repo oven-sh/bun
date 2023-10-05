@@ -215,7 +215,7 @@ interface BunLazyModules {
 declare var $exports: any;
 
 interface CommonJSModuleRecord {
-  $require(id: string, mod: any): any;
+  $require(this: CommonJSModuleRecord, id: string, parent: string | undefined): any;
   children: CommonJSModuleRecord[];
   exports: any;
   id: string;

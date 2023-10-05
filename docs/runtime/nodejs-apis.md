@@ -50,7 +50,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `require('node:events').on`.
+🟡 Missing `events.on`.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -74,7 +74,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟢 Fully implemented.
+🟡 Missing `module.register`, `module.syncBuiltinESMExports`, `module.findSourceMap`, `module.SourceMap`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 

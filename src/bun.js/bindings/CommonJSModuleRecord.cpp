@@ -810,15 +810,17 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
+// This is .$require on a CommonJSModuleRecord. It is used by the CJS module loader internals in `Module.ts`
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    ASSERT(callframe->argumentCount() == 2);
+
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
-    if (!thisObject)
-        return throwVMTypeError(globalObject, throwScope);
+    RELEASE_ASSERT(thisObject);
 
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
@@ -826,19 +828,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     // Special-case for "process" to just return the process object directly.
     if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
+        thisObject->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
         return JSValue::encode(globalObject->processObject());
     }
 
-    WTF::String referrer = thisObject->id().toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue referrerModule = callframe->argument(1);
+    WTF::String referrer = referrerModule.isString() ? referrerModule.toWTFString(globalObject) : MAKE_STATIC_STRING_IMPL(".");
 
     BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
-        jsCast<JSCommonJSModule*>(callframe->argument(1)),
+        thisObject,
         specifierValue,
         &specifierStr,
         &referrerStr);

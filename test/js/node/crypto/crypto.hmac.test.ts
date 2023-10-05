@@ -6,12 +6,16 @@ function testHmac(algo, key, data, expected) {
 
   // If the key is a Buffer, test Hmac with a key object as well.
   const keyWrappers = [key => key, ...(typeof key === "string" ? [] : [createSecretKey])];
+  const wrapperName = ["default", "KeyObject"];
 
-  for (const keyWrapper of keyWrappers) {
-    const hmac = createHmac(algo, keyWrapper(key));
-    for (const chunk of data) hmac.update(chunk);
-    const actual = hmac.digest("hex");
-    expect(actual).toEqual(expected);
+  for (const i in keyWrappers) {
+    const keyWrapper = keyWrappers[i];
+    test(`Hmac ${algo} with ${wrapperName[i]} key`, async () => {
+      const hmac = createHmac(algo, keyWrapper(key));
+      for (const chunk of data) hmac.update(chunk);
+      const actual = hmac.digest("hex");
+      expect(actual).toEqual(expected);
+    });
   }
 }
 
@@ -26,11 +30,11 @@ describe("crypto.Hmac", () => {
     expect(() => createHmac("sha1", null)).toThrow("null is not an object");
   });
 
-  test("test HMAC with multiple updates.", async () => {
+  describe("test HMAC with multiple updates.", async () => {
     testHmac("sha1", "Node", ["some data", "to hmac"], "19fd6e1ba73d9ed2224dd5094a71babe85d9a892");
   });
 
-  test("test HMAC with Wikipidia test cases", async () => {
+  describe("test HMAC with Wikipidia test cases", async () => {
     const wikipedia = [
       {
         key: "key",
@@ -300,7 +304,7 @@ describe("crypto.Hmac", () => {
     ];
 
     for (const { key, data, hmac } of rfc2202_md5) {
-      test(`rfc 2202 md5 case ${hmac}`, async () => {
+      describe(`rfc 2202 md5 case ${hmac}`, async () => {
         testHmac("md5", key, data, hmac);
       });
     }
@@ -366,7 +370,7 @@ describe("crypto.Hmac", () => {
     ];
 
     for (const { key, data, hmac } of rfc2202_sha1) {
-      test(`rfc 2202 sha1 case ${hmac}`, async () => {
+      describe(`rfc 2202 sha1 case ${hmac}`, async () => {
         testHmac("md5", key, data, hmac);
       });
     }

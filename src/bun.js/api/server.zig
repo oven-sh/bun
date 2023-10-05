@@ -5641,17 +5641,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
-            const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
-            js_signal.ensureStillAlive();
-            if (JSC.WebCore.AbortSignal.fromJS(js_signal)) |signal| {
-                ctx.signal = signal.ref().ref(); // +2 refs 1 for the request and 1 for the request context
-            }
+            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
+            ctx.signal = signal;
 
             request_object.* = .{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .https = ssl_enabled,
-                .signal = ctx.signal,
+                .signal = signal.ref(),
                 .body = body.ref(),
             };
 
@@ -5762,18 +5759,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
-            const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
-            js_signal.ensureStillAlive();
-            if (JSC.WebCore.AbortSignal.fromJS(js_signal)) |signal| {
-                ctx.signal = signal.ref().ref(); // +2 refs 1 for the request and 1 for the request context
-            }
+            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
+            ctx.signal = signal;
 
             request_object.* = .{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
-                .signal = ctx.signal,
+                .signal = signal.ref(),
                 .body = body.ref(),
             };
             ctx.upgrade_context = upgrade_ctx;

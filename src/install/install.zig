@@ -656,18 +656,8 @@ const Task = struct {
                 const manager = this.package_manager;
                 const name = this.request.git_clone.name.slice();
                 const url = this.request.git_clone.url.slice();
-                const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        manager.env,
-                        manager.log,
-                        manager.getCacheDirectory().dir,
-                        this.id,
-                        name,
-                        https,
-                    ) catch null;
-                    break :brk null;
-                } orelse Repository.download(
+
+                const dir = Repository.download_try_https_first(
                     manager.allocator,
                     manager.env,
                     manager.log,

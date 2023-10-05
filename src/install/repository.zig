@@ -20,6 +20,7 @@ threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
+/// Because this is stored in the lockfile, we can't change the size of it.
 pub const Repository = extern struct {
     owner: String = .{},
     repo: String = .{},
@@ -121,19 +122,66 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
-    pub fn tryHTTPS(url: string) ?string {
+    /// If `url` doesn't use HTTPS, attempt to download using HTTPS first.
+    /// If that fails, download using `url`s protocol. We do this because
+    /// HTTPS is faster and will work anyway for most use cases,
+    /// so we should try it first.
+    pub fn download_try_https_first(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        log: *logger.Log,
+        cache_dir: std.fs.Dir,
+        task_id: u64,
+        name: string,
+        url: string,
+    ) !std.fs.Dir {
+        // final_path_buf is used as scratch memory here to avoid allocation.
+        // It's overwritten later, but not in download.
+        if (convert_to_https(url, &final_path_buf)) |https| {
+            if (download(allocator, env, log, cache_dir, task_id, name, https)) |dir|
+                return dir
+            else |_| {}
+        }
+
+        return download(allocator, env, log, cache_dir, task_id, name, url);
+    }
+
+    /// Attempts to convert a url to https, returning null if it already is.
+    /// Returns slice of `scratch`.
+    fn convert_to_https(url: []const u8, scratch: []u8) ?[]const u8 {
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            final_path_buf[0.."https".len].* = "https".*;
-            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+            @memcpy(scratch[0.."https".len], "https");
+            bun.copy(u8, scratch["https".len..], url["ssh".len..]);
+            return scratch[0..(url.len - "ssh".len + "https".len)];
         }
         if (Dependency.isSCPLikePath(url)) {
-            final_path_buf[0.."https://".len].* = "https://".*;
-            var rest = final_path_buf["https://".len..];
+            @memcpy(scratch[0.."https://".len], "https://");
+            var rest = scratch["https://".len..];
             bun.copy(u8, rest, url);
-            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
-            return final_path_buf[0..(url.len + "https://".len)];
+            return scratch[0..(url.len + "https://".len)];
         }
+        return null;
+    }
+
+    /// Git doesn't like the colon between the domain and path to repo,
+    /// so we have to replace it. Caller owns returned memory, unless
+    /// it's null.
+    ///
+    /// E.g `git+ssh://git@example.com:repo.git` -> `git+ssh://git@example.com/repo.git`
+    fn remove_scp_url_colon(allocator: std.mem.Allocator, url: []const u8) !?[]const u8 {
+        const protocol_len = if (std.mem.indexOf(u8, url, "://")) |idx|
+            idx + "://".len
+        else
+            0;
+
+        if (Dependency.isSCPLikePath(url[protocol_len..])) {
+            if (strings.indexOfChar(url[protocol_len..], ':')) |colon_offset| {
+                const result = try allocator.dupe(u8, url);
+                result[protocol_len + colon_offset] = '/';
+                return result;
+            }
+        }
+
         return null;
     }
 
@@ -165,20 +213,30 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
+            var free_url = false;
+            // TODO: this should really be handled in the URL/dependency parsing stage.
+            const git_url: []const u8 = if (try remove_scp_url_colon(allocator, url)) |mem| blk: {
+                free_url = true;
+                break :blk mem;
+            } else url;
+            defer if (free_url) allocator.free(git_url);
+
             _ = exec(allocator, env, cache_dir, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
                 "--bare",
-                url,
+                git_url,
                 folder_name,
             }) catch |err| {
-                log.addErrorFmt(
+                log.addErrorFmtWithNote(
                     null,
                     logger.Loc.Empty,
                     allocator,
                     "\"git clone\" for \"{s}\" failed",
                     .{name},
+                    "tried to clone url: \"{s}\"",
+                    .{git_url},
                 ) catch unreachable;
                 return err;
             };

@@ -7,6 +7,7 @@ Before starting, you will need to already have a release build of Bun installed,
 {% codetabs %}
 
 ```bash#Native
+$ sudo apt-get install zip unzip -y
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 ```
 

@@ -290,16 +290,17 @@ describe("crypto.KeyObjects", () => {
     //        'jcR9mxppY',
     //     kty: 'OKP'
     //   } },
-    // {
-    //   private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
-    //   public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
-    //   keyType: "x25519",
-    //   jwk: {
-    //     crv: "X25519",
-    //     x: "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
-    //     d: "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
-    //     kty: "OKP",
-    //   },
+    {
+      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
+      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
+      keyType: "x25519",
+      jwk: {
+        crv: "X25519",
+        x: "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+        d: "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+        kty: "OKP",
+      },
+    },
     // },
     // { private: fixtures.readKey('x448_private.pem', 'ascii'),
     //   public: fixtures.readKey('x448_public.pem', 'ascii'),

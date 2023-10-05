@@ -177,7 +177,6 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
 
 JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    JSValue optionsArg = callFrame->uncheckedArgument(0);
 
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
@@ -187,6 +186,9 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
         JSC::throwTypeError(globalObject, scope, "createPrivateKey requires 1 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
+    
+    JSValue optionsArg = callFrame->uncheckedArgument(0);
+
     if (auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(0))) {
 
         JSValue keyJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "key"_s)));
@@ -2111,6 +2113,72 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
+JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame) {
+    auto count = callFrame->argumentCount();
+    auto& vm = lexicalGlobalObject->vm();
+
+    if (count < 2) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(lexicalGlobalObject, scope, "generateKeySync requires 2 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    
+    auto type = callFrame->argument(0);
+    if(type.isUndefinedOrNull() || type.isEmpty() || !type.isString()) {
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+        JSC::throwTypeError(lexicalGlobalObject, scope, "type is expected to be a string"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto type_str = type.toWTFString(lexicalGlobalObject);
+
+    if(type_str == "hmac"_s) {
+        Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        auto* structure = zigGlobalObject->JSCryptoKeyStructure();
+        size_t lengthBits = 0;
+        auto length = callFrame->argument(1);
+        if(length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+            auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+            JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        lengthBits = length.toUInt32(lexicalGlobalObject);
+        auto result = CryptoKeyHMAC::generate(lengthBits, WebCore::CryptoAlgorithmIdentifier::HMAC, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
+        if (result == nullptr) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
+            return JSValue::encode(JSC::jsUndefined());
+        }
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+    } else if(type_str == "aes"_s) {
+        Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        auto* structure = zigGlobalObject->JSCryptoKeyStructure();
+        size_t lengthBits = 0;
+        if(count > 1) {
+            auto length = callFrame->argument(1);
+            if(length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+                auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+                JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            lengthBits = length.toUInt32(lexicalGlobalObject);
+        }
+        
+        auto result = CryptoKeyAES::generate(WebCore::CryptoAlgorithmIdentifier::AES_CBC, lengthBits, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
+        if (result == nullptr) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
+            return JSValue::encode(JSC::jsUndefined());
+        }
+        return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
+    } else {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+}
+    
+
 JSC::EncodedJSValue KeyObject__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     static const NeverDestroyed<String> values[] = {

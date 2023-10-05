@@ -12029,6 +12029,7 @@ const {
   createSecretKey,
   createPublicKey,
   createPrivateKey,
+  generateKeySync,
 } = $lazy("internal/crypto");
 
 const kCryptoKey = Symbol.for(":;bunKeyObjectCryptoKey::");
@@ -12113,6 +12114,203 @@ class KeyObject {
     return this[kCryptoKey].type;
   }
 }
+
+crypto_exports.generateKeySync = function (algorithm, options) {
+  return KeyObject.from(generateKeySync(algorithm, options?.length));
+};
+
+crypto_exports.generateKey = function (algorithm, options, callback) {
+  const length = options?.length;
+  if (typeof length !== "number") {
+    throw new TypeError(`options.length must be a number`);
+  }
+  switch (algorithm) {
+    case "aes":
+      algorithm = "AES-CBC";
+      break;
+    case "hmac":
+      algorithm = "HMAC";
+      break;
+    default:
+      throw new TypeError(`algorithm should be 'aes' or 'hmac'`);
+  }
+
+  webcrypto.subtle
+    .generateKey(
+      {
+        name: algorithm,
+        length,
+      },
+      true,
+      ["sign", "verify"],
+    )
+    .then(key => {
+      typeof callback === "function" && callback(null, KeyObject.from(key));
+    })
+    .catch(err => typeof callback === "function" && callback(err));
+};
+
+crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+  const publicKeyEncoding = options?.publicKeyEncoding;
+  const privateKeyEncoding = options?.privateKeyEncoding;
+  switch (algorithm) {
+    case "rsa": {
+      let publicExponent = options?.publicExponent || 0x10001;
+      if (typeof publicExponent !== "number") {
+        throw new TypeError(`options.publicExponent must be a number`);
+      }
+      const buffer = Buffer.alloc(4);
+      buffer.writeUInt32BE(publicExponent, 0);
+      const modulusLength = options?.modulusLength;
+      if (typeof modulusLength !== "number") {
+        throw new TypeError(`options.modulusLength must be a number`);
+      }
+      const hash = options?.hashAlgorithm || "SHA-256";
+      webcrypto.subtle
+        .generateKey(
+          {
+            name: "RSA-OAEP",
+            publicExponent: new Uint8Array(buffer),
+            modulusLength,
+            hash: hash,
+          },
+          true,
+          ["encrypt", "decrypt"],
+        )
+        .then(({ publicKey, privateKey }) => {
+          if (typeof callback === "function") {
+            publicKey = publicKeyEncoding
+              ? KeyObject.from(publicKey).export(options?.publicKeyEncoding)
+              : KeyObject.from(publicKey);
+            privateKey = privateKeyEncoding
+              ? KeyObject.from(privateKey).export(privateKeyEncoding)
+              : KeyObject.from(privateKey);
+            callback(null, publicKey, privateKey);
+          }
+        })
+        .catch(err => typeof callback === "function" && callback(err));
+      break;
+    }
+    case "rsa-pss": {
+      let publicExponent = options?.publicExponent || 0x10001;
+      if (typeof publicExponent !== "number") {
+        throw new TypeError(`options.publicExponent must be a number`);
+      }
+      const buffer = Buffer.alloc(4);
+      buffer.writeUInt32BE(publicExponent, 0);
+      const modulusLength = options?.modulusLength;
+      if (typeof modulusLength !== "number") {
+        throw new TypeError(`options.modulusLength must be a number`);
+      }
+      const hash = options?.hashAlgorithm || "SHA-256";
+      if (typeof modulusLength !== "number") {
+        throw new TypeError(`options.modulusLength must be a number`);
+      }
+      webcrypto.subtle
+        .generateKey(
+          {
+            name: "RSA-PSS",
+            publicExponent: new Uint8Array(buffer),
+            modulusLength,
+            hash: hash,
+          },
+          true,
+          ["sign", "verify"],
+        )
+        .then(({ publicKey, privateKey }) => {
+          if (typeof callback === "function") {
+            publicKey = publicKeyEncoding
+              ? KeyObject.from(publicKey).export(options?.publicKeyEncoding)
+              : KeyObject.from(publicKey);
+            privateKey = privateKeyEncoding
+              ? KeyObject.from(privateKey).export(privateKeyEncoding)
+              : KeyObject.from(privateKey);
+            callback(null, publicKey, privateKey);
+          }
+        })
+        .catch(err => typeof callback === "function" && callback(err));
+      break;
+    }
+    case "ec": {
+      let namedCurve = options?.namedCurve;
+      if (typeof namedCurve !== "string") {
+        throw new TypeError(`options.namedCurve must be a string`);
+      }
+
+      switch (namedCurve) {
+        case "p384":
+        case "secp384r1":
+          namedCurve = "P-384";
+          break;
+        case "p256":
+        case "prime256v1":
+          namedCurve = "P-256";
+          break;
+        case "p521":
+        case "secp521r1":
+          namedCurve = "P-521";
+          break;
+        default:
+          throw new TypeError("curve not supported");
+      }
+      webcrypto.subtle
+        .generateKey(
+          {
+            name: "ECDSA",
+            namedCurve,
+          },
+          true,
+          ["sign", "verify"],
+        )
+        .then(({ publicKey, privateKey }) => {
+          if (typeof callback === "function") {
+            publicKey = publicKeyEncoding
+              ? KeyObject.from(publicKey).export(options?.publicKeyEncoding)
+              : KeyObject.from(publicKey);
+            privateKey = privateKeyEncoding
+              ? KeyObject.from(privateKey).export(privateKeyEncoding)
+              : KeyObject.from(privateKey);
+            callback(null, publicKey, privateKey);
+          }
+        })
+        .catch(err => typeof callback === "function" && callback(err));
+      break;
+    }
+    case "ed25519":
+    case "x25519": {
+      webcrypto.subtle
+        .generateKey(
+          {
+            name: algorithm == "x25519" ? "X25519" : "Ed25519",
+          },
+          true,
+          ["sign", "verify"],
+        )
+        .then(({ publicKey, privateKey }) => {
+          if (typeof callback === "function") {
+            publicKey = publicKeyEncoding
+              ? KeyObject.from(publicKey).export(options?.publicKeyEncoding)
+              : KeyObject.from(publicKey);
+            privateKey = privateKeyEncoding
+              ? KeyObject.from(privateKey).export(privateKeyEncoding)
+              : KeyObject.from(privateKey);
+            callback(null, publicKey, privateKey);
+          }
+        })
+        .catch(err => typeof callback === "function" && callback(err));
+      break;
+    }
+    case "dsa":
+    case "dh":
+    case "ed448":
+    case "x448":
+      throw new TypeError("algorithm not supported");
+    default:
+      throw new TypeError(
+        `algorithm should be 'rsa', 'rsa-pss', 'dsa', 'ec', 'ed25519', 'ed448', 'x25519', 'x448', or 'dh'`,
+      );
+  }
+};
 
 crypto_exports.createSecretKey = function (key, encoding) {
   if (key instanceof KeyObject || key instanceof CryptoKey) {

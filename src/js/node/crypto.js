@@ -11936,14 +11936,15 @@ const {
   createPrivateKey,
 } = $lazy("internal/crypto");
 
+const kCryptoKey = Symbol.for(":;bunKeyObjectCryptoKey::");
 class KeyObject {
-  #cryptoKey;
+  [kCryptoKey];
   constructor(key) {
     //TODO: this fails for some reason
     // if(!(key instanceof CryptoKey)) {
     //   throw new TypeError("The \"key\" argument must be an instance of CryptoKey.");
     // }
-    this.#cryptoKey = key;
+    this[kCryptoKey] = key;
   }
   toString() {
     return "[object KeyObject]";
@@ -11951,21 +11952,21 @@ class KeyObject {
 
   static from(key) {
     if (key instanceof KeyObject) {
-      key = key.#cryptoKey;
+      key = key[kCryptoKey];
     }
     return new KeyObject(key);
   }
 
   get asymmetricKeyDetails() {
-    return asymmetricKeyDetails(this.#cryptoKey);
+    return asymmetricKeyDetails(this[kCryptoKey]);
   }
 
   get symmetricKeySize() {
-    return symmetricKeySize(this.#cryptoKey);
+    return symmetricKeySize(this[kCryptoKey]);
   }
 
   get asymmetricKeyType() {
-    return asymmetricKeyType(this.#cryptoKey);
+    return asymmetricKeyType(this[kCryptoKey]);
   }
 
   ["export"](options) {
@@ -11990,18 +11991,18 @@ class KeyObject {
           break;
       }
     }
-    return exports(this.#cryptoKey, options);
+    return exports(this[kCryptoKey], options);
   }
 
   equals(otherKey) {
     if (!(otherKey instanceof KeyObject)) {
       throw new TypeError("otherKey must be a KeyObject");
     }
-    return equals(this.#cryptoKey, otherKey.#cryptoKey);
+    return equals(this[kCryptoKey], otherKey[kCryptoKey]);
   }
 
   get type() {
-    return this.#cryptoKey.type;
+    return this[kCryptoKey].type;
   }
 }
 
@@ -12074,7 +12075,7 @@ crypto_exports.createPublicKey = function (key) {
   } else if (typeof key === "object") {
     if (key instanceof KeyObject || key instanceof CryptoKey) {
       if (key.type === "private") {
-        return KeyObject.from(createPublicKey({ key, format: "" }));
+        return KeyObject.from(createPublicKey({ key: key[kCryptoKey] || key, format: "" }));
       }
       const error = new TypeError(
         `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
@@ -12082,16 +12083,26 @@ crypto_exports.createPublicKey = function (key) {
       error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
       throw error;
     } else {
+      // must be an encrypted private key (this option is not documented at all)
+      if (key.passphrase) {
+        //TODO: handle encrypted keys in one native call
+        let actual_key = key.key;
+        if(typeof actual_key === "string") {
+          actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        }
+        console.log({ key: actual_key, format: key.format, passphrase: key.passphrase });
+        return KeyObject.from(createPublicKey({ key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }), format: "" }));
+      }
       let actual_key = key.key;
       if (typeof actual_key === "string") {
         actual_key = Buffer.from(actual_key, key.encoding || "utf8");
         key.key = actual_key;
       } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
-        if (key.type === "private") {
-          return KeyObject.from(createPublicKey({ key, format: "" }));
+        if (actual_key.type === "private") {
+          return KeyObject.from(createPublicKey({ key: actual_key[kCryptoKey] || actual_key, format: "" }));
         }
         const error = new TypeError(
-          `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
+          `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
         );
         error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
         throw error;

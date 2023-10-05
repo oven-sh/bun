@@ -380,7 +380,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -409,7 +409,7 @@ it("should handle `workspace:` specifier", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:path/to/bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -784,7 +784,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -816,7 +816,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -848,7 +848,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -903,7 +903,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -948,7 +948,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -982,7 +982,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
     "[scripts:run] Moo",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1037,7 +1037,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     " + Bar@workspace:bar",
     "[scripts:run] Foo",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -1081,7 +1081,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -1115,7 +1115,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     "[scripts:run] Foo",
     "[scripts:run] Bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
@@ -1526,7 +1526,7 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-rc1",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1570,7 +1570,7 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-_pre3",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1614,7 +1614,7 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2-b_4+cafe_b0ba",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -1658,7 +1658,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@6.3.0",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -2881,7 +2881,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   expect(out.split(/\r?\n/)).toEqual([
     " + when@https://github.com/cujojs/when/tarball/1.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -2940,7 +2940,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   expect(out.split(/\r?\n/)).toEqual([
     " + when@https://github.com/cujojs/when/tarball/1.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -4884,7 +4884,7 @@ it("should ignore invalid workspaces from parent directory", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -4940,7 +4940,7 @@ it("should handle --cwd", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@0.0.2",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -5304,7 +5304,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
@@ -5334,7 +5334,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
@@ -5377,7 +5377,7 @@ it("should handle `workspaces:bar` and `workspace:*` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5420,7 +5420,7 @@ it("should handle `workspaces:*` and `workspace:bar` gracefully", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -5463,7 +5463,7 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
@@ -6059,7 +6059,7 @@ it("should override npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -6149,7 +6149,7 @@ it("should override @scoped npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + @bar/baz@workspace:packages/bar-baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -6198,7 +6198,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:baz",
     "",
-    " 1 packages installed",
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();

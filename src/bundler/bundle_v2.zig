@@ -7314,7 +7314,7 @@ const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-			.minify_symbols = c.options.minify_symbols,
+            .minify_symbols = c.options.minify_symbols,
             .const_values = c.graph.const_values,
         };
 

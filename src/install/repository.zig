@@ -125,15 +125,33 @@ pub const Repository = extern struct {
         if (strings.hasPrefixComptime(url, "ssh://")) {
             final_path_buf[0.."https".len].* = "https".*;
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+            return final_path_buf[0 .. url.len - "ssh".len + "https".len];
         }
+
         if (Dependency.isSCPLikePath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
+
+            // make sure known hosts have `.com` or `.org`
+            if (strings.eqlComptime(url[0.."bitbucket:".len], "bitbucket:")) {
+                bun.copy(u8, rest, "bitbucket.org/");
+                bun.copy(u8, rest["bitbucket.org/".len..], url["bitbucket:".len..]);
+                return final_path_buf[0 .. url.len + "https://".len + ".org".len];
+            } else if (strings.eqlComptime(url[0.."github:".len], "github:")) {
+                bun.copy(u8, rest, "github.com/");
+                bun.copy(u8, rest["github.com/".len..], url["github:".len..]);
+                return final_path_buf[0 .. url.len + "https://".len + ".com".len];
+            } else if (strings.eqlComptime(url[0.."gitlab:".len], "gitlab:")) {
+                bun.copy(u8, rest, "gitlab.com/");
+                bun.copy(u8, rest["gitlab.com/".len..], url["gitlab:".len..]);
+                return final_path_buf[0 .. url.len + "https://".len + ".com".len];
+            }
+
             bun.copy(u8, rest, url);
             if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
-            return final_path_buf[0..(url.len + "https://".len)];
+            return final_path_buf[0 .. url.len + "https://".len];
         }
+
         return null;
     }
 
@@ -228,6 +246,8 @@ pub const Repository = extern struct {
 
         var package_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |not_found| brk: {
             if (not_found != error.FileNotFound) return not_found;
+
+            std.debug.print("checkout: attempt clone: {s}\n", .{url});
 
             _ = exec(allocator, env, cache_dir, &[_]string{
                 "git",

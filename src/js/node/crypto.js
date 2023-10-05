@@ -10,6 +10,18 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
+function getKeyFrom(key, type) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  } else if (typeof key == "object" && !Buffer.isBuffer(key)) {
+    if (typeof key.format === "string" && typeof key.key !== "undefined") {
+      key = type == "public" ? _createPublicKey(key) : _createPrivateKey(key);
+    }
+  }
+  return key;
+}
 function getArrayBufferOrView(buffer, name, encoding) {
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
@@ -11073,12 +11085,62 @@ var require_parse_asn1 = __commonJS({
       } else if (buffer instanceof CryptoKey) {
         buffer = KeyObject.from(buffer).export();
       } else {
-        typeof buffer == "object" &&
-          !Buffer2.isBuffer(buffer) &&
-          ((password = buffer.passphrase), (buffer = buffer.key));
+        if (typeof buffer == "object" && !Buffer2.isBuffer(buffer)) {
+          password = buffer.passphrase;
+          buffer = buffer.key;
+
+          if (buffer instanceof KeyObject) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = buffer.export(options);
+          } else if (buffer instanceof CryptoKey) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = KeyObject.from(buffer).export(options);
+          }
+        }
       }
       typeof buffer == "string" && (buffer = Buffer2.from(buffer));
-
       var stripped = fixProc(buffer, password),
         type = stripped.tag,
         data = stripped.data,
@@ -11717,13 +11779,19 @@ var require_privateDecrypt = __commonJS({
 // node_modules/public-encrypt/browser.js
 var require_browser10 = __commonJS({
   "node_modules/public-encrypt/browser.js"(exports) {
-    exports.publicEncrypt = require_publicEncrypt();
-    exports.privateDecrypt = require_privateDecrypt();
+    var publicEncrypt = require_publicEncrypt();
+    exports.publicEncrypt = function (key, buf, options) {
+      return publicEncrypt(getKeyFrom(key, "public"), buf, options);
+    };
+    var privateDecrypt = require_privateDecrypt();
+    exports.privateDecrypt = function (key, buf, options) {
+      return privateDecrypt(getKeyFrom(key, "private"), buf, options);
+    };
     exports.privateEncrypt = function (key, buf) {
-      return exports.publicEncrypt(key, buf, !0);
+      return publicEncrypt(getKeyFrom(key, "private"), buf, !0);
     };
     exports.publicDecrypt = function (key, buf) {
-      return exports.privateDecrypt(key, buf, !0);
+      return privateDecrypt(getKeyFrom(key, "public"), buf, !0);
     };
   },
 });
@@ -12022,7 +12090,7 @@ crypto_exports.createSecretKey = function (key, encoding) {
   return KeyObject.from(createSecretKey(buffer));
 };
 
-crypto_exports.createPrivateKey = function (key) {
+function _createPrivateKey(key) {
   if (typeof key === "string") {
     key = Buffer.from(key, "utf8");
     return KeyObject.from(createPrivateKey({ key, format: "pem" }));
@@ -12064,9 +12132,10 @@ crypto_exports.createPrivateKey = function (key) {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-};
+}
+crypto_exports.createPrivateKey = _createPrivateKey;
 
-crypto_exports.createPublicKey = function (key) {
+function _createPublicKey(key) {
   if (typeof key === "string") {
     key = Buffer.from(key, "utf8");
     return KeyObject.from(createPublicKey({ key, format: "pem" }));
@@ -12087,11 +12156,15 @@ crypto_exports.createPublicKey = function (key) {
       if (key.passphrase) {
         //TODO: handle encrypted keys in one native call
         let actual_key = key.key;
-        if(typeof actual_key === "string") {
+        if (typeof actual_key === "string") {
           actual_key = Buffer.from(actual_key, key.encoding || "utf8");
         }
-        console.log({ key: actual_key, format: key.format, passphrase: key.passphrase });
-        return KeyObject.from(createPublicKey({ key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }), format: "" }));
+        return KeyObject.from(
+          createPublicKey({
+            key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }),
+            format: "",
+          }),
+        );
       }
       let actual_key = key.key;
       if (typeof actual_key === "string") {
@@ -12128,7 +12201,8 @@ crypto_exports.createPublicKey = function (key) {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-};
+}
+crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 __export(crypto_exports, {

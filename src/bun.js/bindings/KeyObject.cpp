@@ -125,8 +125,10 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
     auto bp = BIOPtr(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
     auto result = (AsymmetricKeyValueWithDER) { .key = nullptr, .der_data = nullptr, .der_len = 0 };
 
-    if (!bp)
+    if (!bp) {
+        ERR_clear_error();
         return result;
+    }
 
     // Try parsing as a SubjectPublicKeyInfo first.
     if (PEM_bytes_read_bio(&result.der_data, &result.der_len, nullptr, "PUBLIC KEY", bp.get(), nullptr, nullptr) == 1) {
@@ -136,6 +138,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
         if (result.key) {
             return result;
         }
+        ERR_clear_error();
         OPENSSL_clear_free(result.der_data, result.der_len);
     }
 
@@ -149,8 +152,10 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
             return result;
         }
         OPENSSL_clear_free(result.der_data, result.der_len);
+        ERR_clear_error();
         return result;
     }
+    ERR_clear_error();
     return result;
 }
 
@@ -1182,6 +1187,11 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
             JSValue typeJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "type"_s)));
             JSValue passphraseJSValue = options->getDirect(vm, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
             auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
+            if (formatJSValue.isUndefinedOrNull() || formatJSValue.isEmpty()) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::throwTypeError(globalObject, scope, "format is expected to be a string"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
             auto string = formatJSValue.toWTFString(globalObject);
             if (string.isNull()) {
                 auto scope = DECLARE_THROW_SCOPE(vm);

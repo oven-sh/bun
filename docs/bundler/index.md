@@ -1267,7 +1267,6 @@ interface BuildOptions {
         identifiers?: boolean;
         whitespace?: boolean;
         syntax?: boolean;
-        symbols?: boolean;
       };
 }
 

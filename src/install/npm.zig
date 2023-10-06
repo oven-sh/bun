@@ -798,7 +798,25 @@ pub const PackageManifest = struct {
             return this.findByVersion(left.version);
         }
 
-        const releases = this.pkg.releases.keys.get(this.versions);
+        if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version)) {
+                return result;
+            }
+        }
+
+        {
+            const releases = this.pkg.releases.keys.get(this.versions);
+            var i = releases.len;
+            // For now, this is the dumb way
+            while (i > 0) : (i -= 1) {
+                const version = releases[i - 1];
+                const packages = this.pkg.releases.values.get(this.package_versions);
+
+                if (group.satisfies(version)) {
+                    return .{ .version = version, .package = &packages[i - 1] };
+                }
+            }
+        }
 
         if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
             const prereleases = this.pkg.prereleases.keys.get(this.versions);
@@ -806,21 +824,6 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = prereleases[i - 1];
                 const packages = this.pkg.prereleases.values.get(this.package_versions);
-
-                if (group.satisfies(version)) {
-                    return .{ .version = version, .package = &packages[i - 1] };
-                }
-            }
-        } else if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version)) return result;
-        }
-
-        {
-            var i = releases.len;
-            // // For now, this is the dumb way
-            while (i > 0) : (i -= 1) {
-                const version = releases[i - 1];
-                const packages = this.pkg.releases.values.get(this.package_versions);
 
                 if (group.satisfies(version)) {
                     return .{ .version = version, .package = &packages[i - 1] };

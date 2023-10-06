@@ -1276,3 +1276,31 @@ it("server.requestIP (unix)", async () => {
   connection.end();
   server.stop(true);
 });
+
+it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
+  const server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 10,
+    fetch(req, server) {
+      return new Response("OK");
+    },
+  });
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(10),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(11),
+    });
+    expect(resp.status).toBe(413);
+  }
+
+  server.stop(true);
+});

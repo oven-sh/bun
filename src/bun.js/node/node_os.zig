@@ -531,6 +531,9 @@ pub const Os = struct {
                         addr_data[3], addr_data[4], addr_data[5],
                     }) catch unreachable;
                     interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                } else {
+                    const mac = "00:00:00:00:00:00";
+                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
                 }
             }
 

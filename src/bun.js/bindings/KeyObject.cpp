@@ -257,7 +257,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                     auto jwk = WebCore::convertDictionary<JsonWebKey>(*globalObject, keyJSValue);
                     if (jwk.kty == "OKP"_s) {
                         if (jwk.crv == "Ed25519"_s) {
-                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, jwk.usages);
+                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, CryptoKeyUsageSign);
                             if (result == nullptr) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 private key"_s));
@@ -271,7 +271,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                             }
                             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                         } else if (jwk.crv == "X25519"_s) {
-                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(jwk), true, jwk.usages);
+                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(jwk), true, CryptoKeyUsageSign);
                             if (result == nullptr) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 throwException(globalObject, scope, createTypeError(globalObject, "Invalid X25519 private key"_s));
@@ -885,9 +885,8 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                     }
                     auto jwk = WebCore::convertDictionary<JsonWebKey>(*globalObject, keyJSValue);
                     if (jwk.kty == "OKP"_s) {
-                        // const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
                         if (jwk.crv == "Ed25519"_s) {
-                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, jwk.usages);
+                            auto result = CryptoKeyOKP::importPublicJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, CryptoKeyUsageVerify);
                             if (result == nullptr) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 throwException(globalObject, scope, createTypeError(globalObject, "Invalid Ed25519 public key"_s));
@@ -899,7 +898,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                             }
                             return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
                         } else if (jwk.crv == "X25519"_s) {
-                            auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(jwk), true, jwk.usages);
+                            auto result = CryptoKeyOKP::importPublicJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(jwk), true, CryptoKeyUsageVerify);
                             if (result == nullptr) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 throwException(globalObject, scope, createTypeError(globalObject, "Invalid X25519 public key"_s));

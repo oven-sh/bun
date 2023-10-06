@@ -1341,7 +1341,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                 } else if (string == "jwk"_s) {
                     const JsonWebKey& jwkValue = hmac.exportJwk();
                     Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
                 }
                 break;
             }
@@ -1358,7 +1358,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                 } else if (string == "jwk"_s) {
                     const JsonWebKey& jwkValue = aes.exportJwk();
                     Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
                 }
                 break;
             }
@@ -1367,7 +1367,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                 if (string == "jwk"_s) {
                     const JsonWebKey& jwkValue = rsa.exportJwk();
                     Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
                 } else {
                     auto type = !typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty() ? typeJSValue.toWTFString(globalObject) : "pkcs1"_s;
                     if (type.isNull()) {
@@ -1560,7 +1560,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     const JsonWebKey& jwkValue = result.releaseReturnValue();
                     Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
                 } else {
                     auto type = !typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty() ? typeJSValue.toWTFString(globalObject) : "spki"_s;
                     if (type.isNull()) {
@@ -1742,7 +1742,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     const JsonWebKey& jwkValue = result.releaseReturnValue();
                     Zig::GlobalObject* domGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue));
+                    return JSC::JSValue::encode(WebCore::convertDictionaryToJS(*globalObject, *domGlobalObject, jwkValue, true));
                 } else {
                     auto type = !typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty() ? typeJSValue.toWTFString(globalObject) : "spki"_s;
                     if (type.isNull()) {

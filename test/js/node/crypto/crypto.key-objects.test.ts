@@ -177,8 +177,6 @@ describe("crypto.KeyObjects", () => {
 
     for (const keyObject of [privateKey, privateKeyFromJwk]) {
       const exported = keyObject.export({ format: "jwk" });
-      delete exported.ext;
-      delete exported.key_ops;
       expect(exported).toEqual(jwk);
     }
 
@@ -328,9 +326,7 @@ describe("crypto.KeyObjects", () => {
       expect(key.asymmetricKeyType).toBe(keyType);
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
-      const jwt = key.export({ format: "jwk" });
-      delete jwt.ext;
-      delete jwt.key_ops;
+      const jwt = key.export({ format: "jwk" });;
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -341,8 +337,6 @@ describe("crypto.KeyObjects", () => {
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
       const jwt = key.export({ format: "jwk" });
-      delete jwt.ext;
-      delete jwt.key_ops;
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -362,9 +356,7 @@ describe("crypto.KeyObjects", () => {
         if(name == "jwk") {
           const jwt = { ...info.jwk };
           delete jwt.d;
-          const jwk_exported = key.export({ format: "jwk" });
-          delete jwk_exported.ext;
-          delete jwk_exported.key_ops;
+          const jwk_exported = key.export({ format: "jwk" });;
           expect(jwk_exported).toEqual(jwt);
         }
       });
@@ -434,9 +426,7 @@ describe("crypto.KeyObjects", () => {
       expect(key.asymmetricKeyDetails?.namedCurve).toBe(namedCurve);
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
-      const jwt = key.export({ format: "jwk" });
-      delete jwt.ext;
-      delete jwt.key_ops;
+      const jwt = key.export({ format: "jwk" });;
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -448,8 +438,6 @@ describe("crypto.KeyObjects", () => {
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
       const jwt = key.export({ format: "jwk" });
-      delete jwt.ext;
-      delete jwt.key_ops;
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -471,8 +459,6 @@ describe("crypto.KeyObjects", () => {
           const jwt = { ...info.jwk };
           delete jwt.d;
           const jwk_exported = key.export({ format: "jwk" });
-          delete jwk_exported.ext;
-          delete jwk_exported.key_ops;
           expect(jwk_exported).toEqual(jwt);
         }
       });
@@ -583,8 +569,6 @@ describe("crypto.KeyObjects", () => {
     const buffer = Buffer.from("Hello World");
     const keyObject = createSecretKey(buffer);
     const jwk = keyObject.export({ format: "jwk" });
-    delete jwk.ext;
-    delete jwk.key_ops;
     expect(jwk).toEqual({ kty: "oct", k: "SGVsbG8gV29ybGQ" });
   });
 

@@ -247,11 +247,14 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    Vector<uint8_t> encodedData(encodedLength);
-    encodedLength = WTF__base64URLEncode(data.data(), data.size(), encodedData.data(), encodedData.size());
-    if (!encodedLength)
+    LChar *ptr;
+    auto result = String::createUninitialized(encodedLength, ptr);
+    if (UNLIKELY(!ptr)) {
+        RELEASE_ASSERT_NOT_REACHED();
         return String();
-
-    return String::fromUTF8(encodedData.data(), encodedLength);
+    }
+    encodedLength = WTF__base64URLEncode(data.data(), data.size(), ptr, encodedLength);
+    RELEASE_ASSERT(result.length() == encodedLength);
+    return result;
 }
 }

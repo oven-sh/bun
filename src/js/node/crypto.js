@@ -1083,9 +1083,11 @@ var require_cipher_base = __commonJS({
         this._final && ((this.__final = this._final), (this._final = null)),
         (this._decoder = null),
         (this._encoding = null);
+      this._finalized = !1;
     }
     inherits(CipherBase, StreamModule.Transform);
     CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
       typeof data == "string" && (data = Buffer2.from(data, inputEnc));
       var outData = this._update(data);
       return this.hashMode ? this : (outputEnc && (outData = this._toString(outData, outputEnc)), outData);
@@ -1120,6 +1122,13 @@ var require_cipher_base = __commonJS({
       done(err);
     };
     CipherBase.prototype._finalOrDigest = function (outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
+      if (this._finalized) {
+        if (!this._encoding) return Buffer2.alloc(0);
+        return "";
+      }
+
+      this._finalized = !0;
       var outData = this.__final() || Buffer2.alloc(0);
       return outputEnc && (outData = this._toString(outData, outputEnc, !0)), outData;
     };
@@ -1387,6 +1396,7 @@ var require_browser3 = __commonJS({
     Hmac.prototype._final = function () {
       var h = this._hash.digest(),
         hash = this._alg === "rmd160" ? new RIPEMD160() : sha(this._alg);
+
       return hash.update(this._opad).update(h).digest();
     };
     module.exports = function (alg, key) {

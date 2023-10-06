@@ -387,8 +387,8 @@ describe("crypto.Hmac", () => {
 
       {
         const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("latin1")).toEqual(expected);
-        expect(h.digest("latin1")).toEqual("");
+        expect(h.digest("latin1")).toBe(expected);
+        expect(h.digest("latin1")).toBe("");
       }
       {
         const h = createHmac("sha1", "key").update("data");
@@ -401,12 +401,12 @@ describe("crypto.Hmac", () => {
         "\u00f4\u002b\u00b0\u00ee\u00b0\u0018\u00eb\u00bd\u0045\u0097" +
         "\u00ae\u0072\u0013\u0071\u001e\u00c6\u0007\u0060\u0084\u003f";
       {
-        const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("latin1")).toEqual(expected);
-        expect(h.digest("latin1")).toEqual("");
+        const h = createHmac("sha1", "key");
+        expect(h.digest("latin1")).toBe(expected);
+        expect(h.digest("latin1")).toBe("");
       }
       {
-        const h = createHmac("sha1", "key").update("data");
+        const h = createHmac("sha1", "key");
         expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
         expect(h.digest("buffer")).toEqual(Buffer.from(""));
       }

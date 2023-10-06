@@ -346,20 +346,28 @@ describe("crypto.KeyObjects", () => {
       expect(jwt).toEqual(info.jwk);
     });
 
-    test(`${keyType}  createPublicKey should work`, async () => {
-      for (const input of [info.public, info.private, { key: info.jwk, format: "jwk" }]) {
+    [
+      ["public", info.public],
+      ["private", info.private],
+      ["jwk", { key: info.jwk, format: "jwk" }],
+    ].forEach(([name, input]) => {
+      test(`${keyType} createPublicKey using ${name} key should work`, async () => {
         const key = createPublicKey(input);
         expect(key.type).toBe("public");
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.symmetricKeySize).toBe(undefined);
-        expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
-        const jwt = { ...info.jwk };
-        delete jwt.d;
-        const jwk_exported = key.export({ format: "jwk" });
-        delete jwk_exported.ext;
-        delete jwk_exported.key_ops;
-        expect(jwk_exported).toEqual(jwt);
-      }
+        if(name == "public") {
+          expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
+        }
+        if(name == "jwk") {
+          const jwt = { ...info.jwk };
+          delete jwt.d;
+          const jwk_exported = key.export({ format: "jwk" });
+          delete jwk_exported.ext;
+          delete jwk_exported.key_ops;
+          expect(jwk_exported).toEqual(jwt);
+        }
+      });
     });
   });
 
@@ -445,21 +453,29 @@ describe("crypto.KeyObjects", () => {
       expect(jwt).toEqual(info.jwk);
     });
 
-    test(`${keyType} ${namedCurve} createPublicKey should work`, async () => {
-      for (const input of [info.public, info.private, { key: info.jwk, format: "jwk" }]) {
+    [
+      ["public", info.public],
+      ["private", info.private],
+      ["jwk", { key: info.jwk, format: "jwk" }],
+    ].forEach(([name, input]) => {
+      test(`${keyType} ${namedCurve} createPublicKey using ${name} should work`, async () => {
         const key = createPublicKey(input);
         expect(key.type).toBe("public");
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.asymmetricKeyDetails?.namedCurve).toBe(namedCurve);
         expect(key.symmetricKeySize).toBe(undefined);
-        expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
-        const jwt = { ...info.jwk };
-        delete jwt.d;
-        const jwk_exported = key.export({ format: "jwk" });
-        delete jwk_exported.ext;
-        delete jwk_exported.key_ops;
-        expect(jwk_exported).toEqual(jwt);
-      }
+        if(name == "public") {
+          expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
+        }
+        if(name == "jwk") {
+          const jwt = { ...info.jwk };
+          delete jwt.d;
+          const jwk_exported = key.export({ format: "jwk" });
+          delete jwk_exported.ext;
+          delete jwk_exported.key_ops;
+          expect(jwk_exported).toEqual(jwt);
+        }
+      });
     });
   });
 
@@ -501,172 +517,6 @@ describe("crypto.KeyObjects", () => {
     expect(privateKey.type).toBe("private");
     expect(privateKey.asymmetricKeyType).toBe("rsa");
     expect(privateKey.symmetricKeySize).toBe(undefined);
-  });
-
-  test.todo("RSA-PSS should work", async () => {
-    // Test RSA-PSS.
-    {
-      // This key pair does not restrict the message digest algorithm or salt
-      // length.
-      // const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_public_2048.pem"), "ascii");
-      // const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_private_2048.pem"), "ascii");
-      // const publicKey = createPublicKey(publicPem);
-      // const privateKey = createPrivateKey(privatePem);
-      // // Because no RSASSA-PSS-params appears in the PEM, no defaults should be
-      // // added for the PSS parameters. This is different from an empty
-      // // RSASSA-PSS-params sequence (see test below).
-      // const expectedKeyDetails = {
-      //   modulusLength: 2048,
-      //   publicExponent: 65537n,
-      // };
-      // expect(publicKey.type).toBe("public");
-      // expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
-      // expect(publicKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
-      // expect(privateKey.type).toBe("private");
-      // expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
-      // expect(privateKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
-      // assert.throws(
-      //   () => publicKey.export({ format: 'jwk' }),
-      //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-      // assert.throws(
-      //   () => privateKey.export({ format: 'jwk' }),
-      //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-      // for (const key of [privatePem, privateKey]) {
-      //   // Any algorithm should work.
-      //   for (const algo of ['sha1', 'sha256']) {
-      //     // Any salt length should work.
-      //     for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
-      //       const signature = createSign(algo)
-      //                         .update('foo')
-      //                         .sign({ key, saltLength });
-      //       for (const pkey of [key, publicKey, publicPem]) {
-      //         const okay = createVerify(algo)
-      //                      .update('foo')
-      //                      .verify({ key: pkey, saltLength }, signature);
-      //         assert.ok(okay);
-      //       }
-      //     }
-      //   }
-      // }
-      // // Exporting the key using PKCS#1 should not work since this would discard
-      // // any algorithm restrictions.
-      // assert.throws(() => {
-      //   publicKey.export({ format: 'pem', type: 'pkcs1' });
-      // }, {
-      //   code: 'ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS'
-      // });
-      //   {
-      //     // This key pair enforces sha1 as the message digest and the MGF1
-      //     // message digest and a salt length of 20 bytes.
-      //     const publicPem = fixtures.readKey('rsa_pss_public_2048_sha1_sha1_20.pem');
-      //     const privatePem =
-      //         fixtures.readKey('rsa_pss_private_2048_sha1_sha1_20.pem');
-      //     const publicKey = createPublicKey(publicPem);
-      //     const privateKey = createPrivateKey(privatePem);
-      //     // Unlike the previous key pair, this key pair contains an RSASSA-PSS-params
-      //     // sequence. However, because all values in the RSASSA-PSS-params are set to
-      //     // their defaults (see RFC 3447), the ASN.1 structure contains an empty
-      //     // sequence. Node.js should add the default values to the key details.
-      //     const expectedKeyDetails = {
-      //       modulusLength: 2048,
-      //       publicExponent: 65537n,
-      //       hashAlgorithm: 'sha1',
-      //       mgf1HashAlgorithm: 'sha1',
-      //       saltLength: 20
-      //     };
-      //     assert.strictEqual(publicKey.type, 'public');
-      //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
-      //     assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);
-      //     assert.strictEqual(privateKey.type, 'private');
-      //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
-      //     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
-      //   }
-      //   {
-      //     // This key pair enforces sha256 as the message digest and the MGF1
-      //     // message digest and a salt length of at least 16 bytes.
-      //     const publicPem =
-      //       fixtures.readKey('rsa_pss_public_2048_sha256_sha256_16.pem');
-      //     const privatePem =
-      //       fixtures.readKey('rsa_pss_private_2048_sha256_sha256_16.pem');
-      //     const publicKey = createPublicKey(publicPem);
-      //     const privateKey = createPrivateKey(privatePem);
-      //     assert.strictEqual(publicKey.type, 'public');
-      //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
-      //     assert.strictEqual(privateKey.type, 'private');
-      //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
-      //     for (const key of [privatePem, privateKey]) {
-      //       // Signing with anything other than sha256 should fail.
-      //       assert.throws(() => {
-      //         createSign('sha1').sign(key);
-      //       }, /digest not allowed/);
-      //       // Signing with salt lengths less than 16 bytes should fail.
-      //       for (const saltLength of [8, 10, 12]) {
-      //         assert.throws(() => {
-      //           createSign('sha1').sign({ key, saltLength });
-      //         }, /pss saltlen too small/);
-      //       }
-      //       // Signing with sha256 and appropriate salt lengths should work.
-      //       for (const saltLength of [undefined, 16, 18, 20]) {
-      //         const signature = createSign('sha256')
-      //                           .update('foo')
-      //                           .sign({ key, saltLength });
-      //         for (const pkey of [key, publicKey, publicPem]) {
-      //           const okay = createVerify('sha256')
-      //                        .update('foo')
-      //                        .verify({ key: pkey, saltLength }, signature);
-      //           assert.ok(okay);
-      //         }
-      //       }
-      //     }
-      //   }
-      //   {
-      //     // This key enforces sha512 as the message digest and sha256 as the MGF1
-      //     // message digest.
-      //     const publicPem =
-      //       fixtures.readKey('rsa_pss_public_2048_sha512_sha256_20.pem');
-      //     const privatePem =
-      //       fixtures.readKey('rsa_pss_private_2048_sha512_sha256_20.pem');
-      //     const publicKey = createPublicKey(publicPem);
-      //     const privateKey = createPrivateKey(privatePem);
-      //     const expectedKeyDetails = {
-      //       modulusLength: 2048,
-      //       publicExponent: 65537n,
-      //       hashAlgorithm: 'sha512',
-      //       mgf1HashAlgorithm: 'sha256',
-      //       saltLength: 20
-      //     };
-      //     assert.strictEqual(publicKey.type, 'public');
-      //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
-      //     assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);
-      //     assert.strictEqual(privateKey.type, 'private');
-      //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
-      //     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
-      //     // Node.js usually uses the same hash function for the message and for MGF1.
-      //     // However, when a different MGF1 message digest algorithm has been
-      //     // specified as part of the key, it should automatically switch to that.
-      //     // This behavior is required by sections 3.1 and 3.3 of RFC4055.
-      //     for (const key of [privatePem, privateKey]) {
-      //       // sha256 matches the MGF1 hash function and should be used internally,
-      //       // but it should not be permitted as the main message digest algorithm.
-      //       for (const algo of ['sha1', 'sha256']) {
-      //         assert.throws(() => {
-      //           createSign(algo).sign(key);
-      //         }, /digest not allowed/);
-      //       }
-      //       // sha512 should produce a valid signature.
-      //       const signature = createSign('sha512')
-      //                         .update('foo')
-      //                         .sign(key);
-      //       for (const pkey of [key, publicKey, publicPem]) {
-      //         const okay = createVerify('sha512')
-      //                      .update('foo')
-      //                      .verify(pkey, signature);
-      //         assert.ok(okay);
-      //       }
-      //     }
-      //   }
-      // }
-    }
   });
 
   [2048, 4096].forEach(suffix => {
@@ -810,4 +660,170 @@ describe("crypto.KeyObjects", () => {
       }).toThrow();
     }
   });
+});
+
+test.todo("RSA-PSS should work", async () => {
+  // Test RSA-PSS.
+  {
+    // This key pair does not restrict the message digest algorithm or salt
+    // length.
+    // const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_public_2048.pem"), "ascii");
+    // const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_pss_private_2048.pem"), "ascii");
+    // const publicKey = createPublicKey(publicPem);
+    // const privateKey = createPrivateKey(privatePem);
+    // // Because no RSASSA-PSS-params appears in the PEM, no defaults should be
+    // // added for the PSS parameters. This is different from an empty
+    // // RSASSA-PSS-params sequence (see test below).
+    // const expectedKeyDetails = {
+    //   modulusLength: 2048,
+    //   publicExponent: 65537n,
+    // };
+    // expect(publicKey.type).toBe("public");
+    // expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+    // expect(publicKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
+    // expect(privateKey.type).toBe("private");
+    // expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+    // expect(privateKey.asymmetricKeyDetails).toBe(expectedKeyDetails);
+    // assert.throws(
+    //   () => publicKey.export({ format: 'jwk' }),
+    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
+    // assert.throws(
+    //   () => privateKey.export({ format: 'jwk' }),
+    //   { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
+    // for (const key of [privatePem, privateKey]) {
+    //   // Any algorithm should work.
+    //   for (const algo of ['sha1', 'sha256']) {
+    //     // Any salt length should work.
+    //     for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
+    //       const signature = createSign(algo)
+    //                         .update('foo')
+    //                         .sign({ key, saltLength });
+    //       for (const pkey of [key, publicKey, publicPem]) {
+    //         const okay = createVerify(algo)
+    //                      .update('foo')
+    //                      .verify({ key: pkey, saltLength }, signature);
+    //         assert.ok(okay);
+    //       }
+    //     }
+    //   }
+    // }
+    // // Exporting the key using PKCS#1 should not work since this would discard
+    // // any algorithm restrictions.
+    // assert.throws(() => {
+    //   publicKey.export({ format: 'pem', type: 'pkcs1' });
+    // }, {
+    //   code: 'ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS'
+    // });
+    //   {
+    //     // This key pair enforces sha1 as the message digest and the MGF1
+    //     // message digest and a salt length of 20 bytes.
+    //     const publicPem = fixtures.readKey('rsa_pss_public_2048_sha1_sha1_20.pem');
+    //     const privatePem =
+    //         fixtures.readKey('rsa_pss_private_2048_sha1_sha1_20.pem');
+    //     const publicKey = createPublicKey(publicPem);
+    //     const privateKey = createPrivateKey(privatePem);
+    //     // Unlike the previous key pair, this key pair contains an RSASSA-PSS-params
+    //     // sequence. However, because all values in the RSASSA-PSS-params are set to
+    //     // their defaults (see RFC 3447), the ASN.1 structure contains an empty
+    //     // sequence. Node.js should add the default values to the key details.
+    //     const expectedKeyDetails = {
+    //       modulusLength: 2048,
+    //       publicExponent: 65537n,
+    //       hashAlgorithm: 'sha1',
+    //       mgf1HashAlgorithm: 'sha1',
+    //       saltLength: 20
+    //     };
+    //     assert.strictEqual(publicKey.type, 'public');
+    //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
+    //     assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);
+    //     assert.strictEqual(privateKey.type, 'private');
+    //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
+    //     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
+    //   }
+    //   {
+    //     // This key pair enforces sha256 as the message digest and the MGF1
+    //     // message digest and a salt length of at least 16 bytes.
+    //     const publicPem =
+    //       fixtures.readKey('rsa_pss_public_2048_sha256_sha256_16.pem');
+    //     const privatePem =
+    //       fixtures.readKey('rsa_pss_private_2048_sha256_sha256_16.pem');
+    //     const publicKey = createPublicKey(publicPem);
+    //     const privateKey = createPrivateKey(privatePem);
+    //     assert.strictEqual(publicKey.type, 'public');
+    //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
+    //     assert.strictEqual(privateKey.type, 'private');
+    //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
+    //     for (const key of [privatePem, privateKey]) {
+    //       // Signing with anything other than sha256 should fail.
+    //       assert.throws(() => {
+    //         createSign('sha1').sign(key);
+    //       }, /digest not allowed/);
+    //       // Signing with salt lengths less than 16 bytes should fail.
+    //       for (const saltLength of [8, 10, 12]) {
+    //         assert.throws(() => {
+    //           createSign('sha1').sign({ key, saltLength });
+    //         }, /pss saltlen too small/);
+    //       }
+    //       // Signing with sha256 and appropriate salt lengths should work.
+    //       for (const saltLength of [undefined, 16, 18, 20]) {
+    //         const signature = createSign('sha256')
+    //                           .update('foo')
+    //                           .sign({ key, saltLength });
+    //         for (const pkey of [key, publicKey, publicPem]) {
+    //           const okay = createVerify('sha256')
+    //                        .update('foo')
+    //                        .verify({ key: pkey, saltLength }, signature);
+    //           assert.ok(okay);
+    //         }
+    //       }
+    //     }
+    //   }
+    //   {
+    //     // This key enforces sha512 as the message digest and sha256 as the MGF1
+    //     // message digest.
+    //     const publicPem =
+    //       fixtures.readKey('rsa_pss_public_2048_sha512_sha256_20.pem');
+    //     const privatePem =
+    //       fixtures.readKey('rsa_pss_private_2048_sha512_sha256_20.pem');
+    //     const publicKey = createPublicKey(publicPem);
+    //     const privateKey = createPrivateKey(privatePem);
+    //     const expectedKeyDetails = {
+    //       modulusLength: 2048,
+    //       publicExponent: 65537n,
+    //       hashAlgorithm: 'sha512',
+    //       mgf1HashAlgorithm: 'sha256',
+    //       saltLength: 20
+    //     };
+    //     assert.strictEqual(publicKey.type, 'public');
+    //     assert.strictEqual(publicKey.asymmetricKeyType, 'rsa-pss');
+    //     assert.deepStrictEqual(publicKey.asymmetricKeyDetails, expectedKeyDetails);
+    //     assert.strictEqual(privateKey.type, 'private');
+    //     assert.strictEqual(privateKey.asymmetricKeyType, 'rsa-pss');
+    //     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
+    //     // Node.js usually uses the same hash function for the message and for MGF1.
+    //     // However, when a different MGF1 message digest algorithm has been
+    //     // specified as part of the key, it should automatically switch to that.
+    //     // This behavior is required by sections 3.1 and 3.3 of RFC4055.
+    //     for (const key of [privatePem, privateKey]) {
+    //       // sha256 matches the MGF1 hash function and should be used internally,
+    //       // but it should not be permitted as the main message digest algorithm.
+    //       for (const algo of ['sha1', 'sha256']) {
+    //         assert.throws(() => {
+    //           createSign(algo).sign(key);
+    //         }, /digest not allowed/);
+    //       }
+    //       // sha512 should produce a valid signature.
+    //       const signature = createSign('sha512')
+    //                         .update('foo')
+    //                         .sign(key);
+    //       for (const pkey of [key, publicKey, publicPem]) {
+    //         const okay = createVerify('sha512')
+    //                      .update('foo')
+    //                      .verify(pkey, signature);
+    //         assert.ok(okay);
+    //       }
+    //     }
+    //   }
+    // }
+  }
 });

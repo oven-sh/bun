@@ -649,7 +649,7 @@ static JSC::EncodedJSValue KeyObject__createECFromPrivate(JSC::JSGlobalObject* g
     auto point = ECPointPtr(EC_POINT_dup(EC_KEY_get0_public_key(ec_key), EC_KEY_get0_group(ec_key)));
     if (!point) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private 1"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     auto curve = NID_undef;
@@ -657,28 +657,31 @@ static JSC::EncodedJSValue KeyObject__createECFromPrivate(JSC::JSGlobalObject* g
     switch (namedCurve) {
     case CryptoKeyEC::NamedCurve::P256:
         curve = NID_X9_62_prime256v1;
+        break;
     case CryptoKeyEC::NamedCurve::P384:
         curve = NID_secp384r1;
+        break;
     case CryptoKeyEC::NamedCurve::P521:
         curve = NID_secp521r1;
+        break;
     }
     auto publicECKey = ECKeyPtr(EC_KEY_new_by_curve_name(curve));
     if (!publicECKey) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private 2"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     // OPENSSL_EC_NAMED_CURVE needs to be set to export the key with the curve name, not with the curve parameters.
     EC_KEY_set_asn1_flag(publicECKey.get(), OPENSSL_EC_NAMED_CURVE);
     if (EC_KEY_set_public_key(publicECKey.get(), point.get()) <= 0) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private 3"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
     if (EVP_PKEY_set1_EC_KEY(publicPKey.get(), publicECKey.get()) <= 0) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
+        JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private 4"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     auto impl = CryptoKeyEC::create(alg, namedCurve, CryptoKeyType::Public, WTFMove(publicPKey), true, CryptoKeyUsageVerify);

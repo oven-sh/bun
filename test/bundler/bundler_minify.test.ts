@@ -328,7 +328,7 @@ describe("bundler", () => {
       "Symbol.iterator", // do not minify
     ],
     minifySyntax: true,
-    minifySymbols: true,
+    minifyIdentifiers: true,
     target: "bun",
   });
 });

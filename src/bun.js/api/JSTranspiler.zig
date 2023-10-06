@@ -76,7 +76,6 @@ const TranspilerOptions = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
-    minify_symbols: bool = false,
     no_macros: bool = false,
 };
 
@@ -552,7 +551,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             transpiler.minify_whitespace = hot.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
-            transpiler.minify_symbols = transpiler.minify_symbols;
         } else if (hot.isObject()) {
             if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                 transpiler.minify_whitespace = whitespace;
@@ -562,9 +560,6 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
             if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
                 transpiler.minify_identifiers = syntax;
-            }
-            if (try hot.getOptional(globalThis, "symbols", bool)) |symbols| {
-                transpiler.minify_symbols = symbols;
             }
         } else {
             JSC.throwInvalidArguments("Expected minify to be a boolean or an object", .{}, globalObject, exception);
@@ -819,9 +814,6 @@ pub fn constructor(
 
     if (transpiler_options.minify_identifiers)
         bundler.options.minify_identifiers = true;
-
-    if (transpiler_options.minify_symbols)
-        bundler.options.minify_symbols = true;
 
     bundler.options.transform_only = !bundler.options.allow_runtime;
 

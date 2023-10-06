@@ -824,7 +824,6 @@ describe("bundler", () => {
         expect(opts.minifyIdentifiers).toEqual(undefined);
         expect(opts.minifySyntax).toEqual(undefined);
         expect(opts.minifyWhitespace).toEqual(undefined);
-        expect(opts.minifySymbols).toEqual(undefined);
         expect(opts.outdir).toEqual(root);
         expect(opts.platform).toEqual("browser");
         expect(opts.sourcemap).toEqual(undefined);

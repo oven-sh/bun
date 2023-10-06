@@ -501,7 +501,6 @@ pub const Options = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
-    minify_symbols: bool = false,
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
 
@@ -2188,9 +2187,7 @@ fn NewPrinter(
                     }
                     p.print("(");
 
-                    std.debug.print("minify_symbols: {?}\n", .{ p.options.minify_symbols });
-
-                    if (!p.options.minify_symbols or !p.isSymbolIdentifier(e.target)) {
+                    if (!p.options.minify_identifiers or !p.isSymbolIdentifier(e.target)) {
                         const args = e.args.slice();
                         if (args.len > 0) {
                             p.printExpr(args[0], .comma, ExprFlag.None());

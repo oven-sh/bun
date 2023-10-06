@@ -14,16 +14,22 @@ import {
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
+  generateKeyPair,
+  generateKeySync,
 } from "crypto";
-import { test, expect, describe } from "bun:test";
+import { test, it, expect, describe } from "bun:test";
 import fs from "fs";
 import path from "path";
 
 const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_public.pem"), "ascii");
 const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_private.pem"), "ascii");
+const privateEncryptedPem = fs.readFileSync(
+  path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"),
+  "ascii",
+);
 
 describe("crypto.KeyObjects", () => {
-  test.todo("Attempting to create a key using other than CryptoKey should throw", async () => {
+  test("Attempting to create a key using other than CryptoKey should throw", async () => {
     expect(() => new KeyObject("secret", "")).toThrow();
     expect(() => new KeyObject("secret")).toThrow();
     expect(() => KeyObject.from("invalid_key")).toThrow();
@@ -279,17 +285,17 @@ describe("crypto.KeyObjects", () => {
         kty: "OKP",
       },
     },
-    // { private: fixtures.readKey('ed448_private.pem', 'ascii'),
-    //   public: fixtures.readKey('ed448_public.pem', 'ascii'),
-    //   keyType: 'ed448',
-    //   jwk: {
-    //     crv: 'Ed448',
-    //     x: 'oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o' +
-    //        'Dgc2V5ZUA',
-    //     d: '060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX' +
-    //        'jcR9mxppY',
-    //     kty: 'OKP'
-    //   } },
+    {
+      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_private.pem"), "ascii"),
+      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_public.pem"), "ascii"),
+      keyType: "ed448",
+      jwk: {
+        crv: "Ed448",
+        x: "oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o" + "Dgc2V5ZUA",
+        d: "060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX" + "jcR9mxppY",
+        kty: "OKP",
+      },
+    },
     {
       private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
       public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
@@ -301,21 +307,21 @@ describe("crypto.KeyObjects", () => {
         kty: "OKP",
       },
     },
-    // },
-    // { private: fixtures.readKey('x448_private.pem', 'ascii'),
-    //   public: fixtures.readKey('x448_public.pem', 'ascii'),
-    //   keyType: 'x448',
-    //   jwk: {
-    //     crv: 'X448',
-    //     x: 'ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg' +
-    //        'vSKsDFPA',
-    //     d: 'tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy' +
-    //        'S0jlSYJk',
-    //     kty: 'OKP'
-    //   } },
+    {
+      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_private.pem"), "ascii"),
+      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_public.pem"), "ascii"),
+      keyType: "x448",
+      jwk: {
+        crv: "X448",
+        x: "ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg" + "vSKsDFPA",
+        d: "tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy" + "S0jlSYJk",
+        kty: "OKP",
+      },
+    },
   ].forEach(info => {
     const keyType = info.keyType;
-
+    // X25519 implementation is incomplete, Ed448 and X448 are not supported yet
+    const test = keyType === "ed25519" ? it : it.skip;
     test(`${keyType} from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
       expect(key.type).toBe("private");
@@ -371,17 +377,19 @@ describe("crypto.KeyObjects", () => {
         y: "UbJuPy2Xi0lW7UYTBxPK3yGgDu9EAKYIecjkHX5s2lI",
       },
     },
-    //   { private:  fs.readFileSync(path.join(import.meta.dir, 'fixtures', 'ec_secp256k1_private.pem'), 'ascii'),
-    //     public:  fs.readFileSync(path.join(import.meta.dir, 'fixtures', 'ec_secp256k1_public.pem'), 'ascii'),
-    //     keyType: 'ec',
-    //     namedCurve: 'secp256k1',
-    //     jwk: {
-    //       crv: 'secp256k1',
-    //       d: 'c34ocwTwpFa9NZZh3l88qXyrkoYSxvC0FEsU5v1v4IM',
-    //       kty: 'EC',
-    //       x: 'cOzhFSpWxhalCbWNdP2H_yUkdC81C9T2deDpfxK7owA',
-    //       y: '-A3DAZTk9IPppN-f03JydgHaFvL1fAHaoXf4SX4NXyo'
-    //     } },
+    {
+      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii"),
+      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii"),
+      keyType: "ec",
+      namedCurve: "secp256k1",
+      jwk: {
+        crv: "secp256k1",
+        d: "c34ocwTwpFa9NZZh3l88qXyrkoYSxvC0FEsU5v1v4IM",
+        kty: "EC",
+        x: "cOzhFSpWxhalCbWNdP2H_yUkdC81C9T2deDpfxK7owA",
+        y: "-A3DAZTk9IPppN-f03JydgHaFvL1fAHaoXf4SX4NXyo",
+      },
+    },
     {
       private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_private.pem"), "ascii"),
       public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_public.pem"), "ascii"),
@@ -410,7 +418,7 @@ describe("crypto.KeyObjects", () => {
     },
   ].forEach(info => {
     const { keyType, namedCurve } = info;
-
+    const test = namedCurve === "secp256k1" ? it.skip : it;
     test(`${keyType} ${namedCurve} createPrivateKey from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
       expect(key.type).toBe("private");
@@ -455,56 +463,44 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
-  test.todo("DSA should work", async () => {
-    // {
-    //   // Reading an encrypted key without a passphrase should fail.
-    //   assert.throws(() => createPrivateKey(privateDsa), common.hasOpenSSL3 ? {
-    //     name: 'Error',
-    //     message: 'error:07880109:common libcrypto routines::interrupted or ' +
-    //              'cancelled',
-    //   } : {
-    //     name: 'TypeError',
-    //     code: 'ERR_MISSING_PASSPHRASE',
-    //     message: 'Passphrase required for encrypted key'
-    //   });
-    //   // Reading an encrypted key with a passphrase that exceeds OpenSSL's buffer
-    //   // size limit should fail with an appropriate error code.
-    //   assert.throws(() => createPrivateKey({
-    //     key: privateDsa,
-    //     format: 'pem',
-    //     passphrase: Buffer.alloc(1025, 'a')
-    //   }), common.hasOpenSSL3 ? { name: 'Error' } : {
-    //     code: 'ERR_OSSL_PEM_BAD_PASSWORD_READ',
-    //     name: 'Error'
-    //   });
-    //   // The buffer has a size of 1024 bytes, so this passphrase should be permitted
-    //   // (but will fail decryption).
-    //   assert.throws(() => createPrivateKey({
-    //     key: privateDsa,
-    //     format: 'pem',
-    //     passphrase: Buffer.alloc(1024, 'a')
-    //   }), {
-    //     message: /bad decrypt/
-    //   });
-    //   const publicKey = createPublicKey(publicDsa);
-    //   assert.strictEqual(publicKey.type, 'public');
-    //   assert.strictEqual(publicKey.asymmetricKeyType, 'dsa');
-    //   assert.strictEqual(publicKey.symmetricKeySize, undefined);
-    //   assert.throws(
-    //     () => publicKey.export({ format: 'jwk' }),
-    //     { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-    //   const privateKey = createPrivateKey({
-    //     key: privateDsa,
-    //     format: 'pem',
-    //     passphrase: 'secret'
-    //   });
-    //   assert.strictEqual(privateKey.type, 'private');
-    //   assert.strictEqual(privateKey.asymmetricKeyType, 'dsa');
-    //   assert.strictEqual(privateKey.symmetricKeySize, undefined);
-    //   assert.throws(
-    //     () => privateKey.export({ format: 'jwk' }),
-    //     { code: 'ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE' });
-    // }
+  test("private encrypted should work", async () => {
+    // Reading an encrypted key without a passphrase should fail.
+    expect(() => createPrivateKey(privateEncryptedPem)).toThrow();
+    // Reading an encrypted key with a passphrase that exceeds OpenSSL's buffer
+    // size limit should fail with an appropriate error code.
+    expect(() =>
+      createPrivateKey({
+        key: privateEncryptedPem,
+        format: "pem",
+        passphrase: Buffer.alloc(1025, "a"),
+      }),
+    ).toThrow();
+    // The buffer has a size of 1024 bytes, so this passphrase should be permitted
+    // (but will fail decryption).
+    expect(() =>
+      createPrivateKey({
+        key: privateEncryptedPem,
+        format: "pem",
+        passphrase: Buffer.alloc(1024, "a"),
+      }),
+    ).toThrow();
+    const publicKey = createPublicKey({
+      key: privateEncryptedPem,
+      format: "pem",
+      passphrase: "password", // this is not documented but should work
+    });
+    expect(publicKey.type).toBe("public");
+    expect(publicKey.asymmetricKeyType).toBe("rsa");
+    expect(publicKey.symmetricKeySize).toBe(undefined);
+
+    const privateKey = createPrivateKey({
+      key: privateEncryptedPem,
+      format: "pem",
+      passphrase: "password",
+    });
+    expect(privateKey.type).toBe("private");
+    expect(privateKey.asymmetricKeyType).toBe("rsa");
+    expect(privateKey.symmetricKeySize).toBe(undefined);
   });
 
   test.todo("RSA-PSS should work", async () => {
@@ -768,45 +764,40 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
-  test("ed25519 equals should work", async () => {
-    let firstKeyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
-    let secondKeyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+  async function generateKeyPairPromise(keyType: string) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(keyType, {}, (err: Error | undefined, publicKey: KeyObject, privateKey: KeyObject) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve({ publicKey, privateKey });
+    });
+    return (await promise) as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>;
+  }
+  ["ed25519", "x25519"].forEach(keyType => {
+    const test = keyType === "ed25519" ? it : it.skip;
+    test(`${keyType} equals should work`, async () => {
+      const first = await generateKeyPairPromise(keyType);
+      const second = await generateKeyPairPromise(keyType);
 
-    const first = {
-      publicKey: KeyObject.from(firstKeyPair.publicKey),
-      privateKey: KeyObject.from(firstKeyPair.privateKey),
-    };
-    const second = {
-      publicKey: KeyObject.from(secondKeyPair.publicKey),
-      privateKey: KeyObject.from(secondKeyPair.privateKey),
-    };
+      const secret = generateKeySync("aes", { length: 128 });
 
-    const secret = KeyObject.from(
-      await crypto.subtle.generateKey(
-        {
-          name: "AES-GCM",
-          length: 128,
-        },
-        true,
-        ["encrypt"],
-      ),
-    );
+      expect(first.publicKey.equals(first.publicKey)).toBeTrue();
 
-    expect(first.publicKey.equals(first.publicKey)).toBeTrue();
+      expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
 
-    expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
+      expect(first.publicKey.equals(second.publicKey)).toBeFalse();
+      expect(first.publicKey.equals(second.privateKey)).toBeFalse();
+      expect(first.publicKey.equals(secret)).toBeFalse();
 
-    expect(first.publicKey.equals(second.publicKey)).toBeFalse();
-    expect(first.publicKey.equals(second.privateKey)).toBeFalse();
-    expect(first.publicKey.equals(secret)).toBeFalse();
-
-    expect(first.privateKey.equals(first.privateKey)).toBeTrue();
-    expect(
-      first.privateKey.equals(createPrivateKey(first.privateKey.export({ format: "pem", type: "pkcs8" }))),
-    ).toBeTrue();
-    expect(first.privateKey.equals(second.privateKey)).toBeFalse();
-    expect(first.privateKey.equals(second.publicKey)).toBeFalse();
-    expect(first.privateKey.equals(secret)).toBeFalse();
+      expect(first.privateKey.equals(first.privateKey)).toBeTrue();
+      expect(
+        first.privateKey.equals(createPrivateKey(first.privateKey.export({ format: "pem", type: "pkcs8" }))),
+      ).toBeTrue();
+      expect(first.privateKey.equals(second.privateKey)).toBeFalse();
+      expect(first.privateKey.equals(second.publicKey)).toBeFalse();
+      expect(first.privateKey.equals(secret)).toBeFalse();
+    });
   });
 
   test("This should not cause a crash: https://github.com/nodejs/node/issues/44471", async () => {

@@ -12036,10 +12036,13 @@ const kCryptoKey = Symbol.for(":;bunKeyObjectCryptoKey::");
 class KeyObject {
   [kCryptoKey];
   constructor(key) {
-    //TODO: this fails for some reason
+    // TODO: check why this is fails
     // if(!(key instanceof CryptoKey)) {
     //   throw new TypeError("The \"key\" argument must be an instance of CryptoKey.");
     // }
+    if (typeof key !== "object") {
+      throw new TypeError('The "key" argument must be an instance of CryptoKey.');
+    }
     this[kCryptoKey] = key;
   }
   toString() {

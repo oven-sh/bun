@@ -256,7 +256,6 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                     }
                     auto jwk = WebCore::convertDictionary<JsonWebKey>(*globalObject, keyJSValue);
                     if (jwk.kty == "OKP"_s) {
-                        // const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(wrapped);
                         if (jwk.crv == "Ed25519"_s) {
                             auto result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTFMove(jwk), true, jwk.usages);
                             if (result == nullptr) {

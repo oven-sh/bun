@@ -16,6 +16,10 @@ import {
   privateEncrypt,
   generateKeyPairSync,
   generateKeySync,
+  generateKeyPair,
+  sign,
+  verify,
+  generateKey,
 } from "crypto";
 import { test, it, expect, describe } from "bun:test";
 import fs from "fs";
@@ -27,6 +31,65 @@ const privateEncryptedPem = fs.readFileSync(
   path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"),
   "ascii",
 );
+
+// Constructs a regular expression for a PEM-encoded key with the given label.
+function getRegExpForPEM(label: string, cipher?: string) {
+  const head = `\\-\\-\\-\\-\\-BEGIN ${label}\\-\\-\\-\\-\\-`;
+  const rfc1421Header = cipher == null ? "" : `\nProc-Type: 4,ENCRYPTED\nDEK-Info: ${cipher},[^\n]+\n`;
+  const body = "([a-zA-Z0-9\\+/=]{64}\n)*[a-zA-Z0-9\\+/=]{1,64}";
+  const end = `\\-\\-\\-\\-\\-END ${label}\\-\\-\\-\\-\\-`;
+  return new RegExp(`^${head}${rfc1421Header}\n${body}\n${end}\n$`);
+}
+const pkcs1PubExp = getRegExpForPEM("RSA PUBLIC KEY");
+const pkcs1PrivExp = getRegExpForPEM("RSA PRIVATE KEY");
+const pkcs1EncExp = (cipher: string) => getRegExpForPEM("RSA PRIVATE KEY", cipher);
+const spkiExp = getRegExpForPEM("PUBLIC KEY");
+const pkcs8Exp = getRegExpForPEM("PRIVATE KEY");
+const pkcs8EncExp = getRegExpForPEM("ENCRYPTED PRIVATE KEY");
+const sec1Exp = getRegExpForPEM("EC PRIVATE KEY");
+const sec1EncExp = (cipher: string) => getRegExpForPEM("EC PRIVATE KEY", cipher);
+
+// Asserts that the size of the given key (in chars or bytes) is within 10% of
+// the expected size.
+function assertApproximateSize(key: any, expectedSize: number) {
+  const min = Math.floor(0.9 * expectedSize);
+  const max = Math.ceil(1.1 * expectedSize);
+  expect(key.length).toBeGreaterThanOrEqual(min);
+  expect(key.length).toBeLessThanOrEqual(max);
+}
+// Tests that a key pair can be used for encryption / decryption.
+function testEncryptDecrypt(publicKey: any, privateKey: any) {
+  const message = "Hello Node.js world!";
+  const plaintext = Buffer.from(message, "utf8");
+  for (const key of [publicKey, privateKey]) {
+    const ciphertext = publicEncrypt(key, plaintext);
+    const received = privateDecrypt(privateKey, ciphertext);
+    expect(received.toString("utf8")).toEqual(message);
+  }
+}
+
+// Tests that a key pair can be used for signing / verification.
+function testSignVerify(publicKey: any, privateKey: any) {
+  const message = Buffer.from("Hello Node.js world!");
+
+  function oldSign(algo: string, data: string | Buffer, key: any) {
+    return createSign(algo).update(data).sign(key);
+  }
+
+  function oldVerify(algo: string, data: string | Buffer, key: any, signature: any) {
+    return createVerify(algo).update(data).verify(key, signature);
+  }
+
+  for (const signFn of [sign, oldSign]) {
+    const signature = signFn("SHA256", message, privateKey);
+    for (const verifyFn of [verify, oldVerify]) {
+      for (const key of [publicKey, privateKey]) {
+        const okay = verifyFn("SHA256", message, key, signature);
+        expect(okay).toBeTrue();
+      }
+    }
+  }
+}
 
 describe("crypto.KeyObjects", () => {
   test("Attempting to create a key using other than CryptoKey should throw", async () => {
@@ -412,7 +475,7 @@ describe("crypto.KeyObjects", () => {
       namedCurve: "secp521r1",
       jwk: {
         crv: "P-521",
-        d: "ABIIbmn3Gm_Y11uIDkC3g2ijpRxIrJEBY4i_JJYo5OougzTl3BX2ifRluPJMaaHcNer" + "bQH_WdVkLLX86ShlHrRyJ",
+        d: "Eghuafcab9jXW4gOQLeDaKOlHEiskQFjiL8klijk6i6DNOXcFfaJ9GW48kxpodw16ttAf9Z1WQstfzpKGUetHIk",
         kty: "EC",
         x: "AaLFgjwZtznM3N7qsfb86awVXe6c6djUYOob1FN-kllekv0KEXV0bwcDjPGQz5f6MxL" + "CbhMeHRavUS6P10rsTtBn",
         y: "Ad3flexBeAfXceNzRBH128kFbOWD6W41NjwKRqqIF26vmgW_8COldGKZjFkOSEASxPB" + "cvA2iFJRUyQ3whC00j0Np",
@@ -642,6 +705,700 @@ describe("crypto.KeyObjects", () => {
         createPrivateKey({ key, format: "jwk" });
       }).toThrow();
     }
+  });
+
+  ["hmac", "aes"].forEach(type => {
+    [128, 256].forEach(length => {
+      test(`generateKey ${type} ${length}`, async () => {
+        {
+          const key = generateKeySync(type, { length });
+          expect(key).toBeDefined();
+          const keybuf = key.export();
+          expect(keybuf.byteLength).toBe(length / 8);
+        }
+
+        const { promise, resolve, reject } = Promise.withResolvers();
+        generateKey(type, { length }, (err, key) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(key);
+          }
+        });
+
+        {
+          const key = await promise;
+          expect(key).toBeDefined();
+          const keybuf = key.export();
+          expect(keybuf.byteLength).toBe(length / 8);
+        }
+      });
+    });
+  });
+  describe("Test async elliptic curve key generation with 'jwk' encoding and named curve", () => {
+    ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
+      const test = curve === "secp256k1" ? it.skip : it;
+      test(`should work with ${curve}`, async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        generateKeyPair(
+          "ec",
+          {
+            namedCurve: curve,
+            publicKeyEncoding: {
+              format: "jwk",
+            },
+            privateKeyEncoding: {
+              format: "jwk",
+            },
+          },
+          (err, publicKey, privateKey) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve({ publicKey, privateKey });
+          },
+        );
+
+        const { publicKey, privateKey } = await (promise as Promise<{ publicKey: any; privateKey: any }>);
+        expect(typeof publicKey).toBe("object");
+        expect(typeof privateKey).toBe("object");
+        expect(publicKey.x).toBe(privateKey.x);
+        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.d).toBeUndefined();
+        expect(privateKey.d).toBeDefined();
+        expect(publicKey.kty).toEqual("EC");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        expect(publicKey.crv).toEqual(curve);
+        expect(publicKey.crv).toEqual(privateKey.crv);
+      });
+    });
+  });
+
+  describe("Test async elliptic curve key generation with 'jwk' encoding and RSA.", () => {
+    [256, 1024, 2048].forEach(modulusLength => {
+      test(`should work with ${modulusLength}`, async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        generateKeyPair(
+          "rsa",
+          {
+            modulusLength,
+            publicKeyEncoding: {
+              format: "jwk",
+            },
+            privateKeyEncoding: {
+              format: "jwk",
+            },
+          },
+          (err, publicKey, privateKey) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve({ publicKey, privateKey });
+          },
+        );
+
+        const { publicKey, privateKey } = await (promise as Promise<{ publicKey: any; privateKey: any }>);
+        expect(typeof publicKey).toEqual("object");
+        expect(typeof privateKey).toEqual("object");
+        expect(publicKey.kty).toEqual("RSA");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        expect(typeof publicKey.n).toEqual("string");
+        expect(publicKey.n).toEqual(privateKey.n);
+        expect(typeof publicKey.e).toEqual("string");
+        expect(publicKey.e).toEqual(privateKey.e);
+        expect(typeof privateKey.d).toEqual("string");
+        expect(typeof privateKey.p).toEqual("string");
+        expect(typeof privateKey.q).toEqual("string");
+        expect(typeof privateKey.dp).toEqual("string");
+        expect(typeof privateKey.dq).toEqual("string");
+        expect(typeof privateKey.qi).toEqual("string");
+      });
+    });
+  });
+
+  describe("Test async elliptic curve key generation with 'jwk' encoding", () => {
+    ["ed25519", "ed448", "x25519", "x448"].forEach(type => {
+      const test = type === "ed25519" ? it : it.skip;
+      test(`should work with ${type}`, async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        generateKeyPair(
+          type,
+          {
+            publicKeyEncoding: {
+              format: "jwk",
+            },
+            privateKeyEncoding: {
+              format: "jwk",
+            },
+          },
+          (err, publicKey, privateKey) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve({ publicKey, privateKey });
+          },
+        );
+
+        const { publicKey, privateKey } = await (promise as Promise<{ publicKey: any; privateKey: any }>);
+        expect(typeof publicKey).toEqual("object");
+        expect(typeof privateKey).toEqual("object");
+        expect(publicKey.x).toEqual(privateKey.x);
+        expect(publicKey.d).toBeUndefined();
+        expect(privateKey.d).toBeDefined();
+        expect(publicKey.kty).toEqual("OKP");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        const expectedCrv = `${type.charAt(0).toUpperCase()}${type.slice(1)}`;
+        expect(publicKey.crv).toEqual(expectedCrv);
+        expect(publicKey.crv).toEqual(privateKey.crv);
+      });
+    });
+  });
+
+  test(`Test async RSA key generation with an encrypted private key, but encoded as DER`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "rsa",
+      {
+        publicExponent: 0x10001,
+        modulusLength: 512,
+        publicKeyEncoding: {
+          type: "pkcs1",
+          format: "der",
+        },
+        privateKeyEncoding: {
+          type: "pkcs1",
+          format: "pem",
+          cipher: "aes-256-cbc",
+          passphrase: "secret",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey: publicKeyDER, privateKey } = await (promise as Promise<{
+      publicKey: Buffer;
+      privateKey: string;
+    }>);
+    expect(Buffer.isBuffer(publicKeyDER)).toBeTrue();
+    assertApproximateSize(publicKeyDER, 74);
+
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs1EncExp("AES-256-CBC"));
+
+    const publicKey = {
+      key: publicKeyDER,
+      type: "pkcs1",
+      format: "der",
+    };
+    expect(() => {
+      testEncryptDecrypt(publicKey, privateKey);
+    }).toThrow();
+
+    const key = { key: privateKey, passphrase: "secret" };
+    testEncryptDecrypt(publicKey, key);
+    testSignVerify(publicKey, key);
+  });
+
+  test(`Test async RSA key generation with an encrypted private key`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "rsa",
+      {
+        publicExponent: 0x10001,
+        modulusLength: 512,
+        publicKeyEncoding: {
+          type: "pkcs1",
+          format: "der",
+        },
+        privateKeyEncoding: {
+          type: "pkcs8",
+          format: "der",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey: publicKeyDER, privateKey: privateKeyDER } = await (promise as Promise<{
+      publicKey: Buffer;
+      privateKey: Buffer;
+    }>);
+    expect(Buffer.isBuffer(publicKeyDER)).toBeTrue();
+    assertApproximateSize(publicKeyDER, 74);
+
+    expect(Buffer.isBuffer(privateKeyDER)).toBeTrue();
+
+    const publicKey = {
+      key: publicKeyDER,
+      type: "pkcs1",
+      format: "der",
+    };
+    const privateKey = {
+      key: privateKeyDER,
+      format: "der",
+      type: "pkcs8",
+      passphrase: "secret",
+    };
+    testEncryptDecrypt(publicKey, privateKey);
+    testSignVerify(publicKey, privateKey);
+  });
+
+  test(`Test async elliptic curve key generation, e.g. for ECDSA, with an encrypted private key`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "ec",
+      {
+        namedCurve: "P-256",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "pkcs8",
+          format: "pem",
+          cipher: "aes-128-cbc",
+          passphrase: "top secret",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey, privateKey } = await (promise as Promise<{ publicKey: string; privateKey: string }>);
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs8EncExp);
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "top secret",
+    });
+  });
+
+  test(`Test async explicit elliptic curve key generation with an encrypted private key`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "ec",
+      {
+        namedCurve: "prime256v1",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "sec1",
+          format: "pem",
+          cipher: "aes-128-cbc",
+          passphrase: "secret",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey, privateKey } = await (promise as Promise<{ publicKey: string; privateKey: string }>);
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(sec1EncExp("AES-128-CBC"));
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "secret",
+    });
+  });
+
+  test(`Test async explicit elliptic curve key generation, e.g. for ECDSA, with a SEC1 private key`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "ec",
+      {
+        namedCurve: "prime256v1",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "sec1",
+          format: "pem",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey, privateKey } = await (promise as Promise<{ publicKey: string; privateKey: string }>);
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(sec1Exp);
+    testSignVerify(publicKey, privateKey);
+  });
+
+  test(`Test async elliptic curve key generation, e.g. for ECDSA, with an encrypted private key`, async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "ec",
+      {
+        namedCurve: "prime256v1",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "pkcs8",
+          format: "pem",
+          cipher: "aes-128-cbc",
+          passphrase: "top secret",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey, privateKey } = await (promise as Promise<{ publicKey: string; privateKey: string }>);
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs8EncExp);
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "top secret",
+    });
+  });
+
+  describe("Test sync elliptic curve key generation with 'jwk' encoding and named curve", () => {
+    ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
+      const test = curve === "secp256k1" ? it.skip : it;
+      test(`should work with ${curve}`, async () => {
+        const { publicKey, privateKey } = generateKeyPairSync("ec", {
+          namedCurve: curve,
+          publicKeyEncoding: {
+            format: "jwk",
+          },
+          privateKeyEncoding: {
+            format: "jwk",
+          },
+        });
+        expect(typeof publicKey).toBe("object");
+        expect(typeof privateKey).toBe("object");
+        expect(publicKey.x).toBe(privateKey.x);
+        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.d).toBeUndefined();
+        expect(privateKey.d).toBeDefined();
+        expect(publicKey.kty).toEqual("EC");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        expect(publicKey.crv).toEqual(curve);
+        expect(publicKey.crv).toEqual(privateKey.crv);
+      });
+    });
+  });
+
+  describe("Test sync elliptic curve key generation with 'jwk' encoding and RSA.", () => {
+    [256, 1024, 2048].forEach(modulusLength => {
+      test(`should work with ${modulusLength}`, async () => {
+        const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+          modulusLength,
+          publicKeyEncoding: {
+            format: "jwk",
+          },
+          privateKeyEncoding: {
+            format: "jwk",
+          },
+        });
+        expect(typeof publicKey).toEqual("object");
+        expect(typeof privateKey).toEqual("object");
+        expect(publicKey.kty).toEqual("RSA");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        expect(typeof publicKey.n).toEqual("string");
+        expect(publicKey.n).toEqual(privateKey.n);
+        expect(typeof publicKey.e).toEqual("string");
+        expect(publicKey.e).toEqual(privateKey.e);
+        expect(typeof privateKey.d).toEqual("string");
+        expect(typeof privateKey.p).toEqual("string");
+        expect(typeof privateKey.q).toEqual("string");
+        expect(typeof privateKey.dp).toEqual("string");
+        expect(typeof privateKey.dq).toEqual("string");
+        expect(typeof privateKey.qi).toEqual("string");
+      });
+    });
+  });
+
+  describe("Test sync elliptic curve key generation with 'jwk' encoding", () => {
+    ["ed25519", "ed448", "x25519", "x448"].forEach(type => {
+      const test = type === "ed25519" ? it : it.skip;
+      test(`should work with ${type}`, async () => {
+        const { publicKey, privateKey } = generateKeyPairSync(type, {
+          publicKeyEncoding: {
+            format: "jwk",
+          },
+          privateKeyEncoding: {
+            format: "jwk",
+          },
+        });
+
+        expect(typeof publicKey).toEqual("object");
+        expect(typeof privateKey).toEqual("object");
+        expect(publicKey.x).toEqual(privateKey.x);
+        expect(publicKey.d).toBeUndefined();
+        expect(privateKey.d).toBeDefined();
+        expect(publicKey.kty).toEqual("OKP");
+        expect(publicKey.kty).toEqual(privateKey.kty);
+        const expectedCrv = `${type.charAt(0).toUpperCase()}${type.slice(1)}`;
+        expect(publicKey.crv).toEqual(expectedCrv);
+        expect(publicKey.crv).toEqual(privateKey.crv);
+      });
+    });
+  });
+
+  test(`Test sync RSA key generation with an encrypted private key, but encoded as DER`, async () => {
+    const { publicKey: publicKeyDER, privateKey } = generateKeyPairSync("rsa", {
+      publicExponent: 0x10001,
+      modulusLength: 512,
+      publicKeyEncoding: {
+        type: "pkcs1",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs1",
+        format: "pem",
+        cipher: "aes-256-cbc",
+        passphrase: "secret",
+      },
+    });
+
+    expect(Buffer.isBuffer(publicKeyDER)).toBeTrue();
+    assertApproximateSize(publicKeyDER, 74);
+
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs1EncExp("AES-256-CBC"));
+
+    const publicKey = {
+      key: publicKeyDER,
+      type: "pkcs1",
+      format: "der",
+    };
+    expect(() => {
+      testEncryptDecrypt(publicKey, privateKey);
+    }).toThrow();
+
+    const key = { key: privateKey, passphrase: "secret" };
+    testEncryptDecrypt(publicKey, key);
+    testSignVerify(publicKey, key);
+  });
+
+  test(`Test sync RSA key generation with an encrypted private key`, async () => {
+    const { publicKey: publicKeyDER, privateKey: privateKeyDER } = generateKeyPairSync("rsa", {
+      publicExponent: 0x10001,
+      modulusLength: 512,
+      publicKeyEncoding: {
+        type: "pkcs1",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "der",
+      },
+    });
+
+    expect(Buffer.isBuffer(publicKeyDER)).toBeTrue();
+    assertApproximateSize(publicKeyDER, 74);
+
+    expect(Buffer.isBuffer(privateKeyDER)).toBeTrue();
+
+    const publicKey = {
+      key: publicKeyDER,
+      type: "pkcs1",
+      format: "der",
+    };
+    const privateKey = {
+      key: privateKeyDER,
+      format: "der",
+      type: "pkcs8",
+      passphrase: "secret",
+    };
+    testEncryptDecrypt(publicKey, privateKey);
+    testSignVerify(publicKey, privateKey);
+  });
+
+  test(`Test sync elliptic curve key generation, e.g. for ECDSA, with an encrypted private key`, async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "pem",
+        cipher: "aes-128-cbc",
+        passphrase: "top secret",
+      },
+    });
+
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs8EncExp);
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "top secret",
+    });
+  });
+
+  test(`Test sync explicit elliptic curve key generation with an encrypted private key`, async () => {
+    const { publicKey, privateKey } = generateKeyPairSync(
+      "ec",
+      {
+        namedCurve: "prime256v1",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "sec1",
+          format: "pem",
+          cipher: "aes-128-cbc",
+          passphrase: "secret",
+        },
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(sec1EncExp("AES-128-CBC"));
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "secret",
+    });
+  });
+
+  test(`Test sync explicit elliptic curve key generation, e.g. for ECDSA, with a SEC1 private key`, async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
+      },
+      privateKeyEncoding: {
+        type: "sec1",
+        format: "pem",
+      },
+    });
+
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(sec1Exp);
+    testSignVerify(publicKey, privateKey);
+  });
+
+  test(`Test sync elliptic curve key generation, e.g. for ECDSA, with an encrypted private key`, async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "pem",
+        cipher: "aes-128-cbc",
+        passphrase: "top secret",
+      },
+    });
+
+    expect(typeof publicKey).toBe("string");
+    expect(publicKey).toMatch(spkiExp);
+    expect(typeof privateKey).toBe("string");
+    expect(privateKey).toMatch(pkcs8EncExp);
+
+    expect(() => {
+      testSignVerify(publicKey, privateKey);
+    }).toThrow();
+
+    testSignVerify(publicKey, {
+      key: privateKey,
+      passphrase: "top secret",
+    });
+  });
+  // SKIPED because we round the key size to the nearest multiple of 8 like documented
+  test.skip(`this tests check that generateKeyPair returns correct bit length in KeyObject's asymmetricKeyDetails.`, async () => {
+    // This tests check that generateKeyPair returns correct bit length in
+    // https://github.com/nodejs/node/issues/46102#issuecomment-1372153541
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "rsa",
+      {
+        modulusLength: 513,
+      },
+      (err, publicKey, privateKey) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve({ publicKey, privateKey });
+      },
+    );
+
+    const { publicKey, privateKey } = await (promise as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>);
+    expect(publicKey.asymmetricKeyDetails?.modulusLength).toBe(513);
+    expect(privateKey.asymmetricKeyDetails?.modulusLength).toBe(513);
   });
 });
 

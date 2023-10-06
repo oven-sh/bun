@@ -21,7 +21,7 @@ Configuring with `bunfig.toml` is optional. Bun tries to be zero configuration i
 
 # Scope name      The value can be a URL string or an object
 "@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
-# URL is optional and fallsback to the default registry
+# URL is optional and falls back to the default registry
 
 # The "@" in the scope is optional
 mybigcompany2 = { token = "123456" }

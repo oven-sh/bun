@@ -1,5 +1,6 @@
 import bun from './index.js';
 import * as jsc from './modules/jsc.js';
+import * as ffi from './modules/ffi.js';
 
 // This file serves two purposes:
 // 1. It is the entry point for using the Bun global in the REPL. (--import this file)
@@ -28,3 +29,4 @@ globalThis.Bun = bun as typeof bun & {
 };
 
 Reflect.set(globalThis, 'jsc', jsc);
+Reflect.set(globalThis, 'ffi', ffi.default);

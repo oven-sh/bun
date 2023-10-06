@@ -34,7 +34,7 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 
 //? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
 export const version = '1.0.4' satisfies typeof Bun.version;
-export const revision = '17390b39bd9fc62a4bf6ec69447bfbcaf6a48964' satisfies typeof Bun.revision;
+export const revision = 'b510da04d1a1467d628124732295325752433e72' satisfies typeof Bun.revision;
 
 export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
     const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
@@ -240,9 +240,13 @@ export const spawn = ((...args) => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
@@ -342,9 +346,13 @@ export const spawnSync = ((...args): SyncSubprocess => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
+        // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
         else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
@@ -403,11 +411,12 @@ export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferV
 }) satisfies typeof Bun.readableStreamToArrayBuffer;
 export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBuffer>) => {
     let result = '';
+    // @ts-expect-error TODO: check why this suddenly errors in bun-types 1.0.4
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader(); ReadableStreamDefaultReader
     while (true) {
         const { done, value } = await reader.read();
         //! for some reason "done" isnt being set to true so this is just infinitely looping at the moment... sigh
-        if (done || !value || !value?.length) break;
+        if (done || !value || !value?.byteLength) break;
         result += value;
     }
     return result;

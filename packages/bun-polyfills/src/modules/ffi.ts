@@ -1,0 +1,189 @@
+import util from 'node:util';
+import koffi from 'koffi';
+import bunffi from 'bun:ffi';
+
+koffi.alias('f32', 'float');
+koffi.alias('f64', 'double');
+koffi.alias('i8', 'int8_t');
+koffi.alias('i16', 'int16_t');
+koffi.alias('i32', 'int32_t');
+koffi.alias('i64', 'int64_t');
+koffi.alias('u8', 'uint8_t');
+koffi.alias('u16', 'uint16_t');
+koffi.alias('u32', 'uint32_t');
+koffi.alias('u64', 'uint64_t');
+koffi.alias('usize', 'uint64_t');
+koffi.alias('callback', 'void*');
+koffi.alias('function', 'void*');
+koffi.alias('cstring', 'void*');
+koffi.alias('pointer', 'void*');
+koffi.alias('ptr', 'void*');
+
+function bunffiTypeToKoffiType(type: bunffi.FFITypeOrString = 'void'): string {
+    if (typeof type === 'number') return ffi.FFIType[type];
+    else return type;
+}
+
+enum FFIType {
+    char = 0,
+    i8 = 1,
+    int8_t = 1,
+    u8 = 2,
+    uint8_t = 2,
+    i16 = 3,
+    int16_t = 3,
+    u16 = 4,
+    uint16_t = 4,
+    int = 5,
+    i32 = 5,
+    int32_t = 5,
+    u32 = 6,
+    uint32_t = 6,
+    i64 = 7,
+    int64_t = 7,
+    u64 = 8,
+    uint64_t = 8,
+    f64 = 9,
+    double = 9,
+    f32 = 10,
+    float = 10,
+    bool = 11,
+    ptr = 12,
+    pointer = 12,
+    void = 13,
+    cstring = 14,
+    i64_fast = 15,
+    u64_fast = 16,
+    function = 17,
+};
+
+/**
+ * Koffi/Node.js don't seem to have a way to get the pointer address of a value, so we have to track them ourselves,
+ * while also making up fake addresses for values that are created on the JS side, but ensuring that they're unique.
+ */
+const ptrsToValues = new Map<bunffi.Pointer, unknown>();
+let fakePtr = 4;
+
+const ffi = {
+    dlopen<Fns extends Record<string, bunffi.Narrow<bunffi.FFIFunction>>>(name: string, symbols: Fns) {
+        const lib = koffi.load(name);
+        const outsyms = {} as bunffi.ConvertFns<typeof symbols>;
+        for (const [sym, def] of Object.entries(symbols) as [string, bunffi.FFIFunction][]) {
+            const returnType = bunffiTypeToKoffiType(def.returns);
+            const argTypes = def.args?.map(bunffiTypeToKoffiType) ?? [];
+            const rawfn = lib.func(
+                sym,
+                returnType,
+                argTypes,
+            );
+            Reflect.set(
+                outsyms,
+                sym,
+                function(...args: any[]) {
+                    args.forEach((arg, i) => {
+                        if (typeof arg === 'number' && (argTypes[i] === 'ptr' || argTypes[i] === 'pointer')) {
+                            const ptrVal = ptrsToValues.get(arg);
+                            if (!ptrVal) throw new Error(
+                                `Untracked pointer ${arg} in ffi function call ${sym}, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+                            );
+                            args[i] = ptrVal;
+                        }
+                    });
+                    const rawret = rawfn(...args);
+                    if (returnType === 'function' || returnType === 'pointer' || returnType === 'ptr') {
+                        const ptrAddr = Number(koffi.address(rawret));
+                        ptrsToValues.set(ptrAddr, rawret);
+                        return ptrAddr;
+                    }
+                    return rawret;
+                }
+            );
+        }
+        return {
+            close() { lib.unload(); },
+            symbols: outsyms,
+        };
+    },
+    linkSymbols(lib) {
+        return this.dlopen('', lib); // TODO
+    },
+    viewSource(symsOrCb, isCb) {
+        // Impossible to polyfill, but we preserve the important properties of the function:
+        // 1. Returns string if the 2nd argument is true, or an array of strings if it's false/unset.
+        // 2. The string array has the same length as there are keys in the given symbols object.
+        const stub = '/* [native code] */' as const;
+        return isCb ? stub : Object.keys(symsOrCb).map(() => stub) as any; // any cast to suppress type error due to non-overload syntax
+    },
+    toBuffer(ptr, bOff, bLen) { return Buffer.alloc(0); }, // TODO
+    toArrayBuffer(ptr, byteOff?, byteLen?) {
+        const view = ptrsToValues.get(ptr);
+        if (!view) throw new Error(
+            `Untracked pointer ${ptr} in ffi.toArrayBuffer, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+        );
+        if (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) return view as ArrayBuffer; // ?
+        if (util.types.isExternal(view)) {
+            let bytes = [], byte, off = 0;
+            do {
+                byte = koffi.decode(view, off++, 'unsigned char[]', 1);
+                bytes.push(byte[0]);
+            } while (byte[0]);
+            bytes.pop();
+            return new Uint8Array(bytes).buffer as ArrayBuffer; // ?
+        }
+        if (byteOff === undefined) return (view as DataView).buffer;
+        return (view as DataView).buffer.slice(byteOff, byteOff + (byteLen ?? (view as DataView).byteLength));
+    },
+    ptr(view, byteOffset = 0) {
+        const known = [...ptrsToValues.entries()].find(([_, v]) => v === view);
+        if (known) return known[0];
+        const ptr = fakePtr;
+        fakePtr += (view.byteLength + 3) & ~0x3;
+        if (!byteOffset) {
+            ptrsToValues.set(ptr, view);
+            return ptr;
+        } else {
+            const view2 = new DataView(
+                (view instanceof ArrayBuffer || view instanceof SharedArrayBuffer) ? view : view.buffer,
+                byteOffset, view.byteLength
+            );
+            ptrsToValues.set(ptr + byteOffset, view2);
+            return ptr + byteOffset;
+        }
+    },
+    read: 0 as any, // TODO
+    suffix:
+        process.platform === 'darwin' ? '.dylib' :
+        (process.platform === 'win32' ? '.dll' : '.so'),
+    // TODO
+    CString: class CString extends String implements bunffi.CString {
+        constructor(str: bunffi.Pointer, bOff?: number, bLen?: number) {
+            super(str);
+        }
+        close() { }
+        ptr!: bunffi.Pointer;
+        byteOffset?: number;
+        byteLength?: number;
+        get arrayBuffer(): ArrayBuffer { return new ArrayBuffer(0); };
+    },
+    CFunction(sym): CallableFunction & { close(): void; } {
+        if (!sym.ptr) throw new Error('ffi.CFunction requires a non-null pointer');
+        const fnName = `anonymous__${sym.ptr.toString(16).replaceAll('.', '_')}`
+        const fnSig = koffi.proto(fnName, bunffiTypeToKoffiType(sym.returns), sym.args?.map(bunffiTypeToKoffiType) ?? []);
+        const fnPtr = ptrsToValues.get(sym.ptr);
+        if (!fnPtr) throw new Error(
+            `Untracked pointer ${sym.ptr} in ffi.CFunction, this polyfill is limited to pointers obtained through the same instance of the ffi module.`
+        );
+        const fn = koffi.decode(fnPtr, fnSig);
+        fn.close = () => koffi.unregister(fn);
+        return fn;
+    },
+    // TODO
+    JSCallback: class JSCallback implements bunffi.JSCallback {
+        constructor(cb: (...args: any[]) => any, def: bunffi.FFIFunction) { }
+        readonly ptr!: bunffi.Pointer | null;
+        readonly threadsafe!: boolean;
+        close() { };
+    },
+    FFIType,
+} satisfies typeof bunffi;
+export default ffi;

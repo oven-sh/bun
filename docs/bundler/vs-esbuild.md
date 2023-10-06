@@ -737,12 +737,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 ---
 
-- `minifySymbols`
-- `minify.symbols`
-- See `minify`
-
----
-
 - `nodePaths`
 - n/a
 - Not supported

@@ -3753,6 +3753,7 @@ pub const Package = extern struct {
         // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
         // should allow us to remove padding bytes
 
+        // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 

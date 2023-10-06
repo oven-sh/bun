@@ -307,7 +307,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "/private/tmp/scratchpad_20231004T225420/contoso-real-estate",
+      "cwd": "/Users/dave/contoso-real-estate",
       "console": "internalConsole",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"

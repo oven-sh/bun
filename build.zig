@@ -145,7 +145,22 @@ pub fn build(b: *Build) !void {
     };
 }
 
+const required_zig_version = "0.12.0-dev.163+6780a6bbf";
 pub fn build_(b: *Build) !void {
+    if (!std.mem.eql(u8, @import("builtin").zig_version_string, required_zig_version)) {
+        const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
+        std.debug.print(
+            "{s}WARNING:\nBun requires zig version '{s}', but found '{s}', build may fail...\nMake sure you installed the right version as per https://bun.sh/docs/project/development#install-zig\n{s}You can update to the right version using 'zigup {s}'\n\n",
+            .{
+                if (colors) "\x1b[1;33m" else "",
+                required_zig_version,
+                @import("builtin").zig_version_string,
+                if (colors) "\x1b[0m" else "",
+                required_zig_version,
+            },
+        );
+    }
+
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options

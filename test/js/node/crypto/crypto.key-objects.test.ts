@@ -320,13 +320,15 @@ describe("crypto.KeyObjects", () => {
     const keyType = info.keyType;
     // X25519 implementation is incomplete, Ed448 and X448 are not supported yet
     const test = keyType === "ed25519" ? it : it.skip;
+    let privateKey: KeyObject;
     test(`${keyType} from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
+      privateKey = key;
       expect(key.type).toBe("private");
       expect(key.asymmetricKeyType).toBe(keyType);
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
-      const jwt = key.export({ format: "jwk" });;
+      const jwt = key.export({ format: "jwk" });
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -350,13 +352,13 @@ describe("crypto.KeyObjects", () => {
         expect(key.type).toBe("public");
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.symmetricKeySize).toBe(undefined);
-        if(name == "public") {
+        if (name == "public") {
           expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
         }
-        if(name == "jwk") {
+        if (name == "jwk") {
           const jwt = { ...info.jwk };
           delete jwt.d;
-          const jwk_exported = key.export({ format: "jwk" });;
+          const jwk_exported = key.export({ format: "jwk" });
           expect(jwk_exported).toEqual(jwt);
         }
       });
@@ -419,14 +421,16 @@ describe("crypto.KeyObjects", () => {
   ].forEach(info => {
     const { keyType, namedCurve } = info;
     const test = namedCurve === "secp256k1" ? it.skip : it;
+    let privateKey: KeyObject;
     test(`${keyType} ${namedCurve} createPrivateKey from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
+      privateKey = key;
       expect(key.type).toBe("private");
       expect(key.asymmetricKeyType).toBe(keyType);
       expect(key.asymmetricKeyDetails?.namedCurve).toBe(namedCurve);
       expect(key.symmetricKeySize).toBe(undefined);
       expect(key.export({ type: "pkcs8", format: "pem" })).toEqual(info.private);
-      const jwt = key.export({ format: "jwk" });;
+      const jwt = key.export({ format: "jwk" });
       expect(jwt).toEqual(info.jwk);
     });
 
@@ -452,15 +456,20 @@ describe("crypto.KeyObjects", () => {
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.asymmetricKeyDetails?.namedCurve).toBe(namedCurve);
         expect(key.symmetricKeySize).toBe(undefined);
-        if(name == "public") {
+        if (name == "public") {
           expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
         }
-        if(name == "jwk") {
+        if (name == "jwk") {
           const jwt = { ...info.jwk };
           delete jwt.d;
           const jwk_exported = key.export({ format: "jwk" });
           expect(jwk_exported).toEqual(jwt);
         }
+
+        const pkey = privateKey || info.private;
+        const signature = createSign("sha256").update("foo").sign({ key: pkey });
+        const okay = createVerify("sha256").update("foo").verify({ key: key }, signature);
+        expect(okay).toBeTrue();
       });
     });
   });

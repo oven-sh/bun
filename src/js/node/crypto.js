@@ -12032,7 +12032,7 @@ const {
   generateKeySync,
 } = $lazy("internal/crypto");
 
-const kCryptoKey = Symbol.for(":;bunKeyObjectCryptoKey::");
+const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
 class KeyObject {
   [kCryptoKey];
   constructor(key) {

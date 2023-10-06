@@ -184,7 +184,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
                         this,
                         allocator,
                         log,
-                        filename[0 .. strings.lastIndexOfChar(filename, std.fs.path.sep) orelse 0],
+                        filename,
                     );
                 },
                 error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
@@ -1468,7 +1468,7 @@ pub const Printer = struct {
 };
 
 pub fn verifyData(this: *Lockfile) !void {
-    std.debug.assert(this.format == Lockfile.FormatVersion.current or this.format == Lockfile.FormatVersion.migrated);
+    std.debug.assert(this.format == Lockfile.FormatVersion.current);
     var i: usize = 0;
     while (i < this.packages.len) : (i += 1) {
         const package: Lockfile.Package = this.packages.get(i);
@@ -1866,8 +1866,6 @@ pub const FormatVersion = enum(u32) {
     // This change added tarball URLs to npm-resolved packages
     v2 = 2,
 
-    // This format is set when migrating from npm/yarn/pnpm, should not be written/read from disk.
-    migrated = std.math.maxInt(u32),
     _,
     pub const current = FormatVersion.v2;
 };
@@ -4583,3 +4581,8 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
     return null;
 }
+
+// pub fn format(self: Lockfile, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+//     writer.writeAll("{\n");
+//     writer.writeAll("}");
+// }

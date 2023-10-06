@@ -7918,7 +7918,7 @@ pub const PackageManager = struct {
 
         if (manager.log.hasErrors()) Global.crash();
 
-        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0 or load_lockfile_result.ok.format != Lockfile.FormatVersion.current; // (if migrated from npm or previous version);
+        const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
             manager.lockfile = try manager.lockfile.cleanWithLogger(

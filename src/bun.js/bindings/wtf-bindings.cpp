@@ -247,7 +247,7 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    LChar *ptr;
+    LChar* ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
     if (UNLIKELY(!ptr)) {
         RELEASE_ASSERT_NOT_REACHED();

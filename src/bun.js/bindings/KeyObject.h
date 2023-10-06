@@ -14,4 +14,5 @@ JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGloba
 JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 }

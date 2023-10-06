@@ -14,7 +14,7 @@ import {
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
-  generateKeyPair,
+  generateKeyPairSync,
   generateKeySync,
 } from "crypto";
 import { test, it, expect, describe } from "bun:test";
@@ -607,21 +607,11 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
-  async function generateKeyPairPromise(keyType: string) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    generateKeyPair(keyType, {}, (err: Error | undefined, publicKey: KeyObject, privateKey: KeyObject) => {
-      if (err) {
-        return reject(err);
-      }
-      resolve({ publicKey, privateKey });
-    });
-    return (await promise) as Promise<{ publicKey: KeyObject; privateKey: KeyObject }>;
-  }
   ["ed25519", "x25519"].forEach(keyType => {
     const test = keyType === "ed25519" ? it : it.skip;
     test(`${keyType} equals should work`, async () => {
-      const first = await generateKeyPairPromise(keyType);
-      const second = await generateKeyPairPromise(keyType);
+      const first = generateKeyPairSync(keyType);
+      const second = generateKeyPairSync(keyType);
 
       const secret = generateKeySync("aes", { length: 128 });
 

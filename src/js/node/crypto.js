@@ -12018,8 +12018,6 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
-// const $lazy = globalThis[Symbol.for("Bun.lazy")];
-
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -12030,6 +12028,7 @@ const {
   createPublicKey,
   createPrivateKey,
   generateKeySync,
+  generateKeyPairSync,
 } = $lazy("internal/crypto");
 
 const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
@@ -12153,6 +12152,88 @@ crypto_exports.generateKey = function (algorithm, options, callback) {
     .catch(err => typeof callback === "function" && callback(err));
 };
 
+crypto_exports.generateKeyPairSync = function (algorithm, options) {
+  const publicKeyEncoding = options?.publicKeyEncoding;
+  const privateKeyEncoding = options?.privateKeyEncoding;
+  switch (algorithm) {
+    case "rsa": {
+      let publicExponent = options?.publicExponent || 0x10001;
+      if (typeof publicExponent !== "number") {
+        throw new TypeError(`options.publicExponent must be a number`);
+      }
+      const buffer = Buffer.alloc(4);
+      buffer.writeUInt32BE(publicExponent, 0);
+      const modulusLength = options?.modulusLength;
+      if (typeof modulusLength !== "number") {
+        throw new TypeError(`options.modulusLength must be a number`);
+      }
+      const result = generateKeyPairSync(algorithm, { publicExponent: buffer, modulusLength });
+      if (result) {
+        result.publicKey = publicKeyEncoding
+          ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
+          : KeyObject.from(result.publicKey);
+        result.privateKey = privateKeyEncoding
+          ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
+          : KeyObject.from(result.privateKey);
+      }
+      return result;
+    }
+    case "ec": {
+      let namedCurve = options?.namedCurve;
+      if (typeof namedCurve !== "string") {
+        throw new TypeError(`options.namedCurve must be a string`);
+      }
+
+      switch (namedCurve) {
+        case "p384":
+        case "secp384r1":
+          namedCurve = "P-384";
+          break;
+        case "p256":
+        case "prime256v1":
+          namedCurve = "P-256";
+          break;
+        case "p521":
+        case "secp521r1":
+          namedCurve = "P-521";
+          break;
+        default:
+          throw new TypeError("curve not supported");
+      }
+      const result = generateKeyPairSync(algorithm, { namedCurve });
+      if (result) {
+        result.publicKey = publicKeyEncoding
+          ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
+          : KeyObject.from(result.publicKey);
+        result.privateKey = privateKeyEncoding
+          ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
+          : KeyObject.from(result.privateKey);
+      }
+      return result;
+    }
+    case "ed25519":
+    case "x25519": {
+      const result = generateKeyPairSync(algorithm);
+      if (result) {
+        result.publicKey = publicKeyEncoding
+          ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
+          : KeyObject.from(result.publicKey);
+        result.privateKey = privateKeyEncoding
+          ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
+          : KeyObject.from(result.privateKey);
+      }
+      return result;
+    }
+    case "dsa":
+    case "dh":
+    case "ed448":
+    case "x448":
+      throw new TypeError("algorithm not supported");
+    default:
+      throw new TypeError(`algorithm should be 'rsa', 'rsa-pss', 'ec', 'ed25519' or 'x25519'`);
+  }
+};
+
 crypto_exports.generateKeyPair = function (algorithm, options, callback) {
   const publicKeyEncoding = options?.publicKeyEncoding;
   const privateKeyEncoding = options?.privateKeyEncoding;
@@ -12183,7 +12264,7 @@ crypto_exports.generateKeyPair = function (algorithm, options, callback) {
         .then(({ publicKey, privateKey }) => {
           if (typeof callback === "function") {
             publicKey = publicKeyEncoding
-              ? KeyObject.from(publicKey).export(options?.publicKeyEncoding)
+              ? KeyObject.from(publicKey).export(publicKeyEncoding)
               : KeyObject.from(publicKey);
             privateKey = privateKeyEncoding
               ? KeyObject.from(privateKey).export(privateKeyEncoding)
@@ -12309,9 +12390,7 @@ crypto_exports.generateKeyPair = function (algorithm, options, callback) {
     case "x448":
       throw new TypeError("algorithm not supported");
     default:
-      throw new TypeError(
-        `algorithm should be 'rsa', 'rsa-pss', 'dsa', 'ec', 'ed25519', 'ed448', 'x25519', 'x448', or 'dh'`,
-      );
+      throw new TypeError(`algorithm should be 'rsa', 'rsa-pss', 'ec', 'ed25519' or 'x25519'`);
   }
 };
 

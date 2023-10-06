@@ -153,7 +153,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
     }
     ERR_clear_error();
     BIO_reset(bp.get());
-    
+
     // X.509 fallback.
     if (PEM_bytes_read_bio(&result.der_data, &result.der_len, nullptr, "CERTIFICATE", bp.get(), nullptr, nullptr) == 1) {
         const unsigned char* p = result.der_data;
@@ -186,7 +186,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
         JSC::throwTypeError(globalObject, scope, "createPrivateKey requires 1 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    
+
     JSValue optionsArg = callFrame->uncheckedArgument(0);
 
     if (auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(0))) {
@@ -708,12 +708,12 @@ static JSC::EncodedJSValue KeyObject__createOKPFromPrivate(JSC::JSGlobalObject* 
     return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(impl)));
 }
 
-
-static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObject* globalObject, EVP_PKEY* pkey) {
+static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObject* globalObject, EVP_PKEY* pkey)
+{
     auto pKeyID = EVP_PKEY_id(pkey);
     if (pKeyID == EVP_PKEY_RSA || pKeyID == EVP_PKEY_RSA_PSS) {
         return KeyObject__createRSAFromPrivate(globalObject, pkey, pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSA_PSS : CryptoAlgorithmIdentifier::RSA_OAEP);
-    } else if(pKeyID == EVP_PKEY_EC) {
+    } else if (pKeyID == EVP_PKEY_EC) {
         auto& vm = globalObject->vm();
 
         EC_KEY* ec_key = EVP_PKEY_get1_EC_KEY(pkey);
@@ -761,7 +761,7 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
             return JSValue::encode(JSC::jsUndefined());
         }
         return KeyObject__createOKPFromPrivate(globalObject, out, pKeyID == EVP_PKEY_ED25519 ? CryptoKeyOKP::NamedCurve::Ed25519 : CryptoKeyOKP::NamedCurve::X25519, CryptoAlgorithmIdentifier::Ed25519);
-    } else {    
+    } else {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key type"_s));
@@ -941,7 +941,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                 JSC::throwTypeError(globalObject, scope, "The \"key\" property must be of type object"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
-            
+
             if (UNLIKELY(!data) || UNLIKELY(!byteLength)) {
                 auto scope = DECLARE_THROW_SCOPE(vm);
                 throwException(globalObject, scope, createTypeError(globalObject, "ERR_INVALID_ARG_TYPE: expected key to be Buffer or array-like object"_s));
@@ -981,7 +981,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                     }
 
                     auto pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
-                    if(!pkey) {
+                    if (!pkey) {
                         auto scope = DECLARE_THROW_SCOPE(vm);
                         throwException(globalObject, scope, createTypeError(globalObject, "Invalid PEM data"_s));
                         return JSValue::encode(JSC::jsUndefined());
@@ -1103,7 +1103,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                             throwException(globalObject, scope, createTypeError(globalObject, "Invalid PKCS#1"_s));
                             return JSValue::encode(JSC::jsUndefined());
                         }
-                        
+
                         auto pKeyID = EVP_PKEY_id(pkey.get());
                         return KeyObject__createRSAFromPrivate(globalObject, pkey.get(), pKeyID == EVP_PKEY_RSA_PSS ? CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5 : CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5);
                     }
@@ -1440,7 +1440,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         void* passphrase = nullptr;
                         size_t passphrase_len = 0;
                         if (hasPassphrase) {
-                            if(!cipher) {
+                            if (!cipher) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
                                 BIO_free(bio);
@@ -1622,7 +1622,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
                         if (hasPassphrase) {
-                            if(!cipher) {
+                            if (!cipher) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
                                 BIO_free(bio);
@@ -1771,7 +1771,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
 
                         if (hasPassphrase) {
-                            if(!cipher) {
+                            if (!cipher) {
                                 auto scope = DECLARE_THROW_SCOPE(vm);
                                 JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
                                 BIO_free(bio);
@@ -1940,39 +1940,40 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
     }
 }
 
-static char *bignum_to_string(const BIGNUM *bn) {
-  char *tmp, *ret;
-  size_t len;
+static char* bignum_to_string(const BIGNUM* bn)
+{
+    char *tmp, *ret;
+    size_t len;
 
-  // Display large numbers in hex and small numbers in decimal. Converting to
-  // decimal takes quadratic time and is no more useful than hex for large
-  // numbers.
-  if (BN_num_bits(bn) < 32) {
-    return BN_bn2dec(bn);
-  }
+    // Display large numbers in hex and small numbers in decimal. Converting to
+    // decimal takes quadratic time and is no more useful than hex for large
+    // numbers.
+    if (BN_num_bits(bn) < 32) {
+        return BN_bn2dec(bn);
+    }
 
-  tmp = BN_bn2hex(bn);
-  if (tmp == NULL) {
-    return NULL;
-  }
+    tmp = BN_bn2hex(bn);
+    if (tmp == NULL) {
+        return NULL;
+    }
 
-  len = strlen(tmp) + 3;
-  ret = (char*)OPENSSL_malloc(len);
-  if (ret == NULL) {
+    len = strlen(tmp) + 3;
+    ret = (char*)OPENSSL_malloc(len);
+    if (ret == NULL) {
+        OPENSSL_free(tmp);
+        return NULL;
+    }
+
+    // Prepend "0x", but place it after the "-" if negative.
+    if (tmp[0] == '-') {
+        OPENSSL_strlcpy(ret, "-0x", len);
+        OPENSSL_strlcat(ret, tmp + 1, len);
+    } else {
+        OPENSSL_strlcpy(ret, "0x", len);
+        OPENSSL_strlcat(ret, tmp, len);
+    }
     OPENSSL_free(tmp);
-    return NULL;
-  }
-
-  // Prepend "0x", but place it after the "-" if negative.
-  if (tmp[0] == '-') {
-    OPENSSL_strlcpy(ret, "-0x", len);
-    OPENSSL_strlcat(ret, tmp + 1, len);
-  } else {
-    OPENSSL_strlcpy(ret, "0x", len);
-    OPENSSL_strlcat(ret, tmp, len);
-  }
-  OPENSSL_free(tmp);
-  return ret;
+    return ret;
 }
 
 JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -2099,7 +2100,164 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
-JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame) {
+
+JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto count = callFrame->argumentCount();
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (count < 1) {
+        JSC::throwTypeError(lexicalGlobalObject, scope, "generateKeyPairSync requires 1 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto type = callFrame->argument(0);
+    if (type.isUndefinedOrNull() || type.isEmpty() || !type.isString()) {
+        JSC::throwTypeError(lexicalGlobalObject, scope, "type is expected to be a string"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto type_str = type.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* structure = zigGlobalObject->JSCryptoKeyStructure();
+    // TODO: rsa-pss
+    if (type_str == "rsa"_s) {
+        if (count == 1) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength and options.publicExponentVector are required for rsa"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
+        if (options == nullptr) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options is expected to be a object"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto modulusLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "modulusLength"_s)));
+        if (modulusLengthJS.isUndefinedOrNull() || modulusLengthJS.isEmpty() || !modulusLengthJS.isNumber()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.modulusLength is expected to be a number"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto publicExponentJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "publicExponent"_s)));
+        if (publicExponentJS.isUndefinedOrNull() || publicExponentJS.isEmpty() || !publicExponentJS.isCell()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        void* data;
+        size_t byteLength;
+
+        auto type = publicExponentJS.asCell()->type();
+
+        switch (type) {
+
+        case DataViewType:
+        case Uint8ArrayType:
+        case Uint8ClampedArrayType:
+        case Uint16ArrayType:
+        case Uint32ArrayType:
+        case Int8ArrayType:
+        case Int16ArrayType:
+        case Int32ArrayType:
+        case Float32ArrayType:
+        case Float64ArrayType:
+        case BigInt64ArrayType:
+        case BigUint64ArrayType: {
+            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(publicExponentJS.asCell());
+
+            data = view->vector();
+            byteLength = view->length();
+            break;
+        }
+        case ArrayBufferType: {
+            auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(publicExponentJS.asCell());
+            if (UNLIKELY(!jsBuffer)) {
+                JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            auto* buffer = jsBuffer->impl();
+            data = buffer->data();
+            byteLength = buffer->byteLength();
+            break;
+        }
+        default: {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.publicExponent is expected to be a Buffer"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        }
+        int modulusLength = modulusLengthJS.toUInt32(lexicalGlobalObject);
+        auto returnValue = JSC::JSValue {};
+        auto keyPairCallback = [&](CryptoKeyPair&& pair) {
+            pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
+            pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
+
+            auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+            returnValue = obj;
+        };
+        auto failureCallback = [&]() {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
+        };
+        // this is actually sync
+        CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, CryptoAlgorithmIdentifier::SHA_1, false, modulusLength, Vector<uint8_t>((uint8_t*)data, byteLength), true, CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt, WTFMove(keyPairCallback), WTFMove(failureCallback), zigGlobalObject->scriptExecutionContext());
+        return JSValue::encode(returnValue);
+    } else if (type_str == "ec"_s) {
+        if (count == 1) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options.namedCurve is required for ec"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1));
+        if (options == nullptr) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "options is expected to be a object"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto namedCurveJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "namedCurve"_s)));
+        if (namedCurveJS.isUndefinedOrNull() || namedCurveJS.isEmpty() || !namedCurveJS.isString()) {
+            JSC::throwTypeError(lexicalGlobalObject, scope, "namedCurve is expected to be a string"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto namedCurve = namedCurveJS.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        auto result = CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier::ECDSA, namedCurve, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
+        if (result.hasException()) {
+            WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto pair = result.releaseReturnValue();
+        auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+        return JSValue::encode(obj);
+    } else if (type_str == "ed25519"_s) {
+        auto result = CryptoKeyOKP::generatePair(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
+        if (result.hasException()) {
+            WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto pair = result.releaseReturnValue();
+        auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+        return JSValue::encode(obj);
+    } else if (type_str == "x25519"_s) {
+        auto result = CryptoKeyOKP::generatePair(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::X25519, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
+        if (result.hasException()) {
+            WebCore::propagateException(*lexicalGlobalObject, scope, result.releaseException());
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        auto pair = result.releaseReturnValue();
+        auto obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "publicKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.publicKey.releaseNonNull()), 0);
+        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "privateKey"_s)), JSCryptoKey::create(structure, zigGlobalObject, pair.privateKey.releaseNonNull()), 0);
+        return JSValue::encode(obj);
+    } else {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'rsa', 'ec', 'x25519' or 'ed25519'"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsUndefined());
+}
+JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
     auto count = callFrame->argumentCount();
     auto& vm = lexicalGlobalObject->vm();
 
@@ -2108,9 +2266,9 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
         JSC::throwTypeError(lexicalGlobalObject, scope, "generateKeySync requires 2 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    
+
     auto type = callFrame->argument(0);
-    if(type.isUndefinedOrNull() || type.isEmpty() || !type.isString()) {
+    if (type.isUndefinedOrNull() || type.isEmpty() || !type.isString()) {
         auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
         JSC::throwTypeError(lexicalGlobalObject, scope, "type is expected to be a string"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -2118,12 +2276,12 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
 
     auto type_str = type.toWTFString(lexicalGlobalObject);
 
-    if(type_str == "hmac"_s) {
+    if (type_str == "hmac"_s) {
         Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
         size_t lengthBits = 0;
         auto length = callFrame->argument(1);
-        if(length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+        if (length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
             auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
             JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -2136,20 +2294,20 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             return JSValue::encode(JSC::jsUndefined());
         }
         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
-    } else if(type_str == "aes"_s) {
+    } else if (type_str == "aes"_s) {
         Zig::GlobalObject* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         auto* structure = zigGlobalObject->JSCryptoKeyStructure();
         size_t lengthBits = 0;
-        if(count > 1) {
+        if (count > 1) {
             auto length = callFrame->argument(1);
-            if(length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
+            if (length.isUndefinedOrNull() || length.isEmpty() || !length.isNumber()) {
                 auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
                 JSC::throwTypeError(lexicalGlobalObject, scope, "length is expected to be a number"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
             lengthBits = length.toUInt32(lexicalGlobalObject);
         }
-        
+
         auto result = CryptoKeyAES::generate(WebCore::CryptoAlgorithmIdentifier::AES_CBC, lengthBits, true, CryptoKeyUsageSign | CryptoKeyUsageVerify);
         if (result == nullptr) {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2163,7 +2321,6 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
         return JSValue::encode(JSC::jsUndefined());
     }
 }
-    
 
 JSC::EncodedJSValue KeyObject__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {

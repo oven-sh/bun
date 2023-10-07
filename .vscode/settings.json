@@ -81,7 +81,8 @@
     "src/deps/zstd": true,
     "test/snippets/package-json-exports/_node_modules_copy": true,
     "src/js/out": true,
-    "packages/bun-uws/fuzzing/seed-corpus/": true
+    "packages/bun-uws/fuzzing/seed-corpus/": true,
+    "**/.dep": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

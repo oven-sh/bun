@@ -75,7 +75,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t
 #endif
     return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
 }
-BunString toBunString(const char* bytes, size_t length)
+BunString toString(const char* bytes, size_t length)
 {
     return BunString__fromBytes(bytes, length);
 }

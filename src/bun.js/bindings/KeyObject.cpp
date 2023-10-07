@@ -1925,7 +1925,7 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
                         hash_nid = OBJ_obj2nid(params->hashAlgorithm->algorithm);
                     }
                     auto* hash_srt = OBJ_nid2ln(hash_nid);
-                    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "hashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toBunString(hash_srt, strlen(hash_srt))), 0);
+                    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "hashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toString(hash_srt, strlen(hash_srt))), 0);
                     if (params->maskGenAlgorithm != nullptr) {
                         mgf_nid = OBJ_obj2nid(params->maskGenAlgorithm->algorithm);
                         if (mgf_nid == NID_mgf1) {
@@ -1937,7 +1937,7 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
                     // is intentionally not added to the object.
                     if (mgf_nid == NID_mgf1) {
                         auto* mgf1_hash_srt = OBJ_nid2ln(mgf1_hash_nid);
-                        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "mgf1HashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toBunString(mgf1_hash_srt, strlen(mgf1_hash_srt))), 0);
+                        obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "mgf1HashAlgorithm"_s)), Bun::toJS(lexicalGlobalObject, Bun::toString(mgf1_hash_srt, strlen(mgf1_hash_srt))), 0);
                     }
 
                     if (params->saltLength != nullptr) {

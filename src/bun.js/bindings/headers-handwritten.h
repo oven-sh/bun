@@ -239,7 +239,7 @@ extern "C" void BunString__toWTFString(BunString*);
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-BunString toBunString(const char* bytes, size_t length);
+BunString toString(const char* bytes, size_t length);
 WTF::String toWTFString(const BunString& bunString);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
